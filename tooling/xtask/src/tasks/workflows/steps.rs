@@ -6,6 +6,30 @@ pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
+pub(crate) struct Nextest(Step<Run>);
+
+pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
+    Nextest(named::run(
+        platform,
+        "cargo nextest run --workspace --no-fail-fast",
+    ))
+}
+
+impl Nextest {
+    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(r#" --target "{target}""#));
+        }
+        self.into()
+    }
+}
+
+impl From<Nextest> for Step<Run> {
+    fn from(value: Nextest) -> Self {
+        value.0
+    }
+}
+
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
         "actions",
@@ -66,10 +90,6 @@ pub fn cargo_install_nextest() -> Step<Use> {
     named::uses("taiki-e", "install-action", "nextest")
 }
 
-pub fn cargo_nextest(platform: Platform) -> Step<Run> {
-    named::run(platform, "cargo nextest run --workspace --no-fail-fast")
-}
-
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh(indoc::indoc! {r#"
@@ -113,7 +133,9 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
-    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
+    named::uses("namespacelabs", "nscloud-cache-action", "v1")
+        .add_with(("cache", "rust"))
+        .add_with(("path", "~/.rustup"))
 }
 
 pub fn setup_linux() -> Step<Run> {

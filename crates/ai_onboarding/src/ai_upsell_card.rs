@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::{Plan, PlanV2};
 use gpui::{AnyElement, App, Entity, IntoElement, RenderOnce, Window};
 use ui::{CommonAnimationExt, Divider, Vector, VectorName, prelude::*};
 

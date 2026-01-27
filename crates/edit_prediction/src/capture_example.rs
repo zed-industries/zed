@@ -18,6 +18,7 @@ use text::{BufferSnapshot as TextBufferSnapshot, Point, ToOffset as _};
 
 pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
 pub(crate) const DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 100;
+pub(crate) const ZETA2_TESTING_RATE_PER_10K_PREDICTION: u16 = 500;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -173,6 +174,7 @@ pub fn capture_example(
             expected_patches,
             rejected_patch,
             captured_prompt_input: prompt_input,
+            telemetry: None,
         };
         spec.set_cursor_excerpt(
             &cursor_excerpt,
@@ -314,6 +316,10 @@ pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
         .unwrap_or(default_rate);
     cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
         && rand::random::<u16>() % 10_000 < capture_rate
+}
+
+pub(crate) fn should_send_testing_zeta2_request() -> bool {
+    rand::random::<u16>() % 10_000 < ZETA2_TESTING_RATE_PER_10K_PREDICTION
 }
 
 #[cfg(test)]
@@ -599,6 +605,7 @@ mod tests {
                     .to_string()
                 ),
                 captured_prompt_input: example.captured_prompt_input.clone(),
+                telemetry: None,
             }
         );
 

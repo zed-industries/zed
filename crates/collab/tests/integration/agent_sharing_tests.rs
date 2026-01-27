@@ -3,7 +3,7 @@ use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
 use uuid::Uuid;
 
-use crate::tests::TestServer;
+use crate::TestServer;
 
 #[gpui::test]
 async fn test_share_and_retrieve_thread(

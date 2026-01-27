@@ -1,0 +1,244 @@
+name: Identify potential duplicates among new bug/crash reports
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to analyze (for testing)"
+        required: true
+        type: number
+
+concurrency:
+  group: potential-duplicate-check-${{ github.event.issue.number || inputs.issue_number }}
+  # let's not overspend tokens on multiple parallel checks of the same issue
+  cancel-in-progress: true
+
+jobs:
+  identify-duplicates:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: ubuntu-latest
+    # let's not overspend tokens on checks that went too deep into the rabbit hole
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+
+    steps:
+      - name: Get github app token
+        id: get-app-token
+        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Check issue type
+        id: check-type
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            const issueNumber = context.payload.issue?.number || ${{ inputs.issue_number || 0 }};
+            if (!issueNumber) {
+              core.setFailed('No issue number provided');
+              return;
+            }
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber
+            });
+
+            const typeName = issue.type?.name;
+            const isTargetType = typeName === 'Bug' || typeName === 'Crash';
+
+            console.log(`Issue #${issueNumber}: "${issue.title}"`);
+            console.log(`Issue type: ${typeName || '(none)'}`);
+            console.log(`Is target type (Bug/Crash): ${isTargetType}`);
+
+            core.setOutput('issue_number', issueNumber);
+            core.setOutput('issue_author', issue.user?.login || '');
+            core.setOutput('is_target_type', isTargetType);
+
+            if (!isTargetType) {
+              console.log('::notice::Skipping - issue type is not Bug or Crash');
+            }
+
+      - name: Check if author is staff
+        if: steps.check-type.outputs.is_target_type == 'true'
+        id: check-staff
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            const author = process.env.ISSUE_AUTHOR || '';
+            if (!author) {
+              console.log('Could not determine issue author, proceeding with check');
+              core.setOutput('is_staff', 'false');
+              return;
+            }
+
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: author
+              });
+              const isStaff = response.data.state === 'active';
+              core.setOutput('is_staff', String(isStaff));
+              if (isStaff) {
+                console.log(`::notice::Skipping - author @${author} is a staff member`);
+              }
+            } catch (error) {
+              if (error.status === 404) {
+                core.setOutput('is_staff', 'false');
+              } else {
+                throw error;
+              }
+            }
+        env:
+          ISSUE_AUTHOR: ${{ steps.check-type.outputs.issue_author }}
+
+      - name: Checkout repository
+        if: |
+          steps.check-type.outputs.is_target_type == 'true' &&
+          steps.check-staff.outputs.is_staff == 'false'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Analyze for potential duplicates (DRY RUN)
+        if: |
+          steps.check-type.outputs.is_target_type == 'true' &&
+          steps.check-staff.outputs.is_staff == 'false'
+        id: analyze
+        uses: anthropics/claude-code-action@231bd75b7196d48291c1498f1c6d277c2810d9a3 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
+          github_token: ${{ steps.get-app-token.outputs.token }}
+
+          prompt: |
+            You are analyzing issue #${{ steps.check-type.outputs.issue_number }} in the zed-industries/zed repository to determine if it might be a duplicate of an existing issue.
+
+            THIS IS A DRY RUN - do not post any comments or modify anything. Only analyze and return your findings.
+
+            ## Instructions
+
+            1. Use mcp__github__get_issue to fetch the full details of issue #${{ steps.check-type.outputs.issue_number }}
+
+            2. Extract key identifying information:
+               - Error messages (exact text)
+               - Stack traces or panic messages
+               - Affected features/components
+               - Steps to reproduce
+               - Platform/OS information
+
+            3. Search for potential duplicates using mcp__github__search_issues with:
+               - Key error messages or panic text (most reliable signal)
+               - Specific feature names or components mentioned
+               - Limit search to repo:zed-industries/zed and recent issues (last 90 days)
+               - Search both open AND closed issues (duplicates may have been closed)
+
+            4. For each potential match, evaluate similarity:
+               - SAME error message or stack trace = high confidence
+               - SAME steps to reproduce with same outcome = high confidence
+               - Similar description but different error/context = low confidence
+               - Vaguely related topic = NOT a duplicate
+
+            ## Critical Guidelines
+
+            - Be VERY conservative. When in doubt, conclude it is NOT a duplicate.
+            - Only flag as potential duplicate if you have HIGH confidence (same error, same repro steps, same root cause).
+            - "Similar topic" or "related feature" is NOT sufficient - the issues must describe the SAME bug.
+            - False positives are worse than false negatives. Users finding their legitimate issue incorrectly flagged as duplicate is a poor experience.
+
+            ## Output
+
+            Return your analysis as JSON with this exact structure. Do not include any other text outside the JSON.
+
+          claude_args: |
+            --max-turns 3
+            --allowedTools mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues
+            --json-schema {"type":"object","properties":{"issue_number":{"type":"integer"},"issue_title":{"type":"string"},"is_potential_duplicate":{"type":"boolean"},"confidence":{"type":"string","enum":["high","medium","low","none"]},"potential_duplicates":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"title":{"type":"string"},"similarity_reason":{"type":"string"}},"required":["number","title","similarity_reason"]}},"analysis_summary":{"type":"string"},"recommendation":{"type":"string","enum":["flag_as_duplicate","needs_human_review","not_a_duplicate"]}},"required":["issue_number","is_potential_duplicate","confidence","potential_duplicates","analysis_summary","recommendation"]}
+
+      - name: Log analysis results
+        if: |
+          steps.check-type.outputs.is_target_type == 'true' &&
+          steps.check-staff.outputs.is_staff == 'false' &&
+          !cancelled()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const output = process.env.ANALYSIS_OUTPUT || '';
+
+            console.log('='.repeat(60));
+            console.log('DRY RUN ANALYSIS RESULTS');
+            console.log('='.repeat(60));
+
+            if (!output || output === '') {
+              console.log('No structured output received from analysis');
+              core.summary.addHeading('⚠️ Analysis did not produce output', 2);
+              core.summary.addRaw('The duplicate detection analysis did not return structured output. Check the workflow logs for details.');
+              await core.summary.write();
+              return;
+            }
+
+            try {
+              const analysis = JSON.parse(output);
+
+              console.log(`\nIssue: #${analysis.issue_number} - ${analysis.issue_title || 'N/A'}`);
+              console.log(`Is Potential Duplicate: ${analysis.is_potential_duplicate}`);
+              console.log(`Confidence: ${analysis.confidence}`);
+              console.log(`Recommendation: ${analysis.recommendation}`);
+              console.log(`\nAnalysis Summary:\n${analysis.analysis_summary}`);
+
+              if (analysis.potential_duplicates.length > 0) {
+                console.log(`\nPotential Duplicates Found: ${analysis.potential_duplicates.length}`);
+                for (const dup of analysis.potential_duplicates) {
+                  console.log(`  - #${dup.number}: ${dup.title}`);
+                  console.log(`    Reason: ${dup.similarity_reason}`);
+                }
+              } else {
+                console.log('\nNo potential duplicates identified.');
+              }
+
+              console.log('\n' + '='.repeat(60));
+
+              // set summary for workflow run
+              const summaryIcon = analysis.is_potential_duplicate ? '⚠️' : '✅';
+              const summaryText = analysis.is_potential_duplicate
+                ? `Potential duplicate detected (${analysis.confidence} confidence)`
+                : 'No duplicate detected';
+
+              core.summary.addHeading(`${summaryIcon} Issue #${analysis.issue_number}: ${summaryText}`, 2);
+              core.summary.addRaw(`\n**Recommendation:** ${analysis.recommendation}\n\n`);
+              core.summary.addRaw(`**Summary:** ${analysis.analysis_summary}\n\n`);
+
+              if (analysis.potential_duplicates.length > 0) {
+                core.summary.addHeading('Potential Duplicates', 3);
+                const rows = analysis.potential_duplicates.map(d => [
+                  `#${d.number}`,
+                  d.title,
+                  d.similarity_reason
+                ]);
+                core.summary.addTable([
+                  [{data: 'Issue', header: true}, {data: 'Title', header: true}, {data: 'Similarity Reason', header: true}],
+                  ...rows
+                ]);
+              }
+
+              await core.summary.write();
+
+            } catch (e) {
+              console.log('Failed to parse analysis output:', e.message);
+              console.log('Raw output:', output);
+              core.summary.addHeading('⚠️ Failed to parse analysis output', 2);
+              core.summary.addRaw(`Error: ${e.message}\n\nRaw output:\n\`\`\`\n${output}\n\`\`\``);
+              await core.summary.write();
+            }
+        env:
+          ANALYSIS_OUTPUT: ${{ steps.analyze.outputs.structured_output }}

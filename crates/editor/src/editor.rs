@@ -3825,7 +3825,7 @@ impl Editor {
             self.selections_did_change(true, old_cursor_position, state.effects, window, cx);
 
             if self.should_open_signature_help_automatically(old_cursor_position, cx) {
-                self.show_signature_help(&ShowSignatureHelp, window, cx);
+                self.show_signature_help_auto(window, cx);
             }
         }
     }
@@ -23091,6 +23091,21 @@ impl Editor {
         let text_highlights = self
             .background_highlights
             .remove(&HighlightKey::Type(TypeId::of::<T>()))?;
+        if !text_highlights.1.is_empty() {
+            self.scrollbar_marker_state.dirty = true;
+            cx.notify();
+        }
+        Some(text_highlights)
+    }
+
+    pub fn clear_background_highlights_key<T: 'static>(
+        &mut self,
+        key: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<BackgroundHighlight> {
+        let text_highlights = self
+            .background_highlights
+            .remove(&HighlightKey::TypePlus(TypeId::of::<T>(), key))?;
         if !text_highlights.1.is_empty() {
             self.scrollbar_marker_state.dirty = true;
             cx.notify();

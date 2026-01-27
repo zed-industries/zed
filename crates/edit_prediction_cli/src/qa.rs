@@ -1,24 +1,21 @@
 //! Quality assessment of predictions using LLM-as-a-judge.
 //!
-//! This module uses the Anthropic Batch API to evaluate prediction quality.
-//! Caching is handled by the underlying AnthropicClient.
+//! This module uses LLM Batch APIs to evaluate prediction quality.
+//! Caching is handled by the underlying client.
 
+use crate::BatchProvider;
 use crate::anthropic_client::AnthropicClient;
 use crate::example::Example;
-use crate::paths::CACHE_DIR;
+use crate::format_prompt::extract_cursor_excerpt_from_example;
+use crate::openai_client::OpenAiClient;
+use crate::paths::LLM_CACHE_DB;
 use crate::word_diff::unified_to_word_diff;
-use anthropic::{Message, RequestContent, Role};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
-/// Model to use for QA evaluation.
-const MODEL: &str = "claude-sonnet-4-5";
-
-/// Path to the QA cache database.
-pub static QA_CACHE_DB: LazyLock<PathBuf> = LazyLock::new(|| CACHE_DIR.join("qa_cache.sqlite"));
+const PROMPT_TEMPLATE: &str = include_str!("prompts/qa.md");
 
 /// Arguments for the QA command.
 #[derive(Debug, Clone, clap::Args)]
@@ -30,6 +27,17 @@ pub struct QaArgs {
     /// Wait for batch to complete (polls every 30s)
     #[clap(long)]
     pub wait: bool,
+
+    /// Which LLM provider to use (anthropic or openai)
+    #[clap(long, default_value = "openai")]
+    pub backend: BatchProvider,
+}
+
+fn model_for_backend(backend: BatchProvider) -> &'static str {
+    match backend {
+        BatchProvider::Anthropic => "claude-sonnet-4-5",
+        BatchProvider::Openai => "gpt-5.2",
+    }
 }
 
 /// Result of QA evaluation for a single prediction.
@@ -64,6 +72,9 @@ pub fn build_prompt(example: &Example) -> Option<String> {
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
+    // Format cursor excerpt (reuse from format_prompt)
+    let cursor_excerpt = extract_cursor_excerpt_from_example(example)?;
+
     let mut edit_history = String::new();
     for event in &prompt_inputs.edit_history {
         match event.as_ref() {
@@ -83,49 +94,12 @@ pub fn build_prompt(example: &Example) -> Option<String> {
         }
     }
 
-    Some(format!(
-        r#"
-You are evaluating an edit prediction model for a code editor. The model observes a programmer's recent edit history and predicts what edit they will make next.
-
-All diffs are in the word-diff format.
-
-The model is instructed to:
-- Complete partially-applied refactoring or changes
-- Maintain consistency with established patterns and style
-- NOT delete or revert text that was just added (unless the user explicitly undid it themselves)
-
-## Edit History (chronological)
-```````
-{edit_history}
-```````
-
-## Predicted Next Edit
-```````
-{actual_patch_word_diff}
-```````
-
-## Evaluate
-
-1. **reverts_edits**: Does the prediction undo, or revert changes the user intentionally made in the **edit history**?
-
-2. **confidence**: How likely is the user to accept this suggestion?
-   - 1 = Definitely reject (wrong, nonsensical, or harmful)
-   - 2 = Probably reject (doesn't fit intent or pattern)
-   - 3 = Uncertain (plausible but not clearly correct)
-   - 4 = Probably accept (reasonable next step)
-   - 5 = Definitely accept (obvious continuation)
-
-Output JSON in this format:
-
-```
-{{
-    "reasoning": "your reasoning here",
-    "reverts_edits": true/false,
-    "confidence": 1-5
-}}
-```
-"#
-    ))
+    Some(
+        PROMPT_TEMPLATE
+            .replace("{edit_history}", &edit_history)
+            .replace("{cursor_excerpt}", &cursor_excerpt)
+            .replace("{actual_patch_word_diff}", &actual_patch_word_diff),
+    )
 }
 
 /// Extract a code block from a response.
@@ -182,19 +156,101 @@ fn parse_response(response_text: &str) -> QaResult {
     }
 }
 
+enum QaClient {
+    Anthropic(AnthropicClient),
+    OpenAi(OpenAiClient),
+}
+
+impl QaClient {
+    async fn generate(&self, model: &str, max_tokens: u64, prompt: &str) -> Result<Option<String>> {
+        match self {
+            QaClient::Anthropic(client) => {
+                let messages = vec![anthropic::Message {
+                    role: anthropic::Role::User,
+                    content: vec![anthropic::RequestContent::Text {
+                        text: prompt.to_string(),
+                        cache_control: None,
+                    }],
+                }];
+                let response = client.generate(model, max_tokens, messages).await?;
+                Ok(response.map(|r| {
+                    r.content
+                        .iter()
+                        .filter_map(|c| match c {
+                            anthropic::ResponseContent::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                }))
+            }
+            QaClient::OpenAi(client) => {
+                let messages = vec![open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::Plain(prompt.to_string()),
+                }];
+                let response = client.generate(model, max_tokens, messages).await?;
+                Ok(response.map(|r| {
+                    r.choices
+                        .into_iter()
+                        .filter_map(|choice| match choice.message {
+                            open_ai::RequestMessage::Assistant { content, .. } => {
+                                content.map(|c| match c {
+                                    open_ai::MessageContent::Plain(text) => text,
+                                    open_ai::MessageContent::Multipart(parts) => parts
+                                        .into_iter()
+                                        .filter_map(|p| match p {
+                                            open_ai::MessagePart::Text { text } => Some(text),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(""),
+                                })
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                }))
+            }
+        }
+    }
+
+    async fn sync_batches(&self) -> Result<()> {
+        match self {
+            QaClient::Anthropic(client) => client.sync_batches().await,
+            QaClient::OpenAi(client) => client.sync_batches().await,
+        }
+    }
+}
+
 /// Run the QA evaluation on a set of examples.
 pub async fn run_qa(
     examples: &mut [Example],
     args: &QaArgs,
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
-    let client = if args.no_batch {
-        AnthropicClient::plain()?
-    } else {
-        AnthropicClient::batch(&QA_CACHE_DB)?
+    let model = model_for_backend(args.backend);
+    let client = match args.backend {
+        BatchProvider::Anthropic => {
+            if args.no_batch {
+                QaClient::Anthropic(AnthropicClient::plain()?)
+            } else {
+                QaClient::Anthropic(AnthropicClient::batch(&LLM_CACHE_DB)?)
+            }
+        }
+        BatchProvider::Openai => {
+            if args.no_batch {
+                QaClient::OpenAi(OpenAiClient::plain()?)
+            } else {
+                QaClient::OpenAi(OpenAiClient::batch(&LLM_CACHE_DB)?)
+            }
+        }
     };
 
-    eprintln!("Using model: {}, batching: {}", MODEL, !args.no_batch);
+    eprintln!(
+        "Using model: {}, backend: {:?}, batching: {}",
+        model, args.backend, !args.no_batch
+    );
 
     // First pass: send requests (client handles caching internally)
     let mut prompts: Vec<(usize, String)> = Vec::new();
@@ -222,54 +278,16 @@ pub async fn run_qa(
         for (i, (idx, prompt)) in prompts.iter().enumerate() {
             eprint!("\rProcessing {}/{}", i + 1, prompts.len());
 
-            let messages = vec![Message {
-                role: Role::User,
-                content: vec![RequestContent::Text {
-                    text: prompt.clone(),
-                    cache_control: None,
-                }],
-            }];
-
-            let response = client.generate(MODEL, 1024, messages).await?;
-            let result = response.map(|r| {
-                let text = r
-                    .content
-                    .iter()
-                    .filter_map(|c| match c {
-                        anthropic::ResponseContent::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                parse_response(&text)
-            });
+            let response = client.generate(model, 1024, prompt).await?;
+            let result = response.map(|text| parse_response(&text));
             results.push((*idx, result));
         }
         eprintln!();
     } else {
         // Queue all for batching
         for (idx, prompt) in &prompts {
-            let messages = vec![Message {
-                role: Role::User,
-                content: vec![RequestContent::Text {
-                    text: prompt.clone(),
-                    cache_control: None,
-                }],
-            }];
-
-            let response = client.generate(MODEL, 1024, messages).await?;
-            let result = response.map(|r| {
-                let text = r
-                    .content
-                    .iter()
-                    .filter_map(|c| match c {
-                        anthropic::ResponseContent::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                parse_response(&text)
-            });
+            let response = client.generate(model, 1024, prompt).await?;
+            let result = response.map(|text| parse_response(&text));
             results.push((*idx, result));
         }
 
@@ -286,27 +304,8 @@ pub async fn run_qa(
                 let mut all_done = true;
                 for (result_idx, (idx, prompt)) in prompts.iter().enumerate() {
                     if results[result_idx].1.is_none() {
-                        let messages = vec![Message {
-                            role: Role::User,
-                            content: vec![RequestContent::Text {
-                                text: prompt.clone(),
-                                cache_control: None,
-                            }],
-                        }];
-
-                        let response = client.generate(MODEL, 1024, messages).await?;
-                        if let Some(r) = response {
-                            let text = r
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    anthropic::ResponseContent::Text { text } => {
-                                        Some(text.as_str())
-                                    }
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("");
+                        let response = client.generate(model, 1024, prompt).await?;
+                        if let Some(text) = response {
                             results[result_idx] = (*idx, Some(parse_response(&text)));
                         } else {
                             all_done = false;
@@ -356,26 +355,22 @@ pub async fn run_qa(
             continue;
         }
 
-        let result = results_by_idx
-            .get(&idx)
-            .cloned()
-            .unwrap_or_else(|| QaResult {
-                reasoning: None,
-                reverts_edits: None,
-                confidence: None,
-                response: None,
-                error: Some("Result not found".to_string()),
-            });
+        let result = results_by_idx.get(&idx).cloned();
 
-        if result.reverts_edits == Some(true) {
+        if result.as_ref().and_then(|r| r.reverts_edits) == Some(true) {
             num_reverts_edits += 1;
         }
         num_total += 1;
 
-        // Add QA result to example and output
-        let mut example_json = serde_json::to_value(&example)?;
-        example_json["qa"] = serde_json::to_value(&result)?;
-        writeln!(writer, "{}", serde_json::to_string(&example_json)?)?;
+        // Populate QA results for each prediction (currently only first prediction is evaluated)
+        example.qa = example
+            .predictions
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if i == 0 { result.clone() } else { None })
+            .collect();
+
+        writeln!(writer, "{}", serde_json::to_string(&example)?)?;
     }
 
     if let Some(path) = output_path {

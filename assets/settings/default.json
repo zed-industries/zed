@@ -126,6 +126,7 @@
   // over symbols in the editor.
   "hover_popover_enabled": true,
   // Time to wait in milliseconds before showing the informational hover box.
+  // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
