@@ -1001,7 +1001,7 @@ impl AgentConfiguration {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Install from Registry", None, {
                             |window, cx| {
-                                window.dispatch_action(Box::new(zed_actions::AgentRegistry), cx)
+                                window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
                             }
                         })
                         .entry("Add Custom Agent", None, {
