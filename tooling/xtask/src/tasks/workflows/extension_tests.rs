@@ -46,6 +46,13 @@ pub(crate) fn extension_tests() -> Workflow {
         })
 }
 
+fn install_rust_target() -> Step<Run> {
+    named::bash(format!(
+        "rustup target add {rust_target}",
+        rust_target = extension::extension_builder::RUST_TARGET
+    ))
+}
+
 fn run_clippy() -> Step<Run> {
     named::bash("cargo clippy --release --all-targets --all-features -- --deny warnings")
 }
@@ -57,6 +64,7 @@ fn check_rust() -> NamedJob {
         .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
+        .add_step(install_rust_target())
         .add_step(steps::cargo_fmt())
         .add_step(run_clippy())
         .add_step(steps::cargo_install_nextest())
