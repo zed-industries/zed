@@ -62,22 +62,50 @@ const REPLACE_PLACEHOLDER: &str = "Replace in project…";
 const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
 const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
 
-const STACKED_DEFAULT_MODAL_WIDTH_REMS: f32 = 42.0;
-const STACKED_MIN_MODAL_WIDTH_REMS: f32 = 30.0;
-const STACKED_MAX_MODAL_WIDTH_REMS: f32 = 70.0;
-const STACKED_DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
-const STACKED_DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
-const STACKED_MIN_PANEL_HEIGHT: f32 = 80.0;
+struct StackedLayoutState {
+    results_height: Pixels,
+    preview_height: Pixels,
+}
 
-const TELESCOPE_DEFAULT_MODAL_WIDTH_REMS: f32 = 60.0;
-const TELESCOPE_MIN_MODAL_WIDTH_REMS: f32 = 45.0;
-const TELESCOPE_MAX_MODAL_WIDTH_REMS: f32 = 90.0;
-const TELESCOPE_DEFAULT_CONTENT_HEIGHT: f32 = 400.0;
-const TELESCOPE_MIN_CONTENT_HEIGHT: f32 = 200.0;
-const TELESCOPE_MAX_CONTENT_HEIGHT: f32 = 800.0;
-const TELESCOPE_DEFAULT_PREVIEW_WIDTH: f32 = 600.0;
-const TELESCOPE_MIN_PREVIEW_WIDTH: f32 = 200.0;
-const TELESCOPE_MAX_PREVIEW_WIDTH: f32 = 800.0;
+impl StackedLayoutState {
+    const DEFAULT_MODAL_WIDTH_REMS: f32 = 42.0;
+    const MIN_MODAL_WIDTH_REMS: f32 = 30.0;
+    const MAX_MODAL_WIDTH_REMS: f32 = 70.0;
+    const DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
+    const DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
+    const MIN_PANEL_HEIGHT: f32 = 80.0;
+
+    fn new() -> Self {
+        Self {
+            results_height: px(Self::DEFAULT_RESULTS_HEIGHT),
+            preview_height: px(Self::DEFAULT_PREVIEW_HEIGHT),
+        }
+    }
+}
+
+struct TelescopeLayoutState {
+    content_height: Pixels,
+    preview_width: Pixels,
+}
+
+impl TelescopeLayoutState {
+    const DEFAULT_MODAL_WIDTH_REMS: f32 = 60.0;
+    const MIN_MODAL_WIDTH_REMS: f32 = 45.0;
+    const MAX_MODAL_WIDTH_REMS: f32 = 90.0;
+    const DEFAULT_CONTENT_HEIGHT: f32 = 400.0;
+    const MIN_CONTENT_HEIGHT: f32 = 200.0;
+    const MAX_CONTENT_HEIGHT: f32 = 800.0;
+    const DEFAULT_PREVIEW_WIDTH: f32 = 600.0;
+    const MIN_PREVIEW_WIDTH: f32 = 200.0;
+    const MAX_PREVIEW_WIDTH: f32 = 800.0;
+
+    fn new() -> Self {
+        Self {
+            content_height: px(Self::DEFAULT_CONTENT_HEIGHT),
+            preview_width: px(Self::DEFAULT_PREVIEW_WIDTH),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LayoutMode {
@@ -124,11 +152,9 @@ pub struct QuickSearch {
     focus_handle: FocusHandle,
     offset: gpui::Point<Pixels>,
     modal_width: Pixels,
-    results_height: Pixels,
-    preview_height: Pixels,
     layout_mode: LayoutMode,
-    telescope_content_height: Pixels,
-    telescope_preview_width: Pixels,
+    stacked: StackedLayoutState,
+    telescope: TelescopeLayoutState,
     _subscriptions: Vec<Subscription>,
     _autosave_task: Option<Task<()>>,
 }
@@ -351,7 +377,8 @@ impl QuickSearch {
             ),
         ];
 
-        let modal_width = rems(STACKED_DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let modal_width =
+            rems(StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
 
         Self {
             picker,
@@ -360,11 +387,9 @@ impl QuickSearch {
             focus_handle,
             offset: gpui::Point::default(),
             modal_width,
-            results_height: px(STACKED_DEFAULT_RESULTS_HEIGHT),
-            preview_height: px(STACKED_DEFAULT_PREVIEW_HEIGHT),
             layout_mode: LayoutMode::default(),
-            telescope_content_height: px(TELESCOPE_DEFAULT_CONTENT_HEIGHT),
-            telescope_preview_width: px(TELESCOPE_DEFAULT_PREVIEW_WIDTH),
+            stacked: StackedLayoutState::new(),
+            telescope: TelescopeLayoutState::new(),
             _subscriptions: subscriptions,
             _autosave_task: None,
         }
@@ -608,10 +633,13 @@ impl QuickSearch {
     ) -> impl IntoElement {
         let handle_width = px(RESIZE_HANDLE_WIDTH);
         let (min_width_rems, max_width_rems) = match self.layout_mode {
-            LayoutMode::Stacked => (STACKED_MIN_MODAL_WIDTH_REMS, STACKED_MAX_MODAL_WIDTH_REMS),
+            LayoutMode::Stacked => (
+                StackedLayoutState::MIN_MODAL_WIDTH_REMS,
+                StackedLayoutState::MAX_MODAL_WIDTH_REMS,
+            ),
             LayoutMode::Telescope => (
-                TELESCOPE_MIN_MODAL_WIDTH_REMS,
-                TELESCOPE_MAX_MODAL_WIDTH_REMS,
+                TelescopeLayoutState::MIN_MODAL_WIDTH_REMS,
+                TelescopeLayoutState::MAX_MODAL_WIDTH_REMS,
             ),
         };
         let min_width = rems(min_width_rems).to_pixels(window.rem_size());
@@ -636,7 +664,7 @@ impl QuickSearch {
                     side,
                     mouse_start: window.mouse_position().x,
                     width_start: self.modal_width,
-                    preview_width_start: self.telescope_preview_width,
+                    preview_width_start: self.telescope.preview_width,
                     offset_start: self.offset.x,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
@@ -660,9 +688,9 @@ impl QuickSearch {
                     if this.layout_mode == LayoutMode::Telescope && drag.width_start > px(0.0) {
                         let ratio = drag.preview_width_start / drag.width_start;
                         let new_preview_width = (new_width * ratio)
-                            .max(px(TELESCOPE_MIN_PREVIEW_WIDTH))
-                            .min(px(TELESCOPE_MAX_PREVIEW_WIDTH));
-                        this.telescope_preview_width = new_preview_width;
+                            .max(px(TelescopeLayoutState::MIN_PREVIEW_WIDTH))
+                            .min(px(TelescopeLayoutState::MAX_PREVIEW_WIDTH));
+                        this.telescope.preview_width = new_preview_width;
                     }
 
                     let offset_delta = width_change / 2.0;
@@ -704,8 +732,8 @@ impl QuickSearch {
                 VerticalResizeDrag {
                     side,
                     mouse_start: window.mouse_position().y,
-                    results_height_start: self.results_height,
-                    preview_height_start: self.preview_height,
+                    results_height_start: self.stacked.results_height,
+                    preview_height_start: self.stacked.preview_height,
                     offset_start: self.offset.y,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
@@ -721,13 +749,13 @@ impl QuickSearch {
                     };
 
                     let total_start = drag.results_height_start + drag.preview_height_start;
-                    let min_total = px(STACKED_MIN_PANEL_HEIGHT * 2.0);
+                    let min_total = px(StackedLayoutState::MIN_PANEL_HEIGHT * 2.0);
 
                     let new_total = (total_start + total_growth).max(min_total);
                     let scale = new_total / total_start;
 
-                    this.results_height = drag.results_height_start * scale;
-                    this.preview_height = drag.preview_height_start * scale;
+                    this.stacked.results_height = drag.results_height_start * scale;
+                    this.stacked.preview_height = drag.preview_height_start * scale;
 
                     if drag.side == ResizeSide::Start {
                         let actual_growth = new_total - total_start;
@@ -928,7 +956,7 @@ impl QuickSearch {
 
         v_flex().child(preview_header).child(
             div()
-                .h(self.preview_height)
+                .h(self.stacked.preview_height)
                 .overflow_hidden()
                 .child(self.preview_editor.clone()),
         )
@@ -996,8 +1024,8 @@ impl QuickSearch {
             .on_drag(
                 ResizeDrag {
                     mouse_start_y: window.mouse_position().y,
-                    results_height_start: self.results_height,
-                    preview_height_start: self.preview_height,
+                    results_height_start: self.stacked.results_height,
+                    preview_height_start: self.stacked.preview_height,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
@@ -1008,12 +1036,12 @@ impl QuickSearch {
                     let total_height = drag.results_height_start + drag.preview_height_start;
 
                     let new_results = (drag.results_height_start + delta)
-                        .max(px(STACKED_MIN_PANEL_HEIGHT))
-                        .min(total_height - px(STACKED_MIN_PANEL_HEIGHT));
+                        .max(px(StackedLayoutState::MIN_PANEL_HEIGHT))
+                        .min(total_height - px(StackedLayoutState::MIN_PANEL_HEIGHT));
                     let new_preview = total_height - new_results;
 
-                    this.results_height = new_results;
-                    this.preview_height = new_preview;
+                    this.stacked.results_height = new_results;
+                    this.stacked.preview_height = new_preview;
                     cx.notify();
                 },
             ))
@@ -1034,7 +1062,7 @@ impl QuickSearch {
         v_flex()
             .child(
                 div()
-                    .h(self.results_height)
+                    .h(self.stacked.results_height)
                     .overflow_hidden()
                     .child(self.picker.clone()),
             )
@@ -1048,7 +1076,7 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let content_height = self.telescope_content_height;
+        let content_height = self.telescope.content_height;
         v_flex()
             .relative()
             .child(
@@ -1064,7 +1092,7 @@ impl QuickSearch {
                     .child(self.render_telescope_preview_resize(window, cx))
                     .child(
                         div()
-                            .w(self.telescope_preview_width)
+                            .w(self.telescope.preview_width)
                             .h(content_height)
                             .overflow_hidden()
                             .child(self.render_telescope_preview(window, cx)),
@@ -1146,7 +1174,7 @@ impl QuickSearch {
             .on_drag(
                 TelescopePreviewResizeDrag {
                     mouse_start_x: window.mouse_position().x,
-                    preview_width_start: self.telescope_preview_width,
+                    preview_width_start: self.telescope.preview_width,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
@@ -1155,9 +1183,9 @@ impl QuickSearch {
                     let drag = event.drag(cx);
                     let delta = drag.mouse_start_x - event.event.position.x;
                     let new_width = (drag.preview_width_start + delta)
-                        .max(px(TELESCOPE_MIN_PREVIEW_WIDTH))
-                        .min(px(TELESCOPE_MAX_PREVIEW_WIDTH));
-                    this.telescope_preview_width = new_width;
+                        .max(px(TelescopeLayoutState::MIN_PREVIEW_WIDTH))
+                        .min(px(TelescopeLayoutState::MAX_PREVIEW_WIDTH));
+                    this.telescope.preview_width = new_width;
                     cx.notify();
                 },
             ))
@@ -1194,7 +1222,7 @@ impl QuickSearch {
                 TelescopeHeightResizeDrag {
                     side,
                     mouse_start_y: window.mouse_position().y,
-                    content_height_start: self.telescope_content_height,
+                    content_height_start: self.telescope.content_height,
                     offset_start: self.offset.y,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
@@ -1210,10 +1238,10 @@ impl QuickSearch {
                     };
 
                     let new_height = (drag.content_height_start + height_delta)
-                        .max(px(TELESCOPE_MIN_CONTENT_HEIGHT))
-                        .min(px(TELESCOPE_MAX_CONTENT_HEIGHT));
+                        .max(px(TelescopeLayoutState::MIN_CONTENT_HEIGHT))
+                        .min(px(TelescopeLayoutState::MAX_CONTENT_HEIGHT));
 
-                    this.telescope_content_height = new_height;
+                    this.telescope.content_height = new_height;
 
                     if drag.side == ResizeSide::Start {
                         let actual_growth = new_height - drag.content_height_start;
@@ -1375,8 +1403,8 @@ impl Render for QuickSearch {
                             LayoutMode::Telescope => LayoutMode::Stacked,
                         };
                         let default_width_rems = match this.layout_mode {
-                            LayoutMode::Stacked => STACKED_DEFAULT_MODAL_WIDTH_REMS,
-                            LayoutMode::Telescope => TELESCOPE_DEFAULT_MODAL_WIDTH_REMS,
+                            LayoutMode::Stacked => StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS,
+                            LayoutMode::Telescope => TelescopeLayoutState::DEFAULT_MODAL_WIDTH_REMS,
                         };
                         this.modal_width = rems(default_width_rems).to_pixels(window.rem_size());
                         cx.notify();
