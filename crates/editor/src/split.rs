@@ -527,12 +527,8 @@ impl SplittableEditor {
             dm.set_companion(Some((rhs_display_map.downgrade(), companion)), cx);
         });
 
-        let rhs_weak = self.rhs_editor.downgrade();
-        let lhs_weak = lhs.editor.downgrade();
-
         let this = cx.entity().downgrade();
         self.rhs_editor.update(cx, |editor, _cx| {
-            editor.set_scroll_companion(Some(lhs_weak));
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
@@ -549,7 +545,6 @@ impl SplittableEditor {
             )));
         });
         lhs.editor.update(cx, |editor, _cx| {
-            editor.set_scroll_companion(Some(rhs_weak));
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
@@ -564,13 +559,6 @@ impl SplittableEditor {
                     })
                 },
             )));
-        });
-
-        let rhs_scroll_position = self
-            .rhs_editor
-            .update(cx, |editor, cx| editor.scroll_position(cx));
-        lhs.editor.update(cx, |editor, cx| {
-            editor.set_scroll_position_internal(rhs_scroll_position, false, false, window, cx);
         });
 
         // Copy soft wrap state from rhs (source of truth) to lhs
@@ -849,7 +837,6 @@ impl SplittableEditor {
         self.panes.remove(&lhs.pane, cx).unwrap();
         self.rhs_editor.update(cx, |rhs, cx| {
             rhs.set_on_local_selections_changed(None);
-            rhs.set_scroll_companion(None);
             rhs.set_delegate_expand_excerpts(false);
             rhs.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
@@ -861,7 +848,6 @@ impl SplittableEditor {
         });
         lhs.editor.update(cx, |editor, _cx| {
             editor.set_on_local_selections_changed(None);
-            editor.set_scroll_companion(None);
         });
         cx.notify();
     }

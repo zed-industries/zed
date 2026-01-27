@@ -603,20 +603,6 @@ impl Editor {
             cx,
         );
 
-        if local && was_scrolled.0 {
-            if let Some(companion) = self.scroll_companion.as_ref().and_then(|c| c.upgrade()) {
-                companion.update(cx, |companion_editor, cx| {
-                    companion_editor.set_scroll_position_internal(
-                        scroll_position,
-                        false,
-                        false,
-                        window,
-                        cx,
-                    );
-                });
-            }
-        }
-
         was_scrolled
     }
 

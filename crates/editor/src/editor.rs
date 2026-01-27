@@ -1328,7 +1328,6 @@ pub struct Editor {
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
-    scroll_companion: Option<WeakEntity<Editor>>,
     on_local_selections_changed:
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
     suppress_selection_callback: bool,
@@ -2538,7 +2537,6 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
-            scroll_companion: None,
             on_local_selections_changed: None,
             suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
@@ -21050,14 +21048,6 @@ impl Editor {
 
     pub fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
-    }
-
-    pub fn set_scroll_companion(&mut self, companion: Option<WeakEntity<Editor>>) {
-        self.scroll_companion = companion;
-    }
-
-    pub fn scroll_companion(&self) -> Option<&WeakEntity<Editor>> {
-        self.scroll_companion.as_ref()
     }
 
     pub fn set_on_local_selections_changed(
