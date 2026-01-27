@@ -2410,7 +2410,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 11] {
+    fn vim_settings_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2479,6 +2479,19 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .use_smartcase_find = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Global Substitution Default",
+                description: "When enabled, the :substitute command replaces all matches in a line by default. The 'g' flag then toggles this behavior.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.gdefault"),
+                    pick: |settings_content| settings_content.vim.as_ref()?.gdefault.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.vim.get_or_insert_default().gdefault = value;
                     },
                 }),
                 metadata: None,
