@@ -20688,6 +20688,7 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml",
  "clap",
+ "extension",
  "gh-workflow",
  "indexmap",
  "indoc",
