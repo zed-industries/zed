@@ -7,28 +7,28 @@ use language::Buffer;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
+use ui::SharedString;
 
 use crate::outputs::OutputContent;
 
 pub struct MarkdownView {
-    raw_text: String,
+    raw_text: SharedString,
     markdown: Entity<Markdown>,
 }
 
 impl MarkdownView {
     pub fn from(text: String, cx: &mut Context<Self>) -> Self {
-        let markdown = cx.new(|cx| Markdown::new(text.clone().into(), None, None, cx));
+        let raw_text: SharedString = text.clone().into();
 
-        Self {
-            raw_text: text,
-            markdown,
-        }
+        let markdown = cx.new(|cx| Markdown::new(raw_text.clone(), None, None, cx));
+
+        Self { raw_text, markdown }
     }
 }
 
 impl OutputContent for MarkdownView {
     fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_string(self.raw_text.clone()))
+        Some(ClipboardItem::new_string(self.raw_text.as_str().into()))
     }
 
     fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
