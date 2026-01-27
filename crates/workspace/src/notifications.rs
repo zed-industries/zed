@@ -1,4 +1,4 @@
-use crate::{SuppressNotification, Toast, Workspace};
+use crate::{MultiWorkspace, SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, Context, DismissEvent, Entity,
@@ -981,14 +981,16 @@ pub fn show_app_notification<V: Notification + 'static>(
             .insert(id.clone(), build_notification.clone());
 
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
-                workspace_window
-                    .update(cx, |workspace, _window, cx| {
-                        workspace.show_notification_without_handling_dismiss_events(
-                            &id,
-                            cx,
-                            |cx| build_notification(cx),
-                        );
+            if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                multi_workspace
+                    .update(cx, |multi_workspace, _window, cx| {
+                        multi_workspace.workspace().update(cx, |workspace, cx| {
+                            workspace.show_notification_without_handling_dismiss_events(
+                                &id,
+                                cx,
+                                |cx| build_notification(cx),
+                            );
+                        });
                     })
                     .ok(); // Doesn't matter if the windows are dropped
             }
@@ -1002,11 +1004,13 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
     cx.defer(move |cx| {
         GLOBAL_APP_NOTIFICATIONS.lock().remove(&id);
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
+            if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
                 let id = id.clone();
-                workspace_window
-                    .update(cx, |workspace, _window, cx| {
-                        workspace.dismiss_notification(&id, cx)
+                multi_workspace
+                    .update(cx, |multi_workspace, _window, cx| {
+                        multi_workspace.workspace().update(cx, |workspace, cx| {
+                            workspace.dismiss_notification(&id, cx)
+                        });
                     })
                     .ok();
             }
@@ -1049,8 +1053,12 @@ where
             Err(err) => {
                 log::error!("{err:?}");
                 cx.update_root(|view, _, cx| {
-                    if let Ok(workspace) = view.downcast::<Workspace>() {
-                        workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
+                    if let Ok(multi_workspace) = view.downcast::<MultiWorkspace>() {
+                        multi_workspace.update(cx, |multi_workspace, cx| {
+                            multi_workspace
+                                .workspace()
+                                .update(cx, |workspace, cx| workspace.show_error(&err, cx))
+                        })
                     }
                 })
                 .ok();

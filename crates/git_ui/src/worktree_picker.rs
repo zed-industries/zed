@@ -523,7 +523,7 @@ async fn open_remote_worktree(
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             });
-            cx.new(|_cx| MultiWorkspace::new(workspace))
+            cx.new(|cx| MultiWorkspace::new(workspace, cx))
         })?
     };
 

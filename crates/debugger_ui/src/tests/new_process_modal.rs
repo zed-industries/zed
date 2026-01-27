@@ -141,15 +141,17 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         };
 
         workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.start_debug_session(
-                    scenario,
-                    task_context.clone(),
-                    None,
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi, window, cx| {
+                multi.workspace().update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context.clone(),
+                        None,
+                        None,
+                        window,
+                        cx,
+                    );
+                })
             })
             .unwrap();
 

@@ -327,7 +327,7 @@ impl ProjectPicker {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                             });
-                            cx.new(|_cx| MultiWorkspace::new(workspace))
+                            cx.new(|cx| MultiWorkspace::new(workspace, cx))
                         })
                         .log_err()?;
 
@@ -1358,7 +1358,9 @@ impl RemoteServerProjects {
 
                 let replace_window = match (create_new_window, secondary_confirm) {
                     (true, false) | (false, true) => None,
-                    (true, true) | (false, false) => window.window_handle().downcast::<MultiWorkspace>(),
+                    (true, true) | (false, false) => {
+                        window.window_handle().downcast::<MultiWorkspace>()
+                    }
                 };
 
                 cx.spawn_in(window, async move |_, cx| {

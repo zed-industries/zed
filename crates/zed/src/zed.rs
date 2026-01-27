@@ -12,7 +12,6 @@ pub mod telemetry_log;
 pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
-mod workspace_switcher;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use agent_ui_v2::agents_panel::AgentsPanel;
@@ -2288,7 +2287,6 @@ mod tests {
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, TestAppContext, UpdateGlobal,
         VisualTestContext, WindowHandle, actions,
     };
-    use workspace::MultiWorkspace;
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
     use pretty_assertions::{assert_eq, assert_ne};
@@ -2305,6 +2303,7 @@ mod tests {
         path,
         rel_path::{RelPath, rel_path},
     };
+    use workspace::MultiWorkspace;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -2636,17 +2635,9 @@ mod tests {
         // When opening the workspace, the window is not in a edited state.
         let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        let window_is_edited =
-            |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
-                cx.update(|cx| {
-                    window
-                        .read(cx)
-                        .unwrap()
-                        .workspace()
-                        .read(cx)
-                        .is_edited()
-                })
-            };
+        let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
+        };
         let pane = window
             .read_with(cx, |multi_workspace, cx| {
                 multi_workspace.workspace().read(cx).active_pane().clone()
@@ -2803,17 +2794,9 @@ mod tests {
         // When opening the workspace, the window is not in a edited state.
         let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        let window_is_edited =
-            |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
-                cx.update(|cx| {
-                    window
-                        .read(cx)
-                        .unwrap()
-                        .workspace()
-                        .read(cx)
-                        .is_edited()
-                })
-            };
+        let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
+        };
 
         let editor = window
             .read_with(cx, |multi_workspace, cx| {
@@ -2866,8 +2849,12 @@ mod tests {
         cx.run_until_parked();
 
         // When opening the workspace, the window is not in a edited state.
-        let window =
-            cx.update(|cx| cx.active_window().unwrap().downcast::<MultiWorkspace>().unwrap());
+        let window = cx.update(|cx| {
+            cx.active_window()
+                .unwrap()
+                .downcast::<MultiWorkspace>()
+                .unwrap()
+        });
         assert!(window_is_edited(window, cx));
 
         window
@@ -3409,12 +3396,11 @@ mod tests {
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window({
             let project = project.clone();
-            |window, cx| {
-                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-                MultiWorkspace::new(workspace)
-            }
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
-        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
         let paths_to_open = [
@@ -4933,10 +4919,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let _window = cx.add_window({
             let project = project.clone();
-            |window, cx| {
-            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-            MultiWorkspace::new(workspace)
-            }
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
 
         cx.update(|cx| {
@@ -4949,9 +4932,9 @@ mod tests {
         let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
         let active_editor = multi_workspace
             .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.workspace().update(cx, |workspace, cx| {
-                    workspace.active_item_as::<Editor>(cx)
-                })
+                multi_workspace
+                    .workspace()
+                    .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
             })
             .unwrap();
         assert!(
@@ -5054,7 +5037,6 @@ mod tests {
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
-            workspace_switcher::init(cx);
             app_state
         })
     }
@@ -5247,28 +5229,19 @@ mod tests {
         let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_a = cx.add_window({
             let project = project_a.clone();
-            |window, cx| {
-                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-                MultiWorkspace::new(workspace)
-            }
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
 
         let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_b = cx.add_window({
             let project = project_b.clone();
-            |window, cx| {
-                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-                MultiWorkspace::new(workspace)
-            }
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
 
         let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_c = cx.add_window({
             let project = project_c.clone();
-            |window, cx| {
-                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-                MultiWorkspace::new(workspace)
-            }
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
 
         for window in [window_a, window_b, window_c] {

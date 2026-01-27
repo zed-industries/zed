@@ -214,24 +214,26 @@ async fn test_attach_with_pick_pid_variable(executor: BackgroundExecutor, cx: &m
 
     let pick_pid_placeholder = task::VariableName::PickProcessId.template_value();
     workspace
-        .update(cx, |workspace, window, cx| {
-            workspace.start_debug_session(
-                DebugTaskDefinition {
-                    adapter: FakeAdapter::ADAPTER_NAME.into(),
-                    label: "attach with picker".into(),
-                    config: json!({
-                        "request": "attach",
-                        "process_id": pick_pid_placeholder,
-                    }),
-                    tcp_connection: None,
-                }
-                .to_scenario(),
-                task::TaskContext::default(),
-                None,
-                None,
-                window,
-                cx,
-            )
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.start_debug_session(
+                    DebugTaskDefinition {
+                        adapter: FakeAdapter::ADAPTER_NAME.into(),
+                        label: "attach with picker".into(),
+                        config: json!({
+                            "request": "attach",
+                            "process_id": pick_pid_placeholder,
+                        }),
+                        tcp_connection: None,
+                    }
+                    .to_scenario(),
+                    task::TaskContext::default(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                );
+            })
         })
         .unwrap();
 
