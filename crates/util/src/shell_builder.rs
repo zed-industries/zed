@@ -90,11 +90,7 @@ impl ShellBuilder {
             };
             let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
-                let shell_variable = self.kind.to_shell_variable(arg);
-                command.push_str(&match self.kind.try_quote(&shell_variable) {
-                    Some(shell_variable) => shell_variable,
-                    None => Cow::Owned(shell_variable),
-                });
+                command.push_str(&self.kind.quote_preserving_variables(arg));
                 command
             });
             if self.redirect_stdin {
@@ -306,5 +302,92 @@ mod test {
 
         assert_eq!(program, "fish");
         assert_eq!(args, vec!["-i", "-c", "echo oo"]);
+    }
+
+    #[test]
+    fn quotes_file_paths_with_parentheses() {
+        // Test that file paths with parentheses (common in Next.js app router) are properly quoted
+        let shell = Shell::Program("bash".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder.build(
+            Some("bun".into()),
+            &[
+                "test".to_string(),
+                "./src/app/(public)/tests/fails.test.ts".to_string(),
+            ],
+        );
+
+        assert_eq!(program, "bash");
+        // The file path with parentheses should be quoted to prevent shell interpretation
+        assert_eq!(
+            args,
+            vec![
+                "-i",
+                "-c",
+                "bun test './src/app/(public)/tests/fails.test.ts'"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_no_quote_does_not_quote_paths_with_parentheses() {
+        // This demonstrates the bug: build_no_quote doesn't quote paths with special characters
+        let shell = Shell::Program("bash".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder.build_no_quote(
+            Some("bun".into()),
+            &[
+                "test".to_string(),
+                "./src/app/(public)/tests/fails.test.ts".to_string(),
+            ],
+        );
+
+        assert_eq!(program, "bash");
+        // Without quoting, the parentheses will be interpreted by the shell as a subshell
+        assert_eq!(
+            args,
+            vec![
+                "-i",
+                "-c",
+                "bun test ./src/app/(public)/tests/fails.test.ts"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_quotes_paths_preserving_variables() {
+        let shell = Shell::Program("bash".to_owned());
+        let builder = ShellBuilder::new(&shell, false);
+
+        let (_, args) = builder.build(
+            Some("echo".into()),
+            &["./app/(public)/$ZED_FILE.ts".to_string()],
+        );
+
+        // Parens need quoting, but .ts after variable doesn't (no special chars)
+        assert_eq!(args, vec!["-i", "-c", "echo './app/(public)/'$ZED_FILE.ts"]);
+    }
+
+    #[test]
+    fn build_pure_variable_not_quoted() {
+        let shell = Shell::Program("bash".to_owned());
+        let builder = ShellBuilder::new(&shell, false);
+
+        let (_, args) = builder.build(Some("echo".into()), &["$HOME".to_string()]);
+
+        assert_eq!(args, vec!["-i", "-c", "echo $HOME"]);
+    }
+
+    #[test]
+    fn build_braced_variable_with_path() {
+        let shell = Shell::Program("bash".to_owned());
+        let builder = ShellBuilder::new(&shell, false);
+
+        let (_, args) = builder.build(Some("cat".into()), &["${HOME}/file.txt".to_string()]);
+
+        // /file.txt has no special chars, no quoting needed
+        assert_eq!(args, vec!["-i", "-c", "cat ${HOME}/file.txt"]);
     }
 }
