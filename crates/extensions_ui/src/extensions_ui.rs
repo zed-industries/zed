@@ -1437,7 +1437,7 @@ impl ExtensionsPage {
     fn render_acp_registry_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let registry_url = zed_urls::acp_registry_blog(cx);
 
-        let view_regisry = Button::new("view_registry", "View Registry")
+        let view_registry = Button::new("view_registry", "View Registry")
             .style(ButtonStyle::Tinted(ui::TintColor::Warning))
             .on_click({
                 let registry_url = registry_url.clone();
@@ -1479,7 +1479,7 @@ impl ExtensionsPage {
                     h_flex()
                         .gap_1()
                         .child(open_registry_button)
-                        .child(view_regisry),
+                        .child(view_registry),
                 ),
         )
     }
