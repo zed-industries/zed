@@ -4765,9 +4765,21 @@ impl GitPanel {
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .items_end()
-            .px_3()
-            .pb_1()
+            .items_center()
+            .pl_3()
+            .pr_1()
+            .gap_1p5()
+            .border_1()
+            .border_r_2()
+            .child(
+                h_flex().flex_1().child(
+                    Label::new(header.title())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .line_height_style(LineHeightStyle::UiLabel)
+                        .single_line(),
+                ),
+            )
             .child(
                 div()
                     .flex_none()
@@ -4796,13 +4808,6 @@ impl GitPanel {
                     .when(!show_checkbox_persistently, |this| {
                         this.visible_on_hover("entries")
                     }),
-            )
-            .child(
-                Label::new(header.title())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small)
-                    .line_height_style(LineHeightStyle::UiLabel)
-                    .single_line(),
             )
             .into_any_element()
     }
