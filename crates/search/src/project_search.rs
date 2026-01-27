@@ -41,7 +41,7 @@ use std::{
     sync::Arc,
 };
 use ui::{
-    IconButtonShape, KeyBinding, SpinnerLabel, Toggleable, Tooltip, prelude::*,
+    CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
     utils::SearchInputWidth,
 };
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
@@ -2111,21 +2111,27 @@ impl Render for ProjectSearchBar {
                     .min_w(rems_from_px(40.))
                     .child(
                         h_flex()
-                            .gap_1()
-                            .child(Label::new(match_text).size(LabelSize::Small).color(
-                                if search.active_match_index.is_some() {
-                                    Color::Default
-                                } else {
-                                    Color::Disabled
-                                },
-                            ))
-                            .when(is_search_underway, |el| {
-                                el.child(SpinnerLabel::new().size(LabelSize::Small))
+                            .gap_1p5()
+                            .child(
+                                Label::new(match_text)
+                                    .size(LabelSize::Small)
+                                    .when(search.active_match_index.is_some(), |this| {
+                                        this.color(Color::Disabled)
+                                    }),
+                            )
+                            .when(is_search_underway, |this| {
+                                this.child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .color(Color::Accent)
+                                        .size(IconSize::Small)
+                                        .with_rotate_animation(2)
+                                        .into_any_element(),
+                                )
                             }),
                     )
-                    .when(limit_reached, |el| {
-                        el.tooltip(Tooltip::text(
-                            "Search limits reached.\nTry narrowing your search.",
+                    .when(limit_reached, |this| {
+                        this.tooltip(Tooltip::text(
+                            "Search Limits Reached\nTry narrowing your search",
                         ))
                     }),
             );
