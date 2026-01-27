@@ -160,18 +160,10 @@ let
         fontconfig
         freetype
         glib
-        libdrm
-        libgbm
-        libva
         # TODO: need staticlib of this for linking the musl remote server.
         # should make it a separate derivation/flake output
         # see https://crane.dev/examples/cross-musl.html
         libgit2
-        libxcomposite
-        libxdamage
-        libxext
-        libxfixes
-        libxrandr
         openssl
         sqlite
         zlib
@@ -184,6 +176,14 @@ let
         gpu-lib
         xorg.libX11
         xorg.libxcb
+        libdrm
+        libgbm
+        libva
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
       ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
         apple-sdk_15
