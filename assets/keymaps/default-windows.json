@@ -609,6 +609,7 @@
       "ctrl-shift-d": "debug_panel::ToggleFocus",
       "ctrl-shift-/": "agent::ToggleFocus",
       "ctrl-k s": "workspace::SaveAll",
+      "ctrl-k n": "encoding_selector::Toggle",
       "ctrl-k m": "language_selector::Toggle",
       "ctrl-m ctrl-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
@@ -1396,5 +1397,20 @@
     "bindings": {
       "shift-backspace": "project_dropdown::RemoveSelectedFolder",
     },
+  },
+  {
+    "context": "NotebookEditor > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "shift-enter": "notebook::Run",
+      "ctrl-enter": "notebook::Run",
+      "ctrl-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "ctrl-m": "notebook::AddCodeBlock",
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel"
+    }
   },
 ]

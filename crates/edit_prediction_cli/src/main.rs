@@ -12,12 +12,16 @@ mod paths;
 mod predict;
 mod progress;
 mod pull_examples;
+mod qa;
 mod reorder_patch;
+mod repair;
 mod retrieve_context;
+mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
 mod synthesize;
+mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
 use edit_prediction::EditPredictionStore;
@@ -103,8 +107,11 @@ Inputs can be file paths or special specifiers:
 
   captured-after:{timestamp}
       Fetch captured examples from Snowflake after the given RFC3339 timestamp.
+      These are examples captured via the "Capture Edit Prediction Example" action.
 
-      You can specify this multiple times and mix it with file inputs.
+  rejected-after:{timestamp}
+      Fetch rejected edit predictions from Snowflake after the given RFC3339 timestamp.
+      These are predictions that were shown to users but rejected (useful for DPO training).
 
       Required environment variables to connect to Snowflake:
           EP_SNOWFLAKE_API_KEY
@@ -115,20 +122,23 @@ Inputs can be file paths or special specifiers:
 
 Examples:
 
-  # Predict from a file
-  ep predict examples.jsonl
+  # Read examples from a file
+  ep read examples.jsonl -o output.jsonl
 
-  # Predict from captured examples after a timestamp
-  ep predict captured-after:2025-01-01T00:00:00Z
+  # Read captured examples after a timestamp
+  ep read captured-after:2025-01-01T00:00:00Z -o captured.jsonl
 
-  # Mix file inputs and captured-after in the same invocation
+  # Read rejected predictions for DPO training
+  ep read rejected-after:2025-01-01T00:00:00Z -o rejected.jsonl
+
+  # Mix multiple input sources
   ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
 "#;
 
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
-    /// Parse markdown examples and output a combined .jsonl file
-    ParseExample,
+    /// Read examples from files or fetch from Snowflake, output as .jsonl
+    Read,
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
@@ -146,7 +156,7 @@ enum Command {
     /// predicted outputs and removing actual outputs and prompts.
     Distill,
     /// Print aggregated scores
-    Eval(PredictArgs),
+    Eval(EvalArgs),
     /// Generate eval examples by analyzing git commits from a repository
     Synthesize(SynthesizeArgs),
     /// Remove git repositories and worktrees
@@ -157,12 +167,18 @@ enum Command {
     Split(SplitArgs),
     /// Filter a JSONL dataset by programming language (based on cursor_path extension)
     FilterLanguages(FilterLanguagesArgs),
+    /// Import Anthropic batch results by batch IDs (useful for recovering after database loss)
+    ImportBatch(ImportBatchArgs),
+    /// Assess the quality of predictions using LLM-as-a-judge
+    Qa(qa::QaArgs),
+    /// Repair predictions that received poor QA scores by generating improved predictions
+    Repair(repair::RepairArgs),
 }
 
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::ParseExample => write!(f, "parse-example"),
+            Command::Read => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
             Command::FormatPrompt(args) => {
@@ -178,7 +194,7 @@ impl Display for Command {
                 None => write!(f, "score"),
             },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => match &args.provider {
+            Command::Eval(args) => match &args.predict.provider {
                 Some(provider) => write!(f, "eval --provider={}", provider),
                 None => write!(f, "eval"),
             },
@@ -189,6 +205,15 @@ impl Display for Command {
             Command::SplitCommit(_) => write!(f, "split-commit"),
             Command::Split(_) => write!(f, "split"),
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
+            Command::ImportBatch(args) => {
+                write!(f, "import-batch --batch-ids {}", args.batch_ids.join(" "))
+            }
+            Command::Qa(_) => {
+                write!(f, "qa")
+            }
+            Command::Repair(_) => {
+                write!(f, "repair")
+            }
         }
     }
 }
@@ -207,6 +232,15 @@ struct PredictArgs {
     repetitions: usize,
 }
 
+#[derive(Debug, Args, Clone)]
+struct EvalArgs {
+    #[clap(flatten)]
+    predict: PredictArgs,
+    /// Path to write summary scores as JSON
+    #[clap(long)]
+    summary_json: Option<PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
     Sweep,
@@ -215,6 +249,7 @@ enum PredictionProvider {
     Zeta2(ZetaVersion),
     Teacher(ZetaVersion),
     TeacherNonBatching(ZetaVersion),
+    Repair,
 }
 
 impl Default for PredictionProvider {
@@ -234,6 +269,7 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::TeacherNonBatching(version) => {
                 write!(f, "teacher-non-batching:{version}")
             }
+            PredictionProvider::Repair => write!(f, "repair"),
         }
     }
 }
@@ -258,9 +294,10 @@ impl std::str::FromStr for PredictionProvider {
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
                 Ok(PredictionProvider::TeacherNonBatching(version))
             }
+            "repair" => Ok(PredictionProvider::Repair),
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
+                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  Available zeta versions:\n{}",
                     ZetaVersion::options_as_string()
@@ -308,6 +345,13 @@ struct SynthesizeArgs {
     fresh: bool,
 }
 
+#[derive(Debug, Args, Clone)]
+struct ImportBatchArgs {
+    /// Anthropic batch IDs to import (e.g., msgbatch_xxx)
+    #[clap(long, required = true, num_args = 1..)]
+    batch_ids: Vec<String>,
+}
+
 impl EpArgs {
     fn output_path(&self) -> Option<PathBuf> {
         if self.in_place {
@@ -329,12 +373,17 @@ async fn load_examples(
     background_executor: BackgroundExecutor,
 ) -> anyhow::Result<Vec<Example>> {
     let mut captured_after_timestamps = Vec::new();
+    let mut rejected_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
         let input_string = input.to_string_lossy();
         if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
             captured_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) =
+            pull_examples::parse_rejected_after_input(input_string.as_ref())
+        {
+            rejected_after_timestamps.push(timestamp.to_string());
         } else {
             file_inputs.push(input.clone());
         }
@@ -349,21 +398,36 @@ async fn load_examples(
 
     if let Some(0) = remaining_limit_for_snowflake {
         log::info!(
-            "skipping captured-after inputs because --limit is already satisfied by example files"
+            "skipping Snowflake inputs because --limit is already satisfied by example files"
         );
-    } else if !captured_after_timestamps.is_empty() {
-        captured_after_timestamps.sort();
-
+    } else {
         let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
 
-        let mut captured_examples = pull_examples::fetch_captured_examples_after(
-            http_client,
-            &captured_after_timestamps,
-            max_rows_per_timestamp,
-            background_executor,
-        )
-        .await?;
-        examples.append(&mut captured_examples);
+        if !captured_after_timestamps.is_empty() {
+            captured_after_timestamps.sort();
+
+            let mut captured_examples = pull_examples::fetch_captured_examples_after(
+                http_client.clone(),
+                &captured_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut captured_examples);
+        }
+
+        if !rejected_after_timestamps.is_empty() {
+            rejected_after_timestamps.sort();
+
+            let mut rejected_examples = pull_examples::fetch_rejected_examples_after(
+                http_client,
+                &rejected_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor,
+            )
+            .await?;
+            examples.append(&mut rejected_examples);
+        }
     }
 
     crate::example::sort_examples_by_repo_and_rev(&mut examples);
@@ -391,7 +455,9 @@ async fn load_examples(
         examples.truncate(limit);
     }
 
-    Progress::global().set_total_examples(examples.len());
+    let progress = Progress::global();
+    progress.set_total_examples(examples.len());
+    progress.set_max_example_name_len(examples.iter().map(|e| &e.spec.name));
 
     Ok(examples)
 }
@@ -469,6 +535,21 @@ fn main() {
     };
 
     match &command {
+        Command::ImportBatch(import_args) => {
+            smol::block_on(async {
+                let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
+                    .expect("Failed to create Anthropic client");
+                if let Err(e) = client.import_batches(&import_args.batch_ids).await {
+                    eprintln!("Error importing batches: {:?}", e);
+                    std::process::exit(1);
+                }
+                println!(
+                    "Successfully imported {} batch(es)",
+                    import_args.batch_ids.len()
+                );
+            });
+            return;
+        }
         Command::Clean => {
             std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
             return;
@@ -520,6 +601,60 @@ fn main() {
             }
             return;
         }
+        Command::Qa(qa_args) => {
+            // Read examples from input files
+            let mut examples = example::read_example_files(&args.inputs);
+
+            // Apply filters
+            if let Some(name_filter) = &args.name {
+                examples.retain(|e| e.spec.name.contains(name_filter));
+            }
+            if let Some(repo_filter) = &args.repo {
+                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
+            }
+            if let Some(offset) = args.offset {
+                examples.splice(0..offset, []);
+            }
+            if let Some(limit) = args.limit {
+                examples.truncate(limit);
+            }
+
+            smol::block_on(async {
+                if let Err(e) = qa::run_qa(&mut examples, qa_args, output.as_ref()).await {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
+        Command::Repair(repair_args) => {
+            // Read examples from input files
+            let mut examples = example::read_example_files(&args.inputs);
+
+            // Apply filters
+            if let Some(name_filter) = &args.name {
+                examples.retain(|e| e.spec.name.contains(name_filter));
+            }
+            if let Some(repo_filter) = &args.repo {
+                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
+            }
+            if let Some(offset) = args.offset {
+                examples.splice(0..offset, []);
+            }
+            if let Some(limit) = args.limit {
+                examples.truncate(limit);
+            }
+
+            smol::block_on(async {
+                if let Err(e) =
+                    repair::run_repair(&mut examples, repair_args, output.as_ref()).await
+                {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
+            return;
+        }
         _ => {}
     }
 
@@ -541,8 +676,11 @@ fn main() {
                 .await?;
 
                 match &command {
-                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                    Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                    }
+                    Command::Eval(args) => {
+                        predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
@@ -613,7 +751,7 @@ fn main() {
 
                                 let result = async {
                                     match &command {
-                                        Command::ParseExample => {}
+                                        Command::Read => {}
                                         Command::LoadProject => {
                                             run_load_project(
                                                 example,
@@ -658,10 +796,20 @@ fn main() {
                                         Command::Distill => {
                                             run_distill(example).await?;
                                         }
-                                        Command::Score(args) | Command::Eval(args) => {
+                                        Command::Score(args) => {
                                             run_scoring(
                                                 example,
-                                                &args,
+                                                args,
+                                                app_state.clone(),
+                                                &example_progress,
+                                                cx.clone(),
+                                            )
+                                            .await?;
+                                        }
+                                        Command::Eval(args) => {
+                                            run_scoring(
+                                                example,
+                                                &args.predict,
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
@@ -672,7 +820,10 @@ fn main() {
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
-                                        | Command::FilterLanguages(_) => {
+                                        | Command::FilterLanguages(_)
+                                        | Command::ImportBatch(_)
+                                        | Command::Qa(_)
+                                        | Command::Repair(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -756,14 +907,23 @@ fn main() {
                 Progress::global().finalize();
 
                 match &command {
-                    Command::Predict(args) | Command::Score(args) | Command::Eval(args) => {
+                    Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                    }
+                    Command::Eval(args) => {
+                        predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
                     _ => (),
                 }
 
                 match &command {
-                    Command::Eval(_) => score::print_report(&finished_examples.lock().unwrap()),
+                    Command::Eval(args) => {
+                        let examples = finished_examples.lock().unwrap();
+                        score::print_report(&examples);
+                        if let Some(summary_path) = &args.summary_json {
+                            score::write_summary_json(&examples, summary_path)?;
+                        }
+                    }
                     _ => (),
                 };
 

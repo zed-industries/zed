@@ -107,7 +107,9 @@ pub async fn run_prediction(
             }
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-            PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
+            PredictionProvider::Teacher(..)
+            | PredictionProvider::TeacherNonBatching(..)
+            | PredictionProvider::Repair => {
                 unreachable!()
             }
         };
@@ -197,6 +199,7 @@ pub async fn run_prediction(
             .push(ExamplePrediction {
                 actual_patch: None,
                 actual_output: String::new(),
+                error: None,
                 provider,
             });
 
@@ -302,6 +305,7 @@ async fn predict_anthropic(
     let prediction = ExamplePrediction {
         actual_patch: Some(actual_patch),
         actual_output,
+        error: None,
         provider: if batched {
             PredictionProvider::Teacher(version)
         } else {

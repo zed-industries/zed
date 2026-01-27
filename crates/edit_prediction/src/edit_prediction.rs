@@ -5,12 +5,12 @@ use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
-    EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason, EditPredictionRejection,
+    EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
-use copilot::Copilot;
+use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -29,7 +29,7 @@ use gpui::{
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
-use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -71,7 +71,9 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
-use crate::capture_example::should_sample_edit_prediction_example_capture;
+use crate::capture_example::{
+    should_sample_edit_prediction_example_capture, should_send_testing_zeta2_request,
+};
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -170,6 +172,7 @@ pub enum EditPredictionModel {
     Mercury,
 }
 
+#[derive(Clone)]
 pub struct EditPredictionModelInput {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
@@ -754,7 +757,7 @@ impl EditPredictionStore {
             let next_id = project.languages().next_language_server_id();
             let fs = project.fs().clone();
 
-            let copilot = cx.new(|cx| Copilot::new(_project, next_id, fs, node, cx));
+            let copilot = cx.new(|cx| Copilot::new(Some(_project), next_id, fs, node, cx));
             state.copilot = Some(copilot.clone());
             Some(copilot)
         } else {
@@ -1738,16 +1741,19 @@ impl EditPredictionStore {
         let can_collect_example = snapshot
             .file()
             .is_some_and(|file| self.can_collect_file(&project, file, cx))
-            && self.can_collect_events(&inputs.events, cx);
+            && self.can_collect_events(&inputs.events, cx)
+            && self.can_collect_related_files(&project, cx);
 
         if can_collect_example && should_sample_edit_prediction_example_capture(cx) {
             let events_for_capture =
                 self.edit_history_for_project_with_pause_split_last_event(&project, cx);
+            let related_files_for_capture = inputs.related_files.clone();
             if let Some(example_task) = capture_example::capture_example(
                 project.clone(),
                 active_buffer.clone(),
                 position,
                 events_for_capture,
+                related_files_for_capture,
                 false,
                 cx,
             ) {
@@ -1760,7 +1766,20 @@ impl EditPredictionStore {
             }
         }
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
+            EditPredictionModel::Zeta1 => {
+                if should_send_testing_zeta2_request() {
+                    let mut zeta2_inputs = inputs.clone();
+                    zeta2_inputs.trigger = PredictEditsRequestTrigger::Testing;
+                    zeta2::request_prediction_with_zeta2(
+                        self,
+                        zeta2_inputs,
+                        Default::default(),
+                        cx,
+                    )
+                    .detach();
+                }
+                zeta1::request_prediction_with_zeta1(self, inputs, cx)
+            }
             EditPredictionModel::Zeta2 { version } => {
                 zeta2::request_prediction_with_zeta2(self, inputs, version, cx)
             }
@@ -1920,6 +1939,7 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
+        trigger: PredictEditsRequestTrigger,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
         let url = client
             .http_client()
@@ -1929,6 +1949,7 @@ impl EditPredictionStore {
             input,
             model: EDIT_PREDICTIONS_MODEL_ID.clone(),
             prompt_version,
+            trigger,
         };
 
         Self::send_api_request(
@@ -2046,13 +2067,7 @@ impl EditPredictionStore {
                 let mut body = Vec::new();
                 response.body_mut().read_to_end(&mut body).await?;
                 return Ok((serde_json::from_slice(&body)?, usage));
-            } else if !did_retry
-                && token.is_some()
-                && response
-                    .headers()
-                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-                    .is_some()
-            {
+            } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
                 did_retry = true;
                 token = Some(llm_token.refresh(&client).await?);
             } else {
@@ -2143,6 +2158,21 @@ impl EditPredictionStore {
                     ..
                 }
             )
+        })
+    }
+
+    fn can_collect_related_files(&self, project: &Entity<Project>, cx: &mut App) -> bool {
+        if !self.data_collection_choice.is_enabled(cx) {
+            return false;
+        }
+
+        let related_with_buffers = self.context_for_project_with_buffers(project, cx);
+
+        related_with_buffers.iter().all(|(_, buffer)| {
+            buffer
+                .read(cx)
+                .file()
+                .is_some_and(|file| self.is_file_open_source(project, &file, cx))
         })
     }
 
@@ -2331,6 +2361,27 @@ pub fn init(cx: &mut App) {
                     .get_or_insert_default()
                     .edit_prediction_provider = Some(EditPredictionProvider::None)
             });
+        });
+        fn copilot_for_project(project: &Entity<Project>, cx: &mut App) -> Option<Entity<Copilot>> {
+            EditPredictionStore::try_global(cx).and_then(|store| {
+                store.update(cx, |this, cx| this.start_copilot_for_project(project, cx))
+            })
+        }
+
+        workspace.register_action(|workspace, _: &SignIn, window, cx| {
+            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
+                copilot_ui::initiate_sign_in(copilot, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &Reinstall, window, cx| {
+            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
+                copilot_ui::reinstall_and_sign_in(copilot, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &SignOut, window, cx| {
+            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
+                copilot_ui::initiate_sign_out(copilot, window, cx);
+            }
         });
     })
     .detach();

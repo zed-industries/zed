@@ -6,10 +6,15 @@ use crate::{
     parse_output::parse_prediction_output,
     predict::run_prediction,
     progress::{ExampleProgress, Step},
+    reversal_tracking,
 };
 use anyhow::Context as _;
 use edit_prediction::udiff::apply_diff_to_string;
 use gpui::AsyncApp;
+use serde::Serialize;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::Path;
 use std::sync::Arc;
 
 pub async fn run_scoring(
@@ -42,7 +47,14 @@ pub async fn run_scoring(
     let zero_scores = ExampleScore {
         delta_chr_f: 0.0,
         braces_disbalance: 0,
+        exact_lines_tp: 0,
+        exact_lines_fp: 0,
+        exact_lines_fn: 0,
+        reversal_ratio: 0.0,
     };
+
+    let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
+    let cursor_path = example.spec.cursor_path.as_ref();
 
     progress.set_substatus("computing metrics");
     let mut scores = vec![];
@@ -82,9 +94,29 @@ pub async fn run_scoring(
             std::fs::write("/tmp/unbalanced-text.after", &actual_text).ok();
         }
 
+        // Compute exact lines match against best matching expected patch
+        let best_exact_lines = example
+            .spec
+            .expected_patches
+            .iter()
+            .map(|expected_patch| metrics::exact_lines_match(expected_patch, &actual_patch))
+            .max_by_key(|m| m.true_positives)
+            .unwrap_or_default();
+
+        // Compute reversal ratio
+        let reversal_ratio = reversal_tracking::compute_prediction_reversal_ratio(
+            prompt_inputs,
+            &actual_text,
+            cursor_path,
+        );
+
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
             braces_disbalance,
+            exact_lines_tp: best_exact_lines.true_positives,
+            exact_lines_fp: best_exact_lines.false_positives,
+            exact_lines_fn: best_exact_lines.false_negatives,
+            reversal_ratio,
         });
     }
 
@@ -93,56 +125,82 @@ pub async fn run_scoring(
 }
 
 pub fn print_report(examples: &[Example]) {
-    eprintln!(
-        "──────────────────────────────────────────────────────────────────────────────────────"
+    use crate::metrics::ClassificationMetrics;
+
+    const LINE_WIDTH: usize = 110;
+    let separator = "─".repeat(LINE_WIDTH);
+
+    println!("{}", separator);
+    println!(
+        "{:<40} {:>8} {:>5} {:>4} {:>4} {:>4} {:>7} {:>7} {:>7} {:>7}",
+        "Example", "DeltaChrF", "Brace", "TP", "FP", "FN", "Prec", "Rec", "F1", "Revert"
     );
-    eprintln!(
-        "{:<50} {:>14} {:>10}",
-        "Example name", "BracesDisbalance", "DeltaChrF"
-    );
-    eprintln!(
-        "──────────────────────────────────────────────────────────────────────────────────────"
-    );
+    println!("{}", separator);
 
     let mut all_delta_chr_f_scores = Vec::new();
+    let mut all_reversal_ratios = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
+    let mut total_exact_lines = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
 
     for example in examples {
         for score in example.score.iter() {
-            eprintln!(
-                "{:<50} {:>14} {:>9.2}",
-                truncate_name(&example.spec.name, 50),
+            let exact_lines = ClassificationMetrics {
+                true_positives: score.exact_lines_tp,
+                false_positives: score.exact_lines_fp,
+                false_negatives: score.exact_lines_fn,
+            };
+
+            println!(
+                "{:<40} {:>8.2} {:>5} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}%",
+                truncate_name(&example.spec.name, 40),
+                score.delta_chr_f,
                 score.braces_disbalance,
-                score.delta_chr_f
+                score.exact_lines_tp,
+                score.exact_lines_fp,
+                score.exact_lines_fn,
+                exact_lines.precision() * 100.0,
+                exact_lines.recall() * 100.0,
+                exact_lines.f1() * 100.0,
+                score.reversal_ratio * 100.0
             );
 
             all_delta_chr_f_scores.push(score.delta_chr_f);
+            all_reversal_ratios.push(score.reversal_ratio);
             total_scores += 1;
             braces_disbalance_sum += score.braces_disbalance;
+            total_exact_lines.true_positives += score.exact_lines_tp;
+            total_exact_lines.false_positives += score.exact_lines_fp;
+            total_exact_lines.false_negatives += score.exact_lines_fn;
         }
     }
 
-    eprintln!(
-        "──────────────────────────────────────────────────────────────────────────────────────"
-    );
+    println!("{}", separator);
 
     if !all_delta_chr_f_scores.is_empty() {
         let avg_delta_chr_f: f32 =
             all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32;
+        let avg_reversal_ratio: f32 =
+            all_reversal_ratios.iter().sum::<f32>() / all_reversal_ratios.len() as f32;
         let braces_disbalance_avg: f32 = braces_disbalance_sum as f32 / total_scores as f32;
-        let braces_disbalance_display = format!("{:.2}", braces_disbalance_avg);
 
-        eprintln!(
-            "{:<50} {:>14} {:>9.2}",
-            "AVERAGE", braces_disbalance_display, avg_delta_chr_f
+        println!(
+            "{:<40} {:>8.2} {:>5.1} {:>4} {:>4} {:>4} {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}%",
+            "TOTAL / AVERAGE",
+            avg_delta_chr_f,
+            braces_disbalance_avg,
+            total_exact_lines.true_positives,
+            total_exact_lines.false_positives,
+            total_exact_lines.false_negatives,
+            total_exact_lines.precision() * 100.0,
+            total_exact_lines.recall() * 100.0,
+            total_exact_lines.f1() * 100.0,
+            avg_reversal_ratio * 100.0
         );
-        eprintln!(
-            "──────────────────────────────────────────────────────────────────────────────────────"
-        );
+        println!("{}", separator);
     }
 
-    eprintln!("\n");
+    println!("\n");
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {
@@ -151,4 +209,82 @@ fn truncate_name(name: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &name[..max_len - 3])
     }
+}
+
+#[derive(Serialize)]
+pub struct SummaryJson {
+    pub total_examples: usize,
+    pub avg_delta_chr_f: f32,
+    pub avg_braces_disbalance: f32,
+    pub exact_lines_true_positives: usize,
+    pub exact_lines_false_positives: usize,
+    pub exact_lines_false_negatives: usize,
+    pub exact_lines_precision: f64,
+    pub exact_lines_recall: f64,
+    pub exact_lines_f1: f64,
+    pub avg_reversal_ratio: f32,
+}
+
+pub fn compute_summary(examples: &[Example]) -> SummaryJson {
+    use crate::metrics::ClassificationMetrics;
+
+    let mut all_delta_chr_f_scores = Vec::new();
+    let mut all_reversal_ratios = Vec::new();
+    let mut braces_disbalance_sum: usize = 0;
+    let mut total_exact_lines = ClassificationMetrics::default();
+    let mut total_scores: usize = 0;
+
+    for example in examples {
+        for score in example.score.iter() {
+            all_delta_chr_f_scores.push(score.delta_chr_f);
+            all_reversal_ratios.push(score.reversal_ratio);
+            total_scores += 1;
+            braces_disbalance_sum += score.braces_disbalance;
+            total_exact_lines.true_positives += score.exact_lines_tp;
+            total_exact_lines.false_positives += score.exact_lines_fp;
+            total_exact_lines.false_negatives += score.exact_lines_fn;
+        }
+    }
+
+    let avg_delta_chr_f = if all_delta_chr_f_scores.is_empty() {
+        0.0
+    } else {
+        all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32
+    };
+
+    let avg_reversal_ratio = if all_reversal_ratios.is_empty() {
+        0.0
+    } else {
+        all_reversal_ratios.iter().sum::<f32>() / all_reversal_ratios.len() as f32
+    };
+
+    let avg_braces_disbalance = if total_scores == 0 {
+        0.0
+    } else {
+        braces_disbalance_sum as f32 / total_scores as f32
+    };
+
+    SummaryJson {
+        total_examples: total_scores,
+        avg_delta_chr_f,
+        avg_braces_disbalance,
+        exact_lines_true_positives: total_exact_lines.true_positives,
+        exact_lines_false_positives: total_exact_lines.false_positives,
+        exact_lines_false_negatives: total_exact_lines.false_negatives,
+        exact_lines_precision: total_exact_lines.precision(),
+        exact_lines_recall: total_exact_lines.recall(),
+        exact_lines_f1: total_exact_lines.f1(),
+        avg_reversal_ratio,
+    }
+}
+
+pub fn write_summary_json(examples: &[Example], path: &Path) -> anyhow::Result<()> {
+    let summary = compute_summary(examples);
+    let file = File::create(path)
+        .with_context(|| format!("Failed to create summary JSON file: {}", path.display()))?;
+    let writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, &summary)
+        .with_context(|| format!("Failed to write summary JSON to: {}", path.display()))?;
+    eprintln!("Wrote summary JSON to: {}", path.display());
+    Ok(())
 }

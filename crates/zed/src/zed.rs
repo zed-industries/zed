@@ -93,7 +93,8 @@ use workspace::{
     open_new,
 };
 use workspace::{
-    CloseIntent, CloseWindow, NotificationFrame, RestoreBanner, with_active_or_new_workspace,
+    CloseIntent, CloseProject, CloseWindow, NotificationFrame, RestoreBanner,
+    with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
@@ -1110,6 +1111,43 @@ fn register_actions(
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
                         Default::default(),
+                        app_state,
+                        cx,
+                        |workspace, window, cx| {
+                            cx.activate(true);
+                            // Create buffer synchronously to avoid flicker
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", None, true, cx)
+                            });
+                            let editor = cx.new(|cx| {
+                                Editor::for_buffer(buffer, Some(project), window, cx)
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .detach();
+                }
+            }
+        })
+        .register_action({
+            let app_state = Arc::downgrade(&app_state);
+            move |_, _: &CloseProject, window, cx| {
+                let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+                    return;
+                };
+                if let Some(app_state) = app_state.upgrade() {
+                    open_new(
+                        workspace::OpenOptions {
+                            replace_window: Some(window_handle),
+                            ..Default::default()
+                        },
                         app_state,
                         cx,
                         |workspace, window, cx| {
@@ -2808,9 +2846,9 @@ mod tests {
                 editor.update(cx, |editor, cx| editor.insert("EDIT", window, cx));
             })
             .unwrap();
+        cx.run_until_parked();
 
         assert!(window_is_edited(window, cx));
-        cx.run_until_parked();
 
         // Advance the clock to make sure the workspace is serialized
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -4788,9 +4826,11 @@ mod tests {
                 "diagnostics",
                 "edit_prediction",
                 "editor",
+                "encoding_selector",
                 "feedback",
                 "file_finder",
                 "git",
+                "git_graph",
                 "git_onboarding",
                 "git_panel",
                 "git_picker",
@@ -4987,6 +5027,7 @@ mod tests {
             language_model::init(app_state.client.clone(), cx);
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
+            git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(cx);

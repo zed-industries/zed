@@ -19,7 +19,7 @@ use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
 /// Currently, we compile with Rust's `wasm32-wasip2` target, which works with WASI `preview2` and the component model.
-const RUST_TARGET: &str = "wasm32-wasip2";
+pub const RUST_TARGET: &str = "wasm32-wasip2";
 
 /// Compiling Tree-sitter parsers from C to WASM requires Clang 17, and a WASM build of libc
 /// and clang's runtime library. The `wasi-sdk` provides these binaries.
@@ -717,7 +717,7 @@ mod tests {
     use indoc::indoc;
 
     use crate::{
-        ExtensionManifest,
+        ExtensionManifest, ExtensionSnippets,
         extension_builder::{file_newer_than_deps, populate_defaults},
     };
 
@@ -791,7 +791,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("./snippets/snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("./snippets/snippets.json").unwrap()
+            ))
         )
     }
 
@@ -826,7 +828,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("snippets.json").unwrap()
+            ))
         )
     }
 }

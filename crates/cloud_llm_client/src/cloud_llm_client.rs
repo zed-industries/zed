@@ -17,6 +17,14 @@ pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
 /// The client may use this as a signal to refresh the token.
 pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 
+/// The name of the header used to indicate when a request failed due to an outdated LLM token.
+///
+/// A token is considered "outdated" when we can't parse the claims (e.g., after adding a new required claim).
+///
+/// This is distinct from [`EXPIRED_LLM_TOKEN_HEADER_NAME`] which indicates the token's time-based validity has passed.
+/// An outdated token means the token's structure is incompatible with the current server expectations.
+pub const OUTDATED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-outdated-token";
+
 /// The name of the header used to indicate the usage limit for edit predictions.
 pub const EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-edit-predictions-usage-limit";
 
@@ -134,6 +142,7 @@ pub struct PredictEditsBody {
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PredictEditsRequestTrigger {
+    Testing,
     Diagnostics,
     Cli,
     #[default]

@@ -848,7 +848,7 @@ impl ConfigureMode {
     fn load(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut App) {
         self.cwd.update(cx, |input_field, cx| {
             if input_field.is_empty(cx) {
-                input_field.set_text(cwd.to_string_lossy(), window, cx);
+                input_field.set_text(&cwd.to_string_lossy(), window, cx);
             }
         });
     }

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use editor::{Editor, EditorEvent};
 use gpui::{App, Entity, FocusHandle, Focusable, prelude::*};
 use ui::prelude::*;
+use ui_input::{ErasedEditor, ErasedEditorEvent};
 
 /// The head of a [`Picker`](crate::Picker).
 pub(crate) enum Head {
     /// Picker has an editor that allows the user to filter the list.
-    Editor(Entity<Editor>),
+    Editor(Arc<dyn ErasedEditor>),
 
     /// Picker has no head, it's just a list of items.
     Empty(Entity<EmptyHead>),
@@ -16,17 +16,28 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, &Entity<Editor>, &EditorEvent, &mut Window, &mut Context<V>)
-        + 'static,
+        mut edit_handler: impl FnMut(&mut V, &ErasedEditorEvent, &mut Window, &mut Context<V>) + 'static,
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> Self {
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(placeholder_text.as_ref(), window, cx);
-            editor
-        });
-        cx.subscribe_in(&editor, window, edit_handler).detach();
+        let editor = (ui_input::ERASED_EDITOR_FACTORY.get().unwrap())(window, cx);
+
+        editor.set_placeholder_text(placeholder_text.as_ref(), window, cx);
+        let this = cx.weak_entity();
+        editor
+            .subscribe(
+                Box::new(move |event, window, cx| {
+                    this.update(cx, |this, cx| (edit_handler)(this, &event, window, cx))
+                        .ok();
+                }),
+                window,
+                cx,
+            )
+            .detach();
+        // cx.subscribe_in(&editor, window, |v, _, event, window, cx| {
+        //     edit_handler(v, event, window, cx);
+        // })
+        // .detach();
         Self::Editor(editor)
     }
 

@@ -70,6 +70,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -129,6 +130,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -146,7 +148,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -211,6 +213,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -238,11 +241,19 @@ jobs:
         rm -rf ./../.cargo
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_mac:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -253,10 +264,17 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
       shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
@@ -283,6 +301,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -327,6 +346,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}
@@ -362,6 +382,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -399,6 +420,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -447,6 +469,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: ./script/check-licenses
       run: ./script/check-licenses
       shell: bash -euxo pipefail {0}
@@ -519,7 +542,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_nix == 'true'
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
@@ -530,11 +553,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: nix_build::build_nix::set_path
-      run: |
-        echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-        echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
-      shell: bash -euxo pipefail {0}
+    - name: nix_build::build_nix::install_nix
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
@@ -544,12 +566,6 @@ jobs:
         pushFilter: -zed-editor-[0-9.]*-nightly
     - name: nix_build::build_nix::build
       run: nix build .#debug -L --accept-flake-config
-      shell: bash -euxo pipefail {0}
-    - name: nix_build::build_nix::limit_store
-      run: |-
-        if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
-            nix-collect-garbage -d || true
-        fi
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true

@@ -13,7 +13,7 @@ on:
 jobs:
   check_style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -180,7 +180,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -234,7 +234,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -329,6 +329,12 @@ jobs:
         name: Zed-aarch64.exe
         path: target/Zed-aarch64.exe
         if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-windows-aarch64.zip'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-windows-aarch64.zip
+        path: target/zed-remote-server-windows-aarch64.zip
+        if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_x86_64:
     needs:
@@ -376,6 +382,12 @@ jobs:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
         if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-windows-x86_64.zip'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-windows-x86_64.zip
+        path: target/zed-remote-server-windows-x86_64.zip
+        if-no-files-found: error
     timeout-minutes: 60
   build_nix_linux_x86_64:
     needs:
@@ -413,7 +425,7 @@ jobs:
     - check_style
     - run_tests_windows
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
@@ -424,11 +436,10 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: nix_build::build_nix::set_path
-      run: |
-        echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-        echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
-      shell: bash -euxo pipefail {0}
+    - name: nix_build::build_nix::install_nix
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
@@ -437,12 +448,6 @@ jobs:
         cachixArgs: -v
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
-      shell: bash -euxo pipefail {0}
-    - name: nix_build::build_nix::limit_store
-      run: |-
-        if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
-            nix-collect-garbage -d || true
-        fi
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
@@ -483,6 +488,8 @@ jobs:
         mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
+        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
+        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
       shell: bash -euxo pipefail {0}
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
@@ -521,10 +528,10 @@ jobs:
     if: failure()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: release::notify_on_failure::notify_slack
-      run: |-
+    - name: release::send_slack_message
+      run: |
         curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+         --data '{"text":"❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
       shell: bash -euxo pipefail {0}
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
