@@ -1,5 +1,6 @@
 use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
+use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
@@ -11,8 +12,8 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    collections::VecDeque,
     io::Read,
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -41,6 +42,10 @@ pub struct Example {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub score: Vec<ExampleScore>,
 
+    /// QA evaluation results for each prediction (indexed parallel to `predictions`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qa: Vec<Option<QaResult>>,
+
     /// The application state used to process this example.
     #[serde(skip)]
     pub state: Option<ExampleState>,
@@ -60,8 +65,6 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
-    pub context_range: Range<usize>,
-    pub editable_range: Range<usize>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
 }
@@ -75,14 +78,35 @@ pub struct ExamplePrompt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrediction {
-    pub actual_patch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_patch: Option<String>,
+    #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub provider: PredictionProvider,
+}
+
+fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
+    pub braces_disbalance: usize,
+    #[serde(default)]
+    pub exact_lines_tp: usize,
+    #[serde(default)]
+    pub exact_lines_fp: usize,
+    #[serde(default)]
+    pub exact_lines_fn: usize,
+    #[serde(default)]
+    pub reversal_ratio: f32,
 }
 
 impl Example {
@@ -217,9 +241,9 @@ pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
     });
 }
 
-pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+pub fn group_examples_by_repo(examples: Vec<Example>) -> VecDeque<Vec<Example>> {
     let mut examples_by_repo = HashMap::default();
-    for example in examples.iter_mut() {
+    for example in examples {
         examples_by_repo
             .entry(example.spec.repository_url.clone())
             .or_insert_with(Vec::new)
@@ -236,6 +260,7 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
+        qa: Vec::new(),
         state: None,
     })
 }

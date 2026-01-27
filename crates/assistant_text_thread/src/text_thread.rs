@@ -5,16 +5,16 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, ModelRequestUsage, RequestUsage, proto};
+use client::{self, proto};
 use clock::ReplicaId;
-use cloud_llm_client::{CompletionIntent, UsageLimit};
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
-    Task, WeakEntity,
+    Task,
 };
 use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -27,10 +27,8 @@ use language_model::{
 };
 use open_ai::Model as OpenAiModel;
 use paths::text_threads_dir;
-use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
@@ -688,9 +686,7 @@ pub struct TextThread {
     path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<WeakEntity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
-    completion_mode: agent_settings::CompletionMode,
 }
 
 trait ContextAnnotation {
@@ -708,7 +704,6 @@ impl EventEmitter<TextThreadEvent> for TextThread {}
 impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<WeakEntity<Project>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         cx: &mut Context<Self>,
@@ -720,17 +715,8 @@ impl TextThread {
             language_registry,
             prompt_builder,
             slash_commands,
-            project,
             cx,
         )
-    }
-
-    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
-        self.completion_mode
-    }
-
-    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
-        self.completion_mode = completion_mode;
     }
 
     pub fn new(
@@ -740,7 +726,6 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|_cx| {
@@ -778,10 +763,8 @@ impl TextThread {
             pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
-            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
-            project,
             language_registry,
             slash_commands,
             prompt_builder,
@@ -869,7 +852,6 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(TextThreadId::new);
@@ -880,7 +862,6 @@ impl TextThread {
             language_registry,
             prompt_builder,
             slash_commands,
-            project,
             cx,
         );
         this.path = Some(path);
@@ -2068,15 +2049,7 @@ impl TextThread {
 
                                 match event {
                                     LanguageModelCompletionEvent::Started |
-                                    LanguageModelCompletionEvent::Queued {..} |
-                                    LanguageModelCompletionEvent::ToolUseLimitReached { .. } => {}
-                                    LanguageModelCompletionEvent::UsageUpdated { amount, limit } => {
-                                        this.update_model_request_usage(
-                                            amount as u32,
-                                            limit,
-                                            cx,
-                                        );
-                                    }
+                                    LanguageModelCompletionEvent::Queued {..} => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::ReasoningDetails(_) => {
                                         // ReasoningDetails are metadata (signatures, encrypted data, format info)
@@ -2290,7 +2263,6 @@ impl TextThread {
             thread_id: None,
             prompt_id: None,
             intent: Some(CompletionIntent::UserPrompt),
-            mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
             tool_choice: None,
@@ -2349,15 +2321,7 @@ impl TextThread {
                 completion_request.messages.push(request_message);
             }
         }
-        let supports_burn_mode = if let Some(model) = model {
-            model.supports_burn_mode()
-        } else {
-            false
-        };
 
-        if supports_burn_mode {
-            completion_request.mode = Some(self.completion_mode.into());
-        }
         completion_request
     }
 
@@ -2956,21 +2920,6 @@ impl TextThread {
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(TextThreadEvent::SummaryChanged);
-    }
-
-    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
-        let Some(project) = self.project.as_ref().and_then(|project| project.upgrade()) else {
-            return;
-        };
-        project.read(cx).user_store().update(cx, |user_store, cx| {
-            user_store.update_model_request_usage(
-                ModelRequestUsage(RequestUsage {
-                    amount: amount as i32,
-                    limit,
-                }),
-                cx,
-            )
-        });
     }
 }
 

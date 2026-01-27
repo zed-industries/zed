@@ -1,4 +1,3 @@
-mod dev_container;
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
@@ -10,6 +9,7 @@ use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
+use dev_container::start_dev_container;
 use remote::RemoteConnectionOptions;
 pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
@@ -36,6 +36,72 @@ use workspace::{
     with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
+
+use crate::remote_connections::Connection;
+
+#[derive(Clone, Debug)]
+pub struct RecentProjectEntry {
+    pub name: SharedString,
+    pub full_path: SharedString,
+    pub paths: Vec<PathBuf>,
+    pub workspace_id: WorkspaceId,
+}
+
+pub async fn get_recent_projects(
+    current_workspace_id: Option<WorkspaceId>,
+    limit: Option<usize>,
+) -> Vec<RecentProjectEntry> {
+    let workspaces = WORKSPACE_DB
+        .recent_workspaces_on_disk()
+        .await
+        .unwrap_or_default();
+
+    let entries: Vec<RecentProjectEntry> = workspaces
+        .into_iter()
+        .filter(|(id, _, _)| Some(*id) != current_workspace_id)
+        .filter(|(_, location, _)| matches!(location, SerializedWorkspaceLocation::Local))
+        .map(|(workspace_id, _, path_list)| {
+            let paths: Vec<PathBuf> = path_list.paths().to_vec();
+            let ordered_paths: Vec<&PathBuf> = path_list.ordered_paths().collect();
+
+            let name = if ordered_paths.len() == 1 {
+                ordered_paths[0]
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ordered_paths[0].to_string_lossy().to_string())
+            } else {
+                ordered_paths
+                    .iter()
+                    .filter_map(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+
+            let full_path = ordered_paths
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            RecentProjectEntry {
+                name: SharedString::from(name),
+                full_path: SharedString::from(full_path),
+                paths,
+                workspace_id,
+            }
+        })
+        .collect();
+
+    match limit {
+        Some(n) => entries.into_iter().take(n).collect(),
+        None => entries,
+    }
+}
+
+pub async fn delete_recent_project(workspace_id: WorkspaceId) {
+    let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+}
 
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "windows")]
@@ -172,26 +238,22 @@ pub fn init(cx: &mut App) {
             let replace_window = window.window_handle().downcast::<Workspace>();
 
             cx.spawn_in(window, async move |_, mut cx| {
-                let (connection, starting_dir) = match dev_container::start_dev_container(
-                    &mut cx,
-                    app_state.node_runtime.clone(),
-                )
-                .await
-                {
-                    Ok((c, s)) => (c, s),
-                    Err(e) => {
-                        log::error!("Failed to start Dev Container: {:?}", e);
-                        cx.prompt(
-                            gpui::PromptLevel::Critical,
-                            "Failed to start Dev Container",
-                            Some(&format!("{:?}", e)),
-                            &["Ok"],
-                        )
-                        .await
-                        .ok();
-                        return;
-                    }
-                };
+                let (connection, starting_dir) =
+                    match start_dev_container(&mut cx, app_state.node_runtime.clone()).await {
+                        Ok((c, s)) => (Connection::DevContainer(c), s),
+                        Err(e) => {
+                            log::error!("Failed to start Dev Container: {:?}", e);
+                            cx.prompt(
+                                gpui::PromptLevel::Critical,
+                                "Failed to start Dev Container",
+                                Some(&format!("{:?}", e)),
+                                &["Ok"],
+                            )
+                            .await
+                            .ok();
+                            return;
+                        }
+                    };
 
                 let result = open_remote_project(
                     connection.into(),
@@ -265,7 +327,7 @@ pub fn add_wsl_distro(
     use gpui::ReadGlobal;
     use settings::SettingsStore;
 
-    let distro_name = SharedString::from(&connection_options.distro_name);
+    let distro_name = connection_options.distro_name.clone();
     let user = connection_options.user.clone();
     SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
         let connections = setting

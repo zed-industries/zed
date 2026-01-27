@@ -10,6 +10,12 @@ workspace = true
 
 [lib]
 path = "src/fs.rs"
+test = false
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+path = "tests/integration/main.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -50,6 +56,7 @@ windows.workspace = true
 ashpd.workspace = true
 
 [dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 
