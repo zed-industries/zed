@@ -1,7 +1,7 @@
-use gpui::{Entity, EventEmitter, WeakEntity};
+use gpui::{EventEmitter, WeakEntity};
 use ui::{ParentElement, Render, Styled, div};
 
-use crate::{ActivePaneDecorator, Pane, PaneGroup, Workspace};
+use crate::{ActivePaneDecorator, PaneGroup, Workspace, client_side_decorations};
 
 pub struct WorkspaceSatellite {
     pub(crate) center: PaneGroup,
@@ -9,7 +9,6 @@ pub struct WorkspaceSatellite {
 }
 
 pub enum WorkspaceSatelliteEvent {
-    FocusedPane(Entity<Pane>),
     Closing,
 }
 
@@ -24,8 +23,12 @@ impl Render for WorkspaceSatellite {
         let pane = self.center.first_pane();
         let decorator = ActivePaneDecorator::new(&pane, &self.workspace);
 
-        div()
-            .size_full()
-            .child(self.center.render(None, &decorator, window, cx))
+        client_side_decorations(
+            div()
+                .size_full()
+                .child(self.center.render(None, &decorator, window, cx)),
+            window,
+            cx,
+        )
     }
 }

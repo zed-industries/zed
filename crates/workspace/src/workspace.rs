@@ -3274,27 +3274,33 @@ impl Workspace {
         };
 
         let weak_self = self.weak_handle();
+        // TODO: this is added in the current window
         let empty_pane = self.add_pane(window, cx);
         let window_handle = cx.open_window(
             gpui::WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(new_bounds)),
                 ..Default::default()
             },
-            move |_, cx| {
-                cx.new(|_| WorkspaceSatellite {
-                    center: PaneGroup::new(empty_pane),
-                    workspace: weak_self,
-                })
+            {
+                let pane = empty_pane.clone();
+                move |_, cx| {
+                    let mut group = PaneGroup::new(pane);
+                    group.set_in_satellite(true);
+                    group.set_is_center(true);
+                    group.mark_positions(cx);
+
+                    cx.new(|_| WorkspaceSatellite {
+                        center: group,
+                        workspace: weak_self,
+                    })
+                }
             },
         )?;
-
-        let destination_pane =
-            window_handle.read_with(cx, |pane_host, _| pane_host.center.first_pane())?;
 
         window_handle.update(cx, |_, window, cx| {
             move_item(
                 &source_pane,
-                &destination_pane,
+                &empty_pane,
                 item_to_detach,
                 0,
                 true,
@@ -4817,6 +4823,24 @@ impl Workspace {
     pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<Entity<Pane>> {
         let weak_pane = self.panes_by_item.get(&handle.item_id())?;
         weak_pane.upgrade()
+    }
+
+    pub fn satellite_for_pane(
+        &self,
+        pane: &Entity<Pane>,
+        cx: &App,
+    ) -> Option<WindowHandle<WorkspaceSatellite>> {
+        for satellite in &self.satellites {
+            let contains_pane = satellite
+                .read(cx)
+                .map(|satellite| satellite.center.panes().contains(&pane))
+                .unwrap_or(false);
+
+            if contains_pane {
+                return Some(*satellite);
+            }
+        }
+        None
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, window: &mut Window, cx: &mut Context<Self>) {
