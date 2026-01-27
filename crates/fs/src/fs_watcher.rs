@@ -180,9 +180,24 @@ impl GlobalWatcher {
     ) -> anyhow::Result<WatcherRegistrationId> {
         use notify::Watcher;
 
-        self.watcher.lock().watch(&path, mode)?;
-
         let mut state = self.state.lock();
+
+        // Check if this path is already covered by an existing watched ancestor path.
+        // On macOS and Windows, watching is recursive, so we don't need to watch
+        // child paths if an ancestor is already being watched.
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let path_already_covered = state.path_registrations.keys().any(|existing| {
+            path.starts_with(existing.as_ref()) && path.as_ref() != existing.as_ref()
+        });
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let path_already_covered = false;
+
+        if !path_already_covered && !state.path_registrations.contains_key(&path) {
+            drop(state);
+            self.watcher.lock().watch(&path, mode)?;
+            state = self.state.lock();
+        }
 
         let id = state.last_registration;
         state.last_registration = WatcherRegistrationId(id.0 + 1);
