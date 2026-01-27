@@ -2075,7 +2075,7 @@ struct VimEditorSettingsState {
     hide_edit_predictions: bool,
 }
 
-#[derive(RegisterSetting)]
+#[derive(Clone, RegisterSetting)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
