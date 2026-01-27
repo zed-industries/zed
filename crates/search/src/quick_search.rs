@@ -45,19 +45,14 @@ actions!(
         ReplaceNext,
         ReplaceAll,
         ToggleFilters,
+        ToggleLayout,
         ToggleSplitMenu,
         ToggleHistory
     ]
 );
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
-const DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
-const DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
-const MIN_PANEL_HEIGHT: f32 = 80.0;
 const AUTOSAVE_DELAY_MS: u64 = 500;
-const DEFAULT_MODAL_WIDTH_REMS: f32 = 50.0;
-const MIN_MODAL_WIDTH_REMS: f32 = 30.0;
-const MAX_MODAL_WIDTH_REMS: f32 = 80.0;
 const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
 const RESIZE_HANDLE_WIDTH: f32 = 6.0;
 const CLICK_THRESHOLD_MS: u128 = 50;
@@ -66,6 +61,30 @@ const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const REPLACE_PLACEHOLDER: &str = "Replace in project…";
 const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
 const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
+
+const STACKED_DEFAULT_MODAL_WIDTH_REMS: f32 = 42.0;
+const STACKED_MIN_MODAL_WIDTH_REMS: f32 = 30.0;
+const STACKED_MAX_MODAL_WIDTH_REMS: f32 = 70.0;
+const STACKED_DEFAULT_RESULTS_HEIGHT: f32 = 180.0;
+const STACKED_DEFAULT_PREVIEW_HEIGHT: f32 = 280.0;
+const STACKED_MIN_PANEL_HEIGHT: f32 = 80.0;
+
+const TELESCOPE_DEFAULT_MODAL_WIDTH_REMS: f32 = 60.0;
+const TELESCOPE_MIN_MODAL_WIDTH_REMS: f32 = 45.0;
+const TELESCOPE_MAX_MODAL_WIDTH_REMS: f32 = 90.0;
+const TELESCOPE_DEFAULT_CONTENT_HEIGHT: f32 = 400.0;
+const TELESCOPE_MIN_CONTENT_HEIGHT: f32 = 200.0;
+const TELESCOPE_MAX_CONTENT_HEIGHT: f32 = 800.0;
+const TELESCOPE_DEFAULT_PREVIEW_WIDTH: f32 = 600.0;
+const TELESCOPE_MIN_PREVIEW_WIDTH: f32 = 200.0;
+const TELESCOPE_MAX_PREVIEW_WIDTH: f32 = 800.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    #[default]
+    Stacked,
+    Telescope,
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum InputPanel {
@@ -107,6 +126,9 @@ pub struct QuickSearch {
     modal_width: Pixels,
     results_height: Pixels,
     preview_height: Pixels,
+    layout_mode: LayoutMode,
+    telescope_content_height: Pixels,
+    telescope_preview_width: Pixels,
     _subscriptions: Vec<Subscription>,
     _autosave_task: Option<Task<()>>,
 }
@@ -135,6 +157,7 @@ struct HorizontalResizeDrag {
     side: ResizeSide,
     mouse_start: Pixels,
     width_start: Pixels,
+    preview_width_start: Pixels,
     offset_start: Pixels,
 }
 
@@ -144,6 +167,20 @@ struct VerticalResizeDrag {
     mouse_start: Pixels,
     results_height_start: Pixels,
     preview_height_start: Pixels,
+    offset_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct TelescopePreviewResizeDrag {
+    mouse_start_x: Pixels,
+    preview_width_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct TelescopeHeightResizeDrag {
+    side: ResizeSide,
+    mouse_start_y: Pixels,
+    content_height_start: Pixels,
     offset_start: Pixels,
 }
 
@@ -234,6 +271,7 @@ impl QuickSearch {
             Picker::uniform_list(delegate, window, cx)
                 .modal(false)
                 .show_scrollbar(true)
+                .max_height(None)
         });
 
         let subscriptions = vec![
@@ -313,7 +351,7 @@ impl QuickSearch {
             ),
         ];
 
-        let modal_width = rems(DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let modal_width = rems(STACKED_DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
 
         Self {
             picker,
@@ -322,8 +360,11 @@ impl QuickSearch {
             focus_handle,
             offset: gpui::Point::default(),
             modal_width,
-            results_height: px(DEFAULT_RESULTS_HEIGHT),
-            preview_height: px(DEFAULT_PREVIEW_HEIGHT),
+            results_height: px(STACKED_DEFAULT_RESULTS_HEIGHT),
+            preview_height: px(STACKED_DEFAULT_PREVIEW_HEIGHT),
+            layout_mode: LayoutMode::default(),
+            telescope_content_height: px(TELESCOPE_DEFAULT_CONTENT_HEIGHT),
+            telescope_preview_width: px(TELESCOPE_DEFAULT_PREVIEW_WIDTH),
             _subscriptions: subscriptions,
             _autosave_task: None,
         }
@@ -566,8 +607,15 @@ impl QuickSearch {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let handle_width = px(RESIZE_HANDLE_WIDTH);
-        let min_width = rems(MIN_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
-        let max_width = rems(MAX_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let (min_width_rems, max_width_rems) = match self.layout_mode {
+            LayoutMode::Stacked => (STACKED_MIN_MODAL_WIDTH_REMS, STACKED_MAX_MODAL_WIDTH_REMS),
+            LayoutMode::Telescope => (
+                TELESCOPE_MIN_MODAL_WIDTH_REMS,
+                TELESCOPE_MAX_MODAL_WIDTH_REMS,
+            ),
+        };
+        let min_width = rems(min_width_rems).to_pixels(window.rem_size());
+        let max_width = rems(max_width_rems).to_pixels(window.rem_size());
 
         div()
             .id(match side {
@@ -588,6 +636,7 @@ impl QuickSearch {
                     side,
                     mouse_start: window.mouse_position().x,
                     width_start: self.modal_width,
+                    preview_width_start: self.telescope_preview_width,
                     offset_start: self.offset.x,
                 },
                 |_, _, _, cx| cx.new(|_| DragPreview),
@@ -607,6 +656,14 @@ impl QuickSearch {
 
                     let width_change = new_width - drag.width_start;
                     this.modal_width = new_width;
+
+                    if this.layout_mode == LayoutMode::Telescope && drag.width_start > px(0.0) {
+                        let ratio = drag.preview_width_start / drag.width_start;
+                        let new_preview_width = (new_width * ratio)
+                            .max(px(TELESCOPE_MIN_PREVIEW_WIDTH))
+                            .min(px(TELESCOPE_MAX_PREVIEW_WIDTH));
+                        this.telescope_preview_width = new_preview_width;
+                    }
 
                     let offset_delta = width_change / 2.0;
                     this.offset.x = drag.offset_start
@@ -664,7 +721,7 @@ impl QuickSearch {
                     };
 
                     let total_start = drag.results_height_start + drag.preview_height_start;
-                    let min_total = px(MIN_PANEL_HEIGHT * 2.0);
+                    let min_total = px(STACKED_MIN_PANEL_HEIGHT * 2.0);
 
                     let new_total = (total_start + total_growth).max(min_total);
                     let scale = new_total / total_start;
@@ -725,6 +782,7 @@ impl QuickSearch {
                 filters_enabled,
                 selected_index,
                 match_count,
+                self.layout_mode,
                 window,
                 cx,
             ))
@@ -736,6 +794,7 @@ impl QuickSearch {
         filters_enabled: bool,
         selected_index: usize,
         match_count: usize,
+        layout_mode: LayoutMode,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -773,6 +832,21 @@ impl QuickSearch {
                     })
                     .on_click(|_, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx);
+                    })
+            })
+            .child({
+                let focus_handle = self.picker.focus_handle(cx);
+                let (icon, tooltip_text) = match layout_mode {
+                    LayoutMode::Stacked => (IconName::Split, "Switch to Telescope Layout"),
+                    LayoutMode::Telescope => (IconName::ListTree, "Switch to Stacked Layout"),
+                };
+                IconButton::new("layout-toggle", icon)
+                    .size(ButtonSize::Compact)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(tooltip_text, &ToggleLayout, &focus_handle, cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToggleLayout.boxed_clone(), cx);
                     })
             })
             .child({
@@ -934,12 +1008,217 @@ impl QuickSearch {
                     let total_height = drag.results_height_start + drag.preview_height_start;
 
                     let new_results = (drag.results_height_start + delta)
-                        .max(px(MIN_PANEL_HEIGHT))
-                        .min(total_height - px(MIN_PANEL_HEIGHT));
+                        .max(px(STACKED_MIN_PANEL_HEIGHT))
+                        .min(total_height - px(STACKED_MIN_PANEL_HEIGHT));
                     let new_preview = total_height - new_results;
 
                     this.results_height = new_results;
                     this.preview_height = new_preview;
+                    cx.notify();
+                },
+            ))
+    }
+
+    fn render_content(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.layout_mode {
+            LayoutMode::Stacked => self.render_stacked_content(window, cx).into_any_element(),
+            LayoutMode::Telescope => self.render_telescope_content(window, cx).into_any_element(),
+        }
+    }
+
+    fn render_stacked_content(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .child(
+                div()
+                    .h(self.results_height)
+                    .overflow_hidden()
+                    .child(self.picker.clone()),
+            )
+            .child(self.render_results_resize(window, cx))
+            .child(self.render_preview(window, cx))
+            .child(self.render_vertical_resize(ResizeSide::End, window, cx))
+    }
+
+    fn render_telescope_content(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let content_height = self.telescope_content_height;
+        v_flex()
+            .relative()
+            .child(
+                h_flex()
+                    .h(content_height)
+                    .child(
+                        div()
+                            .flex_1()
+                            .h(content_height)
+                            .overflow_hidden()
+                            .child(self.picker.clone()),
+                    )
+                    .child(self.render_telescope_preview_resize(window, cx))
+                    .child(
+                        div()
+                            .w(self.telescope_preview_width)
+                            .h(content_height)
+                            .overflow_hidden()
+                            .child(self.render_telescope_preview(window, cx)),
+                    ),
+            )
+            .child(self.render_telescope_height_resize(ResizeSide::End, window, cx))
+    }
+
+    fn render_telescope_preview(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let delegate = &self.picker.read(cx).delegate;
+        let selected_match = delegate.matches.get(delegate.selected_index);
+
+        let preview_header = if let Some(m) = selected_match {
+            let path = &m.path.path;
+            let file_name = path
+                .file_name()
+                .map(|name| name.to_string())
+                .unwrap_or_default();
+            let directory = path
+                .parent()
+                .map(|path| path.as_std_path().to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let split_menu_handle = delegate.split_popover_menu_handle.clone();
+            let focus_handle = self.focus_handle.clone();
+
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().editor_background)
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new(file_name).size(LabelSize::Small))
+                        .child(
+                            Label::new(directory)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(self.render_split_menu(split_menu_handle, focus_handle, window, cx))
+        } else {
+            h_flex().h(px(26.0))
+        };
+
+        v_flex()
+            .size_full()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            .child(preview_header)
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(self.preview_editor.clone()),
+            )
+    }
+
+    fn render_telescope_preview_resize(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("telescope-preview-resize-handle")
+            .w(px(RESIZE_HANDLE_WIDTH))
+            .h_full()
+            .cursor_col_resize()
+            .bg(cx.theme().colors().border)
+            .hover(|style| style.bg(cx.theme().colors().border_focused))
+            .on_drag(
+                TelescopePreviewResizeDrag {
+                    mouse_start_x: window.mouse_position().x,
+                    preview_width_start: self.telescope_preview_width,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<TelescopePreviewResizeDrag>(cx.listener(
+                |this, event: &DragMoveEvent<TelescopePreviewResizeDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    let delta = drag.mouse_start_x - event.event.position.x;
+                    let new_width = (drag.preview_width_start + delta)
+                        .max(px(TELESCOPE_MIN_PREVIEW_WIDTH))
+                        .min(px(TELESCOPE_MAX_PREVIEW_WIDTH));
+                    this.telescope_preview_width = new_width;
+                    cx.notify();
+                },
+            ))
+    }
+
+    fn render_telescope_height_resize(
+        &self,
+        side: ResizeSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(match side {
+                ResizeSide::Start => "telescope-top-resize-handle",
+                ResizeSide::End => "telescope-bottom-resize-handle",
+            })
+            .h(px(RESIZE_HANDLE_HEIGHT))
+            .w_full()
+            .cursor_row_resize()
+            .map(|this| {
+                let this = this
+                    .bg(cx.theme().colors().border)
+                    .hover(|style| style.bg(cx.theme().colors().border_focused));
+                match side {
+                    ResizeSide::Start => this
+                        .absolute()
+                        .top(-px(RESIZE_HANDLE_HEIGHT))
+                        .left_0()
+                        .right_0(),
+                    ResizeSide::End => this,
+                }
+            })
+            .on_drag(
+                TelescopeHeightResizeDrag {
+                    side,
+                    mouse_start_y: window.mouse_position().y,
+                    content_height_start: self.telescope_content_height,
+                    offset_start: self.offset.y,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<TelescopeHeightResizeDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<TelescopeHeightResizeDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    let delta = event.event.position.y - drag.mouse_start_y;
+
+                    let height_delta = match drag.side {
+                        ResizeSide::Start => -delta,
+                        ResizeSide::End => delta,
+                    };
+
+                    let new_height = (drag.content_height_start + height_delta)
+                        .max(px(TELESCOPE_MIN_CONTENT_HEIGHT))
+                        .min(px(TELESCOPE_MAX_CONTENT_HEIGHT));
+
+                    this.telescope_content_height = new_height;
+
+                    if drag.side == ResizeSide::Start {
+                        let actual_growth = new_height - drag.content_height_start;
+                        this.offset.y = drag.offset_start - actual_growth;
+                    }
                     cx.notify();
                 },
             ))
@@ -959,7 +1238,12 @@ impl Render for QuickSearch {
         }
 
         v_flex()
-            .child(self.render_vertical_resize(ResizeSide::Start, window, cx))
+            .when(self.layout_mode == LayoutMode::Stacked, |this| {
+                this.child(self.render_vertical_resize(ResizeSide::Start, window, cx))
+            })
+            .when(self.layout_mode == LayoutMode::Telescope, |this| {
+                this.child(self.render_telescope_height_resize(ResizeSide::Start, window, cx))
+            })
             .child(self.render_horizontal_resize(ResizeSide::Start, window, cx))
             .child(self.render_horizontal_resize(ResizeSide::End, window, cx))
             .m_4()
@@ -1085,6 +1369,18 @@ impl Render for QuickSearch {
                             }
                         });
                     }))
+                    .on_action(cx.listener(|this, _: &ToggleLayout, window, cx| {
+                        this.layout_mode = match this.layout_mode {
+                            LayoutMode::Stacked => LayoutMode::Telescope,
+                            LayoutMode::Telescope => LayoutMode::Stacked,
+                        };
+                        let default_width_rems = match this.layout_mode {
+                            LayoutMode::Stacked => STACKED_DEFAULT_MODAL_WIDTH_REMS,
+                            LayoutMode::Telescope => TELESCOPE_DEFAULT_MODAL_WIDTH_REMS,
+                        };
+                        this.modal_width = rems(default_width_rems).to_pixels(window.rem_size());
+                        cx.notify();
+                    }))
                     .on_action(cx.listener(Self::go_to_file_split_left))
                     .on_action(cx.listener(Self::go_to_file_split_right))
                     .on_action(cx.listener(Self::go_to_file_split_up))
@@ -1111,15 +1407,7 @@ impl Render for QuickSearch {
                         },
                     ))
                     .child(self.render_header(window, cx))
-                    .child(
-                        div()
-                            .h(self.results_height)
-                            .overflow_hidden()
-                            .child(self.picker.clone()),
-                    )
-                    .child(self.render_results_resize(window, cx))
-                    .child(self.render_preview(window, cx))
-                    .child(self.render_vertical_resize(ResizeSide::End, window, cx)),
+                    .child(self.render_content(window, cx)),
             )
     }
 }
