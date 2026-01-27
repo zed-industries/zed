@@ -189,7 +189,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -234,7 +234,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -307,7 +307,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -358,7 +358,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -435,7 +435,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -469,7 +469,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -495,7 +495,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -534,7 +534,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -582,7 +582,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -635,7 +635,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -668,7 +668,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -702,7 +702,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -732,7 +732,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -777,7 +777,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 
@@ -823,7 +823,7 @@ impl ExtensionTerminalProxy for TerminalExtensionProxy {
                 .await
                 .map_err(|_| anyhow!("Main thread channel closed"))?;
 
-            Ok(result_rx.await.map_err(|_| anyhow!("Result channel closed"))??)
+            result_rx.await.map_err(|_| anyhow!("Result channel closed"))?
         })
     }
 }
