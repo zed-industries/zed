@@ -63,6 +63,9 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: extension_tests::install_rust_target
+      run: rustup target add wasm32-wasip2
+      shell: bash -euxo pipefail {0}
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
       shell: bash -euxo pipefail {0}
