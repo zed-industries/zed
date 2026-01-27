@@ -8193,6 +8193,8 @@ fn init_test(cx: &mut TestAppContext) {
 
 fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         crate::init(cx);
