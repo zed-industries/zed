@@ -118,6 +118,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
+          github_token: ${{ steps.get-app-token.outputs.token }}
 
           prompt: |
             You are analyzing issue #${{ steps.check-type.outputs.issue_number }} in the zed-industries/zed repository to determine if it might be a duplicate of an existing issue.
