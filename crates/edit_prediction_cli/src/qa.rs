@@ -29,7 +29,7 @@ pub struct QaArgs {
     pub wait: bool,
 
     /// Which LLM provider to use (anthropic or openai)
-    #[clap(long, default_value = "anthropic")]
+    #[clap(long, default_value = "openai")]
     pub backend: BatchProvider,
 }
 
