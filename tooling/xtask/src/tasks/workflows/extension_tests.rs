@@ -10,6 +10,7 @@ use crate::tasks::workflows::{
 
 pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
 
+// This should follow the set target in crates/extension/src/extension_builder.rs
 const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
 
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
