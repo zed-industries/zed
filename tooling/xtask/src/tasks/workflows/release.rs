@@ -1,12 +1,16 @@
 use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow};
+use indoc::formatdoc;
 
 use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests,
     runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
-    vars::{self, assets},
+    vars::{self, StepOutput, assets},
 };
+
+const CURRENT_ACTION_RUN_URL: &str =
+    "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
 
 pub(crate) fn release() -> Workflow {
     let macos_tests = run_tests::run_platform_tests(Platform::Mac);
@@ -53,9 +57,15 @@ pub(crate) fn release() -> Workflow {
     };
 
     let upload_release_assets = upload_release_assets(&[&create_draft_release], &bundle);
+    let validate_release_assets = validate_release_assets(&[&upload_release_assets]);
 
-    let auto_release_preview = auto_release_preview(&[&upload_release_assets]);
-    let notify_on_failure = notify_on_failure(&[&upload_release_assets, &auto_release_preview]);
+    let auto_release_preview = auto_release_preview(&[&validate_release_assets]);
+    let push_slack_notification = push_release_update_notification(
+        &create_draft_release,
+        &upload_release_assets,
+        &validate_release_assets,
+        &auto_release_preview,
+    );
 
     named::workflow()
         .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
@@ -77,8 +87,9 @@ pub(crate) fn release() -> Workflow {
             workflow
         })
         .add_job(upload_release_assets.name, upload_release_assets.job)
+        .add_job(validate_release_assets.name, validate_release_assets.job)
         .add_job(auto_release_preview.name, auto_release_preview.job)
-        .add_job(notify_on_failure.name, notify_on_failure.job)
+        .add_job(push_slack_notification.name, push_slack_notification.job)
 }
 
 pub(crate) struct ReleaseBundleJobs {
@@ -126,7 +137,36 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
-fn auto_release_preview(deps: &[&NamedJob; 1]) -> NamedJob {
+fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
+    let expected_assets: Vec<String> = assets::all().iter().map(|a| format!("\"{a}\"")).collect();
+    let expected_assets_json = format!("[{}]", expected_assets.join(", "));
+
+    let validation_script = formatdoc! {r#"
+        EXPECTED_ASSETS='{expected_assets_json}'
+        TAG="$GITHUB_REF_NAME"
+
+        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
+
+        MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
+
+        if [ -n "$MISSING_ASSETS" ]; then
+            echo "Error: The following assets are missing from the release:"
+            echo "$MISSING_ASSETS"
+            exit 1
+        fi
+
+        echo "All expected assets are present in the release."
+        "#,
+    };
+
+    named::job(
+        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
+            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+        ),
+    )
+}
+
+fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
     let (authenticate, token) = steps::authenticate_as_zippy();
 
     named::job(
@@ -213,16 +253,109 @@ fn create_draft_release() -> NamedJob {
     )
 }
 
-pub(crate) fn notify_on_failure(deps: &[&NamedJob]) -> NamedJob {
-    fn notify_slack() -> Step<Run> {
-        named::bash(
-            "curl -X POST -H 'Content-type: application/json'\\\n --data '{\"text\":\"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \"$SLACK_WEBHOOK\""
-        ).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
-    }
+pub(crate) fn push_release_update_notification(
+    create_draft_release_job: &NamedJob,
+    upload_assets_job: &NamedJob,
+    validate_assets_job: &NamedJob,
+    auto_release_preview: &NamedJob,
+) -> NamedJob {
+    let notification_script = formatdoc! {r#"
+        DRAFT_RESULT="${{{{ needs.{draft_job}.result }}}}"
+        UPLOAD_RESULT="${{{{ needs.{upload_job}.result }}}}"
+        VALIDATE_RESULT="${{{{ needs.{validate_job}.result }}}}"
+        AUTO_RELEASE_RESULT="${{{{ needs.{auto_release_job}.result }}}}"
+        TAG="$GITHUB_REF_NAME"
+        RUN_URL="{run_url}"
 
-    let job = dependant_job(deps)
-        .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new("failure()"))
-        .add_step(notify_slack());
+        if [ "$DRAFT_RESULT" == "failure" ]; then
+            echo "❌ Draft release creation failed for $TAG: $RUN_URL"
+        else
+            RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
+            if [ "$UPLOAD_RESULT" == "failure" ]; then
+                echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
+            elif [ "$VALIDATE_RESULT" == "failure" ]; then
+                echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
+                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
+                echo "❌ Auto release failed for $TAG: $RUN_URL"
+            else
+                echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
+            fi
+        fi
+        "#,
+        draft_job = create_draft_release_job.name,
+        upload_job = upload_assets_job.name,
+        validate_job = validate_assets_job.name,
+        auto_release_job = auto_release_preview.name,
+        run_url = CURRENT_ACTION_RUN_URL,
+    };
+
+    let mut job = dependant_job(&[
+        create_draft_release_job,
+        upload_assets_job,
+        validate_assets_job,
+        auto_release_preview,
+    ])
+    .runs_on(runners::LINUX_SMALL)
+    .cond(Expression::new("always()"));
+
+    for step in notify_slack(MessageType::Evaluated(notification_script)) {
+        job = job.add_step(step);
+    }
     named::job(job)
+}
+
+pub(crate) fn notify_on_failure(deps: &[&NamedJob]) -> NamedJob {
+    let failure_message = format!("❌ ${{{{ github.workflow }}}} failed: {CURRENT_ACTION_RUN_URL}");
+
+    let mut job = dependant_job(deps)
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new("failure()"));
+
+    for step in notify_slack(MessageType::Static(failure_message)) {
+        job = job.add_step(step);
+    }
+    named::job(job)
+}
+
+pub(crate) enum MessageType {
+    Static(String),
+    Evaluated(String),
+}
+
+fn notify_slack(message: MessageType) -> Vec<Step<Run>> {
+    match message {
+        MessageType::Static(message) => vec![send_slack_message(message)],
+        MessageType::Evaluated(expression) => {
+            let (generate_step, generated_message) = generate_slack_message(expression);
+
+            vec![
+                generate_step,
+                send_slack_message(generated_message.to_string()),
+            ]
+        }
+    }
+}
+
+fn generate_slack_message(expression: String) -> (Step<Run>, StepOutput) {
+    let script = formatdoc! {r#"
+        MESSAGE=$({expression})
+        echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+        "#
+    };
+    let generate_step = named::bash(&script).id("generate-webhook-message");
+
+    let output = StepOutput::new(&generate_step, "message");
+
+    (generate_step, output)
+}
+
+fn send_slack_message(message: String) -> Step<Run> {
+    let script = formatdoc! {r#"
+        curl -X POST -H 'Content-type: application/json'\
+         --data '{{"text":"{message}"}}' "$SLACK_WEBHOOK"
+        "#
+    };
+    named::bash(&script).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
 }

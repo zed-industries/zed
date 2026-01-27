@@ -71,7 +71,9 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
-use crate::capture_example::should_sample_edit_prediction_example_capture;
+use crate::capture_example::{
+    should_sample_edit_prediction_example_capture, should_send_testing_zeta2_request,
+};
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -170,6 +172,7 @@ pub enum EditPredictionModel {
     Mercury,
 }
 
+#[derive(Clone)]
 pub struct EditPredictionModelInput {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
@@ -1763,7 +1766,20 @@ impl EditPredictionStore {
             }
         }
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
+            EditPredictionModel::Zeta1 => {
+                if should_send_testing_zeta2_request() {
+                    let mut zeta2_inputs = inputs.clone();
+                    zeta2_inputs.trigger = PredictEditsRequestTrigger::Testing;
+                    zeta2::request_prediction_with_zeta2(
+                        self,
+                        zeta2_inputs,
+                        Default::default(),
+                        cx,
+                    )
+                    .detach();
+                }
+                zeta1::request_prediction_with_zeta1(self, inputs, cx)
+            }
             EditPredictionModel::Zeta2 { version } => {
                 zeta2::request_prediction_with_zeta2(self, inputs, version, cx)
             }

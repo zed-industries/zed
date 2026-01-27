@@ -1,10 +1,6 @@
-use crate::{
-    db::{
-        Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
-        tests::{assert_channel_tree_matches, channel_tree, new_test_user},
-    },
-    test_both_dbs,
-};
+use super::{assert_channel_tree_matches, channel_tree, new_test_user};
+use crate::test_both_dbs;
+use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId};
 use rpc::{
     ConnectionId,
     proto::{self, reorder_channel},
@@ -689,12 +685,12 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
+    db.set_channel_visibility(zed_channel, collab::db::ChannelVisibility::Public, admin)
         .await
         .unwrap();
     db.set_channel_visibility(
         public_channel_id,
-        crate::db::ChannelVisibility::Public,
+        collab::db::ChannelVisibility::Public,
         admin,
     )
     .await

@@ -4838,6 +4838,7 @@ mod tests {
                 "diagnostics",
                 "edit_prediction",
                 "editor",
+                "encoding_selector",
                 "feedback",
                 "file_finder",
                 "git",

@@ -1,11 +1,11 @@
-use crate::{db::ChannelId, tests::TestServer};
+use crate::TestServer;
 use call::ActiveCall;
 use chrono::Utc;
+use collab::db::ChannelId;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
 use util::rel_path::rel_path;
-
 #[gpui::test]
 async fn test_channel_guests(
     executor: BackgroundExecutor,

@@ -5297,8 +5297,6 @@ impl AcpThreadView {
         // block you from using the panel.
         let pending_edits = false;
 
-        let use_keep_reject_buttons = !cx.has_flag::<AgentV2FeatureFlag>();
-
         v_flex()
             .mt_1()
             .mx_2()
@@ -5327,7 +5325,6 @@ impl AcpThreadView {
                     &changed_buffers,
                     self.edits_expanded,
                     pending_edits,
-                    use_keep_reject_buttons,
                     cx,
                 ))
                 .when(self.edits_expanded, |parent| {
@@ -5336,7 +5333,6 @@ impl AcpThreadView {
                         telemetry.clone(),
                         &changed_buffers,
                         pending_edits,
-                        use_keep_reject_buttons,
                         cx,
                     ))
                 })
@@ -5514,7 +5510,6 @@ impl AcpThreadView {
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> Div {
         const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
@@ -5596,82 +5591,59 @@ impl AcpThreadView {
                         cx.notify();
                     })),
             )
-            .when(use_keep_reject_buttons, |this| {
-                this.child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new("review-changes", IconName::ListTodo)
-                                .icon_size(IconSize::Small)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Review Changes",
-                                            &OpenAgentDiff,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
-                                })),
-                        )
-                        .child(Divider::vertical().color(DividerColor::Border))
-                        .child(
-                            Button::new("reject-all-changes", "Reject All")
-                                .label_size(LabelSize::Small)
-                                .disabled(pending_edits)
-                                .when(pending_edits, |this| {
-                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
-                                })
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &RejectAll,
-                                        &focus_handle.clone(),
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("review-changes", IconName::ListTodo)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |_window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Review Changes",
+                                        &OpenAgentDiff,
+                                        &focus_handle,
                                         cx,
                                     )
+                                }
+                            })
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
+                            })),
+                    )
+                    .child(Divider::vertical().color(DividerColor::Border))
+                    .child(
+                        Button::new("reject-all-changes", "Reject All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle.clone(), cx)
                                     .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.reject_all(&RejectAll, window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("keep-all-changes", "Keep All")
-                                .label_size(LabelSize::Small)
-                                .disabled(pending_edits)
-                                .when(pending_edits, |this| {
-                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
-                                })
-                                .key_binding(
-                                    KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.keep_all(&KeepAll, window, cx);
-                                })),
-                        ),
-                )
-            })
-            .when(!use_keep_reject_buttons, |this| {
-                this.child(
-                    Button::new("review-changes", "Review Changes")
-                        .label_size(LabelSize::Small)
-                        .key_binding(
-                            KeyBinding::for_action_in(
-                                &git_ui::project_diff::Diff,
-                                &focus_handle,
-                                cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(10.))),
-                        )
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            window.dispatch_action(git_ui::project_diff::Diff.boxed_clone(), cx);
-                        })),
-                )
-            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.reject_all(&RejectAll, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("keep-all-changes", "Keep All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.keep_all(&KeepAll, window, cx);
+                            })),
+                    ),
+            )
     }
 
     fn render_edited_files_buttons(
@@ -5681,11 +5653,10 @@ impl AcpThreadView {
         action_log: &Entity<ActionLog>,
         telemetry: &ActionLogTelemetry,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         editor_bg_color: Hsla,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let container = h_flex()
+        h_flex()
             .id("edited-buttons-container")
             .visible_on_hover("edited-code")
             .absolute()
@@ -5700,118 +5671,62 @@ impl AcpThreadView {
                     this.hovered_edited_file_buttons = None;
                 }
                 cx.notify();
-            }));
-
-        if use_keep_reject_buttons {
-            container
-                .child(
-                    Button::new(("review", index), "Review")
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let workspace = self.workspace.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                let Some(file) = buffer.read(cx).file() else {
-                                    return;
-                                };
-                                let project_path = project::ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                        workspace,
-                                        project_path,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            })
-                        }),
-                )
-                .child(Divider::vertical().color(DividerColor::BorderVariant))
-                .child(
-                    Button::new(("reject-file", index), "Reject")
-                        .label_size(LabelSize::Small)
-                        .disabled(pending_edits)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let action_log = action_log.clone();
-                            let telemetry = telemetry.clone();
-                            move |_, _, cx| {
-                                action_log.update(cx, |action_log, cx| {
-                                    action_log
-                                        .reject_edits_in_ranges(
-                                            buffer.clone(),
-                                            vec![Anchor::min_max_range_for_buffer(
-                                                buffer.read(cx).remote_id(),
-                                            )],
-                                            Some(telemetry.clone()),
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
-                                })
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(("keep-file", index), "Keep")
-                        .label_size(LabelSize::Small)
-                        .disabled(pending_edits)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let action_log = action_log.clone();
-                            let telemetry = telemetry.clone();
-                            move |_, _, cx| {
-                                action_log.update(cx, |action_log, cx| {
-                                    action_log.keep_edits_in_range(
+            }))
+            .child(
+                Button::new("review", "Review")
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_edited_buffer(&buffer, window, cx);
+                        })
+                    }),
+            )
+            .child(Divider::vertical().color(DividerColor::BorderVariant))
+            .child(
+                Button::new(("reject-file", index), "Reject")
+                    .label_size(LabelSize::Small)
+                    .disabled(pending_edits)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        let action_log = action_log.clone();
+                        let telemetry = telemetry.clone();
+                        move |_, _, cx| {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log
+                                    .reject_edits_in_ranges(
                                         buffer.clone(),
-                                        Anchor::min_max_range_for_buffer(
+                                        vec![Anchor::min_max_range_for_buffer(
                                             buffer.read(cx).remote_id(),
-                                        ),
+                                        )],
                                         Some(telemetry.clone()),
                                         cx,
-                                    );
-                                })
-                            }
-                        }),
-                )
-                .into_any_element()
-        } else {
-            container
-                .child(
-                    Button::new(("review", index), "Review")
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let workspace = self.workspace.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                let Some(file) = buffer.read(cx).file() else {
-                                    return;
-                                };
-                                let project_path = project::ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                        workspace,
-                                        project_path,
-                                        window,
-                                        cx,
-                                    );
-                                });
+                                    )
+                                    .detach_and_log_err(cx);
                             })
-                        }),
-                )
-                .into_any_element()
-        }
+                        }
+                    }),
+            )
+            .child(
+                Button::new(("keep-file", index), "Keep")
+                    .label_size(LabelSize::Small)
+                    .disabled(pending_edits)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        let action_log = action_log.clone();
+                        let telemetry = telemetry.clone();
+                        move |_, _, cx| {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log.keep_edits_in_range(
+                                    buffer.clone(),
+                                    Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
+                                    Some(telemetry.clone()),
+                                    cx,
+                                );
+                            })
+                        }
+                    }),
+            )
     }
 
     fn render_edited_files(
@@ -5820,7 +5735,6 @@ impl AcpThreadView {
         telemetry: ActionLogTelemetry,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -5889,7 +5803,6 @@ impl AcpThreadView {
                             action_log,
                             &telemetry,
                             pending_edits,
-                            use_keep_reject_buttons,
                             editor_bg_color,
                             cx,
                         );

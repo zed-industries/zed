@@ -1,5 +1,6 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
 
@@ -340,19 +341,35 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                job.add_service(
+                    "postgres",
+                    Container::new("postgres:15")
+                        .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                        .ports(vec![Port::Name("5432:5432".into())])
+                        .options(
+                            "--health-cmd pg_isready \
+                             --health-interval 500ms \
+                             --health-timeout 5s \
+                             --health-retries 10",
+                        ),
+                )
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::cargo_install_nextest())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
             .add_step(steps::cleanup_cargo_config(platform)),

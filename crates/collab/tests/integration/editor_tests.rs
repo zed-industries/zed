@@ -1,5 +1,6 @@
-use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
+use crate::TestServer;
 use call::ActiveCall;
+use collab::rpc::RECONNECT_TIMEOUT;
 use collections::{HashMap, HashSet};
 use editor::{
     AnchorRangeExt, DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT,
