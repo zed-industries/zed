@@ -1,3 +1,4 @@
+use crate::shell_parser::extract_commands;
 use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
 
@@ -60,20 +61,44 @@ pub fn decide_permission(
         return ToolPermissionDecision::Deny(error);
     }
 
-    if rules.always_deny.iter().any(|r| r.is_match(input)) {
-        return ToolPermissionDecision::Deny(format!(
-            "Command blocked by security rule for {} tool",
-            tool_name
-        ));
-    }
+    // For the terminal tool, parse the command to extract all sub-commands.
+    // This prevents shell injection attacks where a user configures an allow
+    // pattern like "^ls" and an attacker crafts "ls && rm -rf /".
+    let commands_to_check = if tool_name == "terminal" {
+        match extract_commands(input) {
+            Ok(commands) if !commands.is_empty() => commands,
+            Ok(_) => vec![input.to_string()],
+            Err(_) => vec![input.to_string()],
+        }
+    } else {
+        vec![input.to_string()]
+    };
 
-    if rules.always_confirm.iter().any(|r| r.is_match(input)) {
-        if !always_allow_tool_actions {
-            return ToolPermissionDecision::Confirm;
+    // DENY: If ANY sub-command matches a deny pattern, deny the entire command.
+    for cmd in &commands_to_check {
+        if rules.always_deny.iter().any(|r| r.is_match(cmd)) {
+            return ToolPermissionDecision::Deny(format!(
+                "Command blocked by security rule for {} tool",
+                tool_name
+            ));
         }
     }
 
-    if rules.always_allow.iter().any(|r| r.is_match(input)) {
+    // CONFIRM: If ANY sub-command matches a confirm pattern, require confirmation.
+    if !always_allow_tool_actions {
+        for cmd in &commands_to_check {
+            if rules.always_confirm.iter().any(|r| r.is_match(cmd)) {
+                return ToolPermissionDecision::Confirm;
+            }
+        }
+    }
+
+    // ALLOW: ALL sub-commands must match at least one allow pattern.
+    let all_allowed = commands_to_check
+        .iter()
+        .all(|cmd| rules.always_allow.iter().any(|r| r.is_match(cmd)));
+
+    if all_allowed && !commands_to_check.is_empty() {
         return ToolPermissionDecision::Allow;
     }
 
@@ -665,6 +690,42 @@ mod tests {
     fn shell_injection_pipe_stderr_not_allowed() {
         // "|&" pipes both stdout and stderr (bash-specific)
         t("ls |& rm -rf /").allow(&["^ls"]).is_confirm();
+    }
+
+    #[test]
+    fn allow_requires_all_commands_to_match() {
+        // Both "ls" and "echo" must be allowed for this to pass
+        t("ls && echo hello").allow(&["^ls", "^echo"]).is_allow();
+    }
+
+    #[test]
+    fn deny_triggers_on_any_matching_command() {
+        // Even though "ls" is allowed, "rm" is denied, so entire command is denied
+        t("ls && rm file").allow(&["^ls"]).deny(&["^rm"]).is_deny();
+    }
+
+    #[test]
+    fn confirm_triggers_on_any_matching_command() {
+        // "ls" is allowed but "sudo" requires confirm
+        t("ls && sudo reboot")
+            .allow(&["^ls"])
+            .confirm(&["^sudo"])
+            .is_confirm();
+    }
+
+    #[test]
+    fn nested_command_substitution_all_checked() {
+        // All three commands (echo, cat, whoami) must be allowed
+        t("echo $(cat $(whoami).txt)")
+            .allow(&["^echo", "^cat", "^whoami"])
+            .is_allow();
+    }
+
+    #[test]
+    fn parse_failure_falls_back_to_confirm() {
+        // Invalid syntax should not auto-allow, falls back to original string matching
+        // Since "ls &&" doesn't match "^ls$" exactly, it should confirm
+        t("ls &&").allow(&["^ls$"]).is_confirm();
     }
 
     // mcp tools
