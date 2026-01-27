@@ -7,6 +7,7 @@ mod git;
 mod headless;
 mod load_project;
 mod metrics;
+mod openai_client;
 mod parse_output;
 mod paths;
 mod predict;
@@ -242,13 +243,50 @@ struct EvalArgs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TeacherBackend {
+    Sonnet45,
+    Gpt52,
+}
+
+impl std::fmt::Display for TeacherBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TeacherBackend::Sonnet45 => write!(f, "sonnet45"),
+            TeacherBackend::Gpt52 => write!(f, "gpt52"),
+        }
+    }
+}
+
+impl std::str::FromStr for TeacherBackend {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
+            "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
+            "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
+            _ => anyhow::bail!("unknown teacher backend `{s}`. Valid options: sonnet45, gpt52"),
+        }
+    }
+}
+
+impl TeacherBackend {
+    pub fn model_name(&self) -> &'static str {
+        match self {
+            TeacherBackend::Sonnet45 => "claude-sonnet-4-5",
+            TeacherBackend::Gpt52 => "gpt-5.2",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
     Sweep,
     Mercury,
     Zeta1,
     Zeta2(ZetaVersion),
-    Teacher(ZetaVersion),
-    TeacherNonBatching(ZetaVersion),
+    Teacher(TeacherBackend),
+    TeacherNonBatching(TeacherBackend),
     Repair,
 }
 
@@ -265,9 +303,9 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(version) => write!(f, "zeta2:{version}"),
-            PredictionProvider::Teacher(version) => write!(f, "teacher:{version}"),
-            PredictionProvider::TeacherNonBatching(version) => {
-                write!(f, "teacher-non-batching:{version}")
+            PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
+            PredictionProvider::TeacherNonBatching(backend) => {
+                write!(f, "teacher-non-batching:{backend}")
             }
             PredictionProvider::Repair => write!(f, "repair"),
         }
@@ -277,28 +315,38 @@ impl std::fmt::Display for PredictionProvider {
 impl std::str::FromStr for PredictionProvider {
     type Err = anyhow::Error;
 
-    fn from_str(mut s: &str) -> Result<Self, Self::Err> {
-        let mut version = ZetaVersion::default();
-        if let Some((first, second)) = s.split_once(':') {
-            version = ZetaVersion::parse(second)?;
-            s = first;
-        }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (provider, arg) = s.split_once(':').map_or((s, None), |(p, a)| (p, Some(a)));
 
-        let s_lower = s.to_lowercase();
-        match s_lower.as_str() {
+        let provider_lower = provider.to_lowercase();
+        match provider_lower.as_str() {
             "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
-            "zeta2" => Ok(PredictionProvider::Zeta2(version)),
-            "teacher" => Ok(PredictionProvider::Teacher(version)),
+            "zeta2" => {
+                let version = arg.map(ZetaVersion::parse).transpose()?.unwrap_or_default();
+                Ok(PredictionProvider::Zeta2(version))
+            }
+            "teacher" => {
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::Sonnet45);
+                Ok(PredictionProvider::Teacher(backend))
+            }
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
-                Ok(PredictionProvider::TeacherNonBatching(version))
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::Sonnet45);
+                Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
+                 For teacher, you can specify a backend like `teacher:sonnet45` or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
                     ZetaVersion::options_as_string()
                 )
@@ -347,9 +395,18 @@ struct SynthesizeArgs {
 
 #[derive(Debug, Args, Clone)]
 struct ImportBatchArgs {
-    /// Anthropic batch IDs to import (e.g., msgbatch_xxx)
+    /// Batch IDs to import (e.g., msgbatch_xxx for Anthropic, batch_xxx for OpenAI)
     #[clap(long, required = true, num_args = 1..)]
     batch_ids: Vec<String>,
+    /// Which provider's batches to import (anthropic or openai)
+    #[clap(long, default_value = "anthropic")]
+    provider: BatchProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum BatchProvider {
+    Anthropic,
+    Openai,
 }
 
 impl EpArgs {
@@ -537,11 +594,23 @@ fn main() {
     match &command {
         Command::ImportBatch(import_args) => {
             smol::block_on(async {
-                let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
-                    .expect("Failed to create Anthropic client");
-                if let Err(e) = client.import_batches(&import_args.batch_ids).await {
-                    eprintln!("Error importing batches: {:?}", e);
-                    std::process::exit(1);
+                match import_args.provider {
+                    BatchProvider::Anthropic => {
+                        let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
+                            .expect("Failed to create Anthropic client");
+                        if let Err(e) = client.import_batches(&import_args.batch_ids).await {
+                            eprintln!("Error importing Anthropic batches: {:?}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                    BatchProvider::Openai => {
+                        let client = openai_client::OpenAiClient::batch(&paths::LLM_CACHE_DB)
+                            .expect("Failed to create OpenAI client");
+                        if let Err(e) = client.import_batches(&import_args.batch_ids).await {
+                            eprintln!("Error importing OpenAI batches: {:?}", e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
                 println!(
                     "Successfully imported {} batch(es)",
