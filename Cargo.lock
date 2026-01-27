@@ -9163,6 +9163,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "lsp",
+ "menu",
  "project",
  "proto",
  "release_channel",

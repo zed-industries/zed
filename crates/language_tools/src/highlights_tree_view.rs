@@ -3,9 +3,10 @@ use editor::{Anchor, Editor, MultiBufferSnapshot, SelectionEffects, ToPoint, scr
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Render, SharedString, Styled, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
+    MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
+    Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
+use menu::{SelectNext, SelectPrevious};
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use ui::{
@@ -128,6 +129,7 @@ pub struct HighlightsTreeView {
     cached_entries: Vec<HighlightEntry>,
     show_text_highlights: bool,
     show_semantic_tokens: bool,
+    skip_next_scroll: bool,
 }
 
 pub struct HighlightsTreeToolbarItemView {
@@ -159,6 +161,7 @@ impl HighlightsTreeView {
             cached_entries: Vec::new(),
             show_text_highlights: true,
             show_semantic_tokens: true,
+            skip_next_scroll: false,
         };
 
         this.handle_item_updated(active_item, window, cx);
@@ -264,9 +267,10 @@ impl HighlightsTreeView {
             return;
         };
 
-        let (display_map, multi_buffer) = {
+        let (display_map, multi_buffer, cursor_position) = {
             let editor = editor_state.editor.read(cx);
-            (editor.display_map.clone(), editor.buffer().clone())
+            let cursor = editor.selections.newest_anchor().head();
+            (editor.display_map.clone(), editor.buffer().clone(), cursor)
         };
 
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -309,7 +313,41 @@ impl HighlightsTreeView {
         entries.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
 
         self.cached_entries = entries;
+
+        if self.skip_next_scroll {
+            self.skip_next_scroll = false;
+        } else {
+            self.scroll_to_cursor_position(&cursor_position, &multi_buffer_snapshot);
+        }
         cx.notify();
+    }
+
+    fn scroll_to_cursor_position(&mut self, cursor: &Anchor, snapshot: &MultiBufferSnapshot) {
+        let cursor_point = cursor.to_point(snapshot);
+        let cursor_key = (cursor_point.row, cursor_point.column);
+
+        let filtered = self.filtered_entries();
+
+        let best_ix = filtered
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, entry))| {
+                let (start_row, start_col, end_row, end_col) = entry.sort_key;
+                let start = (start_row, start_col);
+                let end = (end_row, end_col);
+                cursor_key >= start && cursor_key <= end
+            })
+            .min_by_key(|(_, (_, entry))| {
+                let (start_row, start_col, end_row, end_col) = entry.sort_key;
+                (end_row - start_row, end_col.saturating_sub(start_col))
+            })
+            .map(|(filtered_ix, (original_ix, _))| (filtered_ix, original_ix));
+
+        if let Some((filtered_ix, original_ix)) = best_ix {
+            self.selected_item_ix = Some(*original_ix);
+            self.list_scroll_handle
+                .scroll_to_item(filtered_ix, ScrollStrategy::Center);
+        }
     }
 
     fn filtered_entries(&self) -> Vec<(usize, &HighlightEntry)> {
@@ -384,6 +422,7 @@ impl HighlightsTreeView {
                     MouseButton::Left,
                     cx.listener(move |tree_view, _: &MouseDownEvent, window, cx| {
                         tree_view.selected_item_ix = Some(original_ix);
+                        tree_view.skip_next_scroll = true;
                         tree_view.update_editor_with_range_for_entry(
                             original_ix,
                             window,
@@ -446,6 +485,62 @@ impl HighlightsTreeView {
             editor.clear_background_highlights_key::<Self>(highlight_key, cx);
         });
     }
+
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(-1, window, cx);
+    }
+
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(1, window, cx);
+    }
+
+    fn move_selection(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let filtered = self.filtered_entries();
+        if filtered.is_empty() {
+            return;
+        }
+
+        let current_filtered_ix = self
+            .selected_item_ix
+            .and_then(|selected| {
+                filtered
+                    .iter()
+                    .position(|(original_ix, _)| *original_ix == selected)
+            })
+            .unwrap_or(0);
+
+        let new_filtered_ix = if delta < 0 {
+            current_filtered_ix.saturating_sub((-delta) as usize)
+        } else {
+            (current_filtered_ix + delta as usize).min(filtered.len() - 1)
+        };
+
+        if let Some(&(original_ix, _)) = filtered.get(new_filtered_ix) {
+            self.selected_item_ix = Some(original_ix);
+            self.skip_next_scroll = true;
+            self.list_scroll_handle
+                .scroll_to_item(new_filtered_ix, ScrollStrategy::Center);
+
+            self.update_editor_with_range_for_entry(
+                original_ix,
+                window,
+                cx,
+                |editor, mut range, _, window, cx| {
+                    mem::swap(&mut range.start, &mut range.end);
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::newest()),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([range]);
+                        },
+                    );
+                },
+            );
+
+            cx.notify();
+        }
+    }
 }
 
 impl Render for HighlightsTreeView {
@@ -454,6 +549,10 @@ impl Render for HighlightsTreeView {
 
         div()
             .flex_1()
+            .track_focus(&self.focus_handle)
+            .key_context("HighlightsTreeView")
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_next))
             .bg(cx.theme().colors().editor_background)
             .map(|this| {
                 if filtered_count > 0 {
@@ -553,6 +652,7 @@ impl Item for HighlightsTreeView {
             let mut clone = Self::new(self.workspace_handle.clone(), None, window, cx);
             clone.show_text_highlights = self.show_text_highlights;
             clone.show_semantic_tokens = self.show_semantic_tokens;
+            clone.skip_next_scroll = false;
             if let Some(editor) = &self.editor {
                 clone.set_editor(editor.editor.clone(), window, cx)
             }
