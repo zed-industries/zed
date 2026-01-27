@@ -26,7 +26,7 @@ pub struct Terminals {
 }
 
 impl Project {
-    pub fn active_file_directory(&self, cx: &App) -> Option<PathBuf> {
+    pub fn active_entry_directory(&self, cx: &App) -> Option<PathBuf> {
         let entry_id = self.active_entry()?;
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         let worktree = worktree.read(cx);

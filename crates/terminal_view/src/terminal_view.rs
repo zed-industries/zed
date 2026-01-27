@@ -1593,7 +1593,7 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
             .read(cx)
-            .active_file_directory(cx)
+            .active_entry_directory(cx)
             .or_else(|| current_project_directory(workspace, cx)),
         WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
@@ -1744,9 +1744,9 @@ mod tests {
         });
     }
 
-    // CurrentFileDirectory: No active entry -> returns None
+    // active_entry_directory: No active entry -> returns None (used by CurrentFileDirectory)
     #[gpui::test]
-    async fn current_file_directory_no_active_entry(cx: &mut TestAppContext) {
+    async fn active_entry_directory_no_active_entry(cx: &mut TestAppContext) {
         let (project, _workspace) = init_test(cx).await;
 
         let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
@@ -1754,14 +1754,14 @@ mod tests {
         cx.update(|cx| {
             assert!(project.read(cx).active_entry().is_none());
 
-            let res = project.read(cx).active_file_directory(cx);
+            let res = project.read(cx).active_entry_directory(cx);
             assert_eq!(res, None);
         });
     }
 
-    // CurrentFileDirectory: Active entry is file -> returns parent directory
+    // active_entry_directory: Active entry is file -> returns parent directory (used by CurrentFileDirectory)
     #[gpui::test]
-    async fn current_file_directory_active_file(cx: &mut TestAppContext) {
+    async fn active_entry_directory_active_file(cx: &mut TestAppContext) {
         let (project, _workspace) = init_test(cx).await;
 
         let (wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
@@ -1786,21 +1786,21 @@ mod tests {
         insert_active_entry_for(wt, entry, project.clone(), cx);
 
         cx.update(|cx| {
-            let res = project.read(cx).active_file_directory(cx);
+            let res = project.read(cx).active_entry_directory(cx);
             assert_eq!(res, Some(Path::new("/root/src").to_path_buf()));
         });
     }
 
-    // CurrentFileDirectory: Active entry is directory -> returns that directory
+    // active_entry_directory: Active entry is directory -> returns that directory (used by CurrentFileDirectory)
     #[gpui::test]
-    async fn current_file_directory_active_dir(cx: &mut TestAppContext) {
+    async fn active_entry_directory_active_dir(cx: &mut TestAppContext) {
         let (project, _workspace) = init_test(cx).await;
 
         let (wt, entry) = create_folder_wt(project.clone(), "/root/", cx).await;
         insert_active_entry_for(wt, entry, project.clone(), cx);
 
         cx.update(|cx| {
-            let res = project.read(cx).active_file_directory(cx);
+            let res = project.read(cx).active_entry_directory(cx);
             assert_eq!(res, Some(Path::new("/root/").to_path_buf()));
         });
     }
