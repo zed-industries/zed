@@ -229,7 +229,7 @@ impl Settings for EditorSettings {
                     horizontal: axes.horizontal.unwrap(),
                     vertical: axes.vertical.unwrap(),
                 },
-                active_scope_markers: scrollbar.active_scope_markers.unwrap_or(true),
+                active_scope_markers: scrollbar.active_scope_markers.unwrap_or(false),
             },
             minimap: Minimap {
                 show: minimap.show.unwrap(),
