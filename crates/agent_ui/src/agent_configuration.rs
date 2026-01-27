@@ -9,7 +9,7 @@ use std::{ops::Range, sync::Arc};
 use agent::ContextServerRegistry;
 use anyhow::Result;
 use client::zed_urls;
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::{Plan, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
