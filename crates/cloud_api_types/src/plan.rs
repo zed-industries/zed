@@ -27,7 +27,10 @@ impl PlanInfo {
     pub fn plan(&self) -> Plan {
         match &self.plan {
             KnownOrUnknown::Known(plan) => *plan,
-            KnownOrUnknown::Unknown(_) => Plan::ZedFree,
+            KnownOrUnknown::Unknown(_) => {
+                // If we get a plan that we don't recognize, fall back to the Free plan.
+                Plan::ZedFree
+            }
         }
     }
 }
