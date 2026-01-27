@@ -5,16 +5,18 @@ use std::{
     str::FromStr,
 };
 
-use editor::{Editor, actions::MoveDown, actions::MoveUp};
+use editor::Editor;
 use gpui::{
     ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers, TextAlign,
     TextStyleRefinement, WeakEntity,
 };
 
 use settings::{
-    CenteredPaddingSettings, CodeFade, DelayMs, FontSize, InactiveOpacity, MinimumContrast,
+    CenteredPaddingSettings, CodeFade, DelayMs, FontSize, FontWeightContent, InactiveOpacity,
+    MinimumContrast,
 };
 use ui::prelude::*;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NumberFieldMode {
@@ -106,6 +108,14 @@ macro_rules! impl_newtype_numeric_stepper_int {
 
 #[rustfmt::skip]
 impl_newtype_numeric_stepper_float!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
+impl_newtype_numeric_stepper_float!(
+    FontWeightContent,
+    50.,
+    100.,
+    10.,
+    FontWeightContent::THIN,
+    FontWeightContent::BLACK
+);
 impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
 impl_newtype_numeric_stepper_float!(FontSize, 1.0, 4.0, 0.5, 6.0, 72.0);
 impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
@@ -307,26 +317,6 @@ impl<T: NumberFieldType> NumberField<T> {
         }
     }
 
-    pub fn format(mut self, format: impl FnOnce(&T) -> String + 'static) -> Self {
-        self.format = Box::new(format);
-        self
-    }
-
-    pub fn small_step(mut self, step: T) -> Self {
-        self.small_step = step;
-        self
-    }
-
-    pub fn normal_step(mut self, step: T) -> Self {
-        self.step = step;
-        self
-    }
-
-    pub fn large_step(mut self, step: T) -> Self {
-        self.large_step = step;
-        self
-    }
-
     pub fn min(mut self, min: T) -> Self {
         self.min_value = min;
         self
@@ -339,14 +329,6 @@ impl<T: NumberFieldType> NumberField<T> {
 
     pub fn mode(self, mode: NumberFieldMode, cx: &mut App) -> Self {
         self.mode.write(cx, mode);
-        self
-    }
-
-    pub fn on_reset(
-        mut self,
-        on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_reset = Some(Box::new(on_reset));
         self
     }
 

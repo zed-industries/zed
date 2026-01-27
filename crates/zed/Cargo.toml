@@ -110,6 +110,7 @@ file_finder.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
+git_graph.workspace = true
 git_hosting_providers.workspace = true
 git_ui.workspace = true
 go_to_line.workspace = true

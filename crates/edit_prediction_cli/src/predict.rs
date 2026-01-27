@@ -197,6 +197,7 @@ pub async fn run_prediction(
             .push(ExamplePrediction {
                 actual_patch: None,
                 actual_output: String::new(),
+                error: None,
                 provider,
             });
 
@@ -302,6 +303,7 @@ async fn predict_anthropic(
     let prediction = ExamplePrediction {
         actual_patch: Some(actual_patch),
         actual_output,
+        error: None,
         provider: if batched {
             PredictionProvider::Teacher(version)
         } else {

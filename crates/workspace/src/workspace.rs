@@ -104,9 +104,9 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp,
-    collections::{VecDeque, hash_map::DefaultHasher},
+    collections::VecDeque,
     env,
-    hash::{Hash, Hasher},
+    hash::Hash,
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
@@ -227,6 +227,8 @@ actions!(
         ToggleAllDocks,
         /// Closes the current window.
         CloseWindow,
+        /// Closes the current project.
+        CloseProject,
         /// Opens the feedback dialog.
         Feedback,
         /// Follows the next collaborator in the session.
@@ -1357,12 +1359,8 @@ impl Workspace {
                 project::Event::LanguageServerPrompt(request) => {
                     struct LanguageServerPrompt;
 
-                    let mut hasher = DefaultHasher::new();
-                    request.lsp_name.as_str().hash(&mut hasher);
-                    let id = hasher.finish();
-
                     this.show_notification(
-                        NotificationId::composite::<LanguageServerPrompt>(id as usize),
+                        NotificationId::composite::<LanguageServerPrompt>(request.id),
                         cx,
                         |cx| {
                             cx.new(|cx| {
@@ -1825,12 +1823,47 @@ impl Workspace {
             };
 
             notify_if_database_failed(window, cx);
+            // Check if this is an empty workspace (no paths to open)
+            // An empty workspace is one where project_paths is empty
+            let is_empty_workspace = project_paths.is_empty();
+            // Check if serialized workspace has paths before it's moved
+            let serialized_workspace_has_paths = serialized_workspace
+                .as_ref()
+                .map(|ws| !ws.paths.is_empty())
+                .unwrap_or(false);
+
             let opened_items = window
                 .update(cx, |_workspace, window, cx| {
                     open_items(serialized_workspace, project_paths, window, cx)
                 })?
                 .await
                 .unwrap_or_default();
+
+            // Restore default dock state for empty workspaces
+            // Only restore if:
+            // 1. This is an empty workspace (no paths), AND
+            // 2. The serialized workspace either doesn't exist or has no paths
+            if is_empty_workspace && !serialized_workspace_has_paths {
+                if let Some(default_docks) = persistence::read_default_dock_state() {
+                    window
+                        .update(cx, |workspace, window, cx| {
+                            for (dock, serialized_dock) in [
+                                (&mut workspace.right_dock, default_docks.right),
+                                (&mut workspace.left_dock, default_docks.left),
+                                (&mut workspace.bottom_dock, default_docks.bottom),
+                            ]
+                            .iter_mut()
+                            {
+                                dock.update(cx, |dock, cx| {
+                                    dock.serialized_dock = Some(serialized_dock.clone());
+                                    dock.restore_state(window, cx);
+                                });
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                }
+            }
 
             window
                 .update(cx, |workspace, window, cx| {
@@ -5860,6 +5893,8 @@ impl Workspace {
             WorkspaceLocation::DetachFromSession => {
                 let window_bounds = SerializedWindowBounds(window.window_bounds());
                 let display = window.display(cx).and_then(|d| d.uuid().ok());
+                // Save dock state for empty local workspaces
+                let docks = build_serialized_docks(self, window, cx);
                 window.spawn(cx, async move |_| {
                     persistence::DB
                         .set_window_open_status(
@@ -5873,10 +5908,21 @@ impl Workspace {
                         .set_session_id(database_id, None)
                         .await
                         .log_err();
+                    persistence::write_default_dock_state(docks).await.log_err();
                 })
             }
-            WorkspaceLocation::None => Task::ready(()),
+            WorkspaceLocation::None => {
+                // Save dock state for empty non-local workspaces
+                let docks = build_serialized_docks(self, window, cx);
+                window.spawn(cx, async move |_| {
+                    persistence::write_default_dock_state(docks).await.log_err();
+                })
+            }
         }
+    }
+
+    fn has_any_items_open(&self, cx: &App) -> bool {
+        self.panes.iter().any(|pane| pane.read(cx).items_len() > 0)
     }
 
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
@@ -5884,7 +5930,7 @@ impl Workspace {
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
-            if !paths.is_empty() {
+            if !paths.is_empty() || self.has_any_items_open(cx) {
                 WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
@@ -7785,14 +7831,15 @@ impl WorkspaceHandle for Entity<Workspace> {
     }
 }
 
-pub async fn last_opened_workspace_location() -> Option<(SerializedWorkspaceLocation, PathList)> {
+pub async fn last_opened_workspace_location()
+-> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
@@ -8125,6 +8172,83 @@ pub struct OpenOptions {
     pub env: Option<HashMap<String, String>>,
 }
 
+/// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
+pub fn open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    app_state: Arc<AppState>,
+    cx: &mut App,
+) -> Task<anyhow::Result<WindowHandle<Workspace>>> {
+    let project_handle = Project::local(
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.user_store.clone(),
+        app_state.languages.clone(),
+        app_state.fs.clone(),
+        None,
+        project::LocalProjectFlags {
+            init_worktree_trust: true,
+            ..project::LocalProjectFlags::default()
+        },
+        cx,
+    );
+
+    cx.spawn(async move |cx| {
+        let serialized_workspace = persistence::DB
+            .workspace_for_id(workspace_id)
+            .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
+
+        let window_bounds_override = window_bounds_env_override();
+
+        let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+            (Some(WindowBounds::Windowed(bounds)), None)
+        } else if let Some(display) = serialized_workspace.display
+            && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
+        {
+            (Some(bounds.0), Some(display))
+        } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+            (Some(bounds), Some(display))
+        } else {
+            (None, None)
+        };
+
+        let options = cx.update(|cx| {
+            let mut options = (app_state.build_window_options)(display, cx);
+            options.window_bounds = window_bounds;
+            options
+        });
+        let centered_layout = serialized_workspace.centered_layout;
+
+        let window = cx.open_window(options, {
+            let app_state = app_state.clone();
+            let project_handle = project_handle.clone();
+            move |window, cx| {
+                cx.new(|cx| {
+                    let mut workspace =
+                        Workspace::new(Some(workspace_id), project_handle, app_state, window, cx);
+                    workspace.centered_layout = centered_layout;
+                    workspace
+                })
+            }
+        })?;
+
+        notify_if_database_failed(window, cx);
+
+        // Restore items from the serialized workspace
+        window
+            .update(cx, |_workspace, window, cx| {
+                open_items(Some(serialized_workspace), vec![], window, cx)
+            })?
+            .await?;
+
+        window.update(cx, |workspace, window, cx| {
+            window.activate_window();
+            workspace.serialize_workspace(window, cx);
+        })?;
+
+        Ok(window)
+    })
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -8289,7 +8413,7 @@ pub fn open_new(
     let task = Workspace::new_local(
         Vec::new(),
         app_state,
-        None,
+        open_options.replace_window,
         open_options.env,
         Some(Box::new(init)),
         cx,

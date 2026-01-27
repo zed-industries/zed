@@ -80,22 +80,30 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: Rc<acp::ClientSideConnection>,
-    updates_tx: Rc<RefCell<watch::Sender<()>>>,
-    updates_rx: watch::Receiver<()>,
+    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
     fn new(connection: Rc<acp::ClientSideConnection>) -> Self {
-        let (tx, rx) = watch::channel(());
+        let (tx, rx) = smol::channel::unbounded();
         Self {
             connection,
-            updates_tx: Rc::new(RefCell::new(tx)),
+            updates_tx: tx,
             updates_rx: rx,
         }
     }
 
     fn notify_update(&self) {
-        self.updates_tx.borrow_mut().send(()).ok();
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::Refresh)
+            .log_err();
+    }
+
+    fn send_info_update(&self, session_id: acp::SessionId, update: acp::SessionInfoUpdate) {
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
+            .log_err();
     }
 }
 
@@ -133,7 +141,10 @@ impl AgentSessionList for AcpSessionList {
         })
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 
@@ -209,8 +220,12 @@ impl AcpConnection {
             )
         });
 
+        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
+            Rc::new(RefCell::new(None));
+
         let client = ClientDelegate {
             sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
             cx: cx.clone(),
         };
         let (connection, io_task) = acp::ClientSideConnection::new(client, stdin, stdout, {
@@ -300,7 +315,9 @@ impl AcpConnection {
             .list
             .is_some()
         {
-            Some(Rc::new(AcpSessionList::new(connection.clone())))
+            let list = Rc::new(AcpSessionList::new(connection.clone()));
+            *client_session_list.borrow_mut() = Some(list.clone());
+            Some(list)
         } else {
             None
         };
@@ -573,6 +590,15 @@ impl AgentConnection for AcpConnection {
         cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.load_session
     }
 
+    fn supports_resume_session(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>()
+            && self
+                .agent_capabilities
+                .session_capabilities
+                .resume
+                .is_some()
+    }
+
     fn load_session(
         self: Rc<Self>,
         session: AgentSessionInfo,
@@ -617,6 +643,84 @@ impl AgentConnection for AcpConnection {
                 .connection
                 .load_session(
                     acp::LoadSessionRequest::new(session.session_id.clone(), cwd)
+                        .mcp_servers(mcp_servers),
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    self.sessions.borrow_mut().remove(&session.session_id);
+                    return Err(map_acp_error(err));
+                }
+            };
+
+            let (modes, models, config_options) = cx.update(|cx| {
+                config_state(cx, response.modes, response.models, response.config_options)
+            });
+            if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
+                session.session_modes = modes;
+                session.models = models;
+                session.config_options = config_options.map(ConfigOptions::new);
+            }
+
+            if let Some(session_list) = &self.session_list {
+                session_list.notify_update();
+            }
+
+            Ok(thread)
+        })
+    }
+
+    fn resume_session(
+        self: Rc<Self>,
+        session: AgentSessionInfo,
+        project: Entity<Project>,
+        cwd: &Path,
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        if !cx.has_flag::<AcpBetaFeatureFlag>()
+            || self
+                .agent_capabilities
+                .session_capabilities
+                .resume
+                .is_none()
+        {
+            return Task::ready(Err(anyhow!(LoadError::Other(
+                "Resuming sessions is not supported by this agent.".into()
+            ))));
+        }
+
+        let cwd = cwd.to_path_buf();
+        let mcp_servers = mcp_servers_for_project(&project, cx);
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let thread: Entity<AcpThread> = cx.new(|cx| {
+            AcpThread::new(
+                self.server_name.clone(),
+                self.clone(),
+                project,
+                action_log,
+                session.session_id.clone(),
+                watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
+                cx,
+            )
+        });
+
+        self.sessions.borrow_mut().insert(
+            session.session_id.clone(),
+            AcpSession {
+                thread: thread.downgrade(),
+                suppress_abort_err: false,
+                session_modes: None,
+                models: None,
+                config_options: None,
+            },
+        );
+
+        cx.spawn(async move |cx| {
+            let response = match self
+                .connection
+                .resume_session(
+                    acp::ResumeSessionRequest::new(session.session_id.clone(), cwd)
                         .mcp_servers(mcp_servers),
                 )
                 .await
@@ -1045,6 +1149,7 @@ impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
 
 struct ClientDelegate {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
     cx: AsyncApp,
 }
 
@@ -1151,6 +1256,12 @@ impl acp::Client for ClientDelegate {
             }
         }
 
+        if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
+            && let Some(session_list) = self.session_list.borrow().as_ref()
+        {
+            session_list.send_info_update(notification.session_id.clone(), info_update.clone());
+        }
+
         // Clone so we can inspect meta both before and after handing off to the thread
         let update_clone = notification.update.clone();
 
@@ -1172,6 +1283,8 @@ impl acp::Client for ClientDelegate {
                                 AlternateScroll::On,
                                 None,
                                 0,
+                                cx.background_executor(),
+                                thread.project().read(cx).path_style(cx),
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
