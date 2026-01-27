@@ -582,12 +582,7 @@ impl Vim {
             }
 
             // gdefault inverts the behavior of the 'g' flag.
-            let gdefault = VimSettings::get_global(cx).gdefault;
-            let replace_all = if gdefault {
-                !replacement.flag_g
-            } else {
-                replacement.flag_g
-            };
+            let replace_all = VimSettings::get_global(cx).gdefault != replacement.flag_g;
             if !replace_all {
                 options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
             }
@@ -711,7 +706,7 @@ impl Replacement {
 
         for c in flags.chars() {
             match c {
-                'g' => replacement.flag_g = true,
+                'g' => replacement.flag_g = !replacement.flag_g,
                 'n' => replacement.flag_n = true,
                 'c' => replacement.flag_c = true,
                 'i' => replacement.case_sensitive = Some(false),
@@ -1152,48 +1147,55 @@ mod test {
 
     #[gpui::test]
     async fn test_replace_gdefault(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |s| {
-                s.vim.get_or_insert_default().gdefault = Some(true);
-            });
-        });
+        // Set the `gdefault` option in both Zed and Neovim.
+        cx.simulate_shared_keystrokes(": s e t space g d e f a u l t")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
 
-        cx.set_state(
-            indoc! {
-                "ˇaa aa aa aa
+        cx.set_shared_state(indoc! {
+            "ˇaa aa aa aa
                 aa
                 aa"
-            },
-            Mode::Normal,
-        );
+        })
+        .await;
 
         // With gdefault on, :s/// replaces all matches (like :s///g normally).
-        cx.simulate_keystrokes(": s / a a / b b");
-        cx.simulate_keystrokes("enter");
-        cx.run_until_parked();
-        cx.assert_state(
-            indoc! {
-                "ˇbb bb bb bb
+        cx.simulate_shared_keystrokes(": s / a a / b b").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇbb bb bb bb
                 aa
                 aa"
-            },
-            Mode::Normal,
-        );
+        });
 
         // With gdefault on, :s///g replaces only the first match.
-        cx.simulate_keystrokes(": s / b b / c c / g");
-        cx.simulate_keystrokes("enter");
-        cx.run_until_parked();
-        cx.assert_state(
-            indoc! {
-                "ˇcc bb bb bb
+        cx.simulate_shared_keystrokes(": s / b b / c c / g").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇcc bb bb bb
                 aa
                 aa"
-            },
-            Mode::Normal,
-        );
+        });
+
+        // Each successive `/g` flag should invert the one before it.
+        cx.simulate_shared_keystrokes(": s / b b / d d / g g").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇcc dd dd dd
+                aa
+                aa"
+        });
+
+        cx.simulate_shared_keystrokes(": s / c c / e e / g g g")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇee dd dd dd
+                aa
+                aa"
+        });
     }
 
     #[gpui::test]
