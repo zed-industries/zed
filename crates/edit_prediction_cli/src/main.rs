@@ -435,6 +435,7 @@ async fn load_examples(
 ) -> anyhow::Result<Vec<Example>> {
     let mut captured_after_timestamps = Vec::new();
     let mut rejected_after_timestamps = Vec::new();
+    let mut requested_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
@@ -445,6 +446,10 @@ async fn load_examples(
             pull_examples::parse_rejected_after_input(input_string.as_ref())
         {
             rejected_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) =
+            pull_examples::parse_requested_after_input(input_string.as_ref())
+        {
+            requested_after_timestamps.push(timestamp.to_string());
         } else {
             file_inputs.push(input.clone());
         }
@@ -481,13 +486,26 @@ async fn load_examples(
             rejected_after_timestamps.sort();
 
             let mut rejected_examples = pull_examples::fetch_rejected_examples_after(
-                http_client,
+                http_client.clone(),
                 &rejected_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut rejected_examples);
+        }
+
+        if !requested_after_timestamps.is_empty() {
+            requested_after_timestamps.sort();
+
+            let mut requested_examples = pull_examples::fetch_requested_examples_after(
+                http_client,
+                &requested_after_timestamps,
                 max_rows_per_timestamp,
                 background_executor,
             )
             .await?;
-            examples.append(&mut rejected_examples);
+            examples.append(&mut requested_examples);
         }
     }
 
