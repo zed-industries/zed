@@ -42,7 +42,12 @@ impl RepositorySelector {
         let repository_entries = git_store.update(cx, |git_store, _cx| {
             let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
 
-            repos.sort_by_key(|a| a.read(_cx).display_name());
+            repos.sort_by(|a, b| {
+                a.read(_cx)
+                    .display_name()
+                    .to_lowercase()
+                    .cmp(&b.read(_cx).display_name().to_lowercase())
+            });
 
             repos
         });
@@ -55,10 +60,12 @@ impl RepositorySelector {
                 .cmp(&b.read(cx).display_name().len())
         });
 
+        let active_repository = git_store.read(cx).active_repository();
         let delegate = RepositorySelectorDelegate {
             repository_selector: cx.entity().downgrade(),
             repository_entries,
             filtered_repositories,
+            active_repository,
             selected_index: 0,
         };
 
@@ -127,6 +134,7 @@ pub struct RepositorySelectorDelegate {
     repository_selector: WeakEntity<RepositorySelector>,
     repository_entries: Vec<Entity<Repository>>,
     filtered_repositories: Vec<Entity<Repository>>,
+    active_repository: Option<Entity<Repository>>,
     selected_index: usize,
 }
 
@@ -198,7 +206,12 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
             this.update_in(cx, |this, window, cx| {
                 let mut sorted_repositories = filtered_repositories;
-                sorted_repositories.sort_by_key(|a| a.read(cx).display_name());
+                sorted_repositories.sort_by(|a, b| {
+                    a.read(cx)
+                        .display_name()
+                        .to_lowercase()
+                        .cmp(&b.read(cx).display_name().to_lowercase())
+                });
                 this.delegate.filtered_repositories = sorted_repositories;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
@@ -246,12 +259,30 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let repo = repo_info.read(cx);
         let display_name = repo.display_name();
         let summary = repo.status_summary();
+        let is_active = self
+            .active_repository
+            .as_ref()
+            .is_some_and(|active| active == repo_info);
+
+        let branch_name = repo.branch.as_ref().map(|b| b.name().to_string());
 
         let mut item = ListItem::new(ix)
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
-            .child(Label::new(display_name));
+            .when(is_active, |item| {
+                item.start_slot(Icon::new(IconName::Check).color(Color::Accent))
+            })
+            .child(v_flex().child(Label::new(display_name)).when_some(
+                branch_name,
+                |el, branch| {
+                    el.child(
+                        Label::new(branch)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                },
+            ));
 
         if summary.count > 0 {
             let status = if summary.conflict > 0 {
