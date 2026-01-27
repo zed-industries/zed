@@ -1240,4 +1240,45 @@ mod test {
                  "
         });
     }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should return to line 2
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Cursor should be restored to line 2 where it was when search was opened
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor_no_matches(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇapple\nbanana\ncherry\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+
+        // Open search and type query for something that doesn't exist
+        cx.simulate_keystrokes("/ n o n e x i s t e n t");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should still be at original position
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+    }
 }

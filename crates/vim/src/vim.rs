@@ -42,6 +42,7 @@ use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
+use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::RegisterSetting;
 pub use settings::{
@@ -1427,6 +1428,31 @@ impl Vim {
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Restore cursor position if returning from dismissed search (Escape pressed)
+        // Only restore if the search bar is currently dismissed and prior_selections are non-empty
+        let should_restore = if !self.search.prior_selections.is_empty() {
+            if let Some(pane) = self.pane(window, cx) {
+                pane.read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .is_some_and(|bar| bar.read(cx).is_dismissed())
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if should_restore {
+            let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
+            self.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(prior_selections);
+                });
+            });
+        }
+
         let Some(editor) = self.editor() else {
             return;
         };
