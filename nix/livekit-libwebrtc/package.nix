@@ -150,7 +150,7 @@ stdenv.mkDerivation {
       fi
     done
 
-    # Trick the update_rust.py script into thinking we have *this specfic* rust available.
+    # Trick the update_rust.py script into thinking we have *this specific* rust available.
     # It isn't actually needed for the libwebrtc build, but GN will fail if it isn't there.
     mkdir -p third_party/rust-toolchain
     (python3 tools/rust/update_rust.py --print-package-version || true) \
