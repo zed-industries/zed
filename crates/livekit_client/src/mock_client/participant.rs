@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::HashMap;
-use gpui::AsyncApp;
+use gpui::{AsyncApp, Task};
 use livekit::webrtc::desktop_capturer::CaptureSource;
 
 #[derive(Clone, Debug)]
@@ -61,14 +61,14 @@ impl LocalParticipant {
     pub async fn publish_screenshare_track(
         &self,
         _source: Option<CaptureSource>,
-        cx: &mut AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, ScreenCaptureStreamHandle)> {
         let this = self.clone();
         let server = this.room.test_server();
         let sid = server
             .publish_video_track(this.room.token(), LocalVideoTrack {})
             .await?;
-        let spawn_handle = gpui_tokio::Tokio::spawn(cx, async {});
+        let spawn_handle = Task::ready(Ok(()));
         let handle = ScreenCaptureStreamHandle {
             screen_id: 0,
             stop_capture: Arc::new(AtomicBool::new(false)),
