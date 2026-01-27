@@ -529,7 +529,7 @@ fork = "0.4.0"
 futures = "0.3"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "c9eac0ed361583e1072860d96776fa52775b82ac" }
-git2 = { version = "0.20.1", default-features = false }
+git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
 globset = "0.4"
 handlebars = "4.3"
 heck = "0.5"
