@@ -692,7 +692,10 @@ pub async fn derive_paths_with_position(
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<PathWithPosition> {
     join_all(path_strings.into_iter().map(|path_str| async move {
-        let canonicalized = fs.canonicalize(Path::new(path_str.as_ref())).await;
+        #[cfg(not(windows))]
+        let canonicalized = _fs.canonicalize(Path::new(path_str.as_ref())).await;
+        #[cfg(target_os = "windows")]
+        let canonicalized = Path::new(path_str.as_ref()).canonicalize();
         (path_str, canonicalized)
     }))
     .await
