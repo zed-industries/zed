@@ -3916,6 +3916,7 @@ impl EditorElement {
                         latest_selection_anchors,
                     );
                     result = result.child(self.render_buffer_header(
+                        false,
                         first_excerpt,
                         true,
                         selected,
@@ -3967,7 +3968,7 @@ impl EditorElement {
 
                         result = result.child(div().pr(editor_margins.right).child(
                             self.render_buffer_header(
-                                excerpt, false, selected, false, jump_data, window, cx,
+                                false, excerpt, false, selected, false, jump_data, window, cx,
                             ),
                         ));
                     } else {
@@ -4050,6 +4051,7 @@ impl EditorElement {
 
     fn render_buffer_header(
         &self,
+        has_sticky_headers: bool,
         for_excerpt: &ExcerptInfo,
         is_folded: bool,
         is_selected: bool,
@@ -4104,6 +4106,9 @@ impl EditorElement {
             .p_1()
             .w_full()
             .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
+            .when(has_sticky_headers, |this| {
+                this.bg(cx.theme().colors().editor_background)
+            })
             .child(
                 h_flex()
                     .size_full()
@@ -4713,6 +4718,7 @@ impl EditorElement {
 
     fn layout_sticky_buffer_header(
         &self,
+        has_sticky_headers: bool,
         StickyHeaderExcerpt { excerpt }: StickyHeaderExcerpt<'_>,
         scroll_position: gpui::Point<ScrollOffset>,
         line_height: Pixels,
@@ -4755,8 +4761,17 @@ impl EditorElement {
                     .top_0(),
             )
             .child(
-                self.render_buffer_header(excerpt, false, selected, true, jump_data, window, cx)
-                    .into_any_element(),
+                self.render_buffer_header(
+                    has_sticky_headers,
+                    excerpt,
+                    false,
+                    selected,
+                    true,
+                    jump_data,
+                    window,
+                    cx,
+                )
+                .into_any_element(),
             )
             .into_any_element();
 
@@ -4970,9 +4985,7 @@ impl EditorElement {
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
             let mut offset = (depth as f64).min(max_scroll_offset);
 
-            // I mean this isn't going to work
-            // TODO need to refine this can create a realistic algorithm
-            let extra = FILE_HEADER_HEIGHT as f64 * 0.932952880859375;
+            let extra = FILE_HEADER_HEIGHT as f64;
 
             if !snapshot.is_singleton() {
                 // Why is this needed if scroll_top is already adjusted for the header height?
@@ -10156,6 +10169,7 @@ impl Element for EditorElement {
                     let blocks = (!is_minimap)
                         .then(|| {
                             window.with_element_namespace("blocks", |window| {
+                                // TODO send along whether you have sticky headers for rendering buffer_header
                                 self.render_blocks(
                                     start_row..end_row,
                                     &snapshot,
@@ -10209,10 +10223,43 @@ impl Element for EditorElement {
                         }
                     }
 
+                    let scroll_pixel_position = point(
+                        scroll_position.x * f64::from(em_advance),
+                        scroll_position.y * f64::from(line_height),
+                    );
+                    let sticky_headers =
+                        if !is_minimap && EditorSettings::get_global(cx).sticky_scroll.enabled {
+                            let relative = self.editor.read(cx).relative_line_numbers(cx);
+                            self.layout_sticky_headers(
+                                &snapshot,
+                                editor_width,
+                                is_row_soft_wrapped,
+                                line_height,
+                                scroll_pixel_position,
+                                content_origin,
+                                &gutter_dimensions,
+                                &gutter_hitbox,
+                                &text_hitbox,
+                                &style,
+                                relative,
+                                current_selection_head,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            None
+                        };
+                    self.editor.update(cx, |editor, _| {
+                        editor.scroll_manager.set_sticky_header_line_count(
+                            sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
+                        );
+                    });
+
                     let sticky_buffer_header = if self.should_show_buffer_headers() {
                         sticky_header_excerpt.map(|sticky_header_excerpt| {
                             window.with_element_namespace("blocks", |window| {
                                 self.layout_sticky_buffer_header(
+                                    sticky_headers.is_some(),
                                     sticky_header_excerpt,
                                     scroll_position,
                                     line_height,
@@ -10262,38 +10309,6 @@ impl Element for EditorElement {
                         {
                             scroll_position = new_scroll_position;
                         }
-                    });
-
-                    let scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_advance),
-                        scroll_position.y * f64::from(line_height),
-                    );
-                    let sticky_headers =
-                        if !is_minimap && EditorSettings::get_global(cx).sticky_scroll.enabled {
-                            let relative = self.editor.read(cx).relative_line_numbers(cx);
-                            self.layout_sticky_headers(
-                                &snapshot,
-                                editor_width,
-                                is_row_soft_wrapped,
-                                line_height,
-                                scroll_pixel_position,
-                                content_origin,
-                                &gutter_dimensions,
-                                &gutter_hitbox,
-                                &text_hitbox,
-                                &style,
-                                relative,
-                                current_selection_head,
-                                window,
-                                cx,
-                            )
-                        } else {
-                            None
-                        };
-                    self.editor.update(cx, |editor, _| {
-                        editor.scroll_manager.set_sticky_header_line_count(
-                            sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
-                        );
                     });
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
@@ -10883,13 +10898,14 @@ impl Element for EditorElement {
                         });
                     }
 
+                    self.paint_sticky_headers(layout, window, cx);
+
                     window.with_element_namespace("blocks", |window| {
                         if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
                             sticky_header.paint(window, cx)
                         }
                     });
 
-                    self.paint_sticky_headers(layout, window, cx);
                     self.paint_minimap(layout, window, cx);
                     self.paint_scrollbars(layout, window, cx);
                     self.paint_edit_prediction_popover(layout, window, cx);
