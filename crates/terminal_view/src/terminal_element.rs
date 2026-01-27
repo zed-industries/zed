@@ -500,22 +500,16 @@ impl TerminalElement {
         (rects, batched_runs)
     }
 
-    /// Computes the cursor position and block width using the fixed cell width.
-    fn shape_cursor(
+    /// Computes the cursor position based on the cursor point and terminal dimensions.
+    fn cursor_position(
         cursor_point: DisplayCursor,
         size: TerminalBounds,
-    ) -> Option<(Point<Pixels>, Pixels)> {
+    ) -> Option<Point<Pixels>> {
         if cursor_point.line() < size.total_lines() as i32 {
-            let cursor_width = size.cell_width();
-
-            // Cursor should always surround as much of the text as possible,
-            // hence when on pixel boundaries round the origin down and the width up
-            Some((
-                point(
-                    (cursor_point.col() as f32 * size.cell_width()).floor(),
-                    (cursor_point.line() as f32 * size.line_height()).floor(),
-                ),
-                cursor_width.ceil(),
+            // When on pixel boundaries round the origin down
+            Some(point(
+                (cursor_point.col() as f32 * size.cell_width()).floor(),
+                (cursor_point.line() as f32 * size.line_height()).floor(),
             ))
         } else {
             None
@@ -1143,11 +1137,20 @@ impl Element for TerminalElement {
                     )
                 };
 
+                // For whitespace, use cell width to avoid cursor stretching.
+                // For other characters, use the larger of shaped width and cell width
+                // to properly cover wide characters like emojis.
+                let cursor_width = if cursor_char.is_whitespace() {
+                    dimensions.cell_width()
+                } else {
+                    cursor_text.width.max(dimensions.cell_width())
+                };
+
                 let ime_cursor_bounds =
-                    TerminalElement::shape_cursor(cursor_point, dimensions).map(
-                        |(cursor_position, block_width)| Bounds {
+                    TerminalElement::cursor_position(cursor_point, dimensions).map(
+                        |cursor_position| Bounds {
                             origin: cursor_position,
-                            size: size(block_width, dimensions.line_height),
+                            size: size(cursor_width.ceil(), dimensions.line_height),
                         },
                     );
 
