@@ -79,12 +79,6 @@ pub enum Plan {
     V2(PlanV2),
 }
 
-impl Plan {
-    pub fn is_v2(&self) -> bool {
-        matches!(self, Self::V2(_))
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanV2 {
@@ -92,19 +86,6 @@ pub enum PlanV2 {
     ZedFree,
     ZedPro,
     ZedProTrial,
-}
-
-impl FromStr for PlanV2 {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "zed_free" => Ok(Self::ZedFree),
-            "zed_pro" => Ok(Self::ZedPro),
-            "zed_pro_trial" => Ok(Self::ZedProTrial),
-            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
-        }
-    }
 }
 
 #[derive(
