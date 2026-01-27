@@ -256,7 +256,14 @@ let
               rustflags = ["--cfg", "gles"]
             '';
 
-            postPatch = lib.optionalString withGLES ''
+            # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
+            # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
+            # TODO: send livekit sdk a PR to make this configurable
+            postPatch = ''
+              substituteInPlace webrtc-sys/build.rs --replace-fail \
+                "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+            ''
+            + lib.optionalString withGLES ''
               cat ${glesConfig} >> .cargo/config/config.toml
             '';
           in
