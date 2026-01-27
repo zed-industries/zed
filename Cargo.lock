@@ -5641,7 +5641,6 @@ dependencies = [
 name = "encoding_selector"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "encoding_rs",
  "fuzzy",
@@ -12667,6 +12666,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",

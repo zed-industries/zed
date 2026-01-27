@@ -25,6 +25,7 @@ use buffer_diff::{
     assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
+use encoding_rs;
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
