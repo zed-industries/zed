@@ -1317,12 +1317,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn resume(
+    fn retry(
         &self,
         session_id: &acp::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
-        Some(Rc::new(NativeAgentSessionResume {
+    ) -> Option<Rc<dyn acp_thread::AgentSessionRetry>> {
+        Some(Rc::new(NativeAgentSessionRetry {
             connection: self.clone(),
             session_id: session_id.clone(),
         }) as _)
@@ -1399,15 +1399,15 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
-    updates_rx: watch::Receiver<()>,
+    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
 
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
-        let (mut tx, rx) = watch::channel(());
+        let (tx, rx) = smol::channel::unbounded();
         let subscription = cx.observe(&thread_store, move |_, _| {
-            tx.send(()).ok();
+            tx.try_send(acp_thread::SessionListUpdate::Refresh).ok();
         });
         Self {
             thread_store,
@@ -1460,7 +1460,10 @@ impl AgentSessionList for NativeAgentSessionList {
             .update(cx, |store, cx| store.delete_threads(cx))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 
@@ -1493,12 +1496,12 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
     }
 }
 
-struct NativeAgentSessionResume {
+struct NativeAgentSessionRetry {
     connection: NativeAgentConnection,
     session_id: acp::SessionId,
 }
 
-impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
+impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>> {
         self.connection
             .run_turn(self.session_id.clone(), cx, |thread, cx| {

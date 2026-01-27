@@ -3,7 +3,7 @@ use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_slash_commands::codeblock_fence_for_path;
+use assistant_slash_commands::{codeblock_fence_for_path, collect_diagnostics_output};
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
@@ -235,6 +235,10 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
             MentionUri::PastedImage => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
@@ -297,14 +301,13 @@ impl MentionSet {
             return cx.spawn(async move |_, cx| {
                 let image = task.await?;
                 let image = image.update(cx, |image, _| image.image.clone());
-                let format = image.format;
                 let image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
                         data: image.source,
-                        format,
+                        format: LanguageModelImage::FORMAT,
                     }))
                 } else {
                     Err(anyhow!("Failed to convert image"))
@@ -511,6 +514,37 @@ impl MentionSet {
             })
         })
     }
+
+    fn confirm_mention_for_diagnostics(
+        &self,
+        include_errors: bool,
+        include_warnings: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow!("project not found")));
+        };
+
+        let diagnostics_task = collect_diagnostics_output(
+            project,
+            assistant_slash_commands::Options {
+                include_errors,
+                include_warnings,
+                path_matcher: None,
+            },
+            cx,
+        );
+        cx.spawn(async move |_, _| {
+            let output = diagnostics_task.await?;
+            let content = output
+                .map(|output| output.text)
+                .unwrap_or_else(|| "No diagnostics found.".into());
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: Vec::new(),
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -672,7 +706,6 @@ pub(crate) fn paste_images_as_context(
             };
             let task = cx
                 .spawn(async move |cx| {
-                    let format = image.format;
                     let image = cx
                         .update(|_, cx| LanguageModelImage::from_image(image, cx))
                         .map_err(|e| e.to_string())?
@@ -681,7 +714,7 @@ pub(crate) fn paste_images_as_context(
                     if let Some(image) = image {
                         Ok(Mention::Image(MentionImage {
                             data: image.source,
-                            format,
+                            format: LanguageModelImage::FORMAT,
                         }))
                     } else {
                         Err("Failed to convert image".into())

@@ -323,7 +323,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
 
     let mut text = text.to_string();
 
-    while let Some(event) = diff.next()? {
+    while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
             DiffEvent::Hunk {
                 hunk,
@@ -340,7 +340,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
                     disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
                         text[..offset].matches('\n').count() as u32
                     })
-                    .ok_or_else(|| anyhow!("couldn't resolve hunk: {}", hunk.context))?;
+                    .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
 
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);

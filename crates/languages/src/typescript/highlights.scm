@@ -383,27 +383,18 @@
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
   "declare"
   "default"
   "delete"
-  "enum"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
   "implements"
-  "import"
   "in"
   "infer"
   "instanceof"
-  "interface"
   "is"
   "keyof"
-  "let"
   "module"
   "namespace"
   "new"
@@ -417,13 +408,28 @@
   "set"
   "static"
   "target"
-  "type"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+  "enum"
+  "interface"
+  "type"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"

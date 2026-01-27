@@ -12,6 +12,7 @@ use language::{Buffer, OffsetRangeExt, Point};
 use similar::DiffableStr;
 use std::sync::Arc;
 use std::{fmt::Write as _, ops::Range};
+use zeta_prompt::ZetaVersion;
 use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
@@ -104,6 +105,7 @@ pub async fn run_format_prompt(
                     .first()
                     .context("expected patches is empty")?
                     .clone(),
+                version,
             )?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -118,7 +120,11 @@ pub async fn run_format_prompt(
     Ok(())
 }
 
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+pub fn zeta2_output_for_patch(
+    input: &zeta_prompt::ZetaPromptInput,
+    patch: &str,
+    version: ZetaVersion,
+) -> Result<String> {
     let mut old_editable_region =
         input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
 
@@ -126,18 +132,28 @@ pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str)
         old_editable_region.push('\n');
     }
 
-    edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region).with_context(|| {
-        format!(
-            "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
-            patch, old_editable_region
-        )
-    })
+    let mut result = edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region)
+        .with_context(|| {
+            format!(
+                "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+                patch, old_editable_region
+            )
+        })?;
+
+    if version == ZetaVersion::V0120GitMergeMarkers {
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+    }
+
+    Ok(result)
 }
 
 pub struct TeacherPrompt;
 
 impl TeacherPrompt {
-    const PROMPT: &str = include_str!("teacher.prompt.md");
+    const PROMPT: &str = include_str!("prompts/teacher.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
@@ -233,7 +249,7 @@ impl TeacherPrompt {
         history_lines.join("\n")
     }
 
-    fn format_context(example: &Example) -> String {
+    pub fn format_context(example: &Example) -> String {
         let related_files = example
             .prompt_inputs
             .as_ref()
@@ -251,6 +267,7 @@ impl TeacherPrompt {
         for file in related_files {
             let path_str = file.path.to_string_lossy();
             writeln!(&mut prompt, "`````{path_str}").ok();
+
             let mut prev_row = 0;
             for excerpt in &file.excerpts {
                 if excerpt.row_range.start > prev_row {
@@ -263,7 +280,7 @@ impl TeacherPrompt {
             if prev_row < file.max_row {
                 prompt.push_str("…\n");
             }
-            prompt.push_str("\n`````");
+            prompt.push_str("\n`````\n");
         }
 
         prompt
@@ -294,9 +311,9 @@ impl TeacherPrompt {
 
     fn extract_editable_region(text: &str) -> String {
         let start = text
-            .find(Self::EDITABLE_REGION_START)
+            .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
-        let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+        let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
         let region = region.strip_suffix('\n').unwrap_or(region);
@@ -312,6 +329,52 @@ impl TeacherPrompt {
             || s.starts_with("+++")
             || s.starts_with("@@")
     }
+}
+
+/// Extract the cursor excerpt from an example.
+/// First tries to extract from an existing prompt, then falls back to constructing from prompt_inputs.
+pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> {
+    // If we have the original prompt, extract the cursor excerpt from it
+    if let Some(prompt) = &example.prompt {
+        // Find "# 3. Current File" section and extract the content
+        if let Some(start) = prompt.input.find("# 3. Current File") {
+            let content_start = prompt.input[start..].find('`').map(|i| start + i)?;
+            let backtick_count = prompt.input[content_start..]
+                .chars()
+                .take_while(|&c| c == '`')
+                .count();
+            let content_start = content_start + backtick_count;
+
+            // Find the path line and skip it
+            let newline_pos = prompt.input[content_start..].find('\n')?;
+            let text_start = content_start + newline_pos + 1;
+
+            // Find the closing backticks
+            let closing_pattern = "`".repeat(backtick_count);
+            let text_end = prompt.input[text_start..].find(&closing_pattern)?;
+            let cursor_excerpt = &prompt.input[text_start..text_start + text_end];
+
+            let path_str = example.spec.cursor_path.to_string_lossy();
+            return Some(format!("`````{path_str}\n{cursor_excerpt}`````"));
+        }
+    }
+
+    // Fallback: construct from prompt_inputs if available
+    let prompt_inputs = example.prompt_inputs.as_ref()?;
+    let content = &prompt_inputs.content;
+    let cursor_offset = prompt_inputs.cursor_offset;
+
+    // Simple fallback: just show content around cursor with markers
+    let path_str = example.spec.cursor_path.to_string_lossy();
+    let mut result = format!("`````{path_str}\n");
+    result.push_str(TeacherPrompt::EDITABLE_REGION_START);
+    result.push_str(&content[..cursor_offset]);
+    result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
+    result.push_str(&content[cursor_offset..]);
+    result.push_str(TeacherPrompt::EDITABLE_REGION_END);
+    result.push_str("\n`````");
+
+    Some(result)
 }
 
 fn extract_last_codeblock(text: &str) -> String {

@@ -357,8 +357,9 @@
       "cmd-enter": "agent::ChatWithFollow",
       "cmd-shift-enter": "agent::SendImmediately",
       "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
-      "shift-backspace": "agent::RemoveFirstQueuedMessage",
-      "cmd-shift-backspace": "agent::ClearMessageQueue",
+      "cmd-shift-backspace": "agent::RemoveFirstQueuedMessage",
+      "cmd-ctrl-e": "agent::EditFirstQueuedMessage",
+      "cmd-alt-backspace": "agent::ClearMessageQueue",
       "cmd-shift-v": "agent::PasteRaw",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
@@ -1444,6 +1445,18 @@
     },
   },
   {
+    "context": "ImageViewer",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-=": "image_viewer::ZoomIn",
+      "cmd-+": "image_viewer::ZoomIn",
+      "cmd--": "image_viewer::ZoomOut",
+      "cmd-0": "image_viewer::ResetZoom",
+      "cmd-1": "image_viewer::ZoomToActualSize",
+      "cmd-shift-0": "image_viewer::FitToView",
+    },
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "cmd-1": "new_process_modal::ActivateTaskTab",
@@ -1464,6 +1477,21 @@
     "context": "MultiProjectDropdown",
     "bindings": {
       "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+    },
+  },
+  {
+    "context": "NotebookEditor > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "shift-enter": "notebook::Run",
+      "cmd-enter": "notebook::Run",
+      "cmd-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "cmd-m": "notebook::AddCodeBlock",
+      "cmd-shift-m": "notebook::AddMarkdownBlock",
+      "cmd-shift-r": "notebook::RestartKernel",
+      "cmd-c": "notebook::InterruptKernel",
     },
   },
 ]
