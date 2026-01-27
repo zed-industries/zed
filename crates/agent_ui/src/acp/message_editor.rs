@@ -672,7 +672,22 @@ impl MessageEditor {
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.insert_context_prefix("@", window, cx);
+    }
+
+    pub fn insert_context_type(
+        &mut self,
+        context_keyword: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prefix = format!("@{}", context_keyword);
+        self.insert_context_prefix(&prefix, window, cx);
+    }
+
+    fn insert_context_prefix(&mut self, prefix: &str, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
+        let prefix = prefix.to_string();
 
         cx.spawn_in(window, async move |_, cx| {
             editor
@@ -682,27 +697,27 @@ impl MessageEditor {
                             matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
                         });
 
-                    let has_at_sign = {
+                    let has_prefix = {
                         let snapshot = editor.display_snapshot(cx);
                         let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                         let offset = cursor.to_offset(&snapshot);
-                        if offset.0 > 0 {
-                            snapshot
-                                .buffer_snapshot()
-                                .reversed_chars_at(offset)
-                                .next()
-                                .map(|sign| sign == '@')
-                                .unwrap_or(false)
+                        if offset.0 >= prefix.len() {
+                            let start_offset = MultiBufferOffset(offset.0 - prefix.len());
+                            let buffer_snapshot = snapshot.buffer_snapshot();
+                            let text = buffer_snapshot
+                                .text_for_range(start_offset..offset)
+                                .collect::<String>();
+                            text == prefix
                         } else {
                             false
                         }
                     };
 
-                    if menu_is_open && has_at_sign {
+                    if menu_is_open && has_prefix {
                         return;
                     }
 
-                    editor.insert("@", window, cx);
+                    editor.insert(&prefix, window, cx);
                     editor.show_completions(&editor::actions::ShowCompletions, window, cx);
                 })
                 .log_err();
@@ -1066,6 +1081,69 @@ impl MessageEditor {
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
         }
+    }
+
+    pub fn add_images_from_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.prompt_capabilities.borrow().image {
+            return;
+        }
+
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.clone();
+
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Select Images".into()),
+        });
+
+        window
+            .spawn(cx, async move |cx| {
+                let paths = match paths_receiver.await {
+                    Ok(Ok(Some(paths))) => paths,
+                    _ => return Ok::<(), anyhow::Error>(()),
+                };
+
+                let supported_formats = [
+                    ("png", gpui::ImageFormat::Png),
+                    ("jpg", gpui::ImageFormat::Jpeg),
+                    ("jpeg", gpui::ImageFormat::Jpeg),
+                    ("webp", gpui::ImageFormat::Webp),
+                    ("gif", gpui::ImageFormat::Gif),
+                    ("bmp", gpui::ImageFormat::Bmp),
+                    ("tiff", gpui::ImageFormat::Tiff),
+                    ("tif", gpui::ImageFormat::Tiff),
+                    ("ico", gpui::ImageFormat::Ico),
+                ];
+
+                let mut images = Vec::new();
+                for path in paths {
+                    let extension = path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|s| s.to_lowercase());
+
+                    let Some(format) = extension.and_then(|ext| {
+                        supported_formats
+                            .iter()
+                            .find(|(e, _)| *e == ext)
+                            .map(|(_, f)| *f)
+                    }) else {
+                        continue;
+                    };
+
+                    let Ok(content) = async_fs::read(&path).await else {
+                        continue;
+                    };
+
+                    images.push(gpui::Image::from_bytes(format, content));
+                }
+
+                crate::mention_set::insert_images_as_context(images, editor, mention_set, cx).await;
+                Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {

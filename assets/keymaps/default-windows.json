@@ -318,6 +318,7 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      "ctrl-;": "agent::OpenAddContextMenu",
     },
   },
   {
@@ -1410,7 +1411,7 @@
       "ctrl-m": "notebook::AddCodeBlock",
       "ctrl-shift-m": "notebook::AddMarkdownBlock",
       "ctrl-shift-r": "notebook::RestartKernel",
-      "ctrl-c": "notebook::InterruptKernel"
-    }
+      "ctrl-c": "notebook::InterruptKernel",
+    },
   },
 ]
