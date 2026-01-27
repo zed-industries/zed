@@ -52,7 +52,10 @@ mod signature_help;
 pub mod test;
 
 pub(crate) use actions::*;
-pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
+pub use display_map::{
+    ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder, HighlightKey,
+    SemanticTokenHighlight,
+};
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
@@ -23231,7 +23234,7 @@ impl Editor {
         self.display_map.update(cx, |display_map, _| {
             display_map
                 .all_text_highlights()
-                .map(|highlight| {
+                .map(|(_, highlight)| {
                     let (style, ranges) = highlight.as_ref();
                     (
                         *style,

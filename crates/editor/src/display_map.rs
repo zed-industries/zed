@@ -308,6 +308,7 @@ impl Companion {
 pub struct SemanticTokenHighlight {
     pub range: Range<Anchor>,
     pub style: HighlightStyle,
+    pub token_type: Option<SharedString>,
 }
 
 impl DisplayMap {
@@ -1219,11 +1220,16 @@ impl DisplayMap {
         Some((highlights.0, &highlights.1))
     }
 
-    #[cfg(feature = "test-support")]
     pub fn all_text_highlights(
         &self,
-    ) -> impl Iterator<Item = &Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        self.text_highlights.values()
+    ) -> impl Iterator<Item = (&HighlightKey, &Arc<(HighlightStyle, Vec<Range<Anchor>>)>)> {
+        self.text_highlights.iter()
+    }
+
+    pub fn all_semantic_token_highlights(
+        &self,
+    ) -> impl Iterator<Item = (&BufferId, &Arc<[SemanticTokenHighlight]>)> {
+        self.semantic_token_highlights.iter()
     }
 
     #[instrument(skip_all)]

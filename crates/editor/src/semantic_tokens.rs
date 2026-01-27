@@ -3,7 +3,8 @@ use std::{collections::hash_map, sync::Arc, time::Duration};
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
 use gpui::{
-    App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
+    App, Context, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, Task,
+    UnderlineStyle,
 };
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
@@ -216,6 +217,7 @@ fn buffer_into_editor_highlights<'a>(
                 token.token_type,
                 token.token_modifiers,
             )?,
+            token_type: stylizer.token_type(token.token_type).map(SharedString::new),
         })
     })
 }
