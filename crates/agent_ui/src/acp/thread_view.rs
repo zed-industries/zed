@@ -323,39 +323,38 @@ impl DiffStats {
 }
 
 pub struct AcpThreadView {
-    agent: Rc<dyn AgentServer>,
-    agent_server_store: Entity<AgentServerStore>,
-    workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
-    thread_state: ThreadState,
-    permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
+    agent: Rc<dyn AgentServer>, // keep
+    agent_server_store: Entity<AgentServerStore>, // keep
+    workspace: WeakEntity<Workspace>, // keep
+    project: Entity<Project>, // keep
+    thread_state: ThreadState, // keep
     /// Tracks the selected granularity index for each tool call's permission dropdown.
     /// The index corresponds to the position in the allow_options list.
     /// Default is the last option (index pointing to "Only this time").
     selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
-    login: Option<task::SpawnInTerminal>,
-    recent_history_entries: Vec<AgentSessionInfo>,
-    history: Entity<AcpThreadHistory>,
-    _history_subscription: Subscription,
-    hovered_recent_history_item: Option<usize>,
+    login: Option<task::SpawnInTerminal>, // keep
+    recent_history_entries: Vec<AgentSessionInfo>, // keep
+    history: Entity<AcpThreadHistory>, // keep
+    _history_subscription: Subscription, // keep
+    hovered_recent_history_item: Option<usize>, // keep
     entry_view_state: Entity<EntryViewState>,
-    message_editor: Entity<MessageEditor>,
-    focus_handle: FocusHandle,
+    message_editor: Entity<MessageEditor>, // keep
+    focus_handle: FocusHandle, // keep
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
     config_options_view: Option<Entity<ConfigOptionsView>>,
     profile_selector: Option<Entity<ProfileSelector>>,
-    notifications: Vec<WindowHandle<AgentNotification>>,
-    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
+    notifications: Vec<WindowHandle<AgentNotification>>, // keep
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
     thread_retry_status: Option<RetryStatus>,
     thread_error: Option<ThreadError>,
     thread_error_markdown: Option<Entity<Markdown>>,
-    command_load_errors: Vec<CommandLoadError>,
-    command_load_errors_dismissed: bool,
-    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
+    command_load_errors: Vec<CommandLoadError>, // keep
+    command_load_errors_dismissed: bool, // keep
+    slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
-    auth_task: Option<Task<()>>,
+    auth_task: Option<Task<()>>, // keep
     /// Tracks which tool calls have their content/output expanded.
     /// Used for showing/hiding tool call results, terminal output, etc.
     expanded_tool_calls: HashSet<acp::ToolCallId>,
@@ -383,9 +382,9 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<AgentSessionInfo>,
     resumed_without_history: bool,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 5],
-    show_codex_windows_warning: bool,
-    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
+    _subscriptions: [Subscription; 5], // keep
+    show_codex_windows_warning: bool, // keep
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>, // keep
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
     can_fast_track_queue: bool,
@@ -404,6 +403,7 @@ enum ThreadState {
         thread: Entity<AcpThread>,
         title_editor: Option<Entity<Editor>>,
         mode_selector: Option<Entity<ModeSelector>>,
+        permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -570,7 +570,6 @@ impl AcpThreadView {
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
-            permission_dropdown_handle: PopoverMenuHandle::default(),
             selected_permission_granularity: HashMap::default(),
             thread_state: Self::initial_state(
                 agent.clone(),
@@ -901,6 +900,7 @@ impl AcpThreadView {
                             thread,
                             title_editor,
                             mode_selector,
+                            permission_dropdown_handle: PopoverMenuHandle::default(),
                             _subscriptions: subscriptions,
                         };
 
@@ -4241,15 +4241,23 @@ impl AcpThreadView {
         selected_index: usize,
         is_first: bool,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let menu_options: Vec<(usize, SharedString)> = choices
             .iter()
             .enumerate()
             .map(|(i, choice)| (i, choice.label()))
             .collect();
 
+        let permission_dropdown_handle = match &self.thread_state {
+            ThreadState::Ready {
+                permission_dropdown_handle,
+                ..
+            } => permission_dropdown_handle.clone(),
+            _ => return div().into_any_element(),
+        };
+
         PopoverMenu::new(("permission-granularity", entry_ix))
-            .with_handle(self.permission_dropdown_handle.clone())
+            .with_handle(permission_dropdown_handle)
             .trigger(
                 Button::new(("granularity-trigger", entry_ix), current_label)
                     .icon(IconName::ChevronDown)
@@ -4299,6 +4307,7 @@ impl AcpThreadView {
                     menu
                 }))
             })
+            .into_any_element()
     }
 
     fn render_permission_buttons_flat(
@@ -6679,7 +6688,13 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.permission_dropdown_handle.toggle(window, cx);
+        if let ThreadState::Ready {
+            permission_dropdown_handle,
+            ..
+        } = &self.thread_state
+        {
+            permission_dropdown_handle.toggle(window, cx);
+        }
     }
 
     fn handle_select_permission_granularity(
