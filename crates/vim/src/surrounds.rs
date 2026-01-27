@@ -88,7 +88,7 @@ impl Vim {
         let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 

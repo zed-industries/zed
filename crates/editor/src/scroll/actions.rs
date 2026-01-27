@@ -30,7 +30,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.update_ongoing_scroll(axis);
+        self.scroll_manager.update(cx, |scroll_manager, _| {
+            scroll_manager.update_ongoing_scroll(axis);
+        });
         self.set_scroll_position(scroll_position, window, cx);
     }
 
@@ -72,7 +74,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let display_snapshot = self.display_snapshot(cx);
-        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
+        let scroll_margin_rows = self.vertical_scroll_margin(cx) as u32;
         let new_screen_top = self
             .selections
             .newest_display(&display_snapshot)
@@ -94,7 +96,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let Some(visible_rows) = self.visible_line_count().map(|count| count as u32) else {
+        let Some(visible_rows) = self.visible_line_count(cx).map(|count| count as u32) else {
             return;
         };
         let new_screen_top = self
@@ -113,8 +115,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-        let Some(visible_rows) = self.visible_line_count().map(|count| count as u32) else {
+        let scroll_margin_rows = self.vertical_scroll_margin(cx) as u32;
+        let Some(visible_rows) = self.visible_line_count(cx).map(|count| count as u32) else {
             return;
         };
         let new_screen_top = self

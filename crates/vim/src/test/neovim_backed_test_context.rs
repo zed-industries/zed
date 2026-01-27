@@ -310,7 +310,7 @@ impl NeovimBackedTestContext {
                     .style(cx)
                     .text
                     .line_height_in_pixels(window.rem_size()),
-                editor.visible_line_count().unwrap(),
+                editor.visible_line_count(cx).unwrap(),
             )
         });
 

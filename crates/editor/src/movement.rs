@@ -1224,7 +1224,7 @@ mod tests {
         let editor = cx.editor.clone();
         let window = cx.window;
         _ = cx.update_window(window, |_, window, cx| {
-            let text_layout_details = editor.read(cx).text_layout_details(window);
+            let text_layout_details = editor.read(cx).text_layout_details(window, cx);
 
             let font = font("Helvetica");
 

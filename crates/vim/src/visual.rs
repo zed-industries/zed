@@ -218,7 +218,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             if vim.mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -302,7 +302,7 @@ impl Vim {
             SelectionGoal,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
-        let text_layout_details = editor.text_layout_details(window);
+        let text_layout_details = editor.text_layout_details(window, cx);
         editor.change_selections(Default::default(), window, cx, |s| {
             let map = &s.display_snapshot();
             let mut head = s.newest_anchor().head().to_display_point(map);

@@ -384,7 +384,9 @@ fn create_editor_diff(
         editor.set_show_vertical_scrollbar(false, cx);
         editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
         editor.set_soft_wrap_mode(SoftWrap::None, cx);
-        editor.scroll_manager.set_forbid_vertical_scroll(true);
+        editor.scroll_manager.update(cx, |scroll_manager, _| {
+            scroll_manager.set_forbid_vertical_scroll(true);
+        });
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_show_breakpoints(false, cx);

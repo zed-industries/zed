@@ -1117,7 +1117,7 @@ mod foo «1{
             let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
             let scroll_position = snapshot.scroll_position();
             let visible_lines =
-                cx.update_editor(|editor, _, _| editor.visible_line_count().unwrap());
+                cx.update_editor(|editor, _, _| editor.visible_line_count(cx).unwrap());
             let visible_range = DisplayRow(scroll_position.y as u32)
                 ..DisplayRow((scroll_position.y + visible_lines) as u32);
 

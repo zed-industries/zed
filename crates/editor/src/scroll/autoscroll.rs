@@ -115,7 +115,7 @@ impl Editor {
         let viewport_height = bounds.size.height;
         let visible_lines = ScrollOffset::from(viewport_height / line_height);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
+        let mut scroll_position = self.scroll_manager.read(cx).scroll_position(&display_map);
         let original_y = scroll_position.y;
         if let Some(last_bounds) = self.expect_bounds_change.take()
             && scroll_position.y != 0.
@@ -186,7 +186,7 @@ impl Editor {
             }
         }
 
-        let visible_sticky_headers = self.scroll_manager.sticky_header_line_count();
+        let visible_sticky_headers = self.scroll_manager.read(cx).sticky_header_line_count();
 
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
@@ -196,17 +196,19 @@ impl Editor {
 
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy, _) => strategy,
-            Autoscroll::Next => self
-                .scroll_manager
-                .last_autoscroll
-                .as_ref()
-                .filter(|(offset, last_target_top, last_target_bottom, _)| {
-                    self.scroll_manager.anchor.offset == *offset
-                        && target_top == *last_target_top
-                        && target_bottom == *last_target_bottom
-                })
-                .map(|(_, _, _, strategy)| strategy.next())
-                .unwrap_or_default(),
+            Autoscroll::Next => {
+                let scroll_manager = self.scroll_manager.read(cx);
+                scroll_manager
+                    .last_autoscroll
+                    .as_ref()
+                    .filter(|(offset, last_target_top, last_target_bottom, _)| {
+                        scroll_manager.anchor.offset == *offset
+                            && target_top == *last_target_top
+                            && target_bottom == *last_target_bottom
+                    })
+                    .map(|(_, _, _, strategy)| strategy.next())
+                    .unwrap_or_default()
+            }
         };
         if let Autoscroll::Strategy(_, Some(anchor)) = autoscroll {
             target_top = anchor.to_display_point(&display_map).row().as_f64();
@@ -215,7 +217,7 @@ impl Editor {
 
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+                let margin = margin.min(self.scroll_manager.read(cx).vertical_scroll_margin);
                 let target_top = (target_top - margin - visible_sticky_headers as f64).max(0.0);
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;
@@ -241,7 +243,7 @@ impl Editor {
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Focused => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+                let margin = margin.min(self.scroll_manager.read(cx).vertical_scroll_margin);
                 scroll_position.y = (target_top - margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
@@ -263,12 +265,15 @@ impl Editor {
             }
         };
 
-        self.scroll_manager.last_autoscroll = Some((
-            self.scroll_manager.anchor.offset,
-            target_top,
-            target_bottom,
-            strategy,
-        ));
+        let anchor_offset = self.scroll_manager.read(cx).anchor.offset;
+        self.scroll_manager.update(cx, |scroll_manager, _| {
+            scroll_manager.last_autoscroll = Some((
+                anchor_offset,
+                target_top,
+                target_bottom,
+                strategy,
+            ));
+        });
 
         let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
         (NeedsHorizontalAutoscroll(true), was_scrolled)
@@ -292,7 +297,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
-        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
+        let mut scroll_position = self.scroll_manager.read(cx).scroll_position(&display_map);
 
         let mut target_left;
         let mut target_right: f64;
@@ -334,7 +339,7 @@ impl Editor {
             return None;
         }
 
-        let scroll_left = self.scroll_manager.anchor.offset.x * em_advance;
+        let scroll_left = self.scroll_manager.read(cx).anchor.offset.x * em_advance;
         let scroll_right = scroll_left + viewport_width;
 
         let was_scrolled = if target_left < scroll_left {
@@ -355,7 +360,9 @@ impl Editor {
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut Context<Self>) {
-        self.scroll_manager.autoscroll_request = Some((autoscroll, true));
+        self.scroll_manager.update(cx, |scroll_manager, _| {
+            scroll_manager.autoscroll_request = Some((autoscroll, true));
+        });
         cx.notify();
     }
 
@@ -364,7 +371,9 @@ impl Editor {
         autoscroll: Autoscroll,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.autoscroll_request = Some((autoscroll, false));
+        self.scroll_manager.update(cx, |scroll_manager, _| {
+            scroll_manager.autoscroll_request = Some((autoscroll, false));
+        });
         cx.notify();
     }
 }

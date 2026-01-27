@@ -3005,7 +3005,7 @@ mod tests {
                 let snapshot = editor.snapshot(window, cx);
                 let cursor_row = editor.selections.newest::<Point>(&snapshot).head().row;
                 let scroll_top = snapshot.scroll_position().y as u32;
-                let visible_lines = editor.visible_line_count().unwrap() as u32;
+                let visible_lines = editor.visible_line_count(cx).unwrap() as u32;
                 let visible_range = scroll_top..(scroll_top + visible_lines);
 
                 assert!(!visible_range.contains(&cursor_row));
@@ -3026,7 +3026,7 @@ mod tests {
                 let snapshot = editor.snapshot(window, cx);
                 let cursor_row = editor.selections.newest::<Point>(&snapshot).head().row;
                 let scroll_top = snapshot.scroll_position().y as u32;
-                let visible_lines = editor.visible_line_count().unwrap() as u32;
+                let visible_lines = editor.visible_line_count(cx).unwrap() as u32;
                 let visible_range = scroll_top..(scroll_top + visible_lines);
 
                 assert!(visible_range.contains(&cursor_row));

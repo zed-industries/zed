@@ -33,7 +33,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

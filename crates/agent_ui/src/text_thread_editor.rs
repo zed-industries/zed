@@ -1000,10 +1000,11 @@ impl TextThreadEditor {
                 .as_f64();
             let scroll_position = editor
                 .scroll_manager
+                .read(cx)
                 .anchor()
                 .scroll_position(&snapshot.display_snapshot);
 
-            let scroll_bottom = scroll_position.y + editor.visible_line_count().unwrap_or(0.);
+            let scroll_bottom = scroll_position.y + editor.visible_line_count(cx).unwrap_or(0.);
             if (scroll_position.y..scroll_bottom).contains(&cursor_row) {
                 Some(ScrollPosition {
                     cursor,

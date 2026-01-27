@@ -111,14 +111,14 @@ fn scroll_editor(
     cx: &mut Context<Editor>,
 ) {
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
-    let old_top_anchor = editor.scroll_manager.anchor().anchor;
+    let old_top_anchor = editor.scroll_manager.read(cx).anchor().anchor;
 
     if editor.scroll_hover(amount, window, cx) {
         return;
     }
 
     let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
-    let amount = match (amount.is_full_page(), editor.visible_line_count()) {
+    let amount = match (amount.is_full_page(), editor.visible_line_count(cx)) {
         (true, Some(visible_line_count)) => {
             if amount.direction().is_upwards() {
                 ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
@@ -134,15 +134,15 @@ fn scroll_editor(
         return;
     }
 
-    let Some(visible_line_count) = editor.visible_line_count() else {
+    let Some(visible_line_count) = editor.visible_line_count(cx) else {
         return;
     };
 
-    let Some(visible_column_count) = editor.visible_column_count() else {
+    let Some(visible_column_count) = editor.visible_column_count(cx) else {
         return;
     };
 
-    let top_anchor = editor.scroll_manager.anchor().anchor;
+    let top_anchor = editor.scroll_manager.read(cx).anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
     editor.change_selections(
@@ -300,7 +300,7 @@ mod test {
                     .style(cx)
                     .text
                     .line_height_in_pixels(window.rem_size()),
-                editor.visible_line_count().unwrap(),
+                editor.visible_line_count(cx).unwrap(),
             )
         });
 

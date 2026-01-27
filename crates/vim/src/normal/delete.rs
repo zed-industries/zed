@@ -24,7 +24,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_columns: HashMap<_, _> = Default::default();

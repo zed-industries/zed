@@ -211,7 +211,7 @@ impl FollowableItem for Editor {
             return None;
         }
 
-        let scroll_anchor = self.scroll_manager.anchor();
+        let scroll_anchor = self.scroll_manager.read(cx).anchor();
         let excerpts = buffer
             .read(cx)
             .excerpts()
@@ -303,7 +303,7 @@ impl FollowableItem for Editor {
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
                     let snapshot = self.buffer.read(cx).snapshot(cx);
-                    let scroll_anchor = self.scroll_manager.anchor();
+                    let scroll_anchor = self.scroll_manager.read(cx).anchor();
                     update.scroll_top_anchor =
                         Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
                     update.scroll_x = scroll_anchor.offset.x;

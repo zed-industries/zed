@@ -4466,7 +4466,7 @@ impl Editor {
             .to_point(&multi_buffer_snapshot);
         let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
             multi_buffer_visible_start
-                + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+                + Point::new(self.visible_line_count(cx).unwrap_or(0.).ceil() as u32, 0),
             Bias::Left,
         );
         let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
@@ -4508,7 +4508,7 @@ impl Editor {
             editor_style: self.style.clone().unwrap(),
             rem_size: window.rem_size(),
             scroll_anchor: self.scroll_manager.anchor(),
-            visible_rows: self.visible_line_count(),
+            visible_rows: self.visible_line_count(cx),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
         }
     }
@@ -5850,7 +5850,7 @@ impl Editor {
                 .to_point(&multi_buffer_snapshot);
             let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
                 multi_buffer_visible_start
-                    + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+                    + Point::new(self.visible_line_count(cx).unwrap_or(0.).ceil() as u32, 0),
                 Bias::Left,
             );
             let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
@@ -10194,7 +10194,7 @@ impl Editor {
 
     pub fn transpose(&mut self, _: &Transpose, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.transact(window, cx, |this, window, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
@@ -10831,7 +10831,7 @@ impl Editor {
 
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
 
@@ -10874,7 +10874,7 @@ impl Editor {
 
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_with(|map, selection| {
@@ -10911,7 +10911,7 @@ impl Editor {
 
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_with(|map, selection| {
@@ -10938,7 +10938,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::down_by_rows(map, head, action.lines, goal, false, text_layout_details)
@@ -10953,7 +10953,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::up_by_rows(map, head, action.lines, goal, false, text_layout_details)
@@ -10967,13 +10967,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(row_count) = self.visible_row_count() else {
+        let Some(row_count) = self.visible_row_count(cx) else {
             return;
         };
 
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
@@ -11007,7 +11007,7 @@ impl Editor {
             return;
         }
 
-        let Some(row_count) = self.visible_row_count() else {
+        let Some(row_count) = self.visible_row_count(cx) else {
             return;
         };
 
@@ -11019,7 +11019,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Some(autoscroll), window, cx, |s| {
             s.move_with(|map, selection| {
@@ -11041,7 +11041,7 @@ impl Editor {
 
     pub fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::up(map, head, goal, false, text_layout_details)
@@ -11059,7 +11059,7 @@ impl Editor {
 
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
 
@@ -11091,13 +11091,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(row_count) = self.visible_row_count() else {
+        let Some(row_count) = self.visible_row_count(cx) else {
             return;
         };
 
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
@@ -11131,7 +11131,7 @@ impl Editor {
             return;
         }
 
-        let Some(row_count) = self.visible_row_count() else {
+        let Some(row_count) = self.visible_row_count(cx) else {
             return;
         };
 
@@ -11143,7 +11143,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Some(autoscroll), window, cx, |s| {
             s.move_with(|map, selection| {
                 if !selection.is_empty() {
@@ -11164,7 +11164,7 @@ impl Editor {
 
     pub fn select_down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::down(map, head, goal, false, text_layout_details)
@@ -12025,7 +12025,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
-        let text_layout_details = self.text_layout_details(window);
+        let text_layout_details = self.text_layout_details(window, cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -12583,7 +12583,7 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
-        let text_layout_details = &self.text_layout_details(window);
+        let text_layout_details = &self.text_layout_details(window, cx);
         self.transact(window, cx, |this, window, cx| {
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
             let mut edits = Vec::new();
@@ -12937,7 +12937,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(visible_row_count) = self.visible_row_count() else {
+        let Some(visible_row_count) = self.visible_row_count(cx) else {
             return;
         };
         let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
@@ -13061,7 +13061,7 @@ impl Editor {
         let start_row = last_new.start.to_display_point(&display_map).row().0;
         let end_row = last_new.end.to_display_point(&display_map).row().0;
         let selection_height = end_row - start_row + 1;
-        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
+        let scroll_margin_rows = self.vertical_scroll_margin(cx) as u32;
 
         let fits_on_the_screen = visible_row_count >= selection_height + scroll_margin_rows * 2;
         let scroll_behavior = if fits_on_the_screen {
@@ -18628,7 +18628,7 @@ impl Editor {
         window: &mut Window,
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style()?.text.line_height_in_pixels(window.rem_size());
-        let text_layout_details = self.text_layout_details(window);
+        let text_layout_details = self.text_layout_details(window, cx);
         let scroll_top = text_layout_details
             .scroll_anchor
             .scroll_position(editor_snapshot)
@@ -18673,7 +18673,7 @@ impl Editor {
     }
 
     fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
-        let text_layout_details = self.text_layout_details(window);
+        let text_layout_details = self.text_layout_details(window, cx);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
@@ -20566,7 +20566,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
-        let text_layout_details = self.text_layout_details(window);
+        let text_layout_details = self.text_layout_details(window, cx);
         let gpui::Size {
             width: em_width,
             height: line_height,

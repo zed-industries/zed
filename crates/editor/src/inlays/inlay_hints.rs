@@ -1404,7 +1404,7 @@ pub mod tests {
         rs_editor
             .update(cx, |editor, window, cx| {
                 editor.set_visible_line_count(50.0, window, cx);
-                editor.set_visible_column_count(120.0);
+                editor.set_visible_column_count(120.0, cx);
                 editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             })
             .unwrap();
@@ -1440,7 +1440,7 @@ pub mod tests {
         md_editor
             .update(cx, |editor, window, cx| {
                 editor.set_visible_line_count(50.0, window, cx);
-                editor.set_visible_column_count(120.0);
+                editor.set_visible_column_count(120.0, cx);
                 editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             })
             .unwrap();
@@ -2136,7 +2136,7 @@ pub mod tests {
         let visible_range_after_scrolls = editor_visible_range(&editor, cx);
         let visible_line_count = editor
             .update(cx, |editor, _window, _| {
-                editor.visible_line_count().unwrap()
+                editor.visible_line_count(cx).unwrap()
             })
             .unwrap();
         let selection_in_cached_range = editor
@@ -3173,7 +3173,7 @@ let c = 3;"#
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_visible_line_count(50.0, window, cx);
-                editor.set_visible_column_count(120.0);
+                editor.set_visible_column_count(120.0, cx);
                 editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             })
             .unwrap();
@@ -3708,7 +3708,7 @@ let c = 3;"#
             // Establish a viewport. The exact values are not important for this test; we just need
             // the editor to consider itself visible so the refresh pipeline runs.
             editor.set_visible_line_count(50.0, window, cx);
-            editor.set_visible_column_count(120.0);
+            editor.set_visible_column_count(120.0, cx);
 
             // Explicitly trigger a refresh now that the viewport exists.
             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
@@ -4187,7 +4187,7 @@ let c = 3;"#
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_visible_line_count(50.0, window, cx);
-                editor.set_visible_column_count(120.0);
+                editor.set_visible_column_count(120.0, cx);
                 editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             })
             .unwrap();
