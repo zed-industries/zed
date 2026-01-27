@@ -7,8 +7,8 @@ pub async fn run_distill(example: &mut Example) -> Result<()> {
         .predictions
         .iter()
         .find(|p| p.provider == PredictionProvider::Repair);
-    let predictions = if has_repair.is_some() {
-        vec![has_repair.unwrap()]
+    let predictions = if let Some(has_repair) = has_repair {
+        vec![has_repair]
     } else {
         example.predictions.iter().collect()
     };
