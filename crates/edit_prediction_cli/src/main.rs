@@ -85,6 +85,10 @@ struct EpArgs {
     /// Failed examples are always logged to the run's failed directory.
     #[arg(long, global = true, default_value = "keep")]
     failed: FailedHandling,
+    /// Output as markdown files instead of JSONL. When set, -o specifies a directory
+    /// where one .md file per example will be written (named after each example).
+    #[arg(long, short, global = true)]
+    markdown: bool,
 }
 
 /// Controls whether failed examples are included in the main output.
@@ -583,6 +587,12 @@ fn main() {
     }
 
     let output = args.output_path();
+
+    if args.markdown && output.is_none() {
+        eprintln!("--markdown requires -o to specify the output directory");
+        std::process::exit(1);
+    }
+
     let command = match &args.command {
         Some(cmd) => cmd.clone(),
         None => {
@@ -756,6 +766,18 @@ fn main() {
 
                 let failfast_on_single_example = examples.len() == 1;
 
+                // For --markdown mode, create the output directory if it doesn't exist
+                let markdown_output_dir = if args.markdown {
+                    let dir = output.as_ref().expect("--markdown requires -o");
+                    if !dir.exists() {
+                        std::fs::create_dir_all(dir)
+                            .expect("Failed to create markdown output directory");
+                    }
+                    Some(dir.clone())
+                } else {
+                    None
+                };
+
                 // For --in-place, write to a temp file and rename at the end to avoid data loss on interruption
                 let in_place_temp_path = if args.in_place {
                     output.as_ref().map(|path| {
@@ -767,40 +789,41 @@ fn main() {
                     None
                 };
 
-                let output_sender: Option<mpsc::UnboundedSender<String>> =
-                    if args.output.is_some() || !matches!(command, Command::Eval(_)) {
-                        let write_path = in_place_temp_path.as_ref().or(output.as_ref());
-                        write_path.map(|path| {
-                            let file = if args.in_place {
-                                // For --in-place, write to temp file (truncate if exists)
-                                OpenOptions::new()
-                                    .create(true)
-                                    .write(true)
-                                    .truncate(true)
-                                    .open(path)
-                                    .expect("Failed to open temp output file")
-                            } else {
-                                // For regular output, append to support resuming
-                                OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(path)
-                                    .expect("Failed to open output file")
-                            };
-                            let mut writer = BufWriter::new(file);
-                            let (sender, mut receiver) = mpsc::unbounded::<String>();
-                            cx.background_spawn(async move {
-                                while let Some(line) = receiver.next().await {
-                                    writeln!(writer, "{}", line).expect("Failed to write example");
-                                    writer.flush().expect("Failed to flush output");
-                                }
-                            })
-                            .detach();
-                            sender
+                let output_sender: Option<mpsc::UnboundedSender<String>> = if !args.markdown
+                    && (args.output.is_some() || !matches!(command, Command::Eval(_)))
+                {
+                    let write_path = in_place_temp_path.as_ref().or(output.as_ref());
+                    write_path.map(|path| {
+                        let file = if args.in_place {
+                            // For --in-place, write to temp file (truncate if exists)
+                            OpenOptions::new()
+                                .create(true)
+                                .write(true)
+                                .truncate(true)
+                                .open(path)
+                                .expect("Failed to open temp output file")
+                        } else {
+                            // For regular output, append to support resuming
+                            OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(path)
+                                .expect("Failed to open output file")
+                        };
+                        let mut writer = BufWriter::new(file);
+                        let (sender, mut receiver) = mpsc::unbounded::<String>();
+                        cx.background_spawn(async move {
+                            while let Some(line) = receiver.next().await {
+                                writeln!(writer, "{}", line).expect("Failed to write example");
+                                writer.flush().expect("Failed to flush output");
+                            }
                         })
-                    } else {
-                        None
-                    };
+                        .detach();
+                        sender
+                    })
+                } else {
+                    None
+                };
 
                 let grouped_examples = Mutex::new(group_examples_by_repo(examples));
                 let finished_examples = Mutex::new(Vec::new());
@@ -917,7 +940,13 @@ fn main() {
 
                                 let should_write = !failed || args.failed == FailedHandling::Keep;
                                 if should_write {
-                                    if let Some(ref mut sender) = output_sender.clone() {
+                                    if let Some(ref markdown_dir) = markdown_output_dir {
+                                        let filename = format!("{}.md", example.spec.filename());
+                                        let path = markdown_dir.join(&filename);
+                                        let markdown = example.spec.to_markdown();
+                                        std::fs::write(&path, &markdown)
+                                            .expect("Failed to write markdown file");
+                                    } else if let Some(ref mut sender) = output_sender.clone() {
                                         let line = serde_json::to_string(&example).unwrap();
                                         sender
                                             .send(line)
