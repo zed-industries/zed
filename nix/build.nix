@@ -30,9 +30,13 @@
   libgbm,
   libgit2,
   libglvnd,
+  libva,
+  libxcomposite,
   libxdamage,
+  libxext,
   libxfixes,
   libxkbcommon,
+  libxrandr,
   nodejs_22,
   openssl,
   perl,
@@ -87,7 +91,6 @@ let
       };
 
       cargoLock = ../Cargo.lock;
-      livekit-webrtc = (import ./livekit-webrtc.nix { inherit system pkgs; }).webrtc.default;
 
       nativeBuildInputs = [
         cmake
@@ -169,14 +172,18 @@ let
       ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
         libxkbcommon
-        libdrm
-        libgbm
-        libxdamage
-        libxfixes
         wayland
         gpu-lib
         xorg.libX11
         xorg.libxcb
+        libdrm
+        libgbm
+        libva
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
       ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
         apple-sdk_15
@@ -211,7 +218,7 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        LK_CUSTOM_WEBRTC = livekit-webrtc;
+        LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
 
         CARGO_PROFILE = profile;
@@ -249,7 +256,14 @@ let
               rustflags = ["--cfg", "gles"]
             '';
 
-            postPatch = lib.optionalString withGLES ''
+            # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
+            # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
+            # TODO: send livekit sdk a PR to make this configurable
+            postPatch = ''
+              substituteInPlace webrtc-sys/build.rs --replace-fail \
+                "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+            ''
+            + lib.optionalString withGLES ''
               cat ${glesConfig} >> .cargo/config/config.toml
             '';
           in
