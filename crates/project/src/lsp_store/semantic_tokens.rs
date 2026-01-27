@@ -483,6 +483,7 @@ impl Iterator for SemanticTokensIter<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp_command::SemanticTokensEdit;
 
     #[test]
     fn parses_sample_tokens() {
@@ -514,6 +515,55 @@ mod tests {
                 },
                 SemanticToken {
                     line: 5,
+                    start: 2,
+                    length: 7,
+                    token_type: 2,
+                    token_modifiers: 0
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn applies_delta_edit() {
+        // Example from the spec: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens
+        // After a user types a new empty line at the beginning of the file,
+        // the tokens shift down by one line. The delta edit transforms
+        // [2,5,3,0,3, 0,5,4,1,0, 3,2,7,2,0] into [3,5,3,0,3, 0,5,4,1,0, 3,2,7,2,0]
+        // by replacing the first element (deltaLine of first token) from 2 to 3.
+
+        let mut tokens = ServerSemanticTokens::from_full(
+            vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0, 3, 2, 7, 2, 0],
+            None,
+        );
+
+        tokens.apply(&[SemanticTokensEdit {
+            start: 0,
+            delete_count: 1,
+            data: vec![3],
+        }]);
+
+        let result = tokens.tokens().collect::<Vec<SemanticToken>>();
+
+        assert_eq!(
+            result,
+            &[
+                SemanticToken {
+                    line: 3,
+                    start: 5,
+                    length: 3,
+                    token_type: 0,
+                    token_modifiers: 3
+                },
+                SemanticToken {
+                    line: 3,
+                    start: 10,
+                    length: 4,
+                    token_type: 1,
+                    token_modifiers: 0
+                },
+                SemanticToken {
+                    line: 6,
                     start: 2,
                     length: 7,
                     token_type: 2,
