@@ -263,9 +263,9 @@ impl Output {
             .items_start()
             .child(
                 div()
-                    .flex_1()
-                    .w_full()
-                    .overflow_x_hidden()
+                    .when(!needs_horizontal_scroll, |el| {
+                        el.flex_1().w_full().overflow_x_hidden()
+                    })
                     .children(content),
             )
             .children(match self {
