@@ -32,6 +32,10 @@ pub(crate) fn extension_tests() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("ZED_EXTENSION_CLI_SHA", ZED_EXTENSION_CLI_SHA))
+        .add_env((
+            "CARGO_BUILD_TARGET",
+            extension::extension_builder::RUST_TARGET,
+        ))
         .map(|workflow| {
             jobs.into_iter()
                 .chain([tests_pass])
