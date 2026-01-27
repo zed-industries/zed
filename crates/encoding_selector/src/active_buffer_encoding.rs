@@ -88,7 +88,6 @@ impl Render for ActiveBufferEncoding {
         div().child(
             Button::new("change-encoding", text)
                 .label_size(LabelSize::Small)
-                .disabled(disabled)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if disabled {
                         return;

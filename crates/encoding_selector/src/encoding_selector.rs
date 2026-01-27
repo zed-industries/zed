@@ -222,7 +222,7 @@ impl PickerDelegate for EncodingSelectorDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select an encoding...".into()
+        "Reopen with encoding...".into()
     }
 
     fn match_count(&self) -> usize {
