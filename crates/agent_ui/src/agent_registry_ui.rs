@@ -549,14 +549,19 @@ impl Render for AgentRegistryPage {
                                     .hoverable_tooltip({
                                         let learn_more_url: SharedString =
                                             zed_urls::acp_registry_blog(cx).into();
-                                        move |_, cx| {
-                                            Tooltip::with_meta(
-                                                "The ACP Registry is still in testing phase.",
-                                                None,
-                                                learn_more_url.clone(),
-                                                cx,
-                                            )
-                                        }
+                                        let tooltip_fn = Tooltip::element(move |_, _| {
+                                            v_flex()
+                                                .gap_1()
+                                                .child(Label::new(
+                                                    "The ACP Registry is still in testing phase.",
+                                                ))
+                                                .child(ButtonLink::new(
+                                                    "Learn more about it",
+                                                    learn_more_url.as_str(),
+                                                ))
+                                                .into_any_element()
+                                        });
+                                        move |window, cx| tooltip_fn(window, cx)
                                     }),
                             )
                             .child(
