@@ -4,7 +4,7 @@ use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, PLAIN_TEXT, RunnableCapture,
     RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
-    language_settings::{LanguageSettings, language_settings},
+    language_settings::{AutoIndentMode, LanguageSettings, language_settings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
@@ -2714,17 +2714,18 @@ impl Buffer {
                 .filter(|((_, (range, _)), _)| {
                     let language = before_edit.language_at(range.start);
                     let language_id = language.map(|l| l.id());
-                    if let Some((cached_language_id, auto_indent)) = previous_setting
+                    if let Some((cached_language_id, use_autoindent)) = previous_setting
                         && cached_language_id == language_id
                     {
-                        auto_indent
+                        use_autoindent
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent =
+                        let auto_indent_mode =
                             language_settings(language.map(|l| l.name()), None, cx).auto_indent;
-                        previous_setting = Some((language_id, auto_indent));
-                        auto_indent
+                        let use_autoindent = auto_indent_mode == AutoIndentMode::Full;
+                        previous_setting = Some((language_id, use_autoindent));
+                        use_autoindent
                     }
                 })
                 .map(|((ix, (range, _)), new_text)| {

@@ -5124,26 +5124,30 @@ impl Editor {
                                 extra_line_additional_indent,
                                 prevent_auto_indent,
                             } => {
-                                let auto_indent_enabled =
+                                let auto_indent_mode =
                                     buffer.language_settings_at(start, cx).auto_indent;
+                                let preserve_indent =
+                                    auto_indent_mode != language::AutoIndentMode::None;
+                                let use_autoindent =
+                                    auto_indent_mode == language::AutoIndentMode::Full;
                                 let capacity_for_delimiter =
                                     delimiter.as_deref().map(str::len).unwrap_or_default();
-                                let existing_indent_if_enabled = if auto_indent_enabled {
+                                let existing_indent_len = if preserve_indent {
                                     existing_indent.len as usize
                                 } else {
                                     0
                                 };
                                 let extra_line_len = extra_line_additional_indent
-                                    .map(|i| 1 + existing_indent_if_enabled + i.len as usize)
+                                    .map(|i| 1 + existing_indent_len + i.len as usize)
                                     .unwrap_or(0);
                                 let mut new_text = String::with_capacity(
                                     1 + capacity_for_delimiter
-                                        + existing_indent_if_enabled
+                                        + existing_indent_len
                                         + additional_indent.len as usize
                                         + extra_line_len,
                                 );
                                 new_text.push('\n');
-                                if auto_indent_enabled {
+                                if preserve_indent {
                                     new_text.extend(existing_indent.chars());
                                 }
                                 new_text.extend(additional_indent.chars());
@@ -5152,12 +5156,12 @@ impl Editor {
                                 }
                                 if let Some(extra_indent) = extra_line_additional_indent {
                                     new_text.push('\n');
-                                    if auto_indent_enabled {
+                                    if preserve_indent {
                                         new_text.extend(existing_indent.chars());
                                     }
                                     new_text.extend(extra_indent.chars());
                                 }
-                                (start, new_text, *prevent_auto_indent)
+                                (start, new_text, *prevent_auto_indent || !use_autoindent)
                             }
                         };
 

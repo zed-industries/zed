@@ -232,6 +232,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
+        MigrationType::Json(migrations::m_2025_01_27::make_auto_indent_an_enum),
     ];
     run_migrations(text, migrations)
 }
@@ -2356,6 +2357,91 @@ mod tests {
                     }
                 }
                 "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_auto_indent_an_enum() {
+        // Empty settings should not change
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_01_27::make_auto_indent_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        // true should become "full"
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_01_27::make_auto_indent_an_enum,
+            )],
+            &r#"{
+                "auto_indent": true
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                "auto_indent": "full"
+            }"#
+                .unindent(),
+            ),
+        );
+
+        // false should become "none"
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_01_27::make_auto_indent_an_enum,
+            )],
+            &r#"{
+                "auto_indent": false
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                "auto_indent": "none"
+            }"#
+                .unindent(),
+            ),
+        );
+
+        // Already valid enum values should not change
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_01_27::make_auto_indent_an_enum,
+            )],
+            &r#"{
+                "auto_indent": "preserve_indent"
+            }"#
+            .unindent(),
+            None,
+        );
+
+        // Should also work inside languages
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_01_27::make_auto_indent_an_enum,
+            )],
+            &r#"{
+                "auto_indent": true,
+                "languages": {
+                    "Python": {
+                        "auto_indent": false
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                "auto_indent": "full",
+                "languages": {
+                    "Python": {
+                        "auto_indent": "none"
+                    }
+                }
+            }"#
                 .unindent(),
             ),
         );

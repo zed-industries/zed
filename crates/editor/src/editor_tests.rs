@@ -10174,7 +10174,9 @@ async fn test_autoindent(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_autoindent_disabled(cx: &mut TestAppContext) {
-    init_test(cx, |settings| settings.defaults.auto_indent = Some(false));
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
+    });
 
     let language = Arc::new(
         Language::new(
@@ -10253,10 +10255,10 @@ async fn test_autoindent_disabled(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoindent_disabled_does_not_preserve_indentation_on_newline(
-    cx: &mut TestAppContext,
-) {
-    init_test(cx, |settings| settings.defaults.auto_indent = Some(false));
+async fn test_autoindent_none_does_not_preserve_indentation_on_newline(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
+    });
 
     let mut cx = EditorTestContext::new(cx).await;
 
@@ -10279,13 +10281,42 @@ async fn test_autoindent_disabled_does_not_preserve_indentation_on_newline(
 }
 
 #[gpui::test]
+async fn test_autoindent_preserve_indent_maintains_indentation_on_newline(cx: &mut TestAppContext) {
+    // When auto_indent is "preserve_indent", pressing Enter on an indented line
+    // should preserve the indentation but not adjust based on syntax.
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        hello
+            indented lineˇ
+        world
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+
+    // The new line SHOULD have the same indentation as the previous line
+    cx.assert_editor_state(indoc! {"
+        hello
+            indented line
+            ˇ
+        world
+    "});
+}
+
+#[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.auto_indent = Some(true);
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::Full);
         settings.languages.0.insert(
             "python".into(),
             LanguageSettingsContent {
-                auto_indent: Some(false),
+                auto_indent: Some(settings::AutoIndentMode::None),
                 ..Default::default()
             },
         );

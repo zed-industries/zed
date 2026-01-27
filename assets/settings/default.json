@@ -357,8 +357,11 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type '(', Zed will surround the text with ().
   "use_auto_surround": true,
-  // Whether indentation should be adjusted based on the context whilst typing.
-  "auto_indent": true,
+  // Controls automatic indentation behavior when typing.
+  // - "full": Adjusts indentation based on syntax context (default)
+  // - "preserve_indent": Preserves current line's indentation on new lines
+  // - "none": No automatic indentation
+  "auto_indent": "full",
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.

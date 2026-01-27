@@ -7276,7 +7276,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Indent",
-                description: "Whether indentation should be adjusted based on the context whilst typing.",
+                description: "Controls automatic indentation behavior when typing.",
                 field: Box::new(SettingField {
                     json_path: Some("languages.$(language).auto_indent"),
                     pick: |settings_content| {
