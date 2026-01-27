@@ -448,6 +448,7 @@
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-shift-a": "quick_search::ToggleSplitMenu",
       "alt-h": "quick_search::ToggleHistory",
+      "alt-cmd-l": "quick_search::ToggleLayout",
     },
   },
   {
