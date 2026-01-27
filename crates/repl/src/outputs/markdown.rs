@@ -7,28 +7,25 @@ use language::Buffer;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
-use ui::SharedString;
 
 use crate::outputs::OutputContent;
 
 pub struct MarkdownView {
-    raw_text: SharedString,
     markdown: Entity<Markdown>,
 }
 
 impl MarkdownView {
     pub fn from(text: String, cx: &mut Context<Self>) -> Self {
-        let raw_text: SharedString = text.clone().into();
+        let markdown = cx.new(|cx| Markdown::new(text.clone().into(), None, None, cx));
 
-        let markdown = cx.new(|cx| Markdown::new(raw_text.clone(), None, None, cx));
-
-        Self { raw_text, markdown }
+        Self { markdown }
     }
 }
 
 impl OutputContent for MarkdownView {
-    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_string(self.raw_text.as_str().into()))
+    fn clipboard_content(&self, _window: &Window, cx: &App) -> Option<ClipboardItem> {
+        let source = self.markdown.read(cx).source().to_string();
+        Some(ClipboardItem::new_string(source))
     }
 
     fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
@@ -40,9 +37,10 @@ impl OutputContent for MarkdownView {
     }
 
     fn buffer_content(&mut self, _: &mut Window, cx: &mut App) -> Option<Entity<Buffer>> {
+        let source = self.markdown.read(cx).source().to_string();
         let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(self.raw_text.clone(), cx)
-                .with_language(language::PLAIN_TEXT.clone(), cx);
+            let mut buffer =
+                Buffer::local(source.clone(), cx).with_language(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });
