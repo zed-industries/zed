@@ -261,7 +261,13 @@ impl Output {
             .w_full()
             .when(needs_horizontal_scroll, |el| el.overflow_x_scroll())
             .items_start()
-            .child(div().flex_1().children(content))
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .overflow_x_hidden()
+                    .children(content),
+            )
             .children(match self {
                 Self::Plain { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
