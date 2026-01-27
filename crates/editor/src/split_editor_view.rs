@@ -14,6 +14,8 @@ use theme::ActiveTheme;
 use ui::scrollbars::ShowScrollbar;
 use ui::{h_flex, prelude::*, v_flex};
 
+use gpui::ContentMask;
+
 use crate::{
     DisplayRow, Editor, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, RowExt, StickyHeaderExcerpt,
@@ -310,7 +312,7 @@ impl Element for SplitBufferHeadersElement {
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
@@ -325,13 +327,15 @@ impl Element for SplitBufferHeadersElement {
 
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                for header_layout in &mut prepaint.non_sticky_headers {
-                    header_layout.element.paint(window, cx);
-                }
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    for header_layout in &mut prepaint.non_sticky_headers {
+                        header_layout.element.paint(window, cx);
+                    }
 
-                if let Some(mut sticky_header) = prepaint.sticky_header.take() {
-                    sticky_header.paint(window, cx);
-                }
+                    if let Some(mut sticky_header) = prepaint.sticky_header.take() {
+                        sticky_header.paint(window, cx);
+                    }
+                });
             });
         });
     }
