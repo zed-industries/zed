@@ -208,8 +208,9 @@ impl BatchingLlmClient {
         model: &str,
         max_tokens: u64,
         messages: &[Message],
+        seed: Option<usize>,
     ) -> Result<Option<AnthropicResponse>> {
-        let request_hash_str = Self::request_hash(model, max_tokens, messages);
+        let request_hash_str = Self::request_hash(model, max_tokens, messages, seed);
         let connection = self.connection.lock().unwrap();
         let response: Vec<String> = connection.select_bound(
             &sql!(SELECT response FROM cache WHERE request_hash = ?1 AND response IS NOT NULL;),
@@ -220,8 +221,14 @@ impl BatchingLlmClient {
             .and_then(|text| serde_json::from_str(&text).ok()))
     }
 
-    pub fn mark_for_batch(&self, model: &str, max_tokens: u64, messages: &[Message]) -> Result<()> {
-        let request_hash = Self::request_hash(model, max_tokens, messages);
+    pub fn mark_for_batch(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: &[Message],
+        seed: Option<usize>,
+    ) -> Result<()> {
+        let request_hash = Self::request_hash(model, max_tokens, messages, seed);
 
         let serializable_messages: Vec<SerializableMessage> = messages
             .iter()
@@ -259,13 +266,14 @@ impl BatchingLlmClient {
         model: &str,
         max_tokens: u64,
         messages: Vec<Message>,
+        seed: Option<usize>,
     ) -> Result<Option<AnthropicResponse>> {
-        let response = self.lookup(model, max_tokens, &messages)?;
+        let response = self.lookup(model, max_tokens, &messages, seed)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(model, max_tokens, &messages)?;
+        self.mark_for_batch(model, max_tokens, &messages, seed)?;
 
         Ok(None)
     }
@@ -606,12 +614,20 @@ impl BatchingLlmClient {
         Ok(all_batch_ids)
     }
 
-    fn request_hash(model: &str, max_tokens: u64, messages: &[Message]) -> String {
+    fn request_hash(
+        model: &str,
+        max_tokens: u64,
+        messages: &[Message],
+        seed: Option<usize>,
+    ) -> String {
         let mut hasher = std::hash::DefaultHasher::new();
         model.hash(&mut hasher);
         max_tokens.hash(&mut hasher);
         for msg in messages {
             message_content_to_string(&msg.content).hash(&mut hasher);
+        }
+        if let Some(seed) = seed {
+            seed.hash(&mut hasher);
         }
         let request_hash = hasher.finish();
         format!("{request_hash:016x}")
@@ -655,6 +671,7 @@ impl AnthropicClient {
         model: &str,
         max_tokens: u64,
         messages: Vec<Message>,
+        seed: Option<usize>,
     ) -> Result<Option<AnthropicResponse>> {
         match self {
             AnthropicClient::Plain(plain_llm_client) => plain_llm_client
@@ -663,7 +680,7 @@ impl AnthropicClient {
                 .map(Some),
             AnthropicClient::Batch(batching_llm_client) => {
                 batching_llm_client
-                    .generate(model, max_tokens, messages)
+                    .generate(model, max_tokens, messages, seed)
                     .await
             }
             AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),

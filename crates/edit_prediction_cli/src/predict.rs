@@ -69,7 +69,7 @@ pub async fn run_prediction(
         .await?;
 
         let batched = matches!(provider, PredictionProvider::Teacher(..));
-        return predict_teacher(example, backend, batched).await;
+        return predict_teacher(example, backend, batched, repetition_count).await;
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
@@ -261,10 +261,13 @@ async fn predict_teacher(
     example: &mut Example,
     backend: TeacherBackend,
     batched: bool,
+    repetition_count: usize,
 ) -> anyhow::Result<()> {
     match backend {
-        TeacherBackend::Sonnet45 => predict_anthropic(example, backend, batched).await,
-        TeacherBackend::Gpt52 => predict_openai(example, backend, batched).await,
+        TeacherBackend::Sonnet45 => {
+            predict_anthropic(example, backend, batched, repetition_count).await
+        }
+        TeacherBackend::Gpt52 => predict_openai(example, backend, batched, repetition_count).await,
     }
 }
 
@@ -272,6 +275,7 @@ async fn predict_anthropic(
     example: &mut Example,
     backend: TeacherBackend,
     batched: bool,
+    repetition_count: usize,
 ) -> anyhow::Result<()> {
     let llm_model_name = backend.model_name();
     let max_tokens = 16384;
@@ -286,46 +290,49 @@ async fn predict_anthropic(
 
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
-    let messages = vec![anthropic::Message {
-        role: anthropic::Role::User,
-        content: vec![anthropic::RequestContent::Text {
-            text: prompt.input.clone(),
-            cache_control: None,
-        }],
-    }];
+    for ix in 0..repetition_count {
+        let messages = vec![anthropic::Message {
+            role: anthropic::Role::User,
+            content: vec![anthropic::RequestContent::Text {
+                text: prompt.input.clone(),
+                cache_control: None,
+            }],
+        }];
 
-    let Some(response) = llm_client
-        .generate(llm_model_name, max_tokens, messages)
-        .await?
-    else {
-        // Request stashed for batched processing
-        return Ok(());
-    };
+        let seed = if repetition_count > 1 { Some(ix) } else { None };
+        let Some(response) = llm_client
+            .generate(llm_model_name, max_tokens, messages, seed)
+            .await?
+        else {
+            // Request stashed for batched processing
+            return Ok(());
+        };
 
-    let actual_output = response
-        .content
-        .into_iter()
-        .filter_map(|content| match content {
-            anthropic::ResponseContent::Text { text } => Some(text),
-            _ => None,
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
+        let actual_output = response
+            .content
+            .into_iter()
+            .filter_map(|content| match content {
+                anthropic::ResponseContent::Text { text } => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
+        let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
 
-    let prediction = ExamplePrediction {
-        actual_patch: Some(actual_patch),
-        actual_output,
-        error: None,
-        provider: if batched {
-            PredictionProvider::Teacher(backend)
-        } else {
-            PredictionProvider::TeacherNonBatching(backend)
-        },
-    };
+        let prediction = ExamplePrediction {
+            actual_patch: Some(actual_patch),
+            actual_output,
+            error: None,
+            provider: if batched {
+                PredictionProvider::Teacher(backend)
+            } else {
+                PredictionProvider::TeacherNonBatching(backend)
+            },
+        };
 
-    example.predictions.push(prediction);
+        example.predictions.push(prediction);
+    }
     Ok(())
 }
 
@@ -333,6 +340,7 @@ async fn predict_openai(
     example: &mut Example,
     backend: TeacherBackend,
     batched: bool,
+    repetition_count: usize,
 ) -> anyhow::Result<()> {
     let llm_model_name = backend.model_name();
     let max_tokens = 16384;
@@ -347,52 +355,55 @@ async fn predict_openai(
 
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
-    let messages = vec![open_ai::RequestMessage::User {
-        content: open_ai::MessageContent::Plain(prompt.input.clone()),
-    }];
+    for ix in 0..repetition_count {
+        let messages = vec![open_ai::RequestMessage::User {
+            content: open_ai::MessageContent::Plain(prompt.input.clone()),
+        }];
 
-    let Some(response) = llm_client
-        .generate(llm_model_name, max_tokens, messages)
-        .await?
-    else {
-        // Request stashed for batched processing
-        return Ok(());
-    };
+        let seed = if repetition_count > 1 { Some(ix) } else { None };
+        let Some(response) = llm_client
+            .generate(llm_model_name, max_tokens, messages, seed)
+            .await?
+        else {
+            // Request stashed for batched processing
+            return Ok(());
+        };
 
-    let actual_output = response
-        .choices
-        .into_iter()
-        .filter_map(|choice| match choice.message {
-            open_ai::RequestMessage::Assistant { content, .. } => content.map(|c| match c {
-                open_ai::MessageContent::Plain(text) => text,
-                open_ai::MessageContent::Multipart(parts) => parts
-                    .into_iter()
-                    .filter_map(|p| match p {
-                        open_ai::MessagePart::Text { text } => Some(text),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(""),
-            }),
-            _ => None,
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
+        let actual_output = response
+            .choices
+            .into_iter()
+            .filter_map(|choice| match choice.message {
+                open_ai::RequestMessage::Assistant { content, .. } => content.map(|c| match c {
+                    open_ai::MessageContent::Plain(text) => text,
+                    open_ai::MessageContent::Multipart(parts) => parts
+                        .into_iter()
+                        .filter_map(|p| match p {
+                            open_ai::MessagePart::Text { text } => Some(text),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(""),
+                }),
+                _ => None,
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
+        let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
 
-    let prediction = ExamplePrediction {
-        actual_patch: Some(actual_patch),
-        actual_output,
-        error: None,
-        provider: if batched {
-            PredictionProvider::Teacher(backend)
-        } else {
-            PredictionProvider::TeacherNonBatching(backend)
-        },
-    };
+        let prediction = ExamplePrediction {
+            actual_patch: Some(actual_patch),
+            actual_output,
+            error: None,
+            provider: if batched {
+                PredictionProvider::Teacher(backend)
+            } else {
+                PredictionProvider::TeacherNonBatching(backend)
+            },
+        };
 
-    example.predictions.push(prediction);
+        example.predictions.push(prediction);
+    }
     Ok(())
 }
 
