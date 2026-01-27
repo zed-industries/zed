@@ -91,7 +91,6 @@ let
       };
 
       cargoLock = ../Cargo.lock;
-      livekit-webrtc = (import ./livekit-webrtc.nix { inherit system pkgs; }).webrtc.default;
 
       nativeBuildInputs = [
         cmake
