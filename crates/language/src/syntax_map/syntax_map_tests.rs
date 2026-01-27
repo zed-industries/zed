@@ -819,7 +819,7 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
     );
 
     let mut syntax_map = SyntaxMap::new(&buffer);
-    syntax_map.set_language_registry(registry.clone());
+    syntax_map.set_language_registry(registry);
     syntax_map.reparse(python.clone(), &buffer);
 
     // Should have no unknown injections (#sq doesn't match the injection pattern)
