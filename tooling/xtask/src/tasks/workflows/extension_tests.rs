@@ -46,10 +46,7 @@ pub(crate) fn extension_tests() -> Workflow {
 }
 
 fn install_rust_target() -> Step<Run> {
-    named::bash(format!(
-        "rustup target add {rust_target}",
-        rust_target = EXTENSION_RUST_TARGET
-    ))
+    named::bash(format!("rustup target add {EXTENSION_RUST_TARGET}",))
 }
 
 fn run_clippy() -> Step<Run> {
