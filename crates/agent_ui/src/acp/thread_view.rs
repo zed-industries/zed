@@ -340,7 +340,6 @@ pub struct AcpThreadView {
     entry_view_state: Entity<EntryViewState>,
     message_editor: Entity<MessageEditor>, // keep
     focus_handle: FocusHandle, // keep
-    model_selector: Option<Entity<AcpModelSelectorPopover>>,
     config_options_view: Option<Entity<ConfigOptionsView>>,
     profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>, // keep
@@ -403,6 +402,7 @@ enum ThreadState {
         thread: Entity<AcpThread>,
         title_editor: Option<Entity<Editor>>,
         mode_selector: Option<Entity<ModeSelector>>,
+        model_selector: Option<Entity<AcpModelSelectorPopover>>,
         permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
         _subscriptions: Vec<Subscription>,
     },
@@ -581,7 +581,6 @@ impl AcpThreadView {
             ),
             login: None,
             message_editor,
-            model_selector: None,
             config_options_view: None,
             profile_selector: None,
             notifications: Vec::new(),
@@ -828,6 +827,7 @@ impl AcpThreadView {
                             connection.session_config_options(&session_id, cx);
 
                         let mode_selector;
+                        let model_selector;
                         if let Some(config_options) = config_options_provider {
                             // Use config options - don't create mode_selector or model_selector
                             let agent_server = this.agent.clone();
@@ -835,12 +835,12 @@ impl AcpThreadView {
                             this.config_options_view = Some(cx.new(|cx| {
                                 ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
                             }));
-                            this.model_selector = None;
+                            model_selector = None;
                             mode_selector = None;
                         } else {
                             // Fall back to legacy mode/model selectors
                             this.config_options_view = None;
-                            this.model_selector =
+                            model_selector =
                                 connection.model_selector(&session_id).map(|selector| {
                                     let agent_server = this.agent.clone();
                                     let fs = this.project.read(cx).fs().clone();
@@ -900,6 +900,7 @@ impl AcpThreadView {
                             thread,
                             title_editor,
                             mode_selector,
+                            model_selector,
                             permission_dropdown_handle: PopoverMenuHandle::default(),
                             _subscriptions: subscriptions,
                         };
@@ -1079,6 +1080,15 @@ impl AcpThreadView {
     pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
         match &self.thread_state {
             ThreadState::Ready { mode_selector, .. } => mode_selector.as_ref(),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    pub fn model_selector(&self) -> Option<&Entity<AcpModelSelectorPopover>> {
+        match &self.thread_state {
+            ThreadState::Ready { model_selector, .. } => model_selector.as_ref(),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -6245,7 +6255,7 @@ impl AcpThreadView {
                             .children(self.config_options_view.clone())
                             .when(self.config_options_view.is_none(), |this| {
                                 this.children(self.mode_selector().cloned())
-                                    .children(self.model_selector.clone())
+                                    .children(self.model_selector().cloned())
                             })
                             .child(self.render_send_button(cx)),
                     ),
@@ -8081,8 +8091,7 @@ impl AcpThreadView {
     }
 
     fn current_model_id(&self, cx: &App) -> Option<String> {
-        self.model_selector
-            .as_ref()
+        self.model_selector()
             .and_then(|selector| selector.read(cx).active_model(cx).map(|m| m.id.to_string()))
     }
 
@@ -8091,8 +8100,7 @@ impl AcpThreadView {
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
-            self.model_selector
-                .as_ref()
+            self.model_selector()
                 .and_then(|selector| selector.read(cx).active_model(cx))
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
@@ -8500,7 +8508,7 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(model_selector) = this.model_selector.as_ref() {
+                if let Some(model_selector) = this.model_selector() {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
                 }
@@ -8519,7 +8527,7 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(model_selector) = this.model_selector.as_ref() {
+                if let Some(model_selector) = this.model_selector() {
                     model_selector.update(cx, |model_selector, cx| {
                         model_selector.cycle_favorite_models(window, cx);
                     });
