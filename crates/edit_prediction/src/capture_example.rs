@@ -13,6 +13,7 @@ use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::
 use text::{BufferSnapshot as TextBufferSnapshot, Point};
 
 pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
+pub(crate) const ZETA2_TESTING_RATE_PER_10K_PREDICTION: u16 = 500;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -238,6 +239,10 @@ pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
         .unwrap_or(DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS);
     cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
         && rand::random::<u16>() % 10_000 < capture_rate
+}
+
+pub(crate) fn should_send_testing_zeta2_request() -> bool {
+    rand::random::<u16>() % 10_000 < ZETA2_TESTING_RATE_PER_10K_PREDICTION
 }
 
 #[cfg(test)]

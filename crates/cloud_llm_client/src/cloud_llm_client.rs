@@ -176,6 +176,7 @@ pub struct PredictEditsBody {
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PredictEditsRequestTrigger {
+    Testing,
     Diagnostics,
     Cli,
     #[default]
