@@ -25,14 +25,14 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
-use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
 use futures::FutureExt as _;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
-use git_ui::project_diff::ProjectDiffToolbar;
+use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
@@ -93,7 +93,8 @@ use workspace::{
     open_new,
 };
 use workspace::{
-    CloseIntent, CloseWindow, NotificationFrame, RestoreBanner, with_active_or_new_workspace,
+    CloseIntent, CloseProject, CloseWindow, NotificationFrame, RestoreBanner,
+    with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
@@ -1137,6 +1138,43 @@ fn register_actions(
         })
         .register_action({
             let app_state = Arc::downgrade(&app_state);
+            move |_, _: &CloseProject, window, cx| {
+                let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+                    return;
+                };
+                if let Some(app_state) = app_state.upgrade() {
+                    open_new(
+                        workspace::OpenOptions {
+                            replace_window: Some(window_handle),
+                            ..Default::default()
+                        },
+                        app_state,
+                        cx,
+                        |workspace, window, cx| {
+                            cx.activate(true);
+                            // Create buffer synchronously to avoid flicker
+                            let project = workspace.project().clone();
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", None, true, cx)
+                            });
+                            let editor = cx.new(|cx| {
+                                Editor::for_buffer(buffer, Some(project), window, cx)
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .detach();
+                }
+            }
+        })
+        .register_action({
+            let app_state = Arc::downgrade(&app_state);
             move |_, _: &NewFile, _, cx| {
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
@@ -1233,12 +1271,16 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let branch_diff_toolbar = cx.new(BranchDiffToolbar::new);
+            toolbar.add_item(branch_diff_toolbar, window, cx);
             let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
             toolbar.add_item(basedpyright_banner, window, cx);
+            let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
+            toolbar.add_item(image_view_toolbar, window, cx);
         })
     });
 }
@@ -1540,7 +1582,9 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
 
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    user_settings_watcher: gpui::Task<()>,
     mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    global_settings_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
@@ -1562,6 +1606,8 @@ pub fn handle_settings_file_changes(
 
     // Watch for changes in both files
     cx.spawn(async move |cx| {
+        let _user_settings_watcher = user_settings_watcher;
+        let _global_settings_watcher = global_settings_watcher;
         let mut settings_streams = futures::stream::select(
             global_settings_file_rx.map(Either::Left),
             user_settings_file_rx.map(Either::Right),
@@ -1599,6 +1645,7 @@ pub fn handle_settings_file_changes(
 
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    user_keymap_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
@@ -1657,6 +1704,7 @@ pub fn handle_keymap_file_changes(
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
 
     cx.spawn(async move |cx| {
+        let _user_keymap_watcher = user_keymap_watcher;
         let mut user_keymap_content = String::new();
         let mut migrating_in_memory = false;
         loop {
@@ -2798,9 +2846,9 @@ mod tests {
                 editor.update(cx, |editor, cx| editor.insert("EDIT", window, cx));
             })
             .unwrap();
+        cx.run_until_parked();
 
         assert!(window_is_edited(window, cx));
-        cx.run_until_parked();
 
         // Advance the clock to make sure the workspace is serialized
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -4507,23 +4555,29 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
         cx.update(|cx| {
-            let settings_rx = watch_config_file(
+            let (settings_rx, settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/settings.json"),
             );
-            let keymap_rx = watch_config_file(
+            let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            let global_settings_rx = watch_config_file(
+            let (global_settings_rx, global_settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(
+                settings_rx,
+                settings_watcher,
+                global_settings_rx,
+                global_settings_watcher,
+                cx,
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
         workspace
             .update(cx, |workspace, _, cx| {
@@ -4624,24 +4678,30 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            let settings_rx = watch_config_file(
+            let (settings_rx, settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/settings.json"),
             );
-            let keymap_rx = watch_config_file(
+            let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
 
-            let global_settings_rx = watch_config_file(
+            let (global_settings_rx, global_settings_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/global_settings.json"),
             );
-            handle_settings_file_changes(settings_rx, global_settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(
+                settings_rx,
+                settings_watcher,
+                global_settings_rx,
+                global_settings_watcher,
+                cx,
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -4766,14 +4826,17 @@ mod tests {
                 "diagnostics",
                 "edit_prediction",
                 "editor",
+                "encoding_selector",
                 "feedback",
                 "file_finder",
                 "git",
+                "git_graph",
                 "git_onboarding",
                 "git_panel",
                 "git_picker",
                 "go_to_line",
                 "icon_theme_selector",
+                "image_viewer",
                 "inline_assistant",
                 "journal",
                 "keymap_editor",
@@ -4964,8 +5027,10 @@ mod tests {
             language_model::init(app_state.client.clone(), cx);
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
+            git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
+            project::AgentRegistryStore::init_global(cx);
             agent_ui::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),

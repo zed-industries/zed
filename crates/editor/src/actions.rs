@@ -602,8 +602,6 @@ actions!(
         LineDown,
         /// Moves cursor up one line.
         LineUp,
-        /// Moves cursor down.
-        MoveDown,
         /// Moves cursor left.
         MoveLeft,
         /// Moves the current line down.
@@ -642,8 +640,6 @@ actions!(
         MoveToStartOfLargerSyntaxNode,
         /// Moves cursor to the end of the next larger syntax node.
         MoveToEndOfLargerSyntaxNode,
-        /// Moves cursor up.
-        MoveUp,
         /// Inserts a new line and moves cursor to it.
         Newline,
         /// Inserts a new line above the current line.

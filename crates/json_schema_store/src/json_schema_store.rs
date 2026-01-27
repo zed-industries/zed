@@ -3,10 +3,10 @@ use std::sync::{Arc, LazyLock};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
-use language::{LanguageRegistry, LspAdapterDelegate, language_settings::all_language_settings};
+use language::{LanguageRegistry, LspAdapterDelegate, language_settings::AllLanguageSettings};
 use parking_lot::RwLock;
 use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
-use settings::LSP_SETTINGS_SCHEMA_URL_PREFIX;
+use settings::{LSP_SETTINGS_SCHEMA_URL_PREFIX, Settings as _, SettingsLocation};
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 
 const SCHEMA_URI_PREFIX: &str = "zed://schemas/";
@@ -300,6 +300,17 @@ async fn resolve_dynamic_schema(
             });
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
+        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions),
+        "action" => {
+            let normalized_action_name = rest.context("No Action name provided")?;
+            let action_name = denormalize_action_name(normalized_action_name);
+            let mut generator = settings::KeymapFile::action_schema_generator();
+            let schema = cx
+                .update(|cx| cx.action_schema_by_name(&action_name, &mut generator))
+                .flatten();
+            root_schema_from_action_schema(schema, &mut generator).to_value()
+        }
+        "tasks" => task::TaskTemplates::generate_json_schema(),
         _ => {
             anyhow::bail!("Unrecognized schema: {schema_name}");
         }
@@ -311,6 +322,7 @@ const JSONC_LANGUAGE_NAME: &str = "JSONC";
 
 pub fn all_schema_file_associations(
     languages: &Arc<LanguageRegistry>,
+    path: Option<SettingsLocation<'_>>,
     cx: &mut App,
 ) -> serde_json::Value {
     let extension_globs = languages
@@ -320,7 +332,7 @@ pub fn all_schema_file_associations(
         .flatten()
         // Path suffixes can be entire file names or just their extensions.
         .flat_map(|path_suffix| [format!("*.{path_suffix}"), path_suffix]);
-    let override_globs = all_language_settings(None, cx)
+    let override_globs = AllLanguageSettings::get(path, cx)
         .file_types
         .get(JSONC_LANGUAGE_NAME)
         .into_iter()

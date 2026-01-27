@@ -1,19 +1,16 @@
 mod application_menu;
 pub mod collab;
 mod onboarding_banner;
-pub mod platform_title_bar;
-mod platforms;
 mod project_dropdown;
-mod system_window_tabs;
 mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
 
-use crate::{
-    application_menu::{ApplicationMenu, show_menus},
-    platform_title_bar::PlatformTitleBar,
-    system_window_tabs::SystemWindowTabs,
+use crate::application_menu::{ApplicationMenu, show_menus};
+pub use platform_title_bar::{
+    self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
+    ShowNextWindowTab, ShowPreviousWindowTab,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -24,7 +21,7 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
@@ -69,7 +66,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    SystemWindowTabs::init(cx);
+    platform_title_bar::PlatformTitleBar::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -792,10 +789,11 @@ impl TitleBar {
         Some(
             PopoverMenu::new("branch-menu")
                 .menu(move |window, cx| {
-                    Some(git_ui::branch_picker::popover(
+                    Some(git_ui::git_picker::popover(
                         workspace.downgrade(),
-                        true,
                         effective_repository.clone(),
+                        git_ui::git_picker::GitPickerTab::Branches,
+                        gpui::rems(34.),
                         window,
                         cx,
                     ))
@@ -964,13 +962,9 @@ impl TitleBar {
                     let user_login = user_login.clone();
 
                     let (plan_name, label_color, bg_color) = match plan {
-                        None | Some(Plan::V2(PlanV2::ZedFree)) => {
-                            ("Free", Color::Default, free_chip_bg)
-                        }
-                        Some(Plan::V2(PlanV2::ZedProTrial)) => {
-                            ("Pro Trial", Color::Accent, pro_chip_bg)
-                        }
-                        Some(Plan::V2(PlanV2::ZedPro)) => ("Pro", Color::Accent, pro_chip_bg),
+                        None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                        Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
+                        Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
                     };
 
                     menu.when(is_signed_in, |this| {

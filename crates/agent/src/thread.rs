@@ -2,9 +2,9 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
+    WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -12,13 +12,14 @@ use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
-    AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
-use cloud_llm_client::{CompletionIntent, Plan};
+use cloud_api_types::Plan;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -32,12 +33,11 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelExt,
-    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -223,6 +223,7 @@ impl UserMessage {
         const OPEN_FETCH_TAG: &str = "<fetched_urls>";
         const OPEN_RULES_TAG: &str =
             "<rules>\nThe user has specified the following rules that should be applied:\n";
+        const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -231,6 +232,7 @@ impl UserMessage {
         let mut thread_context = OPEN_THREADS_TAG.to_string();
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
+        let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -312,6 +314,9 @@ impl UserMessage {
                         MentionUri::Fetch { url } => {
                             write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
                         }
+                        MentionUri::Diagnostics { .. } => {
+                            write!(&mut diagnostics_context, "\n{}\n", content).ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -370,6 +375,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(rules_context));
+        }
+
+        if diagnostics_context.len() > OPEN_DIAGNOSTICS_TAG.len() {
+            diagnostics_context.push_str("</diagnostics>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(diagnostics_context));
         }
 
         if message.content.len() > len_before_context {
@@ -612,7 +624,7 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
-    pub fn build_permission_options(&self) -> Vec<acp::PermissionOption> {
+    pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
 
         let tool_name = &self.tool_name;
@@ -634,11 +646,30 @@ impl ToolPermissionContext {
             _ => (None, None),
         };
 
-        let mut options = vec![acp::PermissionOption::new(
-            acp::PermissionOptionId::new(format!("always:{}", tool_name)),
+        let mut choices = Vec::new();
+
+        let mut push_choice = |label: String, allow_id, deny_id, allow_kind, deny_kind| {
+            choices.push(acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(allow_id),
+                    label.clone(),
+                    allow_kind,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(deny_id),
+                    label,
+                    deny_kind,
+                ),
+            });
+        };
+
+        push_choice(
             format!("Always for {}", tool_name.replace('_', " ")),
+            format!("always_allow:{}", tool_name),
+            format!("always_deny:{}", tool_name),
             acp::PermissionOptionKind::AllowAlways,
-        )];
+            acp::PermissionOptionKind::RejectAlways,
+        );
 
         if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
             let button_text = match tool_name.as_str() {
@@ -646,27 +677,31 @@ impl ToolPermissionContext {
                 "fetch" => format!("Always for `{}`", display),
                 _ => format!("Always for `{}`", display),
             };
-            options.push(acp::PermissionOption::new(
-                acp::PermissionOptionId::new(format!("always_pattern:{}:{}", tool_name, pattern)),
+            push_choice(
                 button_text,
+                format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                format!("always_deny_pattern:{}:{}", tool_name, pattern),
                 acp::PermissionOptionKind::AllowAlways,
-            ));
+                acp::PermissionOptionKind::RejectAlways,
+            );
         }
 
-        options.push(acp::PermissionOption::new(
-            acp::PermissionOptionId::new("once"),
-            "Only this time",
+        push_choice(
+            "Only this time".to_string(),
+            "allow".to_string(),
+            "deny".to_string(),
             acp::PermissionOptionKind::AllowOnce,
-        ));
+            acp::PermissionOptionKind::RejectOnce,
+        );
 
-        options
+        acp_thread::PermissionOptions::Dropdown(choices)
     }
 }
 
 #[derive(Debug)]
 pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCallUpdate,
-    pub options: Vec<acp::PermissionOption>,
+    pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
     pub context: Option<ToolPermissionContext>,
 }
@@ -691,11 +726,13 @@ pub struct Thread {
     summary: Option<SharedString>,
     messages: Vec<Message>,
     user_store: Entity<UserStore>,
-    completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
+    /// Flag indicating the UI has a queued message waiting to be sent.
+    /// Used to signal that the turn should end at the next message boundary.
+    has_queued_message: bool,
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
@@ -709,6 +746,7 @@ pub struct Thread {
     templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
+    thinking_enabled: bool,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -753,8 +791,8 @@ impl Thread {
             summary: None,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
-            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -771,6 +809,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            thinking_enabled: true,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -796,6 +835,19 @@ impl Thread {
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+
+        // Rebind tools that hold thread references to use this subagent's thread
+        // instead of the parent's thread. This is critical for tools like EditFileTool
+        // that make model requests using the thread's ID.
+        let weak_self = cx.weak_entity();
+        let tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> = parent_tools
+            .into_iter()
+            .map(|(name, tool)| {
+                let rebound = tool.rebind_thread(weak_self.clone()).unwrap_or(tool);
+                (name, rebound)
+            })
+            .collect();
+
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -806,10 +858,10 @@ impl Thread {
             summary: None,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
-            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
+            has_queued_message: false,
             pending_message: None,
-            tools: parent_tools,
+            tools,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: Task::ready(None).shared(),
@@ -819,6 +871,7 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
+            thinking_enabled: true,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1003,8 +1056,8 @@ impl Thread {
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
-            completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1016,6 +1069,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            // TODO: Persist this on the `DbThread`.
+            thinking_enabled: true,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1042,7 +1097,6 @@ impl Thread {
                 provider: model.provider_id().to_string(),
                 model: model.name().0.to_string(),
             }),
-            completion_mode: Some(self.completion_mode),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
         };
@@ -1115,18 +1169,13 @@ impl Thread {
         cx.notify()
     }
 
-    pub fn completion_mode(&self) -> CompletionMode {
-        self.completion_mode
+    pub fn thinking_enabled(&self) -> bool {
+        self.thinking_enabled
     }
 
-    pub fn set_completion_mode(&mut self, mode: CompletionMode, cx: &mut Context<Self>) {
-        let old_usage = self.latest_token_usage();
-        self.completion_mode = mode;
-        let new_usage = self.latest_token_usage();
-        if old_usage != new_usage {
-            cx.emit(TokenUsageUpdated(new_usage));
-        }
-        cx.notify()
+    pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.thinking_enabled = enabled;
+        cx.notify();
     }
 
     pub fn last_message(&self) -> Option<Message> {
@@ -1151,6 +1200,12 @@ impl Thread {
         ));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            language_registry.clone(),
+            Templates::new(),
+        ));
+        self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             language_registry,
@@ -1240,6 +1295,14 @@ impl Thread {
         })
     }
 
+    pub fn set_has_queued_message(&mut self, has_queued: bool) {
+        self.has_queued_message = has_queued;
+    }
+
+    pub fn has_queued_message(&self) -> bool {
+        self.has_queued_message
+    }
+
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
         let Some(last_user_message) = self.last_user_message() else {
             return;
@@ -1285,7 +1348,7 @@ impl Thread {
         let usage = self.latest_request_token_usage()?;
         let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
-            max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
+            max_tokens: model.max_token_count(),
             used_tokens: usage.total_tokens(),
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -1533,8 +1596,8 @@ impl Thread {
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
             let (mut events, mut error) = match model.stream_completion(request, cx).await {
-                Ok(events) => (events, None),
-                Err(err) => (stream::empty().boxed(), Some(err)),
+                Ok(events) => (events.fuse(), None),
+                Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
             let mut tool_results = FuturesUnordered::new();
             let mut cancelled = false;
@@ -1601,6 +1664,13 @@ impl Thread {
                 }
             }
 
+            // Drop the stream to release the rate limit permit before tool execution.
+            // The stream holds a semaphore guard that limits concurrent requests.
+            // Without this, the permit would be held during potentially long-running
+            // tool execution, which could cause deadlocks when tools spawn subagents
+            // that need their own permits.
+            drop(events);
+
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
@@ -1654,6 +1724,11 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
+                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
+                if has_queued {
+                    log::debug!("Queued message found, ending turn at message boundary");
+                    return Ok(());
+                }
                 intent = CompletionIntent::ToolResults;
                 attempt = 0;
             }
@@ -1671,10 +1746,7 @@ impl Thread {
         };
 
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                None => false,
-            }
+            plan.is_some()
         } else {
             true
         };
@@ -2175,7 +2247,6 @@ impl Thread {
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
-        log::debug!("Completion mode: {:?}", self.completion_mode);
 
         let available_tools: Vec<_> = self
             .running_turn
@@ -2191,13 +2262,12 @@ impl Thread {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
             intent: Some(completion_intent),
-            mode: Some(self.completion_mode.into()),
             messages,
             tools,
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_enabled,
         };
 
         log::debug!("Completion request built successfully");
@@ -2220,14 +2290,30 @@ impl Thread {
             }
         }
 
+        let use_streaming_edit_tool = false;
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
+                let profile_tool_name = if tool_name == "streaming_edit_file" {
+                    "edit_file"
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", false) | ("edit_file", true) => None,
+                        ("streaming_edit_file", true) => {
+                            // Expose streaming tool as "edit_file"
+                            Some((SharedString::from("edit_file"), tool.clone()))
+                        }
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }
@@ -2614,6 +2700,15 @@ where
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
+
+    /// Create a new instance of this tool bound to a different thread.
+    /// This is used when creating subagents, so that tools like EditFileTool
+    /// that hold a thread reference will use the subagent's thread instead
+    /// of the parent's thread.
+    /// Returns None if the tool doesn't need rebinding (most tools).
+    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        None
+    }
 }
 
 pub struct Erased<T>(T);
@@ -2645,6 +2740,14 @@ pub trait AnyAgentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()>;
+    /// Create a new instance of this tool bound to a different thread.
+    /// This is used when creating subagents, so that tools like EditFileTool
+    /// that hold a thread reference will use the subagent's thread instead
+    /// of the parent's thread.
+    /// Returns None if the tool doesn't need rebinding (most tools).
+    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        None
+    }
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -2707,6 +2810,10 @@ where
         let input = serde_json::from_value(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
+    }
+
+    fn rebind_thread(&self, new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        self.0.rebind_thread(new_thread)
     }
 }
 
@@ -2913,10 +3020,9 @@ impl ToolCallEventStream {
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
     /// They only support `default_mode` (allow/deny/confirm) per tool.
     ///
-    /// Shows 3 buttons:
-    /// - "Always allow <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"`
-    /// - "Allow" → approve once
-    /// - "Deny" → reject once
+    /// Uses the dropdown authorization flow with two granularities:
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
         title: impl Into<String>,
@@ -2943,23 +3049,38 @@ impl ToolCallEventStream {
                         self.tool_use_id.to_string(),
                         acp::ToolCallUpdateFields::new().title(title.into()),
                     ),
-                    options: vec![
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new(format!("always_allow_mcp:{}", tool_id)),
-                            format!("Always allow {} MCP tool", display_name),
-                            acp::PermissionOptionKind::AllowAlways,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("allow"),
-                            "Allow once",
-                            acp::PermissionOptionKind::AllowOnce,
-                        ),
-                        acp::PermissionOption::new(
-                            acp::PermissionOptionId::new("deny"),
-                            "Deny",
-                            acp::PermissionOptionKind::RejectOnce,
-                        ),
-                    ],
+                    options: acp_thread::PermissionOptions::Dropdown(vec![
+                        acp_thread::PermissionOptionChoice {
+                            allow: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new(format!(
+                                    "always_allow_mcp:{}",
+                                    tool_id
+                                )),
+                                format!("Always for {} MCP tool", display_name),
+                                acp::PermissionOptionKind::AllowAlways,
+                            ),
+                            deny: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new(format!(
+                                    "always_deny_mcp:{}",
+                                    tool_id
+                                )),
+                                format!("Always for {} MCP tool", display_name),
+                                acp::PermissionOptionKind::RejectAlways,
+                            ),
+                        },
+                        acp_thread::PermissionOptionChoice {
+                            allow: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new("allow"),
+                                "Only this time",
+                                acp::PermissionOptionKind::AllowOnce,
+                            ),
+                            deny: acp::PermissionOption::new(
+                                acp::PermissionOptionId::new("deny"),
+                                "Only this time",
+                                acp::PermissionOptionKind::RejectOnce,
+                            ),
+                        },
+                    ]),
                     response: response_tx,
                     context: None,
                 },
@@ -2982,6 +3103,19 @@ impl ToolCallEventStream {
                     });
                 }
                 return Ok(());
+            }
+            if response_str == format!("always_deny_mcp:{}", tool_id) {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file(fs, cx, move |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                        });
+                    });
+                }
+                return Err(anyhow!("Permission to run tool denied by user"));
             }
 
             if response_str == "allow" {

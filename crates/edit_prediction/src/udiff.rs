@@ -23,6 +23,10 @@ impl OpenedBuffers {
     pub fn get(&self, path: &str) -> Option<&Entity<Buffer>> {
         self.0.get(path)
     }
+
+    pub fn buffers(&self) -> impl Iterator<Item = &Entity<Buffer>> {
+        self.0.values()
+    }
 }
 
 #[must_use]
@@ -108,10 +112,12 @@ pub async fn apply_diff(
                 };
 
                 buffer.read_with(cx, |buffer, _| {
-                    edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), status)
-                            .with_context(|| format!("Diff:\n{diff_str}"))?,
-                    );
+                    edits.extend(resolve_hunk_edits_in_buffer(
+                        hunk,
+                        buffer,
+                        ranges.as_slice(),
+                        status,
+                    )?);
                     anyhow::Ok(())
                 })?;
             }
@@ -317,7 +323,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
 
     let mut text = text.to_string();
 
-    while let Some(event) = diff.next()? {
+    while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
             DiffEvent::Hunk {
                 hunk,
@@ -334,7 +340,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
                     disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
                         text[..offset].matches('\n').count() as u32
                     })
-                    .ok_or_else(|| anyhow!("couldn't resolve hunk: {}", hunk.context))?;
+                    .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
 
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
@@ -644,11 +650,7 @@ fn resolve_hunk_edits_in_buffer(
         })
         .ok_or_else(|| {
             if candidates.is_empty() {
-                anyhow!(
-                    "Failed to match context:\n\n```\n{}```\n\nBuffer contents:\n\n```\n{}```",
-                    hunk.context,
-                    buffer.text()
-                )
+                anyhow!("Failed to match context:\n\n```\n{}```\n", hunk.context,)
             } else {
                 anyhow!("Context is not unique enough:\n{}", hunk.context)
             }

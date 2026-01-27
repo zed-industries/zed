@@ -1,5 +1,7 @@
 use super::*;
-use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList, UserMessageId};
+use acp_thread::{
+    AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, UserMessageId,
+};
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
@@ -50,6 +52,7 @@ use std::{
 };
 use util::path;
 
+mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
@@ -947,21 +950,130 @@ async fn next_tool_call_authorization(
         if let ThreadEvent::ToolCallAuthorization(tool_call_authorization) = event {
             let permission_kinds = tool_call_authorization
                 .options
-                .iter()
-                .map(|o| o.kind)
-                .collect::<Vec<_>>();
-            // Only 2 options now: AllowAlways (for tool) and AllowOnce (granularity only)
-            // Deny is handled by the UI buttons, not as a separate option
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .map(|option| option.kind);
+            let allow_once = tool_call_authorization
+                .options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
+                .map(|option| option.kind);
+
             assert_eq!(
                 permission_kinds,
-                vec![
-                    acp::PermissionOptionKind::AllowAlways,
-                    acp::PermissionOptionKind::AllowOnce,
-                ]
+                Some(acp::PermissionOptionKind::AllowAlways)
             );
+            assert_eq!(allow_once, Some(acp::PermissionOptionKind::AllowOnce));
             return tool_call_authorization;
         }
     }
+}
+
+#[test]
+fn test_permission_options_terminal_with_pattern() {
+    let permission_options =
+        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    assert_eq!(choices.len(), 3);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Always for `cargo` commands"));
+    assert!(labels.contains(&"Only this time"));
+}
+
+#[test]
+fn test_permission_options_edit_file_with_path_pattern() {
+    let permission_options =
+        ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for edit file"));
+    assert!(labels.contains(&"Always for `src/`"));
+}
+
+#[test]
+fn test_permission_options_fetch_with_domain_pattern() {
+    let permission_options =
+        ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for fetch"));
+    assert!(labels.contains(&"Always for `docs.rs`"));
+}
+
+#[test]
+fn test_permission_options_without_pattern() {
+    let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+        .build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    assert_eq!(choices.len(), 2);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Only this time"));
+    assert!(!labels.iter().any(|label| label.contains("commands")));
+}
+
+#[test]
+fn test_permission_option_ids_for_terminal() {
+    let permission_options =
+        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    let allow_ids: Vec<String> = choices
+        .iter()
+        .map(|choice| choice.allow.option_id.0.to_string())
+        .collect();
+    let deny_ids: Vec<String> = choices
+        .iter()
+        .map(|choice| choice.deny.option_id.0.to_string())
+        .collect();
+
+    assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
+    assert!(allow_ids.contains(&"allow".to_string()));
+    assert!(
+        allow_ids
+            .iter()
+            .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+        "Missing allow pattern option"
+    );
+
+    assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
+    assert!(deny_ids.contains(&"deny".to_string()));
+    assert!(
+        deny_ids
+            .iter()
+            .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+        "Missing deny pattern option"
+    );
 }
 
 #[gpui::test]
@@ -2858,7 +2970,6 @@ async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -2902,7 +3013,6 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -2967,7 +3077,6 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.add_tool(EchoTool);
             thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
         })
@@ -3048,7 +3157,6 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.set_completion_mode(agent_settings::CompletionMode::Burn, cx);
             thread.send(UserMessageId::new(), ["Hello!"], cx)
         })
         .unwrap();
@@ -3245,11 +3353,12 @@ fn watch_settings(fs: Arc<dyn Fs>, cx: &mut App) {
     let fs = fs.clone();
     cx.spawn({
         async move |cx| {
-            let mut new_settings_content_rx = settings::watch_config_file(
+            let (mut new_settings_content_rx, watcher_task) = settings::watch_config_file(
                 cx.background_executor(),
                 fs,
                 paths::settings_file().clone(),
             );
+            let _watcher_task = watcher_task;
 
             while let Some(new_settings_content) = new_settings_content_rx.next().await {
                 cx.update(|cx| {
@@ -3647,7 +3756,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 3: Confirm rule forces confirmation even with always_allow_tool_actions=true
+    // Test 3: always_allow_tool_actions=true overrides always_confirm patterns
     {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
@@ -3674,9 +3783,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         #[allow(clippy::arc_with_non_send_sync)]
         let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
-        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
-        let _task = cx.update(|cx| {
+        let task = cx.update(|cx| {
             tool.run(
                 crate::TerminalToolInput {
                     command: "sudo rm file".to_string(),
@@ -3688,16 +3797,14 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        let auth = rx.expect_authorization().await;
-        assert!(
-            auth.tool_call.fields.title.is_some(),
-            "expected authorization request for sudo command despite always_allow_tool_actions=true"
-        );
+        // With always_allow_tool_actions=true, confirm patterns are overridden
+        task.await
+            .expect("command should be allowed with always_allow_tool_actions=true");
     }
 
-    // Test 4: default_mode: Deny blocks commands when no pattern matches
+    // Test 4: always_allow_tool_actions=true overrides default_mode: Deny
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
+        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
             handle: handle.clone(),
         });
@@ -3734,15 +3841,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        let result = task.await;
-        assert!(
-            result.is_err(),
-            "expected command to be blocked by default_mode: Deny"
-        );
-        assert!(
-            result.unwrap_err().to_string().contains("disabled"),
-            "error should mention the tool is disabled"
-        );
+        // With always_allow_tool_actions=true, even default_mode: Deny is overridden
+        task.await
+            .expect("command should be allowed with always_allow_tool_actions=true");
     }
 }
 
@@ -4213,14 +4314,12 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Long running task".to_string(),
-                    task_prompt: "Do a very long task that takes forever".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Long running task".to_string(),
+                task_prompt: "Do a very long task that takes forever".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream.clone(),
             cx,
@@ -4507,15 +4606,8 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         parent_tools,
     ));
 
-    let subagent_configs = vec![crate::SubagentConfig {
-        label: "Test".to_string(),
-        task_prompt: "Do something".to_string(),
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-        timeout_ms: None,
-        allowed_tools: Some(vec!["nonexistent_tool".to_string()]),
-    }];
-    let result = tool.validate_subagents(&subagent_configs);
+    let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
+    let result = tool.validate_allowed_tools(&allowed_tools);
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4837,14 +4929,12 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     let result = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Test".to_string(),
-                    task_prompt: "Do something".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Test".to_string(),
+                task_prompt: "Do something".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -4915,14 +5005,12 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Research task".to_string(),
-                    task_prompt: "Find all TODOs in the codebase".to_string(),
-                    summary_prompt: "Summarize what you found".to_string(),
-                    context_low_prompt: "Context low, wrap up".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Research task".to_string(),
+                task_prompt: "Find all TODOs in the codebase".to_string(),
+                summary_prompt: "Summarize what you found".to_string(),
+                context_low_prompt: "Context low, wrap up".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -5565,4 +5653,89 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed docs.rs URL"
     );
+}
+
+#[gpui::test]
+async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Add a tool so we can simulate tool calls
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    // Start a turn by sending a message
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Simulate the model making a tool call
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text": "hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+
+    // Signal that a message is queued before ending the stream
+    thread.update(cx, |thread, _cx| {
+        thread.set_has_queued_message(true);
+    });
+
+    // Now end the stream - tool will run, and the boundary check should see the queue
+    fake_model.end_last_completion_stream();
+
+    // Collect all events until the turn stops
+    let all_events = collect_events_until_stop(&mut events, cx).await;
+
+    // Verify we received the tool call event
+    let tool_call_ids: Vec<_> = all_events
+        .iter()
+        .filter_map(|e| match e {
+            Ok(ThreadEvent::ToolCall(tc)) => Some(tc.tool_call_id.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_call_ids,
+        vec!["tool_1"],
+        "Should have received a tool call event for our echo tool"
+    );
+
+    // The turn should have stopped with EndTurn
+    let stop_reasons = stop_events(all_events);
+    assert_eq!(
+        stop_reasons,
+        vec![acp::StopReason::EndTurn],
+        "Turn should have ended after tool completion due to queued message"
+    );
+
+    // Verify the queued message flag is still set
+    thread.update(cx, |thread, _cx| {
+        assert!(
+            thread.has_queued_message(),
+            "Should still have queued message flag set"
+        );
+    });
+
+    // Thread should be idle now
+    thread.update(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be running after turn ends"
+        );
+    });
 }

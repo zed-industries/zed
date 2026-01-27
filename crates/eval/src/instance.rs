@@ -202,7 +202,10 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         );
 
@@ -548,7 +551,6 @@ impl ExampleInstance {
             let request = LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
-                mode: None,
                 intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,

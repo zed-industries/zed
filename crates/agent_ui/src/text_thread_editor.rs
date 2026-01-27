@@ -1,9 +1,8 @@
 use crate::{
     agent_panel::AgentType,
     language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::{BurnModeTooltip, ModelSelectorTooltip},
+    ui::ModelSelectorTooltip,
 };
-use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -34,8 +33,7 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
-    Role,
+    ConfigurationError, IconOrSvg, LanguageModelImage, LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -1639,8 +1637,8 @@ impl TextThreadEditor {
             > = std::collections::BTreeMap::new();
 
             for comment in comments {
-                let start = comment.anchor_range.start.to_point(&snapshot);
-                let end = comment.anchor_range.end.to_point(&snapshot);
+                let start = comment.range.start.to_point(&snapshot);
+                let end = comment.range.end.to_point(&snapshot);
                 comments_by_range
                     .entry((start, end))
                     .or_default()
@@ -2331,45 +2329,6 @@ impl TextThreadEditor {
         )
     }
 
-    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let text_thread = self.text_thread().read(cx);
-        let active_model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.model)?;
-        if !active_model.supports_burn_mode() {
-            return None;
-        }
-
-        let active_completion_mode = text_thread.completion_mode();
-        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
-        let icon = if burn_mode_enabled {
-            IconName::ZedBurnModeOn
-        } else {
-            IconName::ZedBurnMode
-        };
-
-        Some(
-            IconButton::new("burn-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .toggle_state(burn_mode_enabled)
-                .selected_icon_color(Color::Error)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.text_thread().update(cx, |text_thread, _cx| {
-                        text_thread.set_completion_mode(match active_completion_mode {
-                            CompletionMode::Burn => CompletionMode::Normal,
-                            CompletionMode::Normal => CompletionMode::Burn,
-                        });
-                    });
-                }))
-                .tooltip(move |_window, cx| {
-                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
-                        .into()
-                })
-                .into_any_element(),
-        )
-    }
-
     fn render_language_model_selector(
         &self,
         window: &mut Window,
@@ -2826,8 +2785,7 @@ impl Render for TextThreadEditor {
                     .child(
                         h_flex()
                             .gap_0p5()
-                            .child(self.render_inject_context_menu(cx))
-                            .children(self.render_burn_mode_toggle(cx)),
+                            .child(self.render_inject_context_menu(cx)),
                     )
                     .child(
                         h_flex()
@@ -3194,8 +3152,7 @@ fn token_state(text_thread: &Entity<TextThread>, cx: &App) -> Option<TokenState>
         .default_model()?
         .model;
     let token_count = text_thread.read(cx).token_count()?;
-    let max_token_count =
-        model.max_token_count_for_mode(text_thread.read(cx).completion_mode().into());
+    let max_token_count = model.max_token_count();
     let token_state = if max_token_count.saturating_sub(token_count) == 0 {
         TokenState::NoTokensLeft {
             max_token_count,
@@ -3585,6 +3542,7 @@ mod tests {
     fn init_test(cx: &mut App) {
         let settings_store = SettingsStore::test(cx);
         prompt_store::init(cx);
+        editor::init(cx);
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
 

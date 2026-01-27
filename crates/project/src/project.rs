@@ -1,6 +1,7 @@
+pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod buffer_store;
-mod color_extractor;
+pub mod color_extractor;
 pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
@@ -9,21 +10,18 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
-mod manifest_tree;
+pub mod manifest_tree;
 pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
 pub mod search;
-mod task_inventory;
+pub mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;
 pub mod trusted_worktrees;
 pub mod worktree_store;
-
-#[cfg(test)]
-mod project_tests;
 
 mod environment;
 use buffer_diff::BufferDiff;
@@ -32,7 +30,7 @@ pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
-mod yarn;
+pub mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use itertools::Either;
@@ -43,7 +41,10 @@ use crate::{
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
-pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
+pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
+pub use agent_server_store::{
+    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
+};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -68,10 +69,9 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
-use encoding_rs;
+
 pub use environment::ProjectEnvironment;
-#[cfg(test)]
-use futures::future::join_all;
+
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -103,6 +103,8 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
+#[cfg(target_os = "windows")]
+use remote::wsl_path_to_windows_path;
 use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
@@ -159,6 +161,21 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
+#[derive(Clone, Copy, Debug)]
+pub struct LocalProjectFlags {
+    pub init_worktree_trust: bool,
+    pub watch_global_configs: bool,
+}
+
+impl Default for LocalProjectFlags {
+    fn default() -> Self {
+        Self {
+            init_worktree_trust: true,
+            watch_global_configs: true,
+        }
+    }
+}
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -288,6 +305,13 @@ enum ProjectClientState {
     },
 }
 
+/// A link to display in a toast notification, useful to point to documentation.
+#[derive(PartialEq, Debug, Clone)]
+pub struct ToastLink {
+    pub label: &'static str,
+    pub url: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
@@ -309,6 +333,8 @@ pub enum Event {
     Toast {
         notification_id: SharedString,
         message: String,
+        /// Optional link to display as a button in the toast.
+        link: Option<ToastLink>,
     },
     HideToast {
         notification_id: SharedString,
@@ -333,7 +359,9 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromRemote,
+    DisconnectedFromRemote {
+        server_not_running: bool,
+    },
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -699,7 +727,7 @@ impl LspAction {
         }
     }
 
-    fn action_kind(&self) -> Option<lsp::CodeActionKind> {
+    pub fn action_kind(&self) -> Option<lsp::CodeActionKind> {
         match self {
             Self::Action(action) => action.kind.clone(),
             Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
@@ -987,7 +1015,7 @@ impl DirectoryLister {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
@@ -1082,7 +1110,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
-        init_worktree_trust: bool,
+        flags: LocalProjectFlags,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1091,7 +1119,7 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            if init_worktree_trust {
+            if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
                     None,
@@ -1179,6 +1207,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    flags.watch_global_configs,
                     cx,
                 )
             });
@@ -1687,7 +1716,7 @@ impl Project {
             )
         });
 
-        let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx));
+        let agent_server_store = cx.new(|_cx| AgentServerStore::collab());
         let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let project = cx.new(|cx| {
@@ -1872,7 +1901,7 @@ impl Project {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
@@ -1893,7 +1922,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                false,
+                LocalProjectFlags {
+                    init_worktree_trust: false,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -1910,7 +1942,7 @@ impl Project {
         project
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1919,7 +1951,7 @@ impl Project {
         Self::test_project(fs, root_paths, false, cx).await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn test_with_worktree_trust(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1928,7 +1960,7 @@ impl Project {
         Self::test_project(fs, root_paths, true, cx).await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     async fn test_project(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1950,7 +1982,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                init_worktree_trust,
+                LocalProjectFlags {
+                    init_worktree_trust,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -2059,7 +2094,7 @@ impl Project {
         });
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     #[inline]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &App) -> bool {
         self.buffer_store
@@ -2106,6 +2141,27 @@ impl Project {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
+    }
+
+    /// Reveals the given path in the system file manager.
+    ///
+    /// On Windows with a WSL remote connection, this converts the POSIX path
+    /// to a Windows UNC path before revealing.
+    pub fn reveal_path(&self, path: &Path, cx: &mut Context<Self>) {
+        #[cfg(target_os = "windows")]
+        if let Some(RemoteConnectionOptions::Wsl(wsl_options)) = self.remote_connection_options(cx)
+        {
+            let path = path.to_path_buf();
+            cx.spawn(async move |_, cx| {
+                wsl_path_to_windows_path(&wsl_options, &path)
+                    .await
+                    .map(|windows_path| cx.update(|cx| cx.reveal_path(&windows_path)))
+            })
+            .detach_and_log_err(cx);
+            return;
+        }
+
+        cx.reveal_path(path);
     }
 
     #[inline]
@@ -2807,7 +2863,7 @@ impl Project {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn open_local_buffer_with_lsp(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -2820,6 +2876,7 @@ impl Project {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -2834,7 +2891,7 @@ impl Project {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn open_buffer_with_lsp(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -2872,6 +2929,7 @@ impl Project {
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3166,6 +3224,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: "dap".into(),
                 message: message.clone(),
+                link: None,
             });
         }
     }
@@ -3296,6 +3355,7 @@ impl Project {
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
                 notification_id: "lsp".into(),
                 message: message.clone(),
+                link: None,
             }),
             LspStoreEvent::SnippetEdit {
                 buffer_id,
@@ -3319,7 +3379,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            remote::RemoteClientEvent::Disconnected => {
+            &remote::RemoteClientEvent::Disconnected { server_not_running } => {
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);
                 });
@@ -3329,7 +3389,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromRemote);
+                cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
         }
     }
@@ -3346,6 +3406,7 @@ impl Project {
                     let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-settings-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -3359,6 +3420,10 @@ impl Project {
                     let message = format!("Failed to set local tasks in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-tasks-{path:?}").into(),
+                        link: Some(ToastLink {
+                            label: "Open Tasks Documentation",
+                            url: "https://zed.dev/docs/tasks",
+                        }),
                         message,
                     });
                 }
@@ -3373,6 +3438,7 @@ impl Project {
                         format!("Failed to set local debug scenarios in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-debug-scenarios-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -4839,6 +4905,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: envelope.payload.notification_id.into(),
                 message: envelope.payload.message,
+                link: None,
             });
             Ok(())
         })
@@ -4860,13 +4927,15 @@ impl Project {
             })
             .collect();
         this.update(&mut cx, |_, cx| {
-            cx.emit(Event::LanguageServerPrompt(LanguageServerPromptRequest {
-                level: proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
-                message: envelope.payload.message,
-                actions: actions.clone(),
-                lsp_name: envelope.payload.lsp_name,
-                response_channel: tx,
-            }));
+            cx.emit(Event::LanguageServerPrompt(
+                LanguageServerPromptRequest::new(
+                    proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
+                    envelope.payload.message,
+                    actions.clone(),
+                    envelope.payload.lsp_name,
+                    tx,
+                ),
+            ));
 
             anyhow::Ok(())
         })?;
@@ -5465,7 +5534,7 @@ impl Project {
             })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.running_language_servers_for_local_buffer(buffer, cx)
@@ -5497,8 +5566,9 @@ impl Project {
         &self.agent_server_store
     }
 
-    #[cfg(test)]
-    fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+    #[cfg(feature = "test-support")]
+    pub fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+        use futures::future::join_all;
         cx.spawn(async move |this, cx| {
             let scans_complete = this
                 .read_with(cx, |this, cx| {
@@ -5587,48 +5657,6 @@ impl Project {
             .map_or(false, |worktree| {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
-    }
-
-    pub fn update_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: Arc<RelPath>,
-        cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
-    ) {
-        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            // todo(settings_ui) error?
-            return;
-        };
-        cx.spawn(async move |cx| {
-            let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))
-                .await
-                .context("Failed to load settings file")?;
-
-            let has_bom = file.has_bom;
-
-            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
-                store.new_text_for_update(file.text, move |settings| update(settings, cx))
-            });
-            worktree
-                .update(cx, |worktree, cx| {
-                    let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        new_text.into(),
-                        line_ending,
-                        encoding_rs::UTF_8,
-                        has_bom,
-                        cx,
-                    )
-                })
-                .await
-                .context("Failed to write settings file")?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
     }
 }
 
@@ -5959,56 +5987,4 @@ fn provide_inline_values(
     }
 
     variables
-}
-
-#[cfg(test)]
-mod disable_ai_settings_tests {
-    use super::*;
-    use gpui::TestAppContext;
-    use settings::Settings;
-
-    #[gpui::test]
-    async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            settings::init(cx);
-
-            // Test 1: Default is false (AI enabled)
-            assert!(
-                !DisableAiSettings::get_global(cx).disable_ai,
-                "Default should allow AI"
-            );
-        });
-
-        let disable_true = serde_json::json!({
-            "disable_ai": true
-        })
-        .to_string();
-        let disable_false = serde_json::json!({
-            "disable_ai": false
-        })
-        .to_string();
-
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.set_user_settings(&disable_false, cx).unwrap();
-            store.set_global_settings(&disable_true, cx).unwrap();
-        });
-        cx.update(|cx| {
-            assert!(
-                DisableAiSettings::get_global(cx).disable_ai,
-                "Local false cannot override global true"
-            );
-        });
-
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.set_global_settings(&disable_false, cx).unwrap();
-            store.set_user_settings(&disable_true, cx).unwrap();
-        });
-
-        cx.update(|cx| {
-            assert!(
-                DisableAiSettings::get_global(cx).disable_ai,
-                "Local false cannot override global true"
-            );
-        });
-    }
 }

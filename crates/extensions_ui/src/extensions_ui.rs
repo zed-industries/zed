@@ -287,6 +287,10 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
+fn extension_button_id(extension_id: &Arc<str>, operation: ExtensionOperation) -> ElementId {
+    (SharedString::from(extension_id.clone()), operation as usize).into()
+}
+
 struct ExtensionCardButtons {
     install_or_uninstall: Button,
     upgrade: Option<Button>,
@@ -642,7 +646,7 @@ impl ExtensionsPage {
                                 }),
                             )
                             .child(
-                                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                Button::new(extension_button_id(&extension.id, ExtensionOperation::Remove), "Uninstall")
                                     .color(Color::Accent)
                                     .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
@@ -989,7 +993,7 @@ impl ExtensionsPage {
             // The button here is a placeholder, as it won't be interactable anyways.
             return ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Install),
                     "Install",
                 ),
                 configure: None,
@@ -1005,7 +1009,7 @@ impl ExtensionsPage {
         match status.clone() {
             ExtensionStatus::NotInstalled => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Install),
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -1027,7 +1031,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Installing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Install),
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -1041,7 +1045,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Upgrading => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Remove),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1054,12 +1058,16 @@ impl ExtensionsPage {
                     .disabled(true)
                 }),
                 upgrade: Some(
-                    Button::new(SharedString::from(extension.id.clone()), "Upgrade").disabled(true),
+                    Button::new(
+                        extension_button_id(&extension.id, ExtensionOperation::Upgrade),
+                        "Upgrade",
+                    )
+                    .disabled(true),
                 ),
             },
             ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Remove),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1103,7 +1111,7 @@ impl ExtensionsPage {
                     None
                 } else {
                     Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                        Button::new(extension_button_id(&extension.id, ExtensionOperation::Upgrade), "Upgrade")
                           .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .when(!is_compatible, |upgrade_button| {
                                 upgrade_button.disabled(true).tooltip({
@@ -1140,7 +1148,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Removing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Remove),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1619,7 +1627,7 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_1p5()
                             .justify_between()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
+                            .child(Headline::new("Extensions").size(HeadlineSize::Large))
                             .child(
                                 Button::new("install-dev-extension", "Install Dev Extension")
                                     .style(ButtonStyle::Outlined)
@@ -1704,7 +1712,8 @@ impl Render for ExtensionsPage {
                     )
                     .children(ExtensionProvides::iter().filter_map(|provides| {
                         match provides {
-                            ExtensionProvides::SlashCommands
+                            ExtensionProvides::AgentServers
+                            | ExtensionProvides::SlashCommands
                             | ExtensionProvides::IndexedDocsProviders => return None,
                             _ => {}
                         }

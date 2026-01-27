@@ -17,6 +17,14 @@ pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
 /// The client may use this as a signal to refresh the token.
 pub const EXPIRED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-expired-token";
 
+/// The name of the header used to indicate when a request failed due to an outdated LLM token.
+///
+/// A token is considered "outdated" when we can't parse the claims (e.g., after adding a new required claim).
+///
+/// This is distinct from [`EXPIRED_LLM_TOKEN_HEADER_NAME`] which indicates the token's time-based validity has passed.
+/// An outdated token means the token's structure is incompatible with the current server expectations.
+pub const OUTDATED_LLM_TOKEN_HEADER_NAME: &str = "x-zed-outdated-token";
+
 /// The name of the header used to indicate the usage limit for edit predictions.
 pub const EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME: &str = "x-zed-edit-predictions-usage-limit";
 
@@ -66,39 +74,6 @@ impl FromStr for UsageLimit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Plan {
-    V2(PlanV2),
-}
-
-impl Plan {
-    pub fn is_v2(&self) -> bool {
-        matches!(self, Self::V2(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanV2 {
-    #[default]
-    ZedFree,
-    ZedPro,
-    ZedProTrial,
-}
-
-impl FromStr for PlanV2 {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "zed_free" => Ok(Self::ZedFree),
-            "zed_pro" => Ok(Self::ZedPro),
-            "zed_pro_trial" => Ok(Self::ZedProTrial),
-            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
-        }
-    }
-}
-
 #[derive(
     Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize, EnumString, EnumIter, Display,
 )]
@@ -134,6 +109,7 @@ pub struct PredictEditsBody {
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PredictEditsRequestTrigger {
+    Testing,
     Diagnostics,
     Cli,
     #[default]
@@ -201,13 +177,6 @@ pub enum EditPredictionRejectReason {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    Normal,
-    Max,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CompletionIntent {
     UserPrompt,
     ToolResults,
@@ -228,8 +197,6 @@ pub struct CompletionBody {
     pub prompt_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub intent: Option<CompletionIntent>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub mode: Option<CompletionMode>,
     pub provider: LanguageModelProvider,
     pub model: String,
     pub provider_request: serde_json::Value,
@@ -328,10 +295,9 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
-    pub supports_max_mode: bool,
     #[serde(default)]
     pub supports_streaming_tools: bool,
-    // only used by OpenAI and xAI
+    /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
 }
@@ -357,22 +323,7 @@ pub struct UsageData {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
     use super::*;
-
-    #[test]
-    fn test_plan_v2_deserialize_snake_case() {
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_free")).unwrap();
-        assert_eq!(plan, PlanV2::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, PlanV2::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, PlanV2::ZedProTrial);
-    }
 
     #[test]
     fn test_usage_limit_from_str() {
