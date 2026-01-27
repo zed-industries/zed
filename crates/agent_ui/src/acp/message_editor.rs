@@ -1068,6 +1068,69 @@ impl MessageEditor {
         }
     }
 
+    pub fn add_images_from_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.prompt_capabilities.borrow().image {
+            return;
+        }
+
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.clone();
+
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Select Images".into()),
+        });
+
+        window
+            .spawn(cx, async move |cx| {
+                let paths = match paths_receiver.await {
+                    Ok(Ok(Some(paths))) => paths,
+                    _ => return Ok::<(), anyhow::Error>(()),
+                };
+
+                let supported_formats = [
+                    ("png", gpui::ImageFormat::Png),
+                    ("jpg", gpui::ImageFormat::Jpeg),
+                    ("jpeg", gpui::ImageFormat::Jpeg),
+                    ("webp", gpui::ImageFormat::Webp),
+                    ("gif", gpui::ImageFormat::Gif),
+                    ("bmp", gpui::ImageFormat::Bmp),
+                    ("tiff", gpui::ImageFormat::Tiff),
+                    ("tif", gpui::ImageFormat::Tiff),
+                    ("ico", gpui::ImageFormat::Ico),
+                ];
+
+                let mut images = Vec::new();
+                for path in paths {
+                    let extension = path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|s| s.to_lowercase());
+
+                    let Some(format) = extension.and_then(|ext| {
+                        supported_formats
+                            .iter()
+                            .find(|(e, _)| *e == ext)
+                            .map(|(_, f)| *f)
+                    }) else {
+                        continue;
+                    };
+
+                    let Ok(content) = async_fs::read(&path).await else {
+                        continue;
+                    };
+
+                    images.push(gpui::Image::from_bytes(format, content));
+                }
+
+                crate::mention_set::insert_images_as_context(images, editor, mention_set, cx).await;
+                Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
         self.editor.update(cx, |message_editor, cx| {
             message_editor.set_read_only(read_only);
