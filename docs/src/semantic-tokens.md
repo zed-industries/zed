@@ -14,11 +14,11 @@ Semantic tokens are controlled by the `semantic_tokens` setting. By default, sem
 
 This setting accepts three values:
 
-| Value | Description |
-| --- | --- |
-| `"off"` | Do not request semantic tokens from language servers. Uses tree-sitter highlighting only. (Default) |
+| Value        | Description                                                                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"off"`      | Do not request semantic tokens from language servers. Uses tree-sitter highlighting only. (Default)                                                         |
 | `"combined"` | Use LSP semantic tokens together with tree-sitter highlighting. Tree-sitter provides base highlighting, and semantic tokens overlay additional information. |
-| `"full"` | Use LSP semantic tokens exclusively. Tree-sitter highlighting is disabled entirely for buffers with semantic token support. |
+| `"full"`     | Use LSP semantic tokens exclusively. Tree-sitter highlighting is disabled entirely for buffers with semantic token support.                                 |
 
 You can configure this globally or per-language:
 
@@ -57,17 +57,17 @@ Rules are matched in order, and the first matching rule wins. User-defined rules
 
 Each rule can specify:
 
-| Property | Description |
-| --- | --- |
-| `token_type` | The LSP semantic token type to match (e.g., `"variable"`, `"function"`, `"class"`). If omitted, matches all types. |
-| `token_modifiers` | A list of modifiers that must all be present (e.g., `["declaration"]`, `["readonly", "static"]`). |
-| `style` | A list of theme style names to try. The first one found in the current theme is used. |
-| `foreground_color` | Override foreground color in hex format (e.g., `"#ff0000"`). |
-| `background_color` | Override background color in hex format. |
-| `underline` | Boolean or hex color. If `true`, underlines with the text color. |
-| `strikethrough` | Boolean or hex color. If `true`, strikes through with the text color. |
-| `font_weight` | `"normal"` or `"bold"`. |
-| `font_style` | `"normal"` or `"italic"`. |
+| Property           | Description                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `token_type`       | The LSP semantic token type to match (e.g., `"variable"`, `"function"`, `"class"`). If omitted, matches all types. |
+| `token_modifiers`  | A list of modifiers that must all be present (e.g., `["declaration"]`, `["readonly", "static"]`).                  |
+| `style`            | A list of theme style names to try. The first one found in the current theme is used.                              |
+| `foreground_color` | Override foreground color in hex format (e.g., `"#ff0000"`).                                                       |
+| `background_color` | Override background color in hex format.                                                                           |
+| `underline`        | Boolean or hex color. If `true`, underlines with the text color.                                                   |
+| `strikethrough`    | Boolean or hex color. If `true`, strikes through with the text color.                                              |
+| `font_weight`      | `"normal"` or `"bold"`.                                                                                            |
+| `font_style`       | `"normal"` or `"italic"`.                                                                                          |
 
 ### Example: Highlighting Unresolved References
 
@@ -180,27 +180,27 @@ The full default configuration is defined in Zed's source at `assets/settings/de
 
 Language servers report tokens using standardized types. Common types include:
 
-| Type | Description |
-| --- | --- |
-| `namespace` | Namespace or module names |
-| `type` | Type names |
-| `class` | Class names |
-| `enum` | Enum type names |
-| `interface` | Interface names |
-| `struct` | Struct names |
-| `typeParameter` | Generic type parameters |
-| `parameter` | Function/method parameters |
-| `variable` | Variable names |
-| `property` | Object properties or struct fields |
-| `enumMember` | Enum variants |
-| `function` | Function names |
-| `method` | Method names |
-| `macro` | Macro names |
-| `keyword` | Language keywords |
-| `comment` | Comments |
-| `string` | String literals |
-| `number` | Numeric literals |
-| `operator` | Operators |
+| Type            | Description                        |
+| --------------- | ---------------------------------- |
+| `namespace`     | Namespace or module names          |
+| `type`          | Type names                         |
+| `class`         | Class names                        |
+| `enum`          | Enum type names                    |
+| `interface`     | Interface names                    |
+| `struct`        | Struct names                       |
+| `typeParameter` | Generic type parameters            |
+| `parameter`     | Function/method parameters         |
+| `variable`      | Variable names                     |
+| `property`      | Object properties or struct fields |
+| `enumMember`    | Enum variants                      |
+| `function`      | Function names                     |
+| `method`        | Method names                       |
+| `macro`         | Macro names                        |
+| `keyword`       | Language keywords                  |
+| `comment`       | Comments                           |
+| `string`        | String literals                    |
+| `number`        | Numeric literals                   |
+| `operator`      | Operators                          |
 
 Common modifiers include: `declaration`, `definition`, `readonly`, `static`, `deprecated`, `async`, `documentation`, `defaultLibrary`, and language-specific modifiers like `unsafe` (Rust) or `abstract` (TypeScript).
 
