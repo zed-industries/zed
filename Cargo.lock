@@ -16835,7 +16835,6 @@ name = "terminal_extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "ctor",
  "extension",
  "fs",
