@@ -214,15 +214,15 @@ Create a new terminal in the active workspace.
 zed terminal create [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--cwd <path>` | Working directory for the terminal |
-| `--command <cmd>` | Command to run instead of default shell |
-| `--args <args>...` | Arguments for the command (use `--` before args starting with `-`) |
-| `--env <KEY=VALUE>...` | Environment variables to set |
-| `--title <title>` | Title override for the terminal tab |
-| `--in-pane-of <id>` | Create as a tab in the pane containing terminal with this ID |
-| `--no-activate` | Create as a background tab (don't focus) |
+| Option                 | Description                                                        |
+| ---------------------- | ------------------------------------------------------------------ |
+| `--cwd <path>`         | Working directory for the terminal                                 |
+| `--command <cmd>`      | Command to run instead of default shell                            |
+| `--args <args>...`     | Arguments for the command (use `--` before args starting with `-`) |
+| `--env <KEY=VALUE>...` | Environment variables to set                                       |
+| `--title <title>`      | Title override for the terminal tab                                |
+| `--in-pane-of <id>`    | Create as a tab in the pane containing terminal with this ID       |
+| `--no-activate`        | Create as a background tab (don't focus)                           |
 
 Examples:
 
