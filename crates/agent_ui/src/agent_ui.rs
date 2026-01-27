@@ -275,7 +275,7 @@ pub fn init(
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
             move |workspace: &mut Workspace,
-                  _: &zed_actions::AgentRegistry,
+                  _: &zed_actions::AcpRegistry,
                   window: &mut Window,
                   cx: &mut Context<Workspace>| {
                 let existing = workspace
