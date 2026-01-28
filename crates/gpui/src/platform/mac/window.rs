@@ -577,6 +577,16 @@ impl MacWindowState {
             WindowBounds::Windowed(self.bounds())
         }
     }
+
+    fn reapply_titlebar_settings(&self) {
+        if self.transparent_titlebar {
+            unsafe {
+                self.native_window.setTitlebarAppearsTransparent_(YES);
+                self.native_window
+                    .setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
+            }
+        }
+    }
 }
 
 unsafe impl Send for MacWindowState {}
@@ -2113,6 +2123,8 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     if selector == sel!(windowDidBecomeKey:) && is_active {
         let window_state = unsafe { get_window_state(this) };
         let mut lock = window_state.lock();
+
+        lock.reapply_titlebar_settings();
 
         if lock.activated_least_once {
             if let Some(mut callback) = lock.request_frame_callback.take() {
