@@ -348,9 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    local_queued_messages: Vec<QueuedMessage>,
-    queued_message_editors: Vec<Entity<MessageEditor>>,
-    queued_message_editor_subscriptions: Vec<Subscription>,
     last_synced_queue_length: usize,
     discarded_partial_edits: HashSet<acp::ToolCallId>,
     prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
@@ -406,6 +403,9 @@ enum ThreadState {
         editor_expanded: bool,
         should_be_following: bool,
         editing_message: Option<usize>,
+        local_queued_messages: Vec<QueuedMessage>,
+        queued_message_editors: Vec<Entity<MessageEditor>>,
+        queued_message_editor_subscriptions: Vec<Subscription>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,9 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            local_queued_messages: Vec::new(),
-            queued_message_editors: Vec::new(),
-            queued_message_editor_subscriptions: Vec::new(),
             last_synced_queue_length: 0,
             discarded_partial_edits: HashSet::default(),
             prompt_capabilities,
@@ -911,6 +908,9 @@ impl AcpThreadView {
                             editor_expanded: false,
                             should_be_following: false,
                             editing_message: None,
+                            local_queued_messages: Vec::new(),
+                            queued_message_editors: Vec::new(),
+                            queued_message_editor_subscriptions: Vec::new(),
                             _subscriptions: subscriptions,
                         };
 
@@ -2252,10 +2252,15 @@ impl AcpThreadView {
                 } else {
                     let has_queued = self.has_queued_messages();
                     // Don't auto-send if the first message editor is currently focused
-                    let is_first_editor_focused = self
-                        .queued_message_editors
-                        .first()
-                        .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
+                    let is_first_editor_focused = match &self.thread_state {
+                        ThreadState::Ready {
+                            queued_message_editors,
+                            ..
+                        } => queued_message_editors
+                            .first()
+                            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window)),
+                        _ => false,
+                    };
                     if has_queued && !is_first_editor_focused {
                         self.send_queued_message_at_index(0, false, window, cx);
                     }
@@ -5487,7 +5492,7 @@ impl AcpThreadView {
             ..
         } = &self.thread_state
         else {
-            return None.into();
+            return None;
         };
         let plan_expanded = *plan_expanded;
         let edits_expanded = *edits_expanded;
@@ -6223,7 +6228,15 @@ impl AcpThreadView {
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
 
-        let queue_len = self.queued_message_editors.len();
+        let queued_message_editors = match &self.thread_state {
+            ThreadState::Ready {
+                queued_message_editors,
+                ..
+            } => queued_message_editors.as_slice(),
+            _ => &[],
+        };
+
+        let queue_len = queued_message_editors.len();
         let can_fast_track = self.can_fast_track_queue && queue_len > 0;
 
         v_flex()
@@ -6231,7 +6244,7 @@ impl AcpThreadView {
             .max_h_40()
             .overflow_y_scroll()
             .children(
-                self.queued_message_editors
+                queued_message_editors
                     .iter()
                     .enumerate()
                     .map(|(index, editor)| {
@@ -6543,18 +6556,30 @@ impl AcpThreadView {
     }
 
     fn queued_messages_len(&self) -> usize {
-        self.local_queued_messages.len()
+        match &self.thread_state {
+            ThreadState::Ready {
+                local_queued_messages,
+                ..
+            } => local_queued_messages.len(),
+            _ => 0,
+        }
     }
 
     fn has_queued_messages(&self) -> bool {
-        !self.local_queued_messages.is_empty()
+        match &self.thread_state {
+            ThreadState::Ready {
+                local_queued_messages,
+                ..
+            } => !local_queued_messages.is_empty(),
+            _ => false,
+        }
     }
 
     /// Syncs the has_queued_message flag to the native thread (if applicable).
     /// This flag tells the native thread to end its turn at the next message boundary.
     fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
         if let Some(native_thread) = self.as_native_thread(cx) {
-            let has_queued = !self.local_queued_messages.is_empty();
+            let has_queued = self.has_queued_messages();
             native_thread.update(cx, |thread, _| {
                 thread.set_has_queued_message(has_queued);
             });
@@ -6567,20 +6592,30 @@ impl AcpThreadView {
         tracked_buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
-        self.local_queued_messages.push(QueuedMessage {
-            content,
-            tracked_buffers,
-        });
+        if let ThreadState::Ready {
+            local_queued_messages,
+            ..
+        } = &mut self.thread_state
+        {
+            local_queued_messages.push(QueuedMessage {
+                content,
+                tracked_buffers,
+            });
+        }
         self.sync_queue_flag_to_native_thread(cx);
     }
 
     fn remove_from_queue(&mut self, index: usize, cx: &mut Context<Self>) -> Option<QueuedMessage> {
-        if index < self.local_queued_messages.len() {
-            let removed = self.local_queued_messages.remove(index);
-            self.sync_queue_flag_to_native_thread(cx);
-            Some(removed)
-        } else {
-            None
+        match &mut self.thread_state {
+            ThreadState::Ready {
+                local_queued_messages,
+                ..
+            } if index < local_queued_messages.len() => {
+                let removed = local_queued_messages.remove(index);
+                self.sync_queue_flag_to_native_thread(cx);
+                Some(removed)
+            }
+            _ => None,
         }
     }
 
@@ -6591,31 +6626,51 @@ impl AcpThreadView {
         tracked_buffers: Vec<Entity<Buffer>>,
         _cx: &mut Context<Self>,
     ) -> bool {
-        if index < self.local_queued_messages.len() {
-            self.local_queued_messages[index] = QueuedMessage {
-                content,
-                tracked_buffers,
-            };
-            true
-        } else {
-            false
+        match &mut self.thread_state {
+            ThreadState::Ready {
+                local_queued_messages,
+                ..
+            } if index < local_queued_messages.len() => {
+                local_queued_messages[index] = QueuedMessage {
+                    content,
+                    tracked_buffers,
+                };
+                true
+            }
+            _ => false,
         }
     }
 
     fn clear_queue(&mut self, cx: &mut Context<Self>) {
-        self.local_queued_messages.clear();
+        if let ThreadState::Ready {
+            local_queued_messages,
+            ..
+        } = &mut self.thread_state
+        {
+            local_queued_messages.clear();
+        }
         self.sync_queue_flag_to_native_thread(cx);
     }
 
     fn queued_message_contents(&self) -> Vec<Vec<acp::ContentBlock>> {
-        self.local_queued_messages
-            .iter()
-            .map(|q| q.content.clone())
-            .collect()
+        match &self.thread_state {
+            ThreadState::Ready {
+                local_queued_messages,
+                ..
+            } => local_queued_messages.iter().map(|q| q.content.clone()).collect(),
+            _ => Vec::new(),
+        }
     }
 
     fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(editor) = self.queued_message_editors.get(index) else {
+        let editor = match &self.thread_state {
+            ThreadState::Ready {
+                queued_message_editors,
+                ..
+            } => queued_message_editors.get(index).cloned(),
+            _ => None,
+        };
+        let Some(editor) = editor else {
             return;
         };
 
@@ -6638,20 +6693,28 @@ impl AcpThreadView {
 
     fn sync_queued_message_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let needed_count = self.queued_messages_len();
-        let current_count = self.queued_message_editors.len();
+        let queued_messages = self.queued_message_contents();
+
+        let ThreadState::Ready {
+            queued_message_editors,
+            queued_message_editor_subscriptions,
+            ..
+        } = &mut self.thread_state
+        else {
+            return;
+        };
+
+        let current_count = queued_message_editors.len();
 
         if current_count == needed_count && needed_count == self.last_synced_queue_length {
             return;
         }
 
-        let queued_messages = self.queued_message_contents();
-
         if current_count > needed_count {
-            self.queued_message_editors.truncate(needed_count);
-            self.queued_message_editor_subscriptions
-                .truncate(needed_count);
+            queued_message_editors.truncate(needed_count);
+            queued_message_editor_subscriptions.truncate(needed_count);
 
-            for (index, editor) in self.queued_message_editors.iter().enumerate() {
+            for (index, editor) in queued_message_editors.iter().enumerate() {
                 if let Some(content) = queued_messages.get(index) {
                     editor.update(cx, |editor, cx| {
                         editor.set_message(content.clone(), window, cx);
@@ -6660,9 +6723,9 @@ impl AcpThreadView {
             }
         }
 
-        while self.queued_message_editors.len() < needed_count {
+        while queued_message_editors.len() < needed_count {
             let agent_name = self.agent.name();
-            let index = self.queued_message_editors.len();
+            let index = queued_message_editors.len();
             let content = queued_messages.get(index).cloned().unwrap_or_default();
 
             let editor = cx.new(|cx| {
@@ -6708,8 +6771,8 @@ impl AcpThreadView {
                 },
             );
 
-            self.queued_message_editors.push(editor);
-            self.queued_message_editor_subscriptions.push(subscription);
+            queued_message_editors.push(editor);
+            queued_message_editor_subscriptions.push(subscription);
         }
 
         self.last_synced_queue_length = needed_count;
@@ -8791,8 +8854,14 @@ impl Render for AcpThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                if let Some(editor) = this.queued_message_editors.first() {
-                    window.focus(&editor.focus_handle(cx), cx);
+                if let ThreadState::Ready {
+                    queued_message_editors,
+                    ..
+                } = &this.thread_state
+                {
+                    if let Some(editor) = queued_message_editors.first() {
+                        window.focus(&editor.focus_handle(cx), cx);
+                    }
                 }
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
@@ -10778,7 +10847,7 @@ pub(crate) mod tests {
             .unwrap();
 
         thread_view.update_in(cx, |thread_view, window, cx| {
-            assert_eq!(thread_view.editing_message, None);
+            assert_eq!(thread_view.editing_message(), None);
             thread_view.insert_selections(window, cx);
         });
 
