@@ -348,9 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    /// Tracks which tool calls have their content/output expanded.
-    /// Used for showing/hiding tool call results, terminal output, etc.
-    expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
@@ -406,6 +403,9 @@ enum ThreadState {
         token_limit_callout_dismissed: bool,
         thread_feedback: ThreadFeedbackState,
         list_state: ListState,
+        /// Tracks which tool calls have their content/output expanded.
+        /// Used for showing/hiding tool call results, terminal output, etc.
+        expanded_tool_calls: HashSet<acp::ToolCallId>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,7 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             token_limit_callout_dismissed: false,
                             thread_feedback: Default::default(),
                             list_state,
+                            expanded_tool_calls: HashSet::default(),
                             _subscriptions: subscriptions,
                         };
 
@@ -1417,16 +1417,22 @@ impl AcpThreadView {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_edit_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                    if let ThreadState::Ready { expanded_tool_calls, .. } = &mut self.thread_state {
+                        expanded_tool_calls.insert(tool_call_id.clone());
+                    }
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                    if let ThreadState::Ready { expanded_tool_calls, .. } = &mut self.thread_state {
+                        expanded_tool_calls.insert(tool_call_id.clone());
+                    }
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.expanded_tool_calls.remove(tool_call_id);
+                if let ThreadState::Ready { expanded_tool_calls, .. } = &mut self.thread_state {
+                    expanded_tool_calls.remove(tool_call_id);
+                }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -3324,7 +3330,8 @@ impl AcpThreadView {
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation
+            || matches!(&self.thread_state, ThreadState::Ready { expanded_tool_calls, .. } if expanded_tool_calls.contains(&tool_call.id));
 
         let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
@@ -3557,12 +3564,14 @@ impl AcpThreadView {
                                                 .on_click(cx.listener({
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                        if is_open {
-                                                            this.expanded_tool_calls.remove(&id);
-                                                        } else {
-                                                            this.expanded_tool_calls.insert(id.clone());
+                                                        if let ThreadState::Ready { expanded_tool_calls, .. } = &mut this.thread_state {
+                                                            if is_open {
+                                                                expanded_tool_calls.remove(&id);
+                                                            } else {
+                                                                expanded_tool_calls.insert(id.clone());
+                                                            }
+                                                            cx.notify();
                                                         }
-                                                        cx.notify();
                                                     }
                                                 })),
                                         )
@@ -4094,8 +4103,10 @@ impl AcpThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.expanded_tool_calls.remove(&tool_call_id);
-                                cx.notify();
+                                if let ThreadState::Ready { expanded_tool_calls, .. } = &mut this.thread_state {
+                                    expanded_tool_calls.remove(&tool_call_id);
+                                    cx.notify();
+                                }
                             }
                         })),
                 )
@@ -4734,7 +4745,7 @@ impl AcpThreadView {
         let command_element =
             self.render_collapsible_command(false, command_content, &tool_call.id, cx);
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = matches!(&self.thread_state, ThreadState::Ready { expanded_tool_calls, .. } if expanded_tool_calls.contains(&tool_call.id));
 
         let header = h_flex()
             .id(header_id)
@@ -4869,10 +4880,12 @@ impl AcpThreadView {
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
                     move |this, _event, _window, _cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
+                        if let ThreadState::Ready { expanded_tool_calls, .. } = &mut this.thread_state {
+                            if is_expanded {
+                                expanded_tool_calls.remove(&id);
+                            } else {
+                                expanded_tool_calls.insert(id.clone());
+                            }
                         }
                     }
                 })),
@@ -8613,8 +8626,10 @@ impl AcpThreadView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
-        self.expanded_tool_calls.insert(tool_call_id);
-        cx.notify();
+        if let ThreadState::Ready { expanded_tool_calls, .. } = &mut self.thread_state {
+            expanded_tool_calls.insert(tool_call_id);
+            cx.notify();
+        }
     }
 
     /// Expands a subagent card so its content is visible.
