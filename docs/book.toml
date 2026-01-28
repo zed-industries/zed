@@ -24,7 +24,7 @@ default-title = "Zed Code Editor Documentation"
 no-section-label = true
 preferred-dark-theme = "dark"
 additional-css = ["theme/page-toc.css", "theme/plugins.css", "theme/highlight.css"]
-additional-js  = ["theme/page-toc.js", "theme/plugins.js"]
+additional-js  = ["theme/inkeep-chat.js", "theme/page-toc.js", "theme/plugins.js"]
 
 [output.zed-html.print]
 enable = false
