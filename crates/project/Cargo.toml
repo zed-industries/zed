@@ -14,7 +14,7 @@ doctest = false
 test = false
 
 [[test]]
-name = "integration"
+name = "project_tests"
 required-features = ["test-support"]
 path = "tests/integration/project_tests.rs"
 

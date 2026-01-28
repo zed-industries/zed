@@ -11,9 +11,9 @@ doctest = false
 test = false
 
 [[test]]
-name = "integration"
+name = "worktree_tests"
 required-features = ["test-support"]
-path = "tests/integration/main.rs"
+path = "tests/integration/worktree_tests.rs"
 
 [lints]
 workspace = true
