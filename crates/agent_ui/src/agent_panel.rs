@@ -37,7 +37,7 @@ use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
 use client::UserStore;
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
@@ -2046,9 +2046,15 @@ impl AgentPanel {
                             })
                             .item(
                                 ContextMenuEntry::new("Zed Agent")
-                                    .when(is_agent_selected(AgentType::NativeAgent) | is_agent_selected(AgentType::TextThread) , |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
-                                    })
+                                    .when(
+                                        is_agent_selected(AgentType::NativeAgent)
+                                            | is_agent_selected(AgentType::TextThread),
+                                        |this| {
+                                            this.action(Box::new(NewExternalAgentThread {
+                                                agent: None,
+                                            }))
+                                        },
+                                    )
                                     .icon(IconName::ZedAgent)
                                     .icon_color(Color::Muted)
                                     .handler({
@@ -2103,7 +2109,9 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Claude Code")
                                     .when(is_agent_selected(AgentType::ClaudeCode), |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread {
+                                            agent: None,
+                                        }))
                                     })
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
@@ -2132,7 +2140,9 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Codex CLI")
                                     .when(is_agent_selected(AgentType::Codex), |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread {
+                                            agent: None,
+                                        }))
                                     })
                                     .icon(IconName::AiOpenAi)
                                     .disabled(is_via_collab)
@@ -2161,7 +2171,9 @@ impl AgentPanel {
                             .item(
                                 ContextMenuEntry::new("Gemini CLI")
                                     .when(is_agent_selected(AgentType::Gemini), |this| {
-                                        this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                        this.action(Box::new(NewExternalAgentThread {
+                                            agent: None,
+                                        }))
                                     })
                                     .icon(IconName::AiGemini)
                                     .icon_color(Color::Muted)
@@ -2218,7 +2230,9 @@ impl AgentPanel {
                                                 name: agent_name.0.clone(),
                                             }),
                                             |this| {
-                                                this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                                this.action(Box::new(NewExternalAgentThread {
+                                                    agent: None,
+                                                }))
                                             },
                                         )
                                         .icon_color(Color::Muted)
@@ -2261,12 +2275,10 @@ impl AgentPanel {
                                     .icon_color(Color::Muted)
                                     .handler({
                                         move |window, cx| {
-                                            window.dispatch_action(Box::new(zed_actions::Extensions {
-                                                category_filter: Some(
-                                                    zed_actions::ExtensionCategoryFilter::AgentServers,
-                                                ),
-                                                id: None,
-                                            }), cx)
+                                            window.dispatch_action(
+                                                Box::new(zed_actions::AcpRegistry),
+                                                cx,
+                                            )
                                         }
                                     }),
                             )
@@ -2379,7 +2391,7 @@ impl AgentPanel {
         let plan = self.user_store.read(cx).plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        plan.is_some_and(|plan| plan == Plan::V2(PlanV2::ZedFree)) && has_previous_trial
+        plan.is_some_and(|plan| plan == Plan::ZedFree) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2389,9 +2401,7 @@ impl AgentPanel {
 
         let user_store = self.user_store.read(cx);
 
-        if user_store
-            .plan()
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro))
+        if user_store.plan().is_some_and(|plan| plan == Plan::ZedPro)
             && user_store
                 .subscription_period()
                 .and_then(|period| period.0.checked_add_days(chrono::Days::new(1)))

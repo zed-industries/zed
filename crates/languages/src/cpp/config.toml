@@ -2,6 +2,7 @@ name = "C++"
 grammar = "cpp"
 path_suffixes = ["cc", "hh", "cpp", "h", "hpp", "cxx", "hxx", "c++", "h++", "ipp", "inl", "ino", "ixx", "cu", "cuh", "C", "H"]
 line_comments = ["// ", "/// ", "//! "]
+first_line_pattern = '\/\/\s*-\*-\s*C\+\+\s*-\*-'
 decrease_indent_patterns = [
   { pattern = "^\\s*\\{.*\\}?\\s*$", valid_after = ["if", "for", "while", "do", "switch", "else"] },
   { pattern = "^\\s*else\\b", valid_after = ["if"] }

@@ -39,7 +39,6 @@ pub use terminal::*;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
-use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -54,6 +53,7 @@ use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use text::Bias;
 use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
@@ -964,6 +964,9 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    // subagent cancellation fields
+    user_stopped: Arc<std::sync::atomic::AtomicBool>,
+    user_stop_tx: watch::Sender<bool>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1179,6 +1182,8 @@ impl AcpThread {
             }
         });
 
+        let (user_stop_tx, _user_stop_rx) = watch::channel(false);
+
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -1195,11 +1200,28 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
+            user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            user_stop_tx,
         }
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    /// Marks this thread as stopped by user action and signals any listeners.
+    pub fn stop_by_user(&mut self) {
+        self.user_stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.user_stop_tx.send(true).ok();
+    }
+
+    pub fn was_stopped_by_user(&self) -> bool {
+        self.user_stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn user_stop_receiver(&self) -> watch::Receiver<bool> {
+        self.user_stop_tx.receiver()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -2634,6 +2656,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2708,6 +2731,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2794,6 +2818,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    PathStyle::local(),
                 )
             })
             .await
@@ -4083,6 +4108,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4129,6 +4155,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4189,6 +4216,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)

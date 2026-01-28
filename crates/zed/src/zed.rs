@@ -2846,9 +2846,9 @@ mod tests {
                 editor.update(cx, |editor, cx| editor.insert("EDIT", window, cx));
             })
             .unwrap();
+        cx.run_until_parked();
 
         assert!(window_is_edited(window, cx));
-        cx.run_until_parked();
 
         // Advance the clock to make sure the workspace is serialized
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -4826,9 +4826,11 @@ mod tests {
                 "diagnostics",
                 "edit_prediction",
                 "editor",
+                "encoding_selector",
                 "feedback",
                 "file_finder",
                 "git",
+                "git_graph",
                 "git_onboarding",
                 "git_panel",
                 "git_picker",
@@ -5025,6 +5027,7 @@ mod tests {
             language_model::init(app_state.client.clone(), cx);
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
+            git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(cx);

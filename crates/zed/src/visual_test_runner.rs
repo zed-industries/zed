@@ -1399,7 +1399,7 @@ import { AiPaneTabContext } from 'context';
             let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
             if let Some(editor) = editors.into_iter().next() {
                 editor.update(cx, |editor, cx| {
-                    editor.show_diff_review_overlay(DisplayRow(1), window, cx);
+                    editor.show_diff_review_overlay(DisplayRow(1)..DisplayRow(1), window, cx);
                 });
             }
         })

@@ -14,7 +14,6 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "collections",
- "editor",
  "env_logger 0.11.8",
  "file_icons",
  "futures 0.3.31",
@@ -25,6 +24,7 @@ dependencies = [
  "language",
  "language_model",
  "markdown",
+ "multi_buffer",
  "parking_lot",
  "portable-pty",
  "project",
@@ -38,6 +38,7 @@ dependencies = [
  "telemetry",
  "tempfile",
  "terminal",
+ "text",
  "ui",
  "url",
  "urlencoding",
@@ -163,6 +164,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "context_server",
@@ -272,17 +274,18 @@ dependencies = [
  "chrono",
  "client",
  "collections",
+ "credentials_provider",
  "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
+ "google_ai",
  "gpui",
  "gpui_tokio",
  "http_client",
  "indoc",
  "language",
  "language_model",
- "language_models",
  "libc",
  "log",
  "nix 0.29.0",
@@ -349,6 +352,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -495,7 +499,7 @@ name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
  "client",
- "cloud_llm_client",
+ "cloud_api_types",
  "component",
  "gpui",
  "language_model",
@@ -509,8 +513,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46319972e74179d707445f64aaa2893bbf6a111de3a9af29b7eb382f8b39e282"
+source = "git+https://github.com/zed-industries/alacritty?rev=936aee8761a17affc84ab418ae21306c27c26221#936aee8761a17affc84ab418ae21306c27c26221"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.9.4",
@@ -869,6 +872,7 @@ dependencies = [
  "html_to_markdown",
  "http_client",
  "language",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -1348,6 +1352,7 @@ dependencies = [
  "ctor",
  "db",
  "futures 0.3.31",
+ "futures-lite 1.13.0",
  "gpui",
  "http_client",
  "log",
@@ -3290,6 +3295,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "collab",
  "collab_ui",
  "collections",
  "command_palette_hooks",
@@ -3369,6 +3375,7 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
+ "zed_actions",
  "zlog",
 ]
 
@@ -3702,6 +3709,7 @@ dependencies = [
  "sum_tree",
  "theme",
  "util",
+ "workspace",
  "zlog",
 ]
 
@@ -3717,7 +3725,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
- "itertools 0.14.0",
  "log",
  "paths",
  "serde",
@@ -3732,10 +3739,12 @@ dependencies = [
  "anyhow",
  "copilot",
  "gpui",
+ "language",
  "log",
  "lsp",
  "menu",
  "serde_json",
+ "settings",
  "ui",
  "util",
  "workspace",
@@ -5331,6 +5340,7 @@ dependencies = [
  "libc",
  "log",
  "node_runtime",
+ "open_ai",
  "paths",
  "pretty_assertions",
  "project",
@@ -5515,6 +5525,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "ui",
+ "ui_input",
  "unicode-script",
  "unicode-segmentation",
  "unicode-width",
@@ -5635,8 +5646,13 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "encoding_rs",
+ "fuzzy",
  "gpui",
+ "language",
+ "picker",
+ "project",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -6003,6 +6019,8 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "serde_json_lenient",
+ "snippet_provider",
  "theme",
  "tokio",
  "toml 0.8.23",
@@ -6220,11 +6238,10 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "open_path_prompt",
  "picker",
  "pretty_assertions",
  "project",
- "schemars",
- "search",
  "serde",
  "serde_json",
  "settings",
@@ -6233,6 +6250,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
  "zlog",
 ]
 
@@ -7069,7 +7087,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -7086,7 +7104,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -7143,6 +7161,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "smallvec",
  "smol",
  "sum_tree",
  "tempfile",
@@ -7168,6 +7187,30 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
+]
+
+[[package]]
+name = "git_graph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "db",
+ "feature_flags",
+ "fs",
+ "git",
+ "git_ui",
+ "gpui",
+ "project",
+ "rand 0.9.2",
+ "recent_projects",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "theme",
+ "time",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -7243,6 +7286,7 @@ dependencies = [
  "time_format",
  "tracing",
  "ui",
+ "ui_input",
  "unindent",
  "util",
  "watch",
@@ -8404,11 +8448,11 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "platform_title_bar",
  "project",
  "serde_json",
  "serde_json_lenient",
  "theme",
- "title_bar",
  "ui",
  "util",
  "util_macros",
@@ -9028,6 +9072,7 @@ dependencies = [
  "bedrock",
  "chrono",
  "client",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "component",
@@ -9095,11 +9140,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
- "file_finder",
  "file_icons",
  "fuzzy",
  "gpui",
  "language",
+ "open_path_prompt",
  "picker",
  "project",
  "settings",
@@ -9813,6 +9858,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10561,7 +10607,7 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "8.2.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
+source = "git+https://github.com/zed-industries/notify.git?rev=6c550ac3c56cbd143c57ea6390e197af9d790908#6c550ac3c56cbd143c57ea6390e197af9d790908"
 dependencies = [
  "bitflags 2.9.4",
  "fsevent-sys 4.1.0",
@@ -10589,7 +10635,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
+source = "git+https://github.com/zed-industries/notify.git?rev=6c550ac3c56cbd143c57ea6390e197af9d790908#6c550ac3c56cbd143c57ea6390e197af9d790908"
 
 [[package]]
 name = "ntapi"
@@ -11100,12 +11146,34 @@ dependencies = [
  "futures 0.3.31",
  "http_client",
  "log",
+ "rand 0.9.2",
  "schemars",
  "serde",
  "serde_json",
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "open_path_prompt"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "file_icons",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "picker",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -12131,7 +12199,9 @@ dependencies = [
  "serde_json",
  "theme",
  "ui",
+ "ui_input",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12225,6 +12295,20 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "platform_title_bar"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "smallvec",
+ "theme",
+ "ui",
+ "windows 0.61.3",
+ "workspace",
+ "zed_actions",
+]
 
 [[package]]
 name = "plist"
@@ -12589,6 +12673,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",
@@ -12613,6 +12698,7 @@ dependencies = [
  "postage",
  "prettier",
  "pretty_assertions",
+ "project",
  "rand 0.9.2",
  "regex",
  "release_channel",
@@ -13361,7 +13447,6 @@ dependencies = [
  "editor",
  "extension",
  "extension_host",
- "file_finder",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -13373,6 +13458,7 @@ dependencies = [
  "markdown",
  "menu",
  "node_runtime",
+ "open_path_prompt",
  "ordered-float 2.10.1",
  "paths",
  "picker",
@@ -13543,6 +13629,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "collections",
  "fs",
  "futures 0.3.31",
@@ -13607,6 +13694,7 @@ dependencies = [
  "log",
  "lsp",
  "minidumper",
+ "net",
  "node_runtime",
  "paths",
  "pretty_assertions",
@@ -13633,6 +13721,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "windows 0.61.3",
  "workspace",
  "worktree",
  "zlog",
@@ -14029,14 +14118,15 @@ dependencies = [
  "log",
  "menu",
  "picker",
+ "platform_title_bar",
  "prompt_store",
  "release_channel",
  "rope",
  "serde",
  "settings",
  "theme",
- "title_bar",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -15032,6 +15122,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
+ "component",
  "copilot_ui",
  "edit_prediction",
  "editor",
@@ -15049,6 +15140,7 @@ dependencies = [
  "node_runtime",
  "paths",
  "picker",
+ "platform_title_bar",
  "pretty_assertions",
  "project",
  "recent_projects",
@@ -15064,7 +15156,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -15346,7 +15437,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
- "log",
  "parking_lot",
  "paths",
  "schemars",
@@ -15361,11 +15451,11 @@ dependencies = [
 name = "snippets_ui"
 version = "0.1.0"
 dependencies = [
- "file_finder",
  "file_icons",
  "fuzzy",
  "gpui",
  "language",
+ "open_path_prompt",
  "paths",
  "picker",
  "settings",
@@ -16067,6 +16157,7 @@ dependencies = [
  "multi_buffer",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16686,6 +16777,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "pretty_assertions",
  "project",
  "rand 0.9.2",
@@ -17015,7 +17107,7 @@ dependencies = [
  "channel",
  "chrono",
  "client",
- "cloud_llm_client",
+ "cloud_api_types",
  "collections",
  "db",
  "git_ui",
@@ -17023,6 +17115,7 @@ dependencies = [
  "http_client",
  "menu",
  "notifications",
+ "platform_title_bar",
  "pretty_assertions",
  "project",
  "recent_projects",
@@ -17297,12 +17390,12 @@ dependencies = [
  "anyhow",
  "convert_case 0.8.0",
  "editor",
- "file_finder",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",
  "menu",
+ "open_path_prompt",
  "picker",
  "project",
  "ui",
@@ -17569,9 +17662,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-c"
-version = "0.23.4"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afd2b1bf1585dc2ef6d69e87d01db8adb059006649dd5f96f31aa789ee6e9c71"
+checksum = "1a3aad8f0129083a59fe8596157552d2bb7148c492d44c21558d68ca1c722707"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -17972,11 +18065,7 @@ name = "ui_input"
 version = "0.1.0"
 dependencies = [
  "component",
- "editor",
  "gpui",
- "menu",
- "settings",
- "theme",
  "ui",
 ]
 
@@ -18216,6 +18305,7 @@ dependencies = [
  "log",
  "mach2 0.5.0",
  "nix 0.29.0",
+ "percent-encoding",
  "pretty_assertions",
  "rand 0.9.2",
  "regex",
@@ -18230,6 +18320,7 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
+ "url",
  "util_macros",
  "walkdir",
  "which 6.0.3",
@@ -20796,7 +20887,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.222.0"
+version = "0.223.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -20856,6 +20947,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git_graph",
  "git_hosting_providers",
  "git_ui",
  "go_to_line",
@@ -21277,6 +21369,7 @@ name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indoc",
  "serde",
  "strum 0.27.2",
 ]

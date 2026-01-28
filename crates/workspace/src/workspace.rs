@@ -1147,6 +1147,7 @@ type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
+        Option<String>,
         &mut Window,
         &mut Context<Workspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
@@ -1346,10 +1347,20 @@ impl Workspace {
                 project::Event::Toast {
                     notification_id,
                     message,
+                    link,
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
                     cx,
-                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
+                    |cx| {
+                        let mut notification = MessageNotification::new(message.clone(), cx);
+                        if let Some(link) = link {
+                            notification = notification
+                                .more_info_message(link.label)
+                                .more_info_url(link.url);
+                        }
+
+                        cx.new(|_| notification)
+                    },
                 ),
 
                 project::Event::HideToast { notification_id } => {
@@ -2382,7 +2393,7 @@ impl Workspace {
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, lister, window, cx);
+            let rx = prompt(self, lister, suggested_name, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
@@ -2410,7 +2421,7 @@ impl Workspace {
                         workspace.show_portal_error(err.to_string(), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(workspace, lister, window, cx);
+                        let rx = prompt(workspace, lister, suggested_name, window, cx);
                         workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
@@ -2712,7 +2723,7 @@ impl Workspace {
             .flat_map(|k| Keystroke::parse(k).log_err())
             .map(|k| {
                 cx.keyboard_mapper()
-                    .map_key_equivalent(k, true)
+                    .map_key_equivalent(k, false)
                     .inner()
                     .clone()
             })
@@ -5921,12 +5932,16 @@ impl Workspace {
         }
     }
 
+    fn has_any_items_open(&self, cx: &App) -> bool {
+        self.panes.iter().any(|pane| pane.read(cx).items_len() > 0)
+    }
+
     fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
-            if !paths.is_empty() {
+            if !paths.is_empty() || self.has_any_items_open(cx) {
                 WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
@@ -7827,14 +7842,15 @@ impl WorkspaceHandle for Entity<Workspace> {
     }
 }
 
-pub async fn last_opened_workspace_location() -> Option<(SerializedWorkspaceLocation, PathList)> {
+pub async fn last_opened_workspace_location()
+-> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
@@ -8165,6 +8181,83 @@ pub struct OpenOptions {
     pub prefer_focused_window: bool,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
+}
+
+/// Opens a workspace by its database ID, used for restoring empty workspaces with unsaved content.
+pub fn open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    app_state: Arc<AppState>,
+    cx: &mut App,
+) -> Task<anyhow::Result<WindowHandle<Workspace>>> {
+    let project_handle = Project::local(
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.user_store.clone(),
+        app_state.languages.clone(),
+        app_state.fs.clone(),
+        None,
+        project::LocalProjectFlags {
+            init_worktree_trust: true,
+            ..project::LocalProjectFlags::default()
+        },
+        cx,
+    );
+
+    cx.spawn(async move |cx| {
+        let serialized_workspace = persistence::DB
+            .workspace_for_id(workspace_id)
+            .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
+
+        let window_bounds_override = window_bounds_env_override();
+
+        let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+            (Some(WindowBounds::Windowed(bounds)), None)
+        } else if let Some(display) = serialized_workspace.display
+            && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
+        {
+            (Some(bounds.0), Some(display))
+        } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+            (Some(bounds), Some(display))
+        } else {
+            (None, None)
+        };
+
+        let options = cx.update(|cx| {
+            let mut options = (app_state.build_window_options)(display, cx);
+            options.window_bounds = window_bounds;
+            options
+        });
+        let centered_layout = serialized_workspace.centered_layout;
+
+        let window = cx.open_window(options, {
+            let app_state = app_state.clone();
+            let project_handle = project_handle.clone();
+            move |window, cx| {
+                cx.new(|cx| {
+                    let mut workspace =
+                        Workspace::new(Some(workspace_id), project_handle, app_state, window, cx);
+                    workspace.centered_layout = centered_layout;
+                    workspace
+                })
+            }
+        })?;
+
+        notify_if_database_failed(window, cx);
+
+        // Restore items from the serialized workspace
+        window
+            .update(cx, |_workspace, window, cx| {
+                open_items(Some(serialized_workspace), vec![], window, cx)
+            })?
+            .await?;
+
+        window.update(cx, |workspace, window, cx| {
+            window.activate_window();
+            workspace.serialize_workspace(window, cx);
+        })?;
+
+        Ok(window)
+    })
 }
 
 #[allow(clippy::type_complexity)]
@@ -10173,143 +10266,6 @@ mod tests {
             assert!(
                 workspace.zoomed.is_none(),
                 "Workspace remains without zoomed pane"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_zoomed_dock_persists_across_window_activation(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.toggle_dock(DockPosition::Bottom, window, cx);
-            panel
-        });
-
-        // Activate and zoom the panel
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-
-        // Verify the dock is open and zoomed with focus in the panel
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should be open"
-            );
-            assert!(panel.is_zoomed(window, cx), "Panel should be zoomed");
-            assert!(
-                workspace.zoomed.is_some(),
-                "Workspace should track the zoomed panel"
-            );
-            assert!(
-                workspace.zoomed_position.is_some(),
-                "Workspace should track the zoomed dock position"
-            );
-            assert!(
-                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
-                "Panel should be focused"
-            );
-        });
-
-        // Deactivate the window (simulates cmd-tab away from Zed)
-        cx.deactivate_window();
-
-        // Verify the dock is still open while window is deactivated
-        // (the bug manifests on REactivation, not deactivation)
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should still be open while window is deactivated"
-            );
-            assert!(
-                panel.is_zoomed(window, cx),
-                "Panel should still be zoomed while window is deactivated"
-            );
-            assert!(
-                workspace.zoomed_position.is_some(),
-                "zoomed_position should still be set while window is deactivated"
-            );
-        });
-
-        // Reactivate the window (simulates cmd-tab back to Zed)
-        // During reactivation, focus is restored to the dock panel
-        cx.update(|window, _cx| {
-            window.activate_window();
-        });
-        cx.run_until_parked();
-
-        // Verify zoomed dock remains open after reactivation
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should remain open after window reactivation"
-            );
-            assert!(
-                panel.is_zoomed(window, cx),
-                "Panel should remain zoomed after window reactivation"
-            );
-            assert!(
-                workspace.zoomed.is_some(),
-                "Workspace should still track the zoomed panel after window reactivation"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_zoomed_dock_dismissed_when_focus_moves_to_center_pane(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.toggle_dock(DockPosition::Bottom, window, cx);
-            panel
-        });
-
-        // Activate and zoom the panel
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-
-        // Verify setup
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(workspace.bottom_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(window, cx));
-            assert!(workspace.zoomed_position.is_some());
-        });
-
-        // Explicitly focus the center pane (simulates user clicking in the editor)
-        workspace.update_in(cx, |workspace, window, cx| {
-            window.focus(&workspace.active_pane().focus_handle(cx), cx);
-        });
-        cx.run_until_parked();
-
-        // When user explicitly focuses the center pane, the zoomed dock SHOULD be dismissed
-        workspace.update_in(cx, |workspace, _window, cx| {
-            assert!(
-                !workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should be closed when focus explicitly moves to center pane"
-            );
-            assert!(
-                workspace.zoomed.is_none(),
-                "Workspace should not track zoomed panel when focus explicitly moves to center pane"
-            );
-            assert!(
-                workspace.zoomed_position.is_none(),
-                "Workspace zoomed_position should be None when focus explicitly moves to center pane"
             );
         });
     }

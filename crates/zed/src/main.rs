@@ -17,7 +17,6 @@ use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
@@ -55,8 +54,8 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings,
-    WorkspaceStore, notifications::NotificationId,
+    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -611,7 +610,7 @@ fn main() {
             cx,
         );
 
-        copilot_ui::init(cx);
+        copilot_ui::init(&app_state, cx);
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
@@ -624,15 +623,7 @@ fn main() {
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        if cx.has_flag::<AcpBetaFeatureFlag>() {
-            project::AgentRegistryStore::init_global(cx);
-        }
-        cx.observe_flag::<AcpBetaFeatureFlag, _>(|is_enabled, cx| {
-            if is_enabled {
-                project::AgentRegistryStore::init_global(cx);
-            }
-        })
-        .detach();
+        project::AgentRegistryStore::init_global(cx);
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -671,6 +662,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
+        encoding_selector::init(cx);
         language_selector::init(cx);
         line_ending_selector::init(cx);
         toolchain_selector::init(cx);
@@ -681,6 +673,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         svg_preview::init(cx);
@@ -1254,8 +1247,24 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (index, (location, paths)) in locations.into_iter().enumerate() {
+        for (index, (workspace_id, location, paths)) in locations.into_iter().enumerate() {
             match location {
+                SerializedWorkspaceLocation::Local if paths.is_empty() => {
+                    // Restore empty workspace by ID (has items like drafts but no folders)
+                    let app_state = app_state.clone();
+                    let task = cx.spawn(async move |cx| {
+                        let open_task = cx.update(|cx| {
+                            workspace::open_workspace_by_id(workspace_id, app_state, cx)
+                        });
+                        open_task.await.map(|_| ())
+                    });
+
+                    if use_system_window_tabs && index == 0 {
+                        results.push(task.await);
+                    } else {
+                        tasks.push(task);
+                    }
+                }
                 SerializedWorkspaceLocation::Local => {
                     let app_state = app_state.clone();
                     let task = cx.spawn(async move |cx| {
@@ -1376,7 +1385,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
-) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
     let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();

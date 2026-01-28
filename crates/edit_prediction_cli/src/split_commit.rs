@@ -363,7 +363,6 @@ pub fn generate_evaluation_example_from_ordered_commit(
         repository_url: repository_url.to_string(),
         revision: format!("{}~1", commit_hash),
         edit_history: split_commit.source_patch.clone(),
-        // cursor_position: cursor.to_string(),
         cursor_path: Path::new(&cursor.file).into(),
         cursor_position: cursor_excerpt,
         expected_patches: vec![split_commit.target_patch],
@@ -371,6 +370,8 @@ pub fn generate_evaluation_example_from_ordered_commit(
         reasoning: None,
         uncommitted_diff: String::new(),
         rejected_patch: None,
+        captured_prompt_input: None,
+        telemetry: None,
     })
 }
 
@@ -1394,7 +1395,6 @@ Date: Mon Jan 1 00:00:00 2024
             repository_url: "https://github.com/test/repo".to_string(),
             revision: "abc123~1".to_string(),
             edit_history: "patch1".to_string(),
-            // cursor_position: "file.rs:10:5".to_string(),
             cursor_path: Path::new("file.rs").into(),
             cursor_position: "some code<|user_cursor|>".to_string(),
             expected_patches: vec!["patch".to_string()],
@@ -1402,6 +1402,8 @@ Date: Mon Jan 1 00:00:00 2024
             reasoning: None,
             uncommitted_diff: String::new(),
             rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
         };
 
         let json = serde_json::to_string(&case).unwrap();

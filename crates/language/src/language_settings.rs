@@ -378,8 +378,6 @@ impl InlayHintSettings {
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
-    /// Whether to use the experimental edit prediction context retrieval system.
-    pub use_context: bool,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
@@ -425,6 +423,8 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+    /// Whether the Copilot Next Edit Suggestions feature is enabled.
+    pub enable_next_edit_suggestions: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -637,11 +637,6 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
-        let use_edit_prediction_context = all_languages
-            .features
-            .as_ref()
-            .and_then(|f| f.experimental_edit_prediction_context_retrieval)
-            .unwrap_or_default();
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
@@ -658,6 +653,7 @@ impl settings::Settings for AllLanguageSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
             enterprise_uri: copilot.enterprise_uri,
+            enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
         };
 
         let codestral = edit_predictions.codestral.unwrap();
@@ -691,7 +687,6 @@ impl settings::Settings for AllLanguageSettings {
                 } else {
                     EditPredictionProvider::None
                 },
-                use_context: use_edit_prediction_context,
                 disabled_globs: disabled_globs
                     .iter()
                     .filter_map(|g| {

@@ -141,7 +141,14 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
-                if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
+                let has_focused_rename_editor = pane
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
+                    .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
+                if !pane.has_focus(window, cx)
+                    && !pane.context_menu_focused(window, cx)
+                    && !has_focused_rename_editor
+                {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
@@ -1929,7 +1936,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.terminal.get_or_insert_default().project.shell =
-                        Some(settings::Shell::Program("asdf".to_owned()));
+                        Some(settings::Shell::Program("__nonexistent_shell__".to_owned()));
                 });
             });
         });
