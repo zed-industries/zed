@@ -350,10 +350,6 @@ pub struct AcpThreadView {
     auth_task: Option<Task<()>>, // keep
     last_synced_queue_length: usize,
     discarded_partial_edits: HashSet<acp::ToolCallId>,
-    prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
-    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-    cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
-    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     resume_thread_metadata: Option<AgentSessionInfo>,
@@ -390,6 +386,10 @@ enum ThreadState {
         token_limit_callout_dismissed: bool,
         thread_feedback: ThreadFeedbackState,
         list_state: ListState,
+        prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         /// Tracks which tool calls have their content/output expanded.
         /// Used for showing/hiding tool call results, terminal output, etc.
         expanded_tool_calls: HashSet<acp::ToolCallId>,
@@ -561,6 +561,10 @@ impl AcpThreadView {
                 resume_thread.clone(),
                 workspace.clone(),
                 project.clone(),
+                prompt_capabilities,
+                available_commands,
+                cached_user_commands,
+                cached_user_command_errors,
                 window,
                 cx,
             ),
@@ -575,10 +579,6 @@ impl AcpThreadView {
             auth_task: None,
             last_synced_queue_length: 0,
             discarded_partial_edits: HashSet::default(),
-            prompt_capabilities,
-            available_commands,
-            cached_user_commands,
-            cached_user_command_errors,
             recent_history_entries,
             history,
             _history_subscription: history_subscription,
@@ -606,15 +606,33 @@ impl AcpThreadView {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
+        let available_commands = Rc::new(RefCell::new(vec![]));
+        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
+        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
+
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_command_state(
+                prompt_capabilities.clone(),
+                available_commands.clone(),
+                cached_user_commands.clone(),
+                cached_user_command_errors.clone(),
+                cx,
+            );
+        });
+
         self.thread_state = Self::initial_state(
             self.agent.clone(),
             self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
+            prompt_capabilities,
+            available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
             window,
             cx,
         );
-        self.available_commands.replace(vec![]);
         self.refresh_cached_user_commands(cx);
         self.new_server_version_available.take();
         self.recent_history_entries.clear();
@@ -632,6 +650,10 @@ impl AcpThreadView {
         resume_thread: Option<AgentSessionInfo>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
@@ -757,7 +779,7 @@ impl AcpThreadView {
                         let action_log = thread.read(cx).action_log().clone();
 
                         this.resumed_without_history = resumed_without_history;
-                        this.prompt_capabilities
+                        prompt_capabilities
                             .replace(thread.read(cx).prompt_capabilities());
 
                         let entry_view_state = cx.new(|_| {
@@ -767,10 +789,10 @@ impl AcpThreadView {
                                 this.thread_store.clone(),
                                 this.history.downgrade(),
                                 this.prompt_store.clone(),
-                                this.prompt_capabilities.clone(),
-                                this.available_commands.clone(),
-                                this.cached_user_commands.clone(),
-                                this.cached_user_command_errors.clone(),
+                                prompt_capabilities.clone(),
+                                available_commands.clone(),
+                                cached_user_commands.clone(),
+                                cached_user_command_errors.clone(),
                                 this.agent.name(),
                             )
                         });
@@ -897,6 +919,10 @@ impl AcpThreadView {
                             token_limit_callout_dismissed: false,
                             thread_feedback: Default::default(),
                             list_state,
+                            prompt_capabilities,
+                            available_commands,
+                            cached_user_commands,
+                            cached_user_command_errors,
                             expanded_tool_calls: HashSet::default(),
                             expanded_tool_call_raw_inputs: HashSet::default(),
                             expanded_thinking_blocks: HashSet::default(),
@@ -1555,7 +1581,12 @@ impl AcpThreadView {
         let text = self.message_editor.read(cx).text(cx);
         let text = text.trim();
         if text == "/login" || text == "/logout" {
-            let ThreadState::Ready { thread, .. } = &self.thread_state else {
+            let ThreadState::Ready {
+                thread,
+                available_commands,
+                ..
+            } = &self.thread_state
+            else {
                 return;
             };
 
@@ -1563,8 +1594,7 @@ impl AcpThreadView {
             let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
-                && self
-                    .available_commands
+                && available_commands
                     .borrow()
                     .iter()
                     .any(|command| command.name == "logout");
@@ -2318,8 +2348,13 @@ impl AcpThreadView {
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
-                self.prompt_capabilities
-                    .replace(thread.read(cx).prompt_capabilities());
+                if let ThreadState::Ready {
+                    prompt_capabilities,
+                    ..
+                } = &self.thread_state
+                {
+                    prompt_capabilities.replace(thread.read(cx).prompt_capabilities());
+                }
             }
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
@@ -2339,7 +2374,13 @@ impl AcpThreadView {
                 }
 
                 let has_commands = !available_commands.is_empty();
-                self.available_commands.replace(available_commands);
+                if let ThreadState::Ready {
+                    available_commands: commands_rc,
+                    ..
+                } = &self.thread_state
+                {
+                    commands_rc.replace(available_commands);
+                }
                 self.refresh_cached_user_commands(cx);
 
                 let agent_display_name = self
@@ -6698,11 +6739,15 @@ impl AcpThreadView {
         let ThreadState::Ready {
             queued_message_editors,
             queued_message_editor_subscriptions,
+            prompt_capabilities,
+            available_commands,
             ..
         } = &mut self.thread_state
         else {
             return;
         };
+        let prompt_capabilities = prompt_capabilities.clone();
+        let available_commands = available_commands.clone();
 
         let current_count = queued_message_editors.len();
 
@@ -6735,8 +6780,8 @@ impl AcpThreadView {
                     None,
                     self.history.downgrade(),
                     None,
-                    self.prompt_capabilities.clone(),
-                    self.available_commands.clone(),
+                    prompt_capabilities.clone(),
+                    available_commands.clone(),
                     agent_name.clone(),
                     "",
                     EditorMode::AutoHeight {
@@ -8397,8 +8442,18 @@ impl AcpThreadView {
         let (mut commands, mut errors) = registry.read_with(cx, |registry, _| {
             (registry.commands().clone(), registry.errors().to_vec())
         });
-        let server_command_names = self
-            .available_commands
+
+        let ThreadState::Ready {
+            available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
+            ..
+        } = &self.thread_state
+        else {
+            return;
+        };
+
+        let server_command_names = available_commands
             .borrow()
             .iter()
             .map(|command| command.name.clone())
@@ -8411,8 +8466,8 @@ impl AcpThreadView {
 
         self.command_load_errors = errors.clone();
         self.command_load_errors_dismissed = false;
-        *self.cached_user_commands.borrow_mut() = commands;
-        *self.cached_user_command_errors.borrow_mut() = errors;
+        *cached_user_commands.borrow_mut() = commands;
+        *cached_user_command_errors.borrow_mut() = errors;
         cx.notify();
     }
 
@@ -8421,12 +8476,26 @@ impl AcpThreadView {
         &self,
         _cx: &App,
     ) -> collections::HashMap<String, UserSlashCommand> {
-        self.cached_user_commands.borrow().clone()
+        let ThreadState::Ready {
+            cached_user_commands,
+            ..
+        } = &self.thread_state
+        else {
+            return collections::HashMap::default();
+        };
+        cached_user_commands.borrow().clone()
     }
 
     /// Returns the cached slash command errors, if available.
     pub fn cached_slash_command_errors(&self, _cx: &App) -> Vec<CommandLoadError> {
-        self.cached_user_command_errors.borrow().clone()
+        let ThreadState::Ready {
+            cached_user_command_errors,
+            ..
+        } = &self.thread_state
+        else {
+            return Vec::new();
+        };
+        cached_user_command_errors.borrow().clone()
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
