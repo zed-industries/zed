@@ -56,7 +56,7 @@ impl JsonView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let indent = depth * 16;
+        let indent = depth * 24;
 
         match value {
             Value::Object(map) if map.is_empty() => {
@@ -97,13 +97,13 @@ impl JsonView {
                                             Label::new(format!("{}: ", k)).color(Color::Accent),
                                         )
                                     })
-                                    .child(Label::new("{").color(Color::Muted))
                                     .when(!is_expanded, |this| {
-                                        this.child(
-                                            Label::new(format!(" {} ", preview))
-                                                .color(Color::Muted),
-                                        )
-                                        .child(Label::new("}").color(Color::Muted))
+                                        this.child(Label::new("{").color(Color::Muted))
+                                            .child(
+                                                Label::new(format!(" {} ", preview))
+                                                    .color(Color::Muted),
+                                            )
+                                            .child(Label::new("}").color(Color::Muted))
                                     }),
                             ),
                     )
@@ -157,13 +157,13 @@ impl JsonView {
                                             Label::new(format!("{}: ", k)).color(Color::Accent),
                                         )
                                     })
-                                    .child(Label::new("[").color(Color::Muted))
                                     .when(!is_expanded, |this| {
-                                        this.child(
-                                            Label::new(format!(" {} ", preview))
-                                                .color(Color::Muted),
-                                        )
-                                        .child(Label::new("]").color(Color::Muted))
+                                        this.child(Label::new("[").color(Color::Muted))
+                                            .child(
+                                                Label::new(format!(" {} ", preview))
+                                                    .color(Color::Muted),
+                                            )
+                                            .child(Label::new("]").color(Color::Muted))
                                     }),
                             ),
                     )
