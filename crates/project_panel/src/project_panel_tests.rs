@@ -8238,7 +8238,7 @@ async fn test_creating_sort_mode_directories_first(cx: &mut gpui::TestAppContext
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel::default(), window, cx);
+        panel.cancel(&Cancel, window, cx);
     });
     cx.run_until_parked();
 
@@ -8265,7 +8265,7 @@ async fn test_creating_sort_mode_directories_first(cx: &mut gpui::TestAppContext
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel::default(), window, cx);
+        panel.cancel(&Cancel, window, cx);
     });
     cx.run_until_parked();
 }
@@ -8345,7 +8345,7 @@ async fn test_creating_sort_mode_mixed(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel::default(), window, cx);
+        panel.cancel(&Cancel, window, cx);
     });
     cx.run_until_parked();
 
@@ -8372,7 +8372,7 @@ async fn test_creating_sort_mode_mixed(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel::default(), window, cx);
+        panel.cancel(&Cancel, window, cx);
     });
     cx.run_until_parked();
 }
@@ -8452,7 +8452,7 @@ async fn test_creating_sort_mode_files_first(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel::default(), window, cx);
+        panel.cancel(&Cancel, window, cx);
     });
     cx.run_until_parked();
 
@@ -8479,7 +8479,7 @@ async fn test_creating_sort_mode_files_first(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel::default(), window, cx);
+        panel.cancel(&Cancel, window, cx);
     });
     cx.run_until_parked();
 }
