@@ -134,19 +134,7 @@ fn check_commands(
         return ToolPermissionDecision::Confirm;
     }
 
-    // If we had no commands (empty iterator), fall back to treating input as single command
-    // with allow disabled
-    if !had_any_commands {
-        return check_commands(
-            std::iter::once(input.to_string()),
-            input,
-            rules,
-            tool_name,
-            false,
-        );
-    }
-
-    if allow_enabled && all_matched_allow {
+    if allow_enabled && all_matched_allow && had_any_commands {
         return ToolPermissionDecision::Allow;
     }
 
