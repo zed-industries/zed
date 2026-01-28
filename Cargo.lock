@@ -7196,6 +7196,7 @@ dependencies = [
  "anyhow",
  "collections",
  "db",
+ "feature_flags",
  "fs",
  "git",
  "git_ui",
