@@ -348,6 +348,22 @@ pub struct AcpThreadView {
     in_flight_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
+impl AcpThreadView {
+    fn as_ready(&self) -> Option<&ReadyThreadState> {
+        match &self.thread_state {
+            ThreadState::Ready(ready) => Some(ready),
+            _ => None,
+        }
+    }
+    
+    fn as_ready_mut(&mut self) -> Option<&mut ReadyThreadState> {
+        match &mut self.thread_state {
+            ThreadState::Ready(ready) => Some(ready),
+            _ => None,
+        }
+    }
+}
+
 struct ReadyThreadState {
     thread: Entity<AcpThread>,
     entry_view_state: Entity<EntryViewState>,
