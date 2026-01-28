@@ -41,7 +41,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
-use language::{Buffer, File};
+use language::{Buffer, BufferEvent, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -618,6 +618,7 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
+    _commit_message_buffer_subscription: Subscription,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -703,6 +704,16 @@ impl GitPanel {
                 editor.clear(window, cx);
             });
 
+            let mut commit_message_buffer = commit_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            let _commit_message_buffer_subscription =
+                Self::subscribe_to_commit_message_buffer(&mut commit_message_buffer, window, cx);
+
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
@@ -784,6 +795,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                _commit_message_buffer_subscription,
             };
 
             this.schedule_update(window, cx);
@@ -2005,6 +2017,25 @@ impl GitPanel {
             .read(cx)
             .as_singleton()
             .unwrap()
+    }
+
+    fn subscribe_to_commit_message_buffer(
+        commit_message_buffer: &mut Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            &commit_message_buffer,
+            window,
+            |this, _commit_message_buffer, event, _window, cx| match event {
+                BufferEvent::Edited { .. } => {
+                    let text = this.commit_editor.read(cx).text(cx);
+                    log::info!("Typed into commit editor: {}", text);
+                    // TODO: set this string as "pending edit" in commit history object
+                }
+                _ => {}
+            },
+        )
     }
 
     fn toggle_staged_for_selected(
@@ -3437,6 +3468,13 @@ impl GitPanel {
                             cx,
                         )
                     });
+
+                    git_panel._commit_message_buffer_subscription =
+                        Self::subscribe_to_commit_message_buffer(
+                            &mut git_panel.commit_message_buffer(cx),
+                            window,
+                            cx,
+                        );
                 }
             })
         })
