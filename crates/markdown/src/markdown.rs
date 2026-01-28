@@ -108,12 +108,7 @@ pub enum MarkdownFont {
 }
 
 impl MarkdownStyle {
-    pub fn themed_markdown_style(
-        font: MarkdownFont,
-        muted_text: bool,
-        window: &Window,
-        cx: &App,
-    ) -> Self {
+    pub fn themed_markdown_style(font: MarkdownFont, window: &Window, cx: &App) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
@@ -128,11 +123,7 @@ impl MarkdownStyle {
             ),
         };
 
-        let text_color = if muted_text {
-            colors.text_muted
-        } else {
-            colors.text
-        };
+        let text_color = colors.text;
 
         let mut text_style = window.text_style();
         let line_height = buffer_font_size * 1.75;
@@ -229,6 +220,12 @@ impl MarkdownStyle {
             },
             ..Default::default()
         }
+    }
+
+    pub fn with_muted_text(mut self, cx: &App) -> Self {
+        let colors = cx.theme().colors();
+        self.base_text_style.color = colors.text_muted;
+        self
     }
 }
 

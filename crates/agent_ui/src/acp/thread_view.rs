@@ -2784,8 +2784,7 @@ impl AcpThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let style =
-                    MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx);
+                let style = MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_3()
@@ -3072,7 +3071,7 @@ impl AcpThreadView {
                 .overflow_hidden()
                 .child(self.render_markdown(
                     chunk,
-                    MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx),
+                    MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx),
                 ))
         };
 
@@ -3278,7 +3277,6 @@ impl AcpThreadView {
                                                     input,
                                                     MarkdownStyle::themed_markdown_style(
                                                         MarkdownFont::Agent,
-                                                        false,
                                                         window,
                                                         cx,
                                                     ),
@@ -3323,7 +3321,6 @@ impl AcpThreadView {
                                                 input,
                                                 MarkdownStyle::themed_markdown_style(
                                                     MarkdownFont::Agent,
-                                                    false,
                                                     window,
                                                     cx,
                                                 ),
@@ -3620,18 +3617,20 @@ impl AcpThreadView {
                             this.text_color(cx.theme().colors().text_muted)
                         }
                     })
-                    .child(self.render_markdown(
-                        tool_call.label.clone(),
-                        MarkdownStyle {
-                            prevent_mouse_interaction: true,
-                            ..MarkdownStyle::themed_markdown_style(
-                                MarkdownFont::Agent,
-                                true,
-                                window,
-                                cx,
-                            )
-                        },
-                    ))
+                    .child(
+                        self.render_markdown(
+                            tool_call.label.clone(),
+                            MarkdownStyle {
+                                prevent_mouse_interaction: true,
+                                ..MarkdownStyle::themed_markdown_style(
+                                    MarkdownFont::Agent,
+                                    window,
+                                    cx,
+                                )
+                                .with_muted_text(cx)
+                            },
+                        ),
+                    )
                     .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
@@ -3640,10 +3639,13 @@ impl AcpThreadView {
             } else {
                 h_flex()
                     .w_full()
-                    .child(self.render_markdown(
-                        tool_call.label.clone(),
-                        MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, true, window, cx),
-                    ))
+                    .child(
+                        self.render_markdown(
+                            tool_call.label.clone(),
+                            MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx)
+                                .with_muted_text(cx),
+                        ),
+                    )
                     .into_any()
             })
             .when(!is_edit, |this| this.child(gradient_overlay))
@@ -3974,12 +3976,7 @@ impl AcpThreadView {
                     .when_some(last_assistant_markdown, |this, markdown| {
                         this.child(self.render_markdown(
                             markdown,
-                            MarkdownStyle::themed_markdown_style(
-                                MarkdownFont::Agent,
-                                false,
-                                window,
-                                cx,
-                            ),
+                            MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx),
                         ))
                     }),
             )
@@ -4017,7 +4014,7 @@ impl AcpThreadView {
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(
                 markdown,
-                MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx),
+                MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx),
             ))
             .when(!card_layout, |this| {
                 this.child(
@@ -5195,7 +5192,6 @@ impl AcpThreadView {
                                     desc.clone(),
                                     MarkdownStyle::themed_markdown_style(
                                         MarkdownFont::Agent,
-                                        false,
                                         window,
                                         cx,
                                     ),
@@ -8124,8 +8120,8 @@ impl AcpThreadView {
             markdown
         };
 
-        let markdown_style =
-            MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, true, window, cx);
+        let markdown_style = MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx)
+            .with_muted_text(cx);
         let description = self
             .render_markdown(markdown, markdown_style)
             .into_any_element();
@@ -8610,8 +8606,7 @@ fn plan_label_markdown_style(
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
-    let default_md_style =
-        MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx);
+    let default_md_style = MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, window, cx);
 
     MarkdownStyle {
         base_text_style: TextStyle {
