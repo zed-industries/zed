@@ -8,10 +8,11 @@ use project::context_server_store::*;
 use project::project_settings::ContextServerSettings;
 use project::worktree_store::WorktreeStore;
 use project::{
-    FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
+    DisableAiSettings, FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
     project_settings::ProjectSettings,
 };
 use serde_json::json;
+use settings::settings_content::SaturatingBool;
 use settings::{ContextServerCommand, Settings, SettingsStore};
 use std::sync::Arc;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
@@ -551,6 +552,116 @@ async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
 
         cx.run_until_parked();
     }
+}
+
+#[gpui::test]
+async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
+    const SERVER_1_ID: &str = "mcp-1";
+
+    let server_1_id = ContextServerId(SERVER_1_ID.into());
+
+    // Set up SettingsStore with disable_ai: true in user settings BEFORE creating project
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        DisableAiSettings::register(cx);
+        // Set disable_ai via user settings (not override_global) so it persists through recompute_values
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.disable_ai = Some(SaturatingBool(true));
+            });
+        });
+    });
+
+    // Now create the project (ContextServerStore will see disable_ai = true)
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({"code.rs": ""})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    set_context_server_configuration(
+        vec![(
+            server_1_id.0.clone(),
+            settings::ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: vec!["arg".to_string()],
+                    env: None,
+                    timeout: None,
+                },
+            },
+        )],
+        cx,
+    );
+
+    cx.run_until_parked();
+
+    // Verify that no server started because AI is disabled
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_1_id),
+            None,
+            "Server should not start when disable_ai is true"
+        );
+    });
+
+    // Enable AI and verify server starts
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_1_id.clone(), ContextServerStatus::Starting),
+                (server_1_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.disable_ai = Some(SaturatingBool(false));
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    // Disable AI again and verify server stops
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![(server_1_id.clone(), ContextServerStatus::Stopped)],
+            cx,
+        );
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.disable_ai = Some(SaturatingBool(true));
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    // Verify server is stopped
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_1_id),
+            Some(ContextServerStatus::Stopped),
+            "Server should be stopped when disable_ai is true"
+        );
+    });
 }
 
 fn set_context_server_configuration(
