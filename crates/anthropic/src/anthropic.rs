@@ -708,9 +708,6 @@ pub async fn stream_completion_with_rate_limit_info(
                             None => return None,
                         };
 
-                        if line.is_empty() {
-                            return None;
-                        }
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
                             Err(error) => Some(Err(AnthropicError::DeserializeResponse(error))),
