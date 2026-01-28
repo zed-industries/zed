@@ -347,7 +347,6 @@ pub struct AcpThreadView {
     command_load_errors: Vec<CommandLoadError>, // keep
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
-    thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>, // keep
     /// Tracks which tool calls have their content/output expanded.
@@ -406,6 +405,7 @@ enum ThreadState {
         thread_error: Option<ThreadError>,
         thread_error_markdown: Option<Entity<Markdown>>,
         token_limit_callout_dismissed: bool,
+        thread_feedback: ThreadFeedbackState,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -575,7 +575,6 @@ impl AcpThreadView {
             command_load_errors,
             command_load_errors_dismissed: false,
             slash_command_registry,
-            thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             thread_error: None,
                             thread_error_markdown: None,
                             token_limit_callout_dismissed: false,
+                            thread_feedback: Default::default(),
                             _subscriptions: subscriptions,
                         };
 
@@ -1637,11 +1637,16 @@ impl AcpThreadView {
             )
         });
 
-        if let ThreadState::Ready { thread_error, .. } = &mut self.thread_state {
+        if let ThreadState::Ready {
+            thread_error,
+            thread_feedback,
+            ..
+        } = &mut self.thread_state
+        {
             thread_error.take();
+            thread_feedback.clear();
         }
         self.editing_message.take();
-        self.thread_feedback.clear();
 
         if self.should_be_following {
             self.workspace
@@ -2988,7 +2993,12 @@ impl AcpThreadView {
             false
         };
 
-        let Some(thread) = self.thread() else {
+        let ThreadState::Ready {
+            thread,
+            thread_feedback,
+            ..
+        } = &self.thread_state
+        else {
             return primary;
         };
 
@@ -3000,13 +3010,12 @@ impl AcpThreadView {
                     if needs_confirmation {
                         this.child(self.render_generating(true, cx))
                     } else {
-                        this.child(self.render_thread_controls(&thread, cx))
+                        this.child(self.render_thread_controls(thread, cx))
                     }
                 })
-                .when_some(
-                    self.thread_feedback.comments_editor.clone(),
-                    |this, editor| this.child(Self::render_feedback_feedback_editor(editor, cx)),
-                )
+                .when_some(thread_feedback.comments_editor.clone(), |this, editor| {
+                    this.child(Self::render_feedback_feedback_editor(editor, cx))
+                })
                 .into_any_element()
         } else {
             primary
@@ -7653,60 +7662,72 @@ impl AcpThreadView {
                 },
             );
 
-        if AgentSettings::get_global(cx).enable_feedback
-            && self
-                .thread()
-                .is_some_and(|thread| thread.read(cx).connection().telemetry().is_some())
+        if let ThreadState::Ready {
+            thread,
+            thread_feedback,
+            ..
+        } = &self.thread_state
         {
-            let feedback = self.thread_feedback.feedback;
+            if AgentSettings::get_global(cx).enable_feedback
+                && thread.read(cx).connection().telemetry().is_some()
+            {
+                let feedback = thread_feedback.feedback;
 
-            let tooltip_meta = || {
-                SharedString::new(
-                    "Rating the thread sends all of your current conversation to the Zed team.",
-                )
-            };
+                let tooltip_meta = || {
+                    SharedString::new(
+                        "Rating the thread sends all of your current conversation to the Zed team.",
+                    )
+                };
 
-            container = container
-                .child(
-                    IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                        .shape(ui::IconButtonShape::Square)
-                        .icon_size(IconSize::Small)
-                        .icon_color(match feedback {
-                            Some(ThreadFeedback::Positive) => Color::Accent,
-                            _ => Color::Ignored,
-                        })
-                        .tooltip(move |window, cx| match feedback {
-                            Some(ThreadFeedback::Positive) => {
-                                Tooltip::text("Thanks for your feedback!")(window, cx)
-                            }
-                            _ => Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx),
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
-                        })),
-                )
-                .child(
-                    IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                        .shape(ui::IconButtonShape::Square)
-                        .icon_size(IconSize::Small)
-                        .icon_color(match feedback {
-                            Some(ThreadFeedback::Negative) => Color::Accent,
-                            _ => Color::Ignored,
-                        })
-                        .tooltip(move |window, cx| match feedback {
-                            Some(ThreadFeedback::Negative) => {
-                                Tooltip::text(
+                container = container
+                    .child(
+                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Positive) => Color::Accent,
+                                _ => Color::Ignored,
+                            })
+                            .tooltip(move |window, cx| match feedback {
+                                Some(ThreadFeedback::Positive) => {
+                                    Tooltip::text("Thanks for your feedback!")(window, cx)
+                                }
+                                _ => {
+                                    Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx)
+                                }
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                            })),
+                    )
+                    .child(
+                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Negative) => Color::Accent,
+                                _ => Color::Ignored,
+                            })
+                            .tooltip(move |window, cx| match feedback {
+                                Some(ThreadFeedback::Negative) => {
+                                    Tooltip::text(
                                     "We appreciate your feedback and will use it to improve in the future.",
                                 )(window, cx)
-                            }
-                            _ => {
-                                Tooltip::with_meta("Not Helpful Response", None, tooltip_meta(), cx)
-                            }
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-                        })),
-                );
+                                }
+                                _ => {
+                                    Tooltip::with_meta(
+                                        "Not Helpful Response",
+                                        None,
+                                        tooltip_meta(),
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+                            })),
+                    );
+            }
         }
 
         if cx.has_flag::<AgentSharingFeatureFlag>()
@@ -7755,7 +7776,12 @@ impl AcpThreadView {
         h_flex()
             .key_context("AgentFeedbackMessageEditor")
             .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
-                this.thread_feedback.dismiss_comments();
+                if let ThreadState::Ready {
+                    thread_feedback, ..
+                } = &mut this.thread_state
+                {
+                    thread_feedback.dismiss_comments();
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(move |this, _: &menu::Confirm, _window, cx| {
@@ -7778,7 +7804,12 @@ impl AcpThreadView {
                             .icon_size(IconSize::XSmall)
                             .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread_feedback.dismiss_comments();
+                                if let ThreadState::Ready {
+                                    thread_feedback, ..
+                                } = &mut this.thread_state
+                                {
+                                    thread_feedback.dismiss_comments();
+                                }
                                 cx.notify();
                             })),
                     )
@@ -7799,20 +7830,30 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.thread().cloned() else {
+        let ThreadState::Ready {
+            thread,
+            thread_feedback,
+            ..
+        } = &mut self.thread_state
+        else {
             return;
         };
 
-        self.thread_feedback.submit(thread, feedback, window, cx);
+        thread_feedback.submit(thread.clone(), feedback, window, cx);
         cx.notify();
     }
 
     fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread().cloned() else {
+        let ThreadState::Ready {
+            thread,
+            thread_feedback,
+            ..
+        } = &mut self.thread_state
+        else {
             return;
         };
 
-        self.thread_feedback.submit_comments(thread, cx);
+        thread_feedback.submit_comments(thread.clone(), cx);
         cx.notify();
     }
 
