@@ -176,6 +176,7 @@ pub fn capture_example(
             captured_prompt_input: prompt_input,
             telemetry: None,
             human_feedback: Vec::new(),
+            rating: None,
         };
         spec.set_cursor_excerpt(
             &cursor_excerpt,
@@ -608,6 +609,7 @@ mod tests {
                 captured_prompt_input: example.captured_prompt_input.clone(),
                 telemetry: None,
                 human_feedback: Vec::new(),
+                rating: None,
             }
         );
 

@@ -125,6 +125,12 @@ Inputs can be file paths or special specifiers:
       - Positive ratings: output becomes expected_patches
       - Negative ratings: output becomes rejected_patch
 
+  rated-positive-after:{timestamp}
+      Same as rated-after, but only fetches positively rated predictions.
+
+  rated-negative-after:{timestamp}
+      Same as rated-after, but only fetches negatively rated predictions.
+
       Required environment variables to connect to Snowflake:
           EP_SNOWFLAKE_API_KEY
           EP_SNOWFLAKE_BASE_URL
@@ -145,6 +151,12 @@ Examples:
 
   # Read user-rated predictions
   ep read rated-after:2025-01-01T00:00:00Z -o rated.jsonl
+
+  # Read only positively rated predictions
+  ep read rated-positive-after:2025-01-01T00:00:00Z -o positive.jsonl
+
+  # Read only negatively rated predictions
+  ep read rated-negative-after:2025-01-01T00:00:00Z -o negative.jsonl
 
   # Mix multiple input sources
   ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
@@ -446,7 +458,8 @@ async fn load_examples(
     let mut captured_after_timestamps = Vec::new();
     let mut rejected_after_timestamps = Vec::new();
     let mut requested_after_timestamps = Vec::new();
-    let mut rated_after_timestamps = Vec::new();
+    let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
+        Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
@@ -461,10 +474,10 @@ async fn load_examples(
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
             requested_after_timestamps.push(timestamp.to_string());
-        } else if let Some(timestamp) =
+        } else if let Some((timestamp, rating_filter)) =
             pull_examples::parse_rated_after_input(input_string.as_ref())
         {
-            rated_after_timestamps.push(timestamp.to_string());
+            rated_after_inputs.push((timestamp.to_string(), rating_filter));
         } else {
             file_inputs.push(input.clone());
         }
@@ -523,12 +536,12 @@ async fn load_examples(
             examples.append(&mut requested_examples);
         }
 
-        if !rated_after_timestamps.is_empty() {
-            rated_after_timestamps.sort();
+        if !rated_after_inputs.is_empty() {
+            rated_after_inputs.sort();
 
             let mut rated_examples = pull_examples::fetch_rated_examples_after(
                 http_client,
-                &rated_after_timestamps,
+                &rated_after_inputs,
                 max_rows_per_timestamp,
                 background_executor,
             )

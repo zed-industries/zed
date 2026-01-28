@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc};
+use telemetry_events::EditPredictionRating;
 
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
@@ -34,6 +35,8 @@ pub struct ExampleSpec {
     pub telemetry: Option<TelemetrySource>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub human_feedback: Vec<HumanFeedback>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<EditPredictionRating>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
@@ -260,6 +263,7 @@ impl ExampleSpec {
             captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
+            rating: None,
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -509,6 +513,7 @@ mod tests {
             captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
+            rating: None,
         };
 
         // Cursor before `42`
@@ -645,6 +650,7 @@ mod tests {
             captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
+            rating: None,
         };
 
         // Cursor before `42` using inline marker

@@ -373,6 +373,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         captured_prompt_input: None,
         telemetry: None,
         human_feedback: Vec::new(),
+        rating: None,
     })
 }
 
@@ -1406,6 +1407,7 @@ Date: Mon Jan 1 00:00:00 2024
             captured_prompt_input: None,
             telemetry: None,
             human_feedback: Vec::new(),
+            rating: None,
         };
 
         let json = serde_json::to_string(&case).unwrap();

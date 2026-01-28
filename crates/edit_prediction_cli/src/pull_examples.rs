@@ -8,6 +8,7 @@ use serde_json::{Value as JsonValue, json};
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
+use telemetry_events::EditPredictionRating;
 
 use zeta_prompt::ZetaPromptInput;
 
@@ -45,9 +46,19 @@ pub fn parse_requested_after_input(input: &str) -> Option<&str> {
     input.strip_prefix("requested-after:")
 }
 
-/// Parse an input token of the form `rated-after:{timestamp}`.
-pub fn parse_rated_after_input(input: &str) -> Option<&str> {
-    input.strip_prefix("rated-after:")
+/// Parse an input token of the form `rated-after:{timestamp}`, `rated-positive-after:{timestamp}`,
+/// or `rated-negative-after:{timestamp}`.
+/// Returns `(timestamp, Option<EditPredictionRating>)` where `None` means all ratings.
+pub fn parse_rated_after_input(input: &str) -> Option<(&str, Option<EditPredictionRating>)> {
+    if let Some(timestamp) = input.strip_prefix("rated-positive-after:") {
+        Some((timestamp, Some(EditPredictionRating::Positive)))
+    } else if let Some(timestamp) = input.strip_prefix("rated-negative-after:") {
+        Some((timestamp, Some(EditPredictionRating::Negative)))
+    } else if let Some(timestamp) = input.strip_prefix("rated-after:") {
+        Some((timestamp, None))
+    } else {
+        None
+    }
 }
 
 pub async fn fetch_captured_examples_after(
@@ -712,11 +723,11 @@ pub async fn fetch_requested_examples_after(
 
 pub async fn fetch_rated_examples_after(
     http_client: Arc<dyn HttpClient>,
-    after_timestamps: &[String],
+    inputs: &[(String, Option<EditPredictionRating>)],
     max_rows_per_timestamp: usize,
     background_executor: BackgroundExecutor,
 ) -> Result<Vec<Example>> {
-    if after_timestamps.is_empty() {
+    if inputs.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -731,10 +742,20 @@ pub async fn fetch_rated_examples_after(
 
     let mut all_examples = Vec::new();
 
-    for after_date in after_timestamps.iter() {
-        let step_progress_name = format!("rated>{after_date}");
+    for (after_date, rating_filter) in inputs.iter() {
+        let filter_label = match rating_filter {
+            None => "",
+            Some(EditPredictionRating::Positive) => ":positive",
+            Some(EditPredictionRating::Negative) => ":negative",
+        };
+        let step_progress_name = format!("rated{filter_label}>{after_date}");
         let step_progress = progress.start(Step::PullExamples, &step_progress_name);
         step_progress.set_substatus("querying");
+
+        let rating_value = rating_filter.as_ref().map(|r| match r {
+            EditPredictionRating::Positive => "Positive",
+            EditPredictionRating::Negative => "Negative",
+        });
 
         let statement = indoc! {r#"
             SELECT
@@ -746,10 +767,19 @@ pub async fn fetch_rated_examples_after(
                 time::string AS time
             FROM events
             WHERE event_type = ?
+                AND (? IS NULL OR event_properties:rating::string = ?)
                 AND time > TRY_TO_TIMESTAMP_NTZ(?)
             ORDER BY time ASC
             LIMIT ?
         "#};
+
+        let bindings = json!({
+            "1": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
+            "2": { "type": "TEXT", "value": rating_value },
+            "3": { "type": "TEXT", "value": rating_value },
+            "4": { "type": "TEXT", "value": after_date },
+            "5": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() }
+        });
 
         let request = json!({
             "statement": statement,
@@ -758,11 +788,7 @@ pub async fn fetch_rated_examples_after(
             "schema": "PUBLIC",
             "warehouse": "DBT",
             "role": role,
-            "bindings": {
-                "1": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
-                "2": { "type": "TEXT", "value": after_date },
-                "3": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() }
-            }
+            "bindings": bindings
         });
 
         let response = run_sql_with_polling(
@@ -880,8 +906,24 @@ fn rated_examples_from_response<'a>(
             };
 
             let inputs_json = get_json("inputs");
-            let inputs: Option<ZetaPromptInput> =
-                inputs_json.clone().and_then(|v| serde_json::from_value(v).ok());
+            let inputs: Option<ZetaPromptInput> = match &inputs_json {
+                Some(v) => match serde_json::from_value({
+                    let mut value = v.clone();
+                    if let Some(obj) = value.as_object_mut() && !obj.contains_key("cursor_excerpt") {
+                        obj.insert("cursor_excerpt".to_string(), "".into());
+                    }
+                    value
+                }) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        log::warn!(
+                            "skipping row {row_index}: failed to parse inputs - {e}",
+                        );
+                        return None;
+                    }
+                },
+                None => None,
+            };
             let output = get_string("output");
             let rating = get_string("rating");
             let feedback = get_string("feedback").unwrap_or_default();
@@ -924,7 +966,12 @@ fn build_rated_example(
     rating: String,
     feedback: String,
 ) -> Example {
-    let is_positive = rating == "Positive";
+    let parsed_rating = if rating == "Positive" {
+        EditPredictionRating::Positive
+    } else {
+        EditPredictionRating::Negative
+    };
+    let is_positive = parsed_rating == EditPredictionRating::Positive;
     let request_id = format!("rated-{}-{}", device_id, time);
 
     let tags = if is_positive {
@@ -934,6 +981,8 @@ fn build_rated_example(
     };
 
     let mut example = build_example_from_snowflake(request_id, device_id, time, input, tags, None);
+
+    example.spec.rating = Some(parsed_rating);
 
     if !feedback.is_empty() {
         example
@@ -1234,6 +1283,7 @@ fn build_example_from_snowflake(
             was_shown,
         }),
         human_feedback: Vec::new(),
+        rating: None,
     };
 
     Example {
