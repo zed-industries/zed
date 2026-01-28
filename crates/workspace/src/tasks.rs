@@ -8,7 +8,7 @@ use remote::ConnectionState;
 use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::Window;
 
-use crate::{MultiWorkspace, Toast, Workspace, notifications::NotificationId};
+use crate::{Toast, Workspace, notifications::NotificationId};
 
 impl Workspace {
     pub fn schedule_task(

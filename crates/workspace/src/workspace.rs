@@ -8989,7 +8989,7 @@ pub fn join_in_room_project(
                     let workspace = cx.new(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), window, cx)
                     });
-                    cx.new(|_cx| MultiWorkspace::new(workspace, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, cx))
                 })
             })?
         };
