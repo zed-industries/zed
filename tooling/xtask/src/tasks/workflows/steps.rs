@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
-pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
