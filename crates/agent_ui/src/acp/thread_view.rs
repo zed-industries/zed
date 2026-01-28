@@ -348,7 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     edits_expanded: bool,
     plan_expanded: bool,
     queue_expanded: bool,
@@ -406,6 +405,7 @@ enum ThreadState {
         expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
         expanded_thinking_blocks: HashSet<(usize, usize)>,
         expanded_subagents: HashSet<acp::SessionId>,
+        subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,7 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            subagent_scroll_handles: RefCell::new(HashMap::default()),
             editing_message: None,
             local_queued_messages: Vec::new(),
             queued_message_editors: Vec::new(),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             expanded_tool_call_raw_inputs: HashSet::default(),
                             expanded_thinking_blocks: HashSet::default(),
                             expanded_subagents: HashSet::default(),
+                            subagent_scroll_handles: RefCell::new(HashMap::default()),
                             _subscriptions: subscriptions,
                         };
 
@@ -4032,12 +4032,19 @@ impl AcpThreadView {
             }
         });
 
-        let scroll_handle = self
-            .subagent_scroll_handles
-            .borrow_mut()
-            .entry(session_id.clone())
-            .or_default()
-            .clone();
+        let scroll_handle = if let ThreadState::Ready {
+            subagent_scroll_handles,
+            ..
+        } = &self.thread_state
+        {
+            subagent_scroll_handles
+                .borrow_mut()
+                .entry(session_id.clone())
+                .or_default()
+                .clone()
+        } else {
+            ScrollHandle::default()
+        };
 
         scroll_handle.scroll_to_bottom();
         let editor_bg = cx.theme().colors().editor_background;
