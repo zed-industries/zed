@@ -3,6 +3,7 @@ use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
+use util::shell::ShellKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPermissionDecision {
@@ -69,9 +70,49 @@ pub fn decide_permission(
     // If parsing fails or the shell syntax is unsupported, always_allow is
     // disabled for this command (we set allow_enabled to false to signal this).
     if tool_name == TerminalTool::name() {
+        // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
+        // These shells use && / || / ; / | with the same semantics:
+        // - Posix (sh, bash, dash, zsh)
+        // - Fish 3.0+ (added && / || support in 2018)
+        // - PowerShell 7+ (added && / || support in 2020)
+        // - Pwsh (PowerShell 7.x)
+        // - Cmd (Windows - same && / || semantics)
+        // - Xonsh (supports bash syntax for subprocesses)
+        // - Csh / Tcsh (similar syntax)
+        //
+        // These shells have incompatible syntax and will fail to parse:
+        // - Nushell (uses `and` / `or` keywords, different pipeline model)
+        // - Elvish (uses `and` / `or` keywords)
+        // - Rc (Plan 9 shell - no && / || operators)
+        let shell_kind = ShellKind::system();
+        let shell_supports_posix_chaining = matches!(
+            shell_kind,
+            ShellKind::Posix
+                | ShellKind::Fish
+                | ShellKind::PowerShell
+                | ShellKind::Pwsh
+                | ShellKind::Cmd
+                | ShellKind::Xonsh
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+        );
+
+        if !shell_supports_posix_chaining {
+            // For shells with incompatible syntax, we can't reliably parse
+            // the command to extract sub-commands. Disable "always allow"
+            // to be safe, but still check deny/confirm patterns.
+            return check_commands(std::iter::once(input.to_string()), rules, tool_name, false);
+        }
+
         match extract_commands(input) {
             Some(commands) => check_commands(commands, rules, tool_name, true),
-            None => check_commands(std::iter::once(input.to_string()), rules, tool_name, false),
+            None => {
+                // The command failed to parse, so we check to see if we should auto-deny
+                // or auto-confirm; if neither auto-deny nor auto-confirm applies here,
+                // fall back on the default (based on the user's settings, which is Confirm
+                // if not specified otherwise). Ignore "always allow" when it failed to parse.
+                check_commands(std::iter::once(input.to_string()), rules, tool_name, false)
+            }
         }
     } else {
         check_commands(std::iter::once(input.to_string()), rules, tool_name, true)
