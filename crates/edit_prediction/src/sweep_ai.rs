@@ -95,6 +95,11 @@ impl SweepAi {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
             }
 
+            let mut recent_changes_high_res = String::new();
+            for event in &inputs.events_high_res {
+                write_event(event.as_ref(), &mut recent_changes_high_res).unwrap();
+            }
+
             let mut file_chunks = recent_buffer_snapshots
                 .into_iter()
                 .map(|snapshot| {
@@ -188,6 +193,7 @@ impl SweepAi {
                 original_file_contents: text,
                 cursor_position: offset,
                 recent_changes: recent_changes.clone(),
+                recent_changes_high_res,
                 changes_above_cursor: true,
                 multiple_suggestions: false,
                 branch: None,
@@ -366,6 +372,7 @@ struct AutocompleteRequest {
     pub file_path: Arc<Path>,
     pub file_contents: String,
     pub recent_changes: String,
+    pub recent_changes_high_res: String,
     pub cursor_position: usize,
     pub original_file_contents: String,
     pub file_chunks: Vec<FileChunk>,
@@ -453,25 +460,13 @@ struct AdditionalCompletion {
 }
 
 fn write_event(event: &zeta_prompt::Event, f: &mut impl fmt::Write) -> fmt::Result {
-    match event {
-        zeta_prompt::Event::BufferChange {
-            old_path,
-            path,
-            diff,
-            ..
-        } => {
-            if old_path != path {
-                // TODO confirm how to do this for sweep
-                // writeln!(f, "User renamed {:?} to {:?}\n", old_path, new_path)?;
-            }
+    let zeta_prompt::Event::BufferChange { path, diff, .. } = event;
 
-            if !diff.is_empty() {
-                write!(f, "File: {}:\n{}\n", path.display(), diff)?
-            }
-
-            fmt::Result::Ok(())
-        }
+    if diff.is_empty() {
+        return fmt::Result::Ok(());
     }
+
+    write!(f, "File: {}\n{}\n", path.display(), diff)
 }
 
 fn debug_info(cx: &gpui::App) -> Arc<str> {

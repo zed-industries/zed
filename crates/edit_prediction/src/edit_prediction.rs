@@ -178,6 +178,7 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
+    events_high_res: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
     recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
@@ -249,8 +250,11 @@ pub struct StoredEvent {
     pub old_snapshot: TextBufferSnapshot,
 }
 
+const HIGH_RES_EVENT_COUNT_MAX: usize = 16;
+
 struct ProjectState {
     events: VecDeque<StoredEvent>,
+    events_high_res: VecDeque<Arc<zeta_prompt::Event>>,
     last_event: Option<LastEvent>,
     recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -298,6 +302,10 @@ impl ProjectState {
                 one.into_iter().chain(two)
             }))
             .collect()
+    }
+
+    pub fn events_high_res(&self) -> Vec<Arc<zeta_prompt::Event>> {
+        self.events_high_res.iter().cloned().collect()
     }
 
     fn cancel_pending_prediction(
@@ -552,6 +560,40 @@ pub(crate) fn compute_diff_between_snapshots(
     Some(diff)
 }
 
+fn compute_high_res_event(
+    old_file: Option<&Arc<dyn File>>,
+    new_file: Option<&Arc<dyn File>>,
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
+    license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
+    cx: &App,
+) -> Option<Arc<zeta_prompt::Event>> {
+    let path = buffer_path_with_id_fallback(new_file, new_snapshot, cx);
+    let old_path = buffer_path_with_id_fallback(old_file, old_snapshot, cx);
+
+    let in_open_source_repo = [new_file, old_file].iter().all(|file| {
+        file.is_some_and(|file| {
+            license_detection_watchers
+                .get(&file.worktree_id(cx))
+                .is_some_and(|watcher| watcher.is_project_open_source())
+        })
+    });
+
+    let diff = compute_diff_between_snapshots(old_snapshot, new_snapshot)?;
+
+    if path == old_path && diff.is_empty() {
+        None
+    } else {
+        Some(Arc::new(zeta_prompt::Event::BufferChange {
+            old_path,
+            path,
+            diff,
+            in_open_source_repo,
+            predicted: false,
+        }))
+    }
+}
+
 fn buffer_path_with_id_fallback(
     file: Option<&Arc<dyn File>>,
     snapshot: &TextBufferSnapshot,
@@ -804,6 +846,7 @@ impl EditPredictionStore {
                     related_excerpt_store
                 },
                 events: VecDeque::new(),
+                events_high_res: VecDeque::new(),
                 last_event: None,
                 recent_paths: VecDeque::new(),
                 debug_tx: None,
@@ -1058,6 +1101,21 @@ impl EditPredictionStore {
         }
 
         let events = &mut project_state.events;
+
+        // Track high-res events (every edit without coalescing) for sweep
+        if let Some(high_res_event) = compute_high_res_event(
+            old_file.as_ref(),
+            new_file.as_ref(),
+            &old_snapshot,
+            &new_snapshot,
+            &project_state.license_detection_watchers,
+            cx,
+        ) {
+            if project_state.events_high_res.len() >= HIGH_RES_EVENT_COUNT_MAX {
+                project_state.events_high_res.pop_front();
+            }
+            project_state.events_high_res.push_back(high_res_event);
+        }
 
         let now = cx.background_executor().now();
         if let Some(last_event) = project_state.last_event.as_mut() {
@@ -1668,6 +1726,7 @@ impl EditPredictionStore {
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.into_iter().map(|e| e.event).collect();
+        let events_high_res = project_state.events_high_res();
         let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();
@@ -1707,6 +1766,7 @@ impl EditPredictionStore {
             snapshot: snapshot.clone(),
             position,
             events,
+            events_high_res,
             related_files,
             recent_paths: project_state.recent_paths.clone(),
             trigger,
