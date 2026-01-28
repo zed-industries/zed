@@ -52,9 +52,9 @@ use text::{Anchor, ToPoint as _};
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
-    right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
+    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
+    Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -80,7 +80,7 @@ use crate::user_slash_command::{
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
     ToggleProfileSelector,
 };
@@ -396,6 +396,7 @@ pub struct AcpThreadView {
     turn_generation: usize,
     _turn_timer_task: Option<Task<()>>,
     hovered_edited_file_buttons: Option<usize>,
+    add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 enum ThreadState {
@@ -640,6 +641,7 @@ impl AcpThreadView {
             turn_generation: 0,
             _turn_timer_task: None,
             hovered_edited_file_buttons: None,
+            add_context_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -2248,7 +2250,13 @@ impl AcpThreadView {
                         if let Some(workspace) = self.workspace.upgrade() {
                             let project = self.project.clone();
                             let authenticate = Self::spawn_external_agent_login(
-                                login, workspace, project, false, true, window, cx,
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
@@ -2349,14 +2357,17 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "spawn-gemini-cli")
-            && let Some(login) = self.login.clone()
-        {
+        let authenticate = if let Some(login) = self.login.clone() {
             if let Some(workspace) = self.workspace.upgrade() {
                 let project = self.project.clone();
                 Self::spawn_external_agent_login(
-                    login, workspace, project, false, false, window, cx,
+                    login,
+                    workspace,
+                    project,
+                    method.clone(),
+                    false,
+                    window,
+                    cx,
                 )
             } else {
                 Task::ready(Ok(()))
@@ -2403,8 +2414,8 @@ impl AcpThreadView {
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
+        method: acp::AuthMethodId,
         previous_attempt: bool,
-        check_exit_code: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -2454,25 +2465,29 @@ impl AcpThreadView {
                 })?
                 .await?;
 
-            if check_exit_code {
-                // For extension-based auth, wait for the process to exit and check exit code
+            let success_patterns = match method.0.as_ref() {
+                "claude-login" | "spawn-gemini-cli" => vec![
+                    "Login successful".to_string(),
+                    "Type your message".to_string(),
+                ],
+                _ => Vec::new(),
+            };
+            if success_patterns.is_empty() {
+                // No success patterns specified: wait for the process to exit and check exit code
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
 
                 match exit_status {
-                    Some(status) if status.success() => {
-                        Ok(())
-                    }
-                    Some(status) => {
-                        Err(anyhow!("Login command failed with exit code: {:?}", status.code()))
-                    }
-                    None => {
-                        Err(anyhow!("Login command terminated without exit status"))
-                    }
+                    Some(status) if status.success() => Ok(()),
+                    Some(status) => Err(anyhow!(
+                        "Login command failed with exit code: {:?}",
+                        status.code()
+                    )),
+                    None => Err(anyhow!("Login command terminated without exit status")),
                 }
             } else {
-                // For hardcoded agents (claude-login, gemini-cli): look for specific output
+                // Look for specific output patterns to detect successful login
                 let mut exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .fuse();
@@ -2485,8 +2500,7 @@ impl AcpThreadView {
                                 cx.background_executor().timer(Duration::from_secs(1)).await;
                                 let content =
                                     terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                                if content.contains("Login successful")
-                                    || content.contains("Type your message")
+                                if success_patterns.iter().any(|pattern| content.contains(pattern))
                                 {
                                     return anyhow::Ok(());
                                 }
@@ -2504,7 +2518,7 @@ impl AcpThreadView {
                     }
                     _ = exit_status => {
                         if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
-                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), true, false, window, cx))?.await
+                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), method, true, window, cx))?.await
                         }
                         return Err(anyhow!("exited before logging in"));
                     }
@@ -3815,30 +3829,70 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .when(has_expandable_content, |this| {
-                        this.child(
-                            Disclosure::new(
-                                SharedString::from(format!(
-                                    "subagent-disclosure-inner-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                is_expanded,
-                            )
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(card_header_id)
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    if this.expanded_subagents.contains(&session_id) {
-                                        this.expanded_subagents.remove(&session_id);
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .when(is_running, |buttons| {
+                                buttons.child(
+                                    Button::new(
+                                        SharedString::from(format!(
+                                            "stop-subagent-{}-{}",
+                                            entry_ix, context_ix
+                                        )),
+                                        "Stop",
+                                    )
+                                    .icon(IconName::Stop)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .label_size(LabelSize::Small)
+                                    .tooltip(Tooltip::text("Stop this subagent"))
+                                    .on_click({
+                                        let thread = thread.clone();
+                                        cx.listener(move |_this, _event, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.stop_by_user();
+                                            });
+                                        })
+                                    }),
+                                )
+                            })
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "subagent-disclosure-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    if is_expanded {
+                                        IconName::ChevronUp
                                     } else {
-                                        this.expanded_subagents.insert(session_id.clone());
-                                    }
-                                    cx.notify();
-                                }
-                            })),
-                        )
-                    }),
+                                        IconName::ChevronDown
+                                    },
+                                )
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_expandable_content)
+                                .when(has_expandable_content, |button| {
+                                    button.on_click(cx.listener({
+                                        move |this, _, _, cx| {
+                                            if this.expanded_subagents.contains(&session_id) {
+                                                this.expanded_subagents.remove(&session_id);
+                                            } else {
+                                                this.expanded_subagents.insert(session_id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    }))
+                                })
+                                .when(
+                                    !has_expandable_content,
+                                    |button| {
+                                        button.tooltip(Tooltip::text("Waiting for content..."))
+                                    },
+                                ),
+                            ),
+                    ),
             )
             .when(is_expanded, |this| {
                 this.child(
@@ -5245,8 +5299,6 @@ impl AcpThreadView {
         // block you from using the panel.
         let pending_edits = false;
 
-        let use_keep_reject_buttons = !cx.has_flag::<AgentV2FeatureFlag>();
-
         v_flex()
             .mt_1()
             .mx_2()
@@ -5275,7 +5327,6 @@ impl AcpThreadView {
                     &changed_buffers,
                     self.edits_expanded,
                     pending_edits,
-                    use_keep_reject_buttons,
                     cx,
                 ))
                 .when(self.edits_expanded, |parent| {
@@ -5284,7 +5335,6 @@ impl AcpThreadView {
                         telemetry.clone(),
                         &changed_buffers,
                         pending_edits,
-                        use_keep_reject_buttons,
                         cx,
                     ))
                 })
@@ -5462,7 +5512,6 @@ impl AcpThreadView {
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> Div {
         const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
@@ -5544,82 +5593,59 @@ impl AcpThreadView {
                         cx.notify();
                     })),
             )
-            .when(use_keep_reject_buttons, |this| {
-                this.child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new("review-changes", IconName::ListTodo)
-                                .icon_size(IconSize::Small)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Review Changes",
-                                            &OpenAgentDiff,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
-                                })),
-                        )
-                        .child(Divider::vertical().color(DividerColor::Border))
-                        .child(
-                            Button::new("reject-all-changes", "Reject All")
-                                .label_size(LabelSize::Small)
-                                .disabled(pending_edits)
-                                .when(pending_edits, |this| {
-                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
-                                })
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &RejectAll,
-                                        &focus_handle.clone(),
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("review-changes", IconName::ListTodo)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |_window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Review Changes",
+                                        &OpenAgentDiff,
+                                        &focus_handle,
                                         cx,
                                     )
+                                }
+                            })
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
+                            })),
+                    )
+                    .child(Divider::vertical().color(DividerColor::Border))
+                    .child(
+                        Button::new("reject-all-changes", "Reject All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle.clone(), cx)
                                     .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.reject_all(&RejectAll, window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("keep-all-changes", "Keep All")
-                                .label_size(LabelSize::Small)
-                                .disabled(pending_edits)
-                                .when(pending_edits, |this| {
-                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
-                                })
-                                .key_binding(
-                                    KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.keep_all(&KeepAll, window, cx);
-                                })),
-                        ),
-                )
-            })
-            .when(!use_keep_reject_buttons, |this| {
-                this.child(
-                    Button::new("review-changes", "Review Changes")
-                        .label_size(LabelSize::Small)
-                        .key_binding(
-                            KeyBinding::for_action_in(
-                                &git_ui::project_diff::Diff,
-                                &focus_handle,
-                                cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(10.))),
-                        )
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            window.dispatch_action(git_ui::project_diff::Diff.boxed_clone(), cx);
-                        })),
-                )
-            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.reject_all(&RejectAll, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("keep-all-changes", "Keep All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.keep_all(&KeepAll, window, cx);
+                            })),
+                    ),
+            )
     }
 
     fn render_edited_files_buttons(
@@ -5629,11 +5655,10 @@ impl AcpThreadView {
         action_log: &Entity<ActionLog>,
         telemetry: &ActionLogTelemetry,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         editor_bg_color: Hsla,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let container = h_flex()
+        h_flex()
             .id("edited-buttons-container")
             .visible_on_hover("edited-code")
             .absolute()
@@ -5648,118 +5673,62 @@ impl AcpThreadView {
                     this.hovered_edited_file_buttons = None;
                 }
                 cx.notify();
-            }));
-
-        if use_keep_reject_buttons {
-            container
-                .child(
-                    Button::new(("review", index), "Review")
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let workspace = self.workspace.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                let Some(file) = buffer.read(cx).file() else {
-                                    return;
-                                };
-                                let project_path = project::ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                        workspace,
-                                        project_path,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            })
-                        }),
-                )
-                .child(Divider::vertical().color(DividerColor::BorderVariant))
-                .child(
-                    Button::new(("reject-file", index), "Reject")
-                        .label_size(LabelSize::Small)
-                        .disabled(pending_edits)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let action_log = action_log.clone();
-                            let telemetry = telemetry.clone();
-                            move |_, _, cx| {
-                                action_log.update(cx, |action_log, cx| {
-                                    action_log
-                                        .reject_edits_in_ranges(
-                                            buffer.clone(),
-                                            vec![Anchor::min_max_range_for_buffer(
-                                                buffer.read(cx).remote_id(),
-                                            )],
-                                            Some(telemetry.clone()),
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
-                                })
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(("keep-file", index), "Keep")
-                        .label_size(LabelSize::Small)
-                        .disabled(pending_edits)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let action_log = action_log.clone();
-                            let telemetry = telemetry.clone();
-                            move |_, _, cx| {
-                                action_log.update(cx, |action_log, cx| {
-                                    action_log.keep_edits_in_range(
+            }))
+            .child(
+                Button::new("review", "Review")
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_edited_buffer(&buffer, window, cx);
+                        })
+                    }),
+            )
+            .child(Divider::vertical().color(DividerColor::BorderVariant))
+            .child(
+                Button::new(("reject-file", index), "Reject")
+                    .label_size(LabelSize::Small)
+                    .disabled(pending_edits)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        let action_log = action_log.clone();
+                        let telemetry = telemetry.clone();
+                        move |_, _, cx| {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log
+                                    .reject_edits_in_ranges(
                                         buffer.clone(),
-                                        Anchor::min_max_range_for_buffer(
+                                        vec![Anchor::min_max_range_for_buffer(
                                             buffer.read(cx).remote_id(),
-                                        ),
+                                        )],
                                         Some(telemetry.clone()),
                                         cx,
-                                    );
-                                })
-                            }
-                        }),
-                )
-                .into_any_element()
-        } else {
-            container
-                .child(
-                    Button::new(("review", index), "Review")
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let workspace = self.workspace.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                let Some(file) = buffer.read(cx).file() else {
-                                    return;
-                                };
-                                let project_path = project::ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                        workspace,
-                                        project_path,
-                                        window,
-                                        cx,
-                                    );
-                                });
+                                    )
+                                    .detach_and_log_err(cx);
                             })
-                        }),
-                )
-                .into_any_element()
-        }
+                        }
+                    }),
+            )
+            .child(
+                Button::new(("keep-file", index), "Keep")
+                    .label_size(LabelSize::Small)
+                    .disabled(pending_edits)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        let action_log = action_log.clone();
+                        let telemetry = telemetry.clone();
+                        move |_, _, cx| {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log.keep_edits_in_range(
+                                    buffer.clone(),
+                                    Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
+                                    Some(telemetry.clone()),
+                                    cx,
+                                );
+                            })
+                        }
+                    }),
+            )
     }
 
     fn render_edited_files(
@@ -5768,7 +5737,6 @@ impl AcpThreadView {
         telemetry: ActionLogTelemetry,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -5837,7 +5805,6 @@ impl AcpThreadView {
                             action_log,
                             &telemetry,
                             pending_edits,
-                            use_keep_reject_buttons,
                             editor_bg_color,
                             cx,
                         );
@@ -6896,27 +6863,168 @@ impl AcpThreadView {
             }))
     }
 
-    fn render_add_context_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let message_editor = self.message_editor.clone();
-        let menu_visible = message_editor.read(cx).is_completions_menu_visible(cx);
+    fn render_add_context_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let weak_self = cx.weak_entity();
 
-        IconButton::new("add-context", IconName::AtSign)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .when(!menu_visible, |this| {
-                this.tooltip(move |_window, cx| {
-                    Tooltip::with_meta("Add Context", None, "Or type @ to include context", cx)
-                })
+        PopoverMenu::new("add-context-menu")
+            .trigger_with_tooltip(
+                IconButton::new("add-context", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Add Context",
+                            &OpenAddContextMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(gpui::Corner::BottomLeft)
+            .with_handle(self.add_context_menu_handle.clone())
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
             })
-            .on_click(cx.listener(move |_this, _, window, cx| {
-                let message_editor_clone = message_editor.clone();
+            .menu(move |window, cx| {
+                weak_self
+                    .update(cx, |this, cx| this.build_add_context_menu(window, cx))
+                    .ok()
+            })
+    }
 
-                window.defer(cx, move |window, cx| {
-                    message_editor_clone.update(cx, |message_editor, cx| {
-                        message_editor.trigger_completion_menu(window, cx);
-                    });
-                });
-            }))
+    fn build_add_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let message_editor = self.message_editor.clone();
+        let workspace = self.workspace.clone();
+        let supports_images = self.prompt_capabilities.borrow().image;
+
+        let has_selection = workspace
+            .upgrade()
+            .and_then(|ws| {
+                ws.read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<Editor>())
+            })
+            .is_some_and(|editor| {
+                editor.update(cx, |editor, cx| {
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                })
+            });
+
+        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+            menu.key_context("AddContextMenu")
+                .header("Context")
+                .item(
+                    ContextMenuEntry::new("Files & Directories")
+                        .icon(IconName::File)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("file", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Symbols")
+                        .icon(IconName::Code)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("symbol", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Threads")
+                        .icon(IconName::Thread)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("thread", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Rules")
+                        .icon(IconName::Reader)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("rule", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Image")
+                        .icon(IconName::Image)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!supports_images)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.add_images_from_picker(window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Selection")
+                        .icon(IconName::CursorIBeam)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!has_selection)
+                        .handler({
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_selections(window, cx);
+                                });
+                            }
+                        }),
+                )
+        })
+    }
+
+    fn open_add_context_menu(
+        &mut self,
+        _action: &OpenAddContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.add_context_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
     }
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
@@ -8421,6 +8529,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::handle_authorize_tool_call))
             .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
+            .on_action(cx.listener(Self::open_add_context_menu))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))

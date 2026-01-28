@@ -52,6 +52,8 @@ use theme::{ActiveTheme, Theme};
 use urlencoding;
 use util::{paths::PathStyle, truncate_and_trailoff};
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::{
     borrow::Cow,
     cmp::{self, min},
@@ -992,8 +994,8 @@ impl Terminal {
                     .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
-            AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(error_code), cx);
+            AlacTermEvent::ChildExit(raw_status) => {
+                self.register_task_finished(Some(raw_status), cx);
             }
         }
     }
@@ -2201,22 +2203,22 @@ impl Terminal {
         Task::ready(None)
     }
 
-    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
-        let e: Option<ExitStatus> = error_code.map(|code| {
+    fn register_task_finished(&mut self, raw_status: Option<i32>, cx: &mut Context<Terminal>) {
+        let exit_status: Option<ExitStatus> = raw_status.map(|value| {
             #[cfg(unix)]
             {
-                std::os::unix::process::ExitStatusExt::from_raw(code)
+                std::os::unix::process::ExitStatusExt::from_raw(value)
             }
             #[cfg(windows)]
             {
-                std::os::windows::process::ExitStatusExt::from_raw(code as u32)
+                std::os::windows::process::ExitStatusExt::from_raw(value as u32)
             }
         });
 
         if let Some(tx) = &self.completion_tx {
-            tx.try_send(e).ok();
+            tx.try_send(exit_status).ok();
         }
-        if let Some(e) = e {
+        if let Some(e) = exit_status {
             self.child_exited = Some(e);
         }
         let task = match &mut self.task {
@@ -2231,7 +2233,7 @@ impl Terminal {
         if task.status != TaskStatus::Running {
             return;
         }
-        match error_code {
+        match exit_status.and_then(|e| e.code()) {
             Some(error_code) => {
                 task.status.register_task_exit(error_code);
             }
@@ -2240,7 +2242,7 @@ impl Terminal {
             }
         };
 
-        let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
+        let (finished_successfully, task_line, command_line) = task_summary(task, exit_status);
         let mut lines_to_show = Vec::new();
         if task.spawned_task.show_summary {
             lines_to_show.push(task_line.as_str());
@@ -2305,19 +2307,35 @@ pub fn row_to_string(row: &Row<Cell>) -> String {
 }
 
 const TASK_DELIMITER: &str = "⏵ ";
-fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
+fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, String, String) {
     let escaped_full_label = task
         .spawned_task
         .full_label
         .replace("\r\n", "\r")
         .replace('\n', "\r");
-    let success = error_code == Some(0);
-    let task_line = match error_code {
-        Some(0) => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
-        Some(error_code) => format!(
-            "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
-        ),
-        None => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+    let task_label = |suffix: &str| format!("{TASK_DELIMITER}Task `{escaped_full_label}` {suffix}");
+    let (success, task_line) = match exit_status {
+        Some(status) => {
+            let code = status.code();
+            #[cfg(unix)]
+            let signal = status.signal();
+            #[cfg(not(unix))]
+            let signal: Option<i32> = None;
+
+            match (code, signal) {
+                (Some(0), _) => (true, task_label("finished successfully")),
+                (Some(code), _) => (
+                    false,
+                    task_label(&format!("finished with exit code: {code}")),
+                ),
+                (None, Some(signal)) => (
+                    false,
+                    task_label(&format!("terminated by signal: {signal}")),
+                ),
+                (None, None) => (false, task_label("finished")),
+            }
+        }
+        None => (false, task_label("finished")),
     };
     let escaped_command_label = task
         .spawned_task
@@ -2813,7 +2831,7 @@ mod tests {
                 #[cfg(target_os = "windows")]
                 assert_eq!(exit_status.code(), Some(1));
                 #[cfg(not(target_os = "windows"))]
-                assert_eq!(exit_status.code(), None);
+                assert_eq!(exit_status.code(), Some(127)); // code 127 means "command not found" on Unix
             }
         });
 

@@ -21,6 +21,7 @@ aws_http_client.workspace = true
 bedrock.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true

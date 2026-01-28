@@ -11,6 +11,12 @@ workspace = true
 [lib]
 path = "src/project.rs"
 doctest = false
+test = false
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+path = "tests/integration/project_tests.rs"
 
 [features]
 test-support = [
@@ -98,6 +104,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
+encoding_rs.workspace = true
 db = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }
@@ -111,6 +118,7 @@ language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+project = {workspace = true, features = ["test-support"]}
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 snippet_provider = { workspace = true, features = ["test-support"] }
