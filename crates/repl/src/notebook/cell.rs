@@ -1188,8 +1188,6 @@ impl Render for CodeCell {
                                 .px_5()
                                 .rounded_lg()
                                 .border_1()
-                                // .border_color(cx.theme().colors().border)
-                                // .bg(cx.theme().colors().editor_background)
                                 .child(
                                     div()
                                         .id((ElementId::from(self.id.to_string()), "output-scroll"))
@@ -1226,16 +1224,7 @@ impl Render for CodeCell {
                                                 Output::ClearOutputWaitMarker => None,
                                             };
 
-                                            div()
-                                                // .w_full()
-                                                // .mt_3()
-                                                // .p_3()
-                                                // .rounded_sm()
-                                                // .bg(cx.theme().colors().editor_background)
-                                                // .border(px(1.))
-                                                // .border_color(cx.theme().colors().border)
-                                                // .shadow_xs()
-                                                .children(content)
+                                            div().children(content)
                                         })),
                                 ),
                         ),
