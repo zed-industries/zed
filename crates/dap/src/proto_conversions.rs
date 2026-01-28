@@ -9,7 +9,7 @@ pub trait ProtoConversion {
     type ProtoType;
     type Output;
 
-    fn to_proto(&self) -> Self::ProtoType;
+    fn to_proto(self) -> Self::ProtoType;
     fn from_proto(payload: Self::ProtoType) -> Self::Output;
 }
 
