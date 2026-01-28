@@ -462,14 +462,26 @@ async fn open_workspaces(
             if open_new_workspace == Some(true) {
                 Vec::new()
             } else {
-                // The workspace_id from the database is not used;
-                // open_paths will assign a new WorkspaceId when opening the workspace.
-                restorable_workspace_locations(cx, &app_state)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(_workspace_id, location, paths)| (location, paths))
-                    .collect()
+                // Check if workspace windows already exist (e.g., from macOS restoration)
+                // to avoid opening duplicate windows when the CLI is invoked
+                let has_existing_workspaces = cx.update(|cx| {
+                    !workspace::local_workspace_windows(cx).is_empty()
+                });
+
+                if has_existing_workspaces {
+                    // Windows already exist (e.g., restored by macOS) - don't duplicate them
+                    Vec::new()
+                } else {
+                    // No windows exist - restore from settings
+                    // The workspace_id from the database is not used;
+                    // open_paths will assign a new WorkspaceId when opening the workspace.
+                    restorable_workspace_locations(cx, &app_state)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(_workspace_id, location, paths)| (location, paths))
+                        .collect()
+                }
             }
         } else {
             vec![(
@@ -1124,6 +1136,89 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    async fn test_no_duplicate_workspace_when_windows_already_exist(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file_path = if cfg!(windows) {
+            "C:\\root\\file.txt"
+        } else {
+            "/root/file.txt"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file_path),
+                &Rope::from("content"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+
+        // Open workspace normally (simulating macOS restoration creating a window)
+        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
+
+        cx.spawn({
+            let app_state = app_state.clone();
+            let response_tx = response_tx.clone();
+            |mut cx| async move {
+                open_local_workspace(
+                    vec![file_path.to_string()],
+                    vec![],
+                    None,
+                    false,
+                    false,
+                    &response_tx,
+                    None,
+                    &app_state,
+                    &mut cx,
+                )
+                .await
+            }
+        })
+        .await;
+
+        // Count workspace windows after first open
+        let initial_window_count = cx.update(|cx| workspace::local_workspace_windows(cx).len());
+        assert_eq!(initial_window_count, 1, "Should have one workspace window");
+
+        // Now call open_workspaces with empty paths (simulating CLI with no args)
+        cx.spawn({
+            let app_state = app_state.clone();
+            |mut cx| async move {
+                open_workspaces(
+                    vec![],     // Empty paths
+                    vec![],     // Empty diff_paths
+                    None,       // open_new_workspace
+                    false,      // reuse
+                    &response_tx,
+                    false,      // wait
+                    app_state,
+                    None,       // env
+                    &mut cx,
+                )
+                .await
+            }
+        })
+        .await
+        .ok();
+
+        // Count workspace windows after second call
+        let final_window_count = cx.update(|cx| workspace::local_workspace_windows(cx).len());
+        assert_eq!(
+            final_window_count, 1,
+            "Should still have only one workspace window (no duplicate)"
+        );
     }
 
     #[gpui::test]
