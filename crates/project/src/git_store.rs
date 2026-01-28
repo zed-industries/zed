@@ -523,6 +523,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_file_history);
+        client.add_entity_request_handler(Self::handle_file_history_count);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -2539,6 +2540,26 @@ impl GitStore {
         })
     }
 
+    async fn handle_file_history_count(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitFileHistoryCount>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitFileHistoryCountResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let path = RepoPath::from_proto(&envelope.payload.path)?;
+
+        let file_history_count = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.file_history_count(path)
+            })
+            .await??;
+
+        Ok(proto::GitFileHistoryCountResponse {
+            count: file_history_count as u64,
+        })
+    }
+
     async fn handle_reset(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitReset>,
@@ -4368,14 +4389,22 @@ impl Repository {
     }
 
     pub fn file_history_count(&mut self, path: RepoPath) -> oneshot::Receiver<Result<usize>> {
+        let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.file_history_count(path).await
                 }
-                RepositoryState::Remote(RemoteRepositoryState { .. }) => {
-                    // TODO!: Implement `file_history_count` for remote.
-                    Ok(0)
+                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                    let response = client
+                        .request(proto::GitFileHistoryCount {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            path: path.to_proto(),
+                        })
+                        .await?;
+
+                    Ok(response.count as usize)
                 }
             }
         })
