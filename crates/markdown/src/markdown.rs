@@ -3,10 +3,14 @@ mod path_range;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
+use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
+use gpui::UnderlineStyle;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use settings::Settings as _;
+use theme::ThemeSettings;
 use ui::Checkbox;
 use ui::CopyButton;
 
@@ -95,6 +99,133 @@ impl Default for MarkdownStyle {
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
         }
+    }
+}
+
+pub enum MarkdownFont {
+    Agent,
+    Editor,
+}
+
+impl MarkdownStyle {
+    pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
+
+        let (buffer_font_size, ui_font_size) = match font {
+            MarkdownFont::Agent => (
+                theme_settings.agent_buffer_font_size(cx),
+                theme_settings.agent_ui_font_size(cx),
+            ),
+            MarkdownFont::Editor => (
+                theme_settings.buffer_font_size(cx),
+                theme_settings.ui_font_size(cx),
+            ),
+        };
+
+        let text_color = colors.text;
+
+        let mut text_style = window.text_style();
+        let line_height = buffer_font_size * 1.75;
+
+        text_style.refine(&TextStyleRefinement {
+            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
+            font_size: Some(ui_font_size.into()),
+            line_height: Some(line_height.into()),
+            color: Some(text_color),
+            ..Default::default()
+        });
+
+        MarkdownStyle {
+            base_text_style: text_style.clone(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: colors.element_selection_background,
+            code_block_overflow_x_scroll: true,
+            heading_level_styles: Some(HeadingLevelStyles {
+                h1: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.15).into()),
+                    ..Default::default()
+                }),
+                h2: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.1).into()),
+                    ..Default::default()
+                }),
+                h3: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.05).into()),
+                    ..Default::default()
+                }),
+                h4: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.).into()),
+                    ..Default::default()
+                }),
+                h5: Some(TextStyleRefinement {
+                    font_size: Some(rems(0.95).into()),
+                    ..Default::default()
+                }),
+                h6: Some(TextStyleRefinement {
+                    font_size: Some(rems(0.875).into()),
+                    ..Default::default()
+                }),
+            }),
+            code_block: StyleRefinement {
+                padding: EdgesRefinement {
+                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                },
+                margin: EdgesRefinement {
+                    top: Some(Length::Definite(px(8.).into())),
+                    left: Some(Length::Definite(px(0.).into())),
+                    right: Some(Length::Definite(px(0.).into())),
+                    bottom: Some(Length::Definite(px(12.).into())),
+                },
+                border_style: Some(BorderStyle::Solid),
+                border_widths: EdgesRefinement {
+                    top: Some(AbsoluteLength::Pixels(px(1.))),
+                    left: Some(AbsoluteLength::Pixels(px(1.))),
+                    right: Some(AbsoluteLength::Pixels(px(1.))),
+                    bottom: Some(AbsoluteLength::Pixels(px(1.))),
+                },
+                border_color: Some(colors.border_variant),
+                background: Some(colors.editor_background.into()),
+                text: TextStyleRefinement {
+                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
+                    font_size: Some(buffer_font_size.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            inline_code: TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
+                font_size: Some(buffer_font_size.into()),
+                background_color: Some(colors.editor_foreground.opacity(0.08)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                color: Some(colors.text_accent),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn with_muted_text(mut self, cx: &App) -> Self {
+        let colors = cx.theme().colors();
+        self.base_text_style.color = colors.text_muted;
+        self
     }
 }
 

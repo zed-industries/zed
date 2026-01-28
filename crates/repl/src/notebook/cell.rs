@@ -9,7 +9,7 @@ use gpui::{
     StatefulInteractiveElement, Task, TextStyleRefinement, image_cache, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
-use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
@@ -322,8 +322,7 @@ pub struct MarkdownCell {
     image_cache: Entity<RetainAllImageCache>,
     source: String,
     editor: Entity<Editor>,
-    parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
-    markdown_parsing_task: Task<()>,
+    markdown: Entity<Markdown>,
     editing: bool,
     selected: bool,
     cell_position: Option<CellPosition>,
@@ -381,23 +380,7 @@ impl MarkdownCell {
             editor
         });
 
-        let markdown_parsing_task = {
-            let languages = languages.clone();
-            let source = source.clone();
-
-            cx.spawn_in(window, async move |this, cx| {
-                let parsed_markdown = cx
-                    .background_spawn(async move {
-                        parse_markdown(&source, None, Some(languages)).await
-                    })
-                    .await;
-
-                this.update(cx, |cell: &mut MarkdownCell, _| {
-                    cell.parsed_markdown = Some(parsed_markdown);
-                })
-                .log_err();
-            })
-        };
+        let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
 
         let cell_id = id.clone();
         let editor_subscription =
@@ -419,9 +402,8 @@ impl MarkdownCell {
             image_cache: RetainAllImageCache::new(cx),
             source,
             editor,
-            parsed_markdown: None,
-            markdown_parsing_task,
-            editing: start_editing, // Start in edit mode if empty
+            markdown,
+            editing: start_editing,
             selected: false,
             cell_position: None,
             languages,
@@ -477,18 +459,8 @@ impl MarkdownCell {
         self.source = source.clone();
         let languages = self.languages.clone();
 
-        self.markdown_parsing_task = cx.spawn(async move |this, cx| {
-            let parsed_markdown = cx
-                .background_spawn(
-                    async move { parse_markdown(&source, None, Some(languages)).await },
-                )
-                .await;
-
-            this.update(cx, |cell: &mut MarkdownCell, cx| {
-                cell.parsed_markdown = Some(parsed_markdown);
-                cx.notify();
-            })
-            .log_err();
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.reset(source.into(), cx);
         });
     }
 
@@ -581,42 +553,11 @@ impl Render for MarkdownCell {
         }
 
         // Preview mode - show rendered markdown
-        let Some(parsed) = self.parsed_markdown.as_ref() else {
-            // No parsed content yet, show placeholder that can be clicked to edit
-            let focus_handle = self.editor.focus_handle(cx);
-            return v_flex()
-                .size_full()
-                .children(self.cell_position_spacer(true, window, cx))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .pr_6()
-                        .rounded_xs()
-                        .items_start()
-                        .gap(DynamicSpacing::Base08.rems(cx))
-                        .bg(self.selected_bg_color(window, cx))
-                        .child(self.gutter(window, cx))
-                        .child(
-                            div()
-                                .id("markdown-placeholder")
-                                .flex_1()
-                                .p_3()
-                                .italic()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child("Click to edit markdown...")
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.editing = true;
-                                    window.focus(&this.editor.focus_handle(cx), cx);
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .children(self.cell_position_spacer(false, window, cx));
-        };
 
-        let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
+        let style = MarkdownStyle {
+            base_text_style: window.text_style(),
+            ..Default::default()
+        };
 
         v_flex()
             .size_full()
@@ -645,11 +586,7 @@ impl Render for MarkdownCell {
                                 window.focus(&this.editor.focus_handle(cx), cx);
                                 cx.notify();
                             }))
-                            .children(parsed.children.iter().map(|child| {
-                                div().relative().child(div().relative().child(
-                                    render_markdown_block(child, &mut markdown_render_context),
-                                ))
-                            })),
+                            .child(MarkdownElement::new(self.markdown.clone(), style)),
                     ),
             )
             .children(self.cell_position_spacer(false, window, cx))
