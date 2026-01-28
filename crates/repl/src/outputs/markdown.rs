@@ -52,5 +52,5 @@ impl Render for MarkdownView {
 }
 
 fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    MarkdownStyle::themed_markdown_style(MarkdownFont::Editor, window, cx)
+    MarkdownStyle::themed(MarkdownFont::Editor, window, cx)
 }

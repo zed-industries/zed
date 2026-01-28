@@ -108,7 +108,7 @@ pub enum MarkdownFont {
 }
 
 impl MarkdownStyle {
-    pub fn themed_markdown_style(font: MarkdownFont, window: &Window, cx: &App) -> Self {
+    pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
