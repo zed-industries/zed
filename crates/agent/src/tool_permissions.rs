@@ -99,7 +99,7 @@ impl ToolPermissionDecision {
                         "The {} shell does not support \"always allow\" patterns for the terminal \
                          tool because Zed cannot parse its command chaining syntax. Please remove \
                          the always_allow patterns from your tool_permissions settings, or switch \
-                         to a supported shell (bash, zsh, fish, powershell, etc.).",
+                         to a POSIX-conforming shell.",
                         shell_kind
                     ));
                 }
