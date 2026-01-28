@@ -19,8 +19,7 @@ jobs:
   identify-duplicates:
     if: github.repository == 'zed-industries/zed'
     runs-on: ubuntu-latest
-    # let's not overspend tokens on checks that went too deep into the rabbit hole
-    timeout-minutes: 5
+
     permissions:
       contents: read
       issues: read
@@ -116,10 +115,14 @@ jobs:
           steps.check-type.outputs.is_target_type == 'true' &&
           steps.check-staff.outputs.is_staff == 'false'
         id: analyze
+        # let's not overspend tokens on checks that went too deep into the rabbit hole
+        timeout-minutes: 5
         uses: anthropics/claude-code-action@231bd75b7196d48291c1498f1c6d277c2810d9a3 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
           github_token: ${{ steps.get-app-token.outputs.token }}
+          # this is automatic analysis, not user-invoked, and Claude only has read-only tools, so should be safe
+          allowed_non_write_users: "*"
 
           prompt: |
             You are analyzing issue #${{ steps.check-type.outputs.issue_number }} in the zed-industries/zed repository to determine if it might be a duplicate of an existing issue.
@@ -212,7 +215,7 @@ jobs:
               const summaryIcon = analysis.is_potential_duplicate ? '⚠️' : '✅';
               const summaryText = analysis.is_potential_duplicate
                 ? `Potential duplicate detected (${analysis.confidence} confidence)`
-                : 'No duplicate detected';
+                : 'No likely duplicates found';
 
               core.summary.addHeading(`${summaryIcon} Issue #${analysis.issue_number}: ${summaryText}`, 2);
               core.summary.addRaw(`\n**Recommendation:** ${analysis.recommendation}\n\n`);
