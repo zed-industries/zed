@@ -1564,7 +1564,7 @@ impl AcpThreadView {
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         if let Some(ready) = self.as_ready_mut() {
-            ready.clear_thread_error(cx);   
+            ready.clear_thread_error(cx);
         }
     }
 
@@ -6414,7 +6414,7 @@ impl AcpThreadView {
 
     fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ready) = self.as_ready_mut() {
-            ready.reject_all(cx); 
+            ready.reject_all(cx);
         };
     }
 
@@ -6537,7 +6537,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        self.as_ready_mut()?.authorize_pending_tool_call(kind, window, cx)
+        self.as_ready_mut()?
+            .authorize_pending_tool_call(kind, window, cx)
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {

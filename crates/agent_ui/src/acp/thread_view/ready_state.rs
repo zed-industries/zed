@@ -1021,7 +1021,7 @@ impl ReadyThreadState {
         self.token_limit_callout_dismissed = true;
         cx.notify();
     }
-    
+
     // other
 
     pub fn refresh_cached_user_commands_from_registry(
