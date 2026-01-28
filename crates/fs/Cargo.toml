@@ -13,9 +13,9 @@ path = "src/fs.rs"
 test = false
 
 [[test]]
-name = "integration"
+name = "fs_tests"
 required-features = ["test-support"]
-path = "tests/integration/main.rs"
+path = "tests/integration/fs_tests.rs"
 
 [dependencies]
 anyhow.workspace = true

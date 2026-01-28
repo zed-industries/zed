@@ -40,7 +40,7 @@ pub struct MoveToBeginningOfLine {
 #[serde(deny_unknown_fields)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
     #[serde(default)]
     pub stop_at_indent: bool,
 }
@@ -51,7 +51,7 @@ pub struct SelectToBeginningOfLine {
 #[serde(deny_unknown_fields)]
 pub struct DeleteToBeginningOfLine {
     #[serde(default)]
-    pub(super) stop_at_indent: bool,
+    pub stop_at_indent: bool,
 }
 
 /// Moves the cursor up by one page.
@@ -87,7 +87,7 @@ pub struct MoveToEndOfLine {
 #[serde(deny_unknown_fields)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
 }
 
 /// Toggles the display of available code actions at the cursor position.
@@ -174,7 +174,7 @@ pub struct MoveDownByLines {
 #[serde(deny_unknown_fields)]
 pub struct SelectUpByLines {
     #[serde(default)]
-    pub(super) lines: u32,
+    pub lines: u32,
 }
 
 /// Extends selection down by a specified number of lines.

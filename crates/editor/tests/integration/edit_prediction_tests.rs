@@ -5,8 +5,9 @@ use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
-use crate::{
-    AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
+use crate::init_test;
+use editor::{
+    EditPrediction, MenuEditPredictionsPolicy, actions::AcceptEditPrediction,
     test::editor_test_context::EditorTestContext,
 };
 

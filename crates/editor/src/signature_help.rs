@@ -52,7 +52,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn hide_signature_help(
+    pub fn hide_signature_help(
         &mut self,
         cx: &mut Context<Self>,
         signature_help_hidden_by: SignatureHelpHiddenBy,
@@ -309,7 +309,7 @@ impl SignatureHelpState {
         self.hidden_by = None;
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn popover(&self) -> Option<&SignatureHelpPopover> {
         self.popover.as_ref()
     }
@@ -345,7 +345,7 @@ impl SignatureHelpState {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-support")]
 impl SignatureHelpState {
     pub fn task(&self) -> Option<&Task<()>> {
         self.task.as_ref()
@@ -354,7 +354,7 @@ impl SignatureHelpState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SignatureHelp {
-    pub(crate) label: SharedString,
+    pub label: SharedString,
     documentation: Option<Entity<Markdown>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
     active_parameter: Option<usize>,

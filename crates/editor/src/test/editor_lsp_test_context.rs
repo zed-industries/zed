@@ -33,8 +33,8 @@ pub struct EditorLspTestContext {
     pub buffer_lsp_url: lsp::Uri,
 }
 
-#[cfg(test)]
-pub(crate) fn git_commit_lang() -> Arc<Language> {
+#[cfg(feature = "test-support")]
+pub fn git_commit_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "Git Commit".into(),
