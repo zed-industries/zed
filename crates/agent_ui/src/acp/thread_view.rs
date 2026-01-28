@@ -348,7 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    should_be_following: bool,
     editing_message: Option<usize>,
     local_queued_messages: Vec<QueuedMessage>,
     queued_message_editors: Vec<Entity<MessageEditor>>,
@@ -406,6 +405,7 @@ enum ThreadState {
         plan_expanded: bool,
         queue_expanded: bool,
         editor_expanded: bool,
+        should_be_following: bool,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -583,7 +583,6 @@ impl AcpThreadView {
             available_commands,
             cached_user_commands,
             cached_user_command_errors,
-            should_be_following: false,
             recent_history_entries,
             history,
             _history_subscription: history_subscription,
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             plan_expanded: false,
                             queue_expanded: true,
                             editor_expanded: false,
+                            should_be_following: false,
                             _subscriptions: subscriptions,
                         };
 
@@ -1678,7 +1678,11 @@ impl AcpThreadView {
         }
         self.editing_message.take();
 
-        if self.should_be_following {
+        if let ThreadState::Ready {
+            should_be_following: true,
+            ..
+        } = &self.thread_state
+        {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace.follow(CollaboratorId::Agent, window, cx);
@@ -1800,12 +1804,18 @@ impl AcpThreadView {
                 .ok();
             } else {
                 this.update(cx, |this, cx| {
-                    this.should_be_following = this
-                        .workspace
-                        .update(cx, |workspace, _| {
-                            workspace.is_being_followed(CollaboratorId::Agent)
-                        })
-                        .unwrap_or_default();
+                    if let ThreadState::Ready {
+                        should_be_following,
+                        ..
+                    } = &mut this.thread_state
+                    {
+                        *should_be_following = this
+                            .workspace
+                            .update(cx, |workspace, _| {
+                                workspace.is_being_followed(CollaboratorId::Agent)
+                            })
+                            .unwrap_or_default();
+                    }
                 })
                 .ok();
             }
@@ -1894,7 +1904,13 @@ impl AcpThreadView {
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
-        let should_be_following = self.should_be_following;
+        let should_be_following = matches!(
+            &self.thread_state,
+            ThreadState::Ready {
+                should_be_following: true,
+                ..
+            }
+        );
         let workspace = self.workspace.clone();
 
         let contents_task = cx.spawn_in(window, async move |_this, cx| {
@@ -2696,7 +2712,11 @@ impl AcpThreadView {
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
         });
-        if self.should_be_following {
+        if let ThreadState::Ready {
+            should_be_following: true,
+            ..
+        } = &self.thread_state
+        {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace.follow(CollaboratorId::Agent, window, cx);
@@ -7065,14 +7085,26 @@ impl AcpThreadView {
                     workspace.is_being_followed(CollaboratorId::Agent)
                 })
                 .unwrap_or(false),
-            _ => self.should_be_following,
+            _ => matches!(
+                &self.thread_state,
+                ThreadState::Ready {
+                    should_be_following: true,
+                    ..
+                }
+            ),
         }
     }
 
     fn toggle_following(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let following = self.is_following(cx);
 
-        self.should_be_following = !following;
+        if let ThreadState::Ready {
+            should_be_following,
+            ..
+        } = &mut self.thread_state
+        {
+            *should_be_following = !following;
+        }
         if self.thread().map(|thread| thread.read(cx).status()) == Some(ThreadStatus::Generating) {
             self.workspace
                 .update(cx, |workspace, cx| {
