@@ -1949,11 +1949,6 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
-        let mut temporarily_unfolded = None;
-
-        if new_entry_id != entry_id {
-            temporarily_unfolded = Some(new_entry_id);
-        }
 
         if let Some((worktree, expanded_dir_ids)) = self
             .project
@@ -1997,7 +1992,7 @@ impl ProjectPanel {
             previously_focused: self.state.selection,
             depth: 0,
             validation_state: ValidationState::None,
-            temporarily_unfolded,
+            temporarily_unfolded: (new_entry_id != entry_id).then_some(new_entry_id),
         });
         self.filename_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
