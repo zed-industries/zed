@@ -1,4 +1,5 @@
 use collections::{BTreeMap, HashMap};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
@@ -28,6 +29,12 @@ use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
 };
+
+pub struct GitGraphFeatureFlag;
+
+impl FeatureFlag for GitGraphFeatureFlag {
+    const NAME: &'static str = "git-graph";
+}
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
@@ -496,7 +503,8 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, _, cx| {
             div.when(
-                workspace.project().read(cx).active_repository(cx).is_some(),
+                workspace.project().read(cx).active_repository(cx).is_some()
+                    && cx.has_flag::<GitGraphFeatureFlag>(),
                 |div| {
                     let workspace = workspace.weak_handle();
 
