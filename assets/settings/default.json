@@ -126,6 +126,7 @@
   // over symbols in the editor.
   "hover_popover_enabled": true,
   // Time to wait in milliseconds before showing the informational hover box.
+  // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
@@ -731,6 +732,8 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
+    // Whether to show folder names with bold text in the project panel.
+    "bold_folder_labels": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the project panel.
@@ -2274,6 +2277,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
     // Cursor shape for each mode.

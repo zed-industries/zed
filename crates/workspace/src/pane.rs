@@ -21,9 +21,9 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
-    PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, prelude::*,
+    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
+    deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -2785,8 +2785,28 @@ impl Pane {
                 ClosePosition::Right => ui::TabCloseSide::End,
             })
             .toggle_state(is_active)
-            .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
-                pane.activate_item(ix, true, true, window, cx)
+            .on_click(cx.listener({
+                let item_handle = item.boxed_clone();
+                move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                    if event.click_count() > 1 {
+                        // On double-click, dispatch the Rename action (when available)
+                        // instead of just activating the item.
+                        pane.unpreview_item_if_preview(item_id);
+                        let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
+                        if let Some((_, action)) = extra_actions
+                            .into_iter()
+                            .find(|(label, _)| label.as_ref() == "Rename")
+                        {
+                            // Dispatch action directly through the focus handle to avoid
+                            // relay_action's intermediate focus step which can interfere
+                            // with inline editors.
+                            let focus_handle = item_handle.item_focus_handle(cx);
+                            focus_handle.dispatch_action(&*action, window, cx);
+                            return;
+                        }
+                    }
+                    pane.activate_item(ix, true, true, window, cx)
+                }
             }))
             // TODO: This should be a click listener with the middle mouse button instead of a mouse down listener.
             .on_mouse_down(
@@ -2794,14 +2814,6 @@ impl Pane {
                 cx.listener(move |pane, _event, window, cx| {
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, _, _| {
-                    if event.click_count > 1 {
-                        pane.unpreview_item_if_preview(item_id);
-                    }
                 }),
             )
             .on_drag(
@@ -2955,12 +2967,14 @@ impl Pane {
 
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
+        let item_handle = item.boxed_clone();
 
         right_click_menu(ix)
             .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
+                let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
@@ -3218,6 +3232,14 @@ impl Pane {
                             menu = menu.map(pin_tab_entries);
                         }
                     };
+
+                    // Add custom item-specific actions
+                    if !extra_actions.is_empty() {
+                        menu = menu.separator();
+                        for (label, action) in extra_actions {
+                            menu = menu.action(label, action);
+                        }
+                    }
 
                     menu.context(menu_context)
                 })

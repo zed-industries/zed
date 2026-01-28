@@ -78,6 +78,12 @@ async fn main() -> Result<()> {
         .await
         .context("failed to compile extension")?;
 
+    let extension_provides = extension_provides(&manifest);
+
+    if extension_provides.is_empty() {
+        bail!("extension does not provide any features");
+    }
+
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
     test_languages(&manifest, &extension_path, &grammars)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
@@ -101,8 +107,6 @@ async fn main() -> Result<()> {
             String::from_utf8_lossy(&tar_output.stderr)
         );
     }
-
-    let extension_provides = extension_provides(&manifest);
 
     let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
         name: manifest.name,

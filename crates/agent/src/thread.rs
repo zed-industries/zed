@@ -18,7 +18,8 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
-use cloud_llm_client::{CompletionIntent, Plan};
+use cloud_api_types::Plan;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -1745,10 +1746,7 @@ impl Thread {
         };
 
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                None => false,
-            }
+            plan.is_some()
         } else {
             true
         };

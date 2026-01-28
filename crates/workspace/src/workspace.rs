@@ -1151,6 +1151,7 @@ type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
+        Option<String>,
         &mut Window,
         &mut Context<Workspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
@@ -2398,7 +2399,7 @@ impl Workspace {
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, lister, window, cx);
+            let rx = prompt(self, lister, suggested_name, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
@@ -2426,7 +2427,7 @@ impl Workspace {
                         workspace.show_portal_error(err.to_string(), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(workspace, lister, window, cx);
+                        let rx = prompt(workspace, lister, suggested_name, window, cx);
                         workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
@@ -2728,7 +2729,7 @@ impl Workspace {
             .flat_map(|k| Keystroke::parse(k).log_err())
             .map(|k| {
                 cx.keyboard_mapper()
-                    .map_key_equivalent(k, true)
+                    .map_key_equivalent(k, false)
                     .inner()
                     .clone()
             })
@@ -10367,143 +10368,6 @@ mod tests {
             assert!(
                 workspace.zoomed.is_none(),
                 "Workspace remains without zoomed pane"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_zoomed_dock_persists_across_window_activation(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.toggle_dock(DockPosition::Bottom, window, cx);
-            panel
-        });
-
-        // Activate and zoom the panel
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-
-        // Verify the dock is open and zoomed with focus in the panel
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should be open"
-            );
-            assert!(panel.is_zoomed(window, cx), "Panel should be zoomed");
-            assert!(
-                workspace.zoomed.is_some(),
-                "Workspace should track the zoomed panel"
-            );
-            assert!(
-                workspace.zoomed_position.is_some(),
-                "Workspace should track the zoomed dock position"
-            );
-            assert!(
-                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
-                "Panel should be focused"
-            );
-        });
-
-        // Deactivate the window (simulates cmd-tab away from Zed)
-        cx.deactivate_window();
-
-        // Verify the dock is still open while window is deactivated
-        // (the bug manifests on REactivation, not deactivation)
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should still be open while window is deactivated"
-            );
-            assert!(
-                panel.is_zoomed(window, cx),
-                "Panel should still be zoomed while window is deactivated"
-            );
-            assert!(
-                workspace.zoomed_position.is_some(),
-                "zoomed_position should still be set while window is deactivated"
-            );
-        });
-
-        // Reactivate the window (simulates cmd-tab back to Zed)
-        // During reactivation, focus is restored to the dock panel
-        cx.update(|window, _cx| {
-            window.activate_window();
-        });
-        cx.run_until_parked();
-
-        // Verify zoomed dock remains open after reactivation
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should remain open after window reactivation"
-            );
-            assert!(
-                panel.is_zoomed(window, cx),
-                "Panel should remain zoomed after window reactivation"
-            );
-            assert!(
-                workspace.zoomed.is_some(),
-                "Workspace should still track the zoomed panel after window reactivation"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_zoomed_dock_dismissed_when_focus_moves_to_center_pane(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.toggle_dock(DockPosition::Bottom, window, cx);
-            panel
-        });
-
-        // Activate and zoom the panel
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-
-        // Verify setup
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(workspace.bottom_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(window, cx));
-            assert!(workspace.zoomed_position.is_some());
-        });
-
-        // Explicitly focus the center pane (simulates user clicking in the editor)
-        workspace.update_in(cx, |workspace, window, cx| {
-            window.focus(&workspace.active_pane().focus_handle(cx), cx);
-        });
-        cx.run_until_parked();
-
-        // When user explicitly focuses the center pane, the zoomed dock SHOULD be dismissed
-        workspace.update_in(cx, |workspace, _window, cx| {
-            assert!(
-                !workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should be closed when focus explicitly moves to center pane"
-            );
-            assert!(
-                workspace.zoomed.is_none(),
-                "Workspace should not track zoomed panel when focus explicitly moves to center pane"
-            );
-            assert!(
-                workspace.zoomed_position.is_none(),
-                "Workspace zoomed_position should be None when focus explicitly moves to center pane"
             );
         });
     }

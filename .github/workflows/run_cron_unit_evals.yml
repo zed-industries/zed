@@ -7,8 +7,6 @@ env:
   RUST_BACKTRACE: '1'
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
 on:
-  schedule:
-  - cron: 47 1 * * 2
   workflow_dispatch: {}
 jobs:
   cron_unit_evals:
@@ -35,6 +33,7 @@ jobs:
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
       shell: bash -euxo pipefail {0}

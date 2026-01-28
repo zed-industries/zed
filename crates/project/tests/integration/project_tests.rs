@@ -25,6 +25,7 @@ use buffer_diff::{
     assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
+use encoding_rs;
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
@@ -11111,6 +11112,70 @@ async fn search(
             })
         })
         .collect())
+}
+
+#[gpui::test]
+async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+
+    // Create a file with ASCII content "Hi" - this will be detected as UTF-8
+    // When reinterpreted as UTF-16LE, the bytes 0x48 0x69 become a single character
+    let ascii_bytes: Vec<u8> = vec![0x48, 0x69];
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/test.txt"), ascii_bytes).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/test.txt"), cx))
+        .await
+        .unwrap();
+
+    let (initial_encoding, initial_text, initial_dirty) = buffer.read_with(cx, |buffer, _| {
+        (buffer.encoding(), buffer.text(), buffer.is_dirty())
+    });
+    assert_eq!(initial_encoding, encoding_rs::UTF_8);
+    assert_eq!(initial_text, "Hi");
+    assert!(!initial_dirty);
+
+    let reload_receiver = buffer.update(cx, |buffer, cx| {
+        buffer.reload_with_encoding(encoding_rs::UTF_16LE, cx)
+    });
+    cx.executor().run_until_parked();
+
+    // Wait for reload to complete
+    let _ = reload_receiver.await;
+
+    // Verify the encoding changed, text is different, and still not dirty (we reloaded from disk)
+    let (reloaded_encoding, reloaded_text, reloaded_dirty) = buffer.read_with(cx, |buffer, _| {
+        (buffer.encoding(), buffer.text(), buffer.is_dirty())
+    });
+    assert_eq!(reloaded_encoding, encoding_rs::UTF_16LE);
+    assert_eq!(reloaded_text, "楈");
+    assert!(!reloaded_dirty);
+
+    // Undo the reload
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.encoding(), encoding_rs::UTF_8);
+        assert_eq!(buffer.text(), "Hi");
+        assert!(!buffer.is_dirty());
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.redo(cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.encoding(), encoding_rs::UTF_16LE);
+        assert_ne!(buffer.text(), "Hi");
+        assert!(!buffer.is_dirty());
+    });
 }
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {

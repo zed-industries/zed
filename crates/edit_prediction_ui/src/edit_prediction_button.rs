@@ -1127,30 +1127,6 @@ impl EditPredictionButton {
 
             menu = self.build_language_settings_menu(menu, window, cx);
 
-            if cx.has_flag::<Zeta2FeatureFlag>() {
-                let settings = all_language_settings(None, cx);
-                let context_retrieval = settings.edit_predictions.use_context;
-                menu = menu.separator().header("Context Retrieval").item(
-                    ContextMenuEntry::new("Enable Context Retrieval")
-                        .toggleable(IconPosition::Start, context_retrieval)
-                        .action(workspace::ToggleEditPrediction.boxed_clone())
-                        .handler({
-                            let fs = self.fs.clone();
-                            move |_, cx| {
-                                update_settings_file(fs.clone(), cx, move |settings, _| {
-                                    settings
-                                        .project
-                                        .all_languages
-                                        .features
-                                        .get_or_insert_default()
-                                        .experimental_edit_prediction_context_retrieval =
-                                        Some(!context_retrieval)
-                                });
-                            }
-                        }),
-                );
-            }
-
             menu = self.add_provider_switching_section(menu, provider, cx);
             menu = menu.separator().item(
                 ContextMenuEntry::new("Configure Providers")

@@ -104,6 +104,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
+encoding_rs.workspace = true
 db = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }

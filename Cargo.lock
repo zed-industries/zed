@@ -164,6 +164,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "context_server",
@@ -351,6 +352,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -497,7 +499,7 @@ name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
  "client",
- "cloud_llm_client",
+ "cloud_api_types",
  "component",
  "gpui",
  "language_model",
@@ -5338,6 +5340,7 @@ dependencies = [
  "libc",
  "log",
  "node_runtime",
+ "open_ai",
  "paths",
  "pretty_assertions",
  "project",
@@ -5643,8 +5646,13 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "encoding_rs",
+ "fuzzy",
  "gpui",
+ "language",
+ "picker",
+ "project",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -7079,7 +7087,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -7096,7 +7104,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=c9eac0ed361583e1072860d96776fa52775b82ac#c9eac0ed361583e1072860d96776fa52775b82ac"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -9063,6 +9071,7 @@ dependencies = [
  "bedrock",
  "chrono",
  "client",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "component",
@@ -9848,6 +9857,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10596,7 +10606,7 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "8.2.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
+source = "git+https://github.com/zed-industries/notify.git?rev=6c550ac3c56cbd143c57ea6390e197af9d790908#6c550ac3c56cbd143c57ea6390e197af9d790908"
 dependencies = [
  "bitflags 2.9.4",
  "fsevent-sys 4.1.0",
@@ -10624,7 +10634,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
+source = "git+https://github.com/zed-industries/notify.git?rev=6c550ac3c56cbd143c57ea6390e197af9d790908#6c550ac3c56cbd143c57ea6390e197af9d790908"
 
 [[package]]
 name = "ntapi"
@@ -11135,6 +11145,7 @@ dependencies = [
  "futures 0.3.31",
  "http_client",
  "log",
+ "rand 0.9.2",
  "schemars",
  "serde",
  "serde_json",
@@ -12661,6 +12672,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",
@@ -13616,6 +13628,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "collections",
  "fs",
  "futures 0.3.31",
@@ -16143,6 +16156,7 @@ dependencies = [
  "multi_buffer",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16762,6 +16776,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "pretty_assertions",
  "project",
  "rand 0.9.2",
@@ -17091,7 +17106,7 @@ dependencies = [
  "channel",
  "chrono",
  "client",
- "cloud_llm_client",
+ "cloud_api_types",
  "collections",
  "db",
  "git_ui",
@@ -21353,6 +21368,7 @@ name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indoc",
  "serde",
  "strum 0.27.2",
 ]

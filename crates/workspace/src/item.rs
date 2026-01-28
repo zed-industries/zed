@@ -364,6 +364,16 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn include_in_nav_history() -> bool {
         true
     }
+
+    /// Returns additional actions to add to the tab's context menu.
+    /// Each entry is a label and an action to dispatch.
+    fn tab_extra_context_menu_actions(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        Vec::new()
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -534,6 +544,11 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn tab_extra_context_menu_actions(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<(SharedString, Box<dyn Action>)>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -1080,6 +1095,16 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.focus_handle(cx).focus(window, cx);
             window.dispatch_action(action, cx);
+        })
+    }
+
+    fn tab_extra_context_menu_actions(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        self.update(cx, |this, cx| {
+            this.tab_extra_context_menu_actions(window, cx)
         })
     }
 }
