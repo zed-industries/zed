@@ -97,6 +97,13 @@ struct State {
 }
 
 impl State {
+    fn is_unfolded(&self, entry_id: &ProjectEntryId) -> bool {
+        self.unfolded_dir_ids.contains(entry_id)
+            || self.edit_state.as_ref().map_or(false, |edit_state| {
+                edit_state.temporarily_unfolded == Some(*entry_id)
+            })
+    }
+
     fn derive(old: &Self) -> Self {
         Self {
             last_worktree_root_id: None,
@@ -3517,24 +3524,6 @@ impl ProjectPanel {
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
-                        let temporarily_unfolded = new_state
-                            .edit_state
-                            .as_ref()
-                            .and_then(|e| e.temporarily_unfolded);
-
-                        let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
-                            hash_map::Entry::Occupied(e) => e.into_mut(),
-                            hash_map::Entry::Vacant(e) => {
-                                // The first time a worktree's root entry becomes available,
-                                // mark that root entry as expanded.
-                                if let Some(entry) = worktree_snapshot.root_entry() {
-                                    e.insert(vec![entry.id]).as_slice()
-                                } else {
-                                    &[]
-                                }
-                            }
-                        };
-
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
                         if let Some(edit_state) = &new_state.edit_state
@@ -3569,8 +3558,7 @@ impl ProjectPanel {
                             }
                             if auto_collapse_dirs && entry.kind.is_dir() {
                                 auto_folded_ancestors.push(entry.id);
-                                if !new_state.unfolded_dir_ids.contains(&entry.id)
-                                    && temporarily_unfolded != Some(entry.id)
+                                if !new_state.is_unfolded(&entry.id)
                                     && let Some(root_path) = worktree_snapshot.root_entry()
                                 {
                                     let mut child_entries =
@@ -3701,6 +3689,20 @@ impl ProjectPanel {
                                         Some((entry.id, worktree_snapshot.id(), width_estimate))
                                 }
                             }
+
+                            let expanded_dir_ids =
+                                match new_state.expanded_dir_ids.entry(worktree_id) {
+                                    hash_map::Entry::Occupied(e) => e.into_mut(),
+                                    hash_map::Entry::Vacant(e) => {
+                                        // The first time a worktree's root entry becomes available,
+                                        // mark that root entry as expanded.
+                                        if let Some(entry) = worktree_snapshot.root_entry() {
+                                            e.insert(vec![entry.id]).as_slice()
+                                        } else {
+                                            &[]
+                                        }
+                                    }
+                                };
 
                             if expanded_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
