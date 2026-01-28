@@ -52,9 +52,24 @@ struct Product {
 }
 `````
 
-### Current File
+### User Edit History
 
 `````
+--- a/src/calculate.rs
++++ b/src/calculate.rs
+@@ -100,6 +100,7 @@
+ fn calculate_total(products: &[Product]) -> u32 {
+     let mut total = 0;
+     for product in products {
++        total += ;
+     }
+     total
+ }
+`````
+
+### Current File
+
+`````src/calculate.rs
 fn calculate_total(products: &[Product]) -> u32 {
 <|editable_region_start|>
     let mut total = 0;
@@ -82,16 +97,29 @@ The user is computing a sum based on a list of products. The only numeric field 
 
 ## Example 2
 
-The user appears to be typing a print call, but it's not clear what data they intend to print. You should fill in as much code as is obviously intended, and position the cursor so that the user can fill in the rest.
+The user appears to be in the process of typing an eprintln call. Rather than fixing the spelling issue by deleting the newly-inserted content, you must continue the user's trajectory. It's not clear what data they intend to print. You should fill in as much code as is obviously intended, and position the cursor so that the user can fill in the rest.
+
+### User Edit History
+
+`````
+--- a/src/modal.rs
++++ b/src/modal.rs
+@@ -100,4 +100,4 @@
+ fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
+     modal_state.close();
+-     modal_state.dismiss();
++     eprmodal_state.dismiss();
+ }
+`````
 
 ### Current File
 
-`````
+`````src/modal.rs
 // handle the close button click
 <|editable_region_start|>
 fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
     modal_state.close();
-    epr<|user_cursor|>;
+    epr<|user_cursor|>modal_state.dismiss();
 <|editable_region_end|>
 }
 `````
@@ -111,7 +139,7 @@ fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
 
 # Your task:
 
-# 1. User Edits History
+# 1. User Edit History
 
 `````
 {{edit_history}}
