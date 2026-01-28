@@ -345,11 +345,6 @@ impl Element for ImageContentElement {
             .image_size
             .map(|(w, h)| (px(w as f32 * zoom_level), px(h as f32 * zoom_level)));
 
-        // Trigger a redraw once this finished loading
-        if first_layout {
-            let _ = image.clone().use_render_image(window, cx);
-        }
-
         let (mut left, mut top) = (px(0.0), px(0.0));
         let mut scaled_width = px(0.0);
         let mut scaled_height = px(0.0);
