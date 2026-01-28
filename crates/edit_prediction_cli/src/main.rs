@@ -1130,11 +1130,10 @@ async fn handle_error(
         writeln!(file, "{}", serde_json::to_string(example).unwrap())
             .expect("Failed to write to failed.jsonl");
 
-        let cursor_path = example
-            .repo_name()
-            .unwrap()
-            .worktree_path()
-            .join(&example.spec.cursor_path);
+        let cursor_path = match example.repo_name() {
+            Ok(repo_name) => repo_name.worktree_path().join(&example.spec.cursor_path),
+            Err(_) => example.spec.cursor_path.as_ref().to_path_buf(),
+        };
         msg = format!(
             indoc::indoc! {"
                 While processing \"{}\":

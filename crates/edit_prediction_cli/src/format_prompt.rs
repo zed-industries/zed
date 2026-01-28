@@ -217,7 +217,7 @@ impl TeacherPrompt {
             .content
             .match_indices(&old_editable_region)
             .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset))
-            .unwrap();
+            .context("editable region not found in prompt content")?;
         let editable_region_start_line = prompt_inputs.content[..editable_region_offset]
             .matches('\n')
             .count();
