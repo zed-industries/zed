@@ -104,7 +104,46 @@ The `Entity<T>` handle is like an `Rc` - it maintains a reference count but only
 
 **`VisualContext`**: Extends `AppContext` with window-specific operations for contexts that have a window.
 
-### 3. Accessing Entity State
+### 3. Element State Management
+
+When rendering elements, you often need state that persists across consecutive frames. GPUI provides two methods on `Window` for this purpose:
+
+**`window.use_state(cx, init)`**: Creates or retrieves state that exists as long as the element is being rendered in consecutive frames. It automatically generates a key based on the caller's code location.
+
+```rust
+impl Render for MyView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // State persists as long as this render method is called in consecutive frames
+        let markdown = window.use_state(cx, |_, cx| Markdown::new("".into(), None, None, cx));
+        
+        div().child(markdown.clone())
+    }
+}
+```
+
+**`window.use_keyed_state(key, cx, init)`**: Similar to `use_state`, but allows you to specify a custom key. This is essential when rendering lists or other dynamic content where elements may change positions, as the key ensures state persists even when the element's location in the render tree changes.
+
+```rust
+impl Render for MyView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Each list item uses its ID as the key, ensuring state persists correctly
+        self.items.iter().map(|item| {
+            let item_state = window.use_keyed_state(item.id, cx, |_, cx| ItemState::new(cx));
+            div().child(format!("Item: {}", item.name))
+        })
+    }
+}
+```
+
+These methods are particularly useful for:
+- UI components that need to track hover state, selection, or expansion
+- Transient editors created within render methods
+- State that should be tied to an element's lifecycle rather than the entire view
+- Components that need to avoid recreating state on every render
+
+When using these methods, the state entity automatically notifies the current view when it changes, triggering a re-render.
+
+### 4. Accessing Entity State
 
 ```rust
 // Updating
@@ -117,7 +156,7 @@ counter.update(cx, |counter: &mut Counter, cx: &mut Context<Counter>| {
 let count = counter.read(cx).count;
 ```
 
-### 4. Entity Handles
+### 5. Entity Handles
 
 With `entity: Entity<T>`:
 
