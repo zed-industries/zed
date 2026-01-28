@@ -31,7 +31,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -39,21 +38,16 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-      shell: bash -euxo pipefail {0}
     - name: ./script/run-unit-evals
       run: ./script/run-unit-evals
-      shell: bash -euxo pipefail {0}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -64,7 +58,9 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

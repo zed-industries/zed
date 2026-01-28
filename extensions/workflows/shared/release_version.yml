@@ -14,3 +14,6 @@ jobs:
     secrets:
       app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
       app-secret: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

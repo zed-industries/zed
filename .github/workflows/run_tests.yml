@@ -51,7 +51,6 @@ jobs:
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
-      shell: bash -euxo pipefail {0}
     outputs:
       run_action_checks: ${{ steps.filter.outputs.run_action_checks }}
       run_docs: ${{ steps.filter.outputs.run_docs }}
@@ -77,16 +76,12 @@ jobs:
         version: '9'
     - name: steps::prettier
       run: ./script/prettier
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
-      shell: bash -euxo pipefail {0}
     - name: ./script/check-todos
       run: ./script/check-todos
-      shell: bash -euxo pipefail {0}
     - name: ./script/check-keymaps
       run: ./script/check-keymaps
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_style::check_for_typos
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
@@ -125,7 +120,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -133,16 +127,12 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::clippy
       run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   clippy_mac:
     needs:
@@ -158,7 +148,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -166,7 +155,6 @@ jobs:
         path: ~/.rustup
     - name: steps::clippy
       run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
     needs:
@@ -213,7 +201,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -221,13 +208,10 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -236,15 +220,12 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
-      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     services:
       postgres:
@@ -268,7 +249,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -282,15 +262,12 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
-      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   doctests:
     needs:
@@ -309,28 +286,22 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - id: run_doctests
       name: run_tests::doctests::run_doctests
       run: |
         cargo test --workspace --doc --no-fail-fast
-      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   check_workspace_binaries:
     needs:
@@ -346,7 +317,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -354,24 +324,18 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: cargo build -p collab
       run: cargo build -p collab
-      shell: bash -euxo pipefail {0}
     - name: cargo build --workspace --bins --examples
       run: cargo build --workspace --bins --examples
-      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   check_dependencies:
     needs:
@@ -399,7 +363,6 @@ jobs:
         command: machete
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_dependencies::check_vulnerable_dependencies
       if: github.event_name == 'pull_request'
       uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8
@@ -420,7 +383,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -434,16 +396,12 @@ jobs:
         jobSummary: false
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/generate-action-metadata
       run: ./script/generate-action-metadata
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_docs::install_mdbook
       uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08
       with:
@@ -452,7 +410,6 @@ jobs:
       run: |
         mkdir -p target/deploy
         mdbook build ./docs --dest-dir=../target/deploy/docs/
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -477,10 +434,8 @@ jobs:
         path: ~/.rustup
     - name: ./script/check-licenses
       run: ./script/check-licenses
-      shell: bash -euxo pipefail {0}
     - name: ./script/generate-licenses
       run: ./script/generate-licenses
-      shell: bash -euxo pipefail {0}
   check_scripts:
     needs:
     - orchestrate
@@ -493,15 +448,12 @@ jobs:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
       run: ./script/shellcheck-scripts error
-      shell: bash -euxo pipefail {0}
     - id: get_actionlint
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::run_actionlint
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -510,7 +462,6 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   build_nix_linux_x86_64:
     needs:
@@ -540,7 +491,6 @@ jobs:
         pushFilter: -zed-editor-[0-9.]*-nightly
     - name: nix_build::build_nix::build
       run: nix build .#debug -L --accept-flake-config
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
   build_nix_mac_aarch64:
@@ -571,7 +521,6 @@ jobs:
         pushFilter: -zed-editor-[0-9.]*-nightly
     - name: nix_build::build_nix::build
       run: nix build .#debug -L --accept-flake-config
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
   check_postgres_and_protobuf_migrations:
@@ -591,7 +540,6 @@ jobs:
         fetch-depth: 0
     - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
       run: git clean -df
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
       run: |
         if [ -z "$GITHUB_BASE_REF" ];
@@ -602,7 +550,6 @@ jobs:
           git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
           echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
         fi
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
       uses: bufbuild/buf-setup-action@v1
       with:
@@ -663,7 +610,9 @@ jobs:
         check_result "build_nix_mac_aarch64" "${{ needs.build_nix_mac_aarch64.result }}"
 
         exit $EXIT_CODE
-      shell: bash -euxo pipefail {0}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}
