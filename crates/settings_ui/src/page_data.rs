@@ -4230,7 +4230,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 20] {
+    fn project_panel_section() -> [SettingsPageItem; 21] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4453,6 +4453,28 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .auto_fold_dirs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Bold Folder Labels",
+                description: "Whether to show folder names with bold text in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.bold_folder_labels"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .bold_folder_labels
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .bold_folder_labels = value;
                     },
                 }),
                 metadata: None,

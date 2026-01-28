@@ -732,6 +732,8 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
+    // Whether to show folder names with bold text in the project panel.
+    "bold_folder_labels": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the project panel.

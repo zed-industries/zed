@@ -21,11 +21,12 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
     DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
-    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -5274,6 +5275,7 @@ impl ProjectPanel {
                                         kind.is_file(),
                                         is_active || is_marked,
                                         settings.drag_and_drop,
+                                        settings.bold_folder_labels,
                                         item_colors.drag_over,
                                         folded_directory_drag_target,
                                         filename_text_color,
@@ -5285,6 +5287,10 @@ impl ProjectPanel {
                                     Label::new(file_name)
                                         .single_line()
                                         .color(filename_text_color)
+                                        .when(
+                                            settings.bold_folder_labels && kind.is_dir(),
+                                            |this| this.weight(FontWeight::SEMIBOLD),
+                                        )
                                         .into_any_element(),
                                 ),
                             })
@@ -5338,6 +5344,7 @@ impl ProjectPanel {
         is_file: bool,
         is_active_or_marked: bool,
         drag_and_drop_enabled: bool,
+        bold_folder_labels: bool,
         drag_over_color: Hsla,
         folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
         filename_text_color: Color,
@@ -5448,6 +5455,9 @@ impl ProjectPanel {
                             Label::new(component)
                                 .single_line()
                                 .color(filename_text_color)
+                                .when(bold_folder_labels && !is_file, |this| {
+                                    this.weight(FontWeight::SEMIBOLD)
+                                })
                                 .when(index == active_index && is_active_or_marked, |this| {
                                     this.underline()
                                 }),
