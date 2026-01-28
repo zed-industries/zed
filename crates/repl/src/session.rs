@@ -311,7 +311,7 @@ impl Session {
                     SshRunningKernel::new(
                         spec,
                         working_directory,
-                        gpui::Entity::from(project),
+                        project,
                         session_view,
                         window,
                         cx,

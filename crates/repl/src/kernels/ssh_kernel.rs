@@ -106,7 +106,9 @@ impl SshRunningKernel {
                     }
                     Err(_) => {
                         if attempt < max_attempts - 1 {
-                            smol::Timer::after(std::time::Duration::from_millis(100)).await;
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(100))
+                                .await;
                         }
                     }
                 }
@@ -181,19 +183,12 @@ impl SshRunningKernel {
             cx.spawn({
                 let session = session.clone();
                 async move |cx| {
-                    loop {
-                        match iopub_socket.read().await {
-                            Ok(message) => {
-                                session
-                                    .update_in(cx, |session, window, cx| {
-                                        session.route(&message, window, cx);
-                                    })
-                                    .log_err();
-                            }
-                            Err(_) => {
-                                break;
-                            }
-                        }
+                    while let Ok(message) = iopub_socket.read().await {
+                        session
+                            .update_in(cx, |session, window, cx| {
+                                session.route(&message, window, cx);
+                            })
+                            .log_err();
                     }
                 }
             })

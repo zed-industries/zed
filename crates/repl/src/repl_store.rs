@@ -173,7 +173,7 @@ impl ReplStore {
                 .into_iter()
                 .map(KernelSpecification::Jupyter)
                 .collect::<Vec<_>>();
-            
+
             if let Ok(wsl_specs) = wsl_kernel_specifications.await {
                 all_specs.extend(wsl_specs);
             }

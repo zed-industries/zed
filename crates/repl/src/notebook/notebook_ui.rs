@@ -1154,25 +1154,27 @@ impl Render for NotebookEditor {
             .size_full()
             .key_context("NotebookEditor")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, &OpenNotebook, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenNotebook, window, cx| {
                 this.open_notebook(&OpenNotebook, window, cx)
             }))
             .on_action(
-                cx.listener(|this, &ClearOutputs, window, cx| this.clear_outputs(window, cx)),
+                cx.listener(|this, _: &ClearOutputs, window, cx| this.clear_outputs(window, cx)),
             )
             .on_action(
-                cx.listener(|this, &Run, window, cx| this.run_current_cell(&Run, window, cx)),
+                cx.listener(|this, _: &Run, window, cx| this.run_current_cell(&Run, window, cx)),
             )
-            .on_action(cx.listener(|this, &RunAll, window, cx| this.run_cells(window, cx)))
-            .on_action(cx.listener(|this, &MoveCellUp, window, cx| this.move_cell_up(window, cx)))
+            .on_action(cx.listener(|this, _: &RunAll, window, cx| this.run_cells(window, cx)))
             .on_action(
-                cx.listener(|this, &MoveCellDown, window, cx| this.move_cell_down(window, cx)),
+                cx.listener(|this, _: &MoveCellUp, window, cx| this.move_cell_up(window, cx)),
             )
-            .on_action(cx.listener(|this, &AddMarkdownBlock, window, cx| {
+            .on_action(
+                cx.listener(|this, _: &MoveCellDown, window, cx| this.move_cell_down(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &AddMarkdownBlock, window, cx| {
                 this.add_markdown_block(window, cx)
             }))
             .on_action(
-                cx.listener(|this, &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
+                cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
             .on_action(
                 cx.listener(|this, action, window, cx| this.restart_kernel(action, window, cx)),
@@ -1231,7 +1233,7 @@ impl project::ProjectItem for NotebookItem {
                 let buffer = project
                     .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
                     .await?;
-                let file_content = buffer.read_with(cx, |buffer, _| buffer.text().to_string());
+                let file_content = buffer.read_with(cx, |buffer, _| buffer.text());
 
                 // Pre-process to ensure IDs exist
                 let mut json: serde_json::Value = serde_json::from_str(&file_content)?;
@@ -1515,7 +1517,7 @@ impl Item for NotebookEditor {
                 })?
                 .await?;
 
-            let file_content = buffer.read_with(cx, |buffer, _| buffer.text().to_string());
+            let file_content = buffer.read_with(cx, |buffer, _| buffer.text());
 
             let mut json: serde_json::Value = serde_json::from_str(&file_content)?;
             if let Some(cells) = json.get_mut("cells").and_then(|c| c.as_array_mut()) {

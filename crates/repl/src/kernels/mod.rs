@@ -164,7 +164,7 @@ pub fn python_env_kernel_specifications(
     let worktree_root_path: Option<std::sync::Arc<std::path::Path>> = project
         .read(cx)
         .worktree_for_id(worktree_id, cx)
-        .map(|w| w.read(cx).abs_path().clone());
+        .map(|w| w.read(cx).abs_path());
 
     let background_executor = cx.background_executor().clone();
 

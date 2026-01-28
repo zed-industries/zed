@@ -800,9 +800,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::SpawnKernel>,
         cx: AsyncApp,
     ) -> Result<proto::SpawnKernelResponse> {
-        let (fs, worktree_store) = this.update(&mut cx.clone(), |this, _| {
-            (this.fs.clone(), this.worktree_store.clone())
-        });
+        let fs = this.update(&mut cx.clone(), |this, _| this.fs.clone());
 
         let mut ports = Vec::new();
         for _ in 0..5 {
