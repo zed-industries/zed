@@ -12490,6 +12490,54 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_replace_window_is_used_when_provided(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "test content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Get the window handle to use as replace_window
+        let window_handle = workspace.clone();
+
+        // Call open_paths with replace_window set
+        let open_result = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec!["/root/file.txt".into()],
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        replace_window: Some(window_handle.clone()),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await;
+
+        // Verify that the file was opened successfully
+        assert_eq!(open_result.len(), 1);
+        assert!(open_result[0].is_some());
+
+        // Verify the file is in the active pane
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let paths = pane_items_paths(&pane, cx);
+        assert!(paths.contains(&"root/file.txt".to_string()));
+    }
+
     fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {
         pane.read(cx)
             .items()
