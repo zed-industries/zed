@@ -171,6 +171,7 @@ pub struct ScrollManager {
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
+    _save_scroll_position_task: Task<()>,
 }
 
 impl ScrollManager {
@@ -189,6 +190,7 @@ impl ScrollManager {
             visible_column_count: None,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
+            _save_scroll_position_task: Task::ready(()),
         }
     }
 
@@ -315,23 +317,23 @@ impl ScrollManager {
         self.show_scrollbars(window, cx);
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
+            let executor = cx.background_executor().clone();
 
-            cx.foreground_executor()
-                .spawn(async move {
-                    log::debug!(
-                        "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
-                    );
-                    DB.save_scroll_position(
-                        item_id,
-                        workspace_id,
-                        top_row,
-                        anchor.offset.x,
-                        anchor.offset.y,
-                    )
-                    .await
-                    .log_err()
-                })
-                .detach()
+            self._save_scroll_position_task = cx.background_executor().spawn(async move {
+                executor.timer(Duration::from_millis(10)).await;
+                log::debug!(
+                    "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
+                );
+                DB.save_scroll_position(
+                    item_id,
+                    workspace_id,
+                    top_row,
+                    anchor.offset.x,
+                    anchor.offset.y,
+                )
+                .await
+                .log_err();
+            });
         }
         cx.notify();
 
