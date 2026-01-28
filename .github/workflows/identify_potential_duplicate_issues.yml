@@ -116,7 +116,7 @@ jobs:
           steps.check-staff.outputs.is_staff == 'false'
         id: analyze
         # let's not overspend tokens on checks that went too deep into the rabbit hole
-        timeout-minutes: 5
+        timeout-minutes: 20
         uses: anthropics/claude-code-action@231bd75b7196d48291c1498f1c6d277c2810d9a3 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
