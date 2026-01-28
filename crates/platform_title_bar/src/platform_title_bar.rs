@@ -2,8 +2,9 @@ mod platforms;
 mod system_window_tabs;
 
 use gpui::{
-    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
+    Action, AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
+    WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
@@ -154,14 +155,12 @@ impl Render for PlatformTitleBar {
                 } else if self.platform_style == PlatformStyle::Mac {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
                 } else if let Some(ref layout) = button_layout {
-                    if let Some(left_buttons) = platform_linux::render_window_buttons(
-                        &layout.left,
-                        "left",
-                        close_action.as_ref(),
-                        window,
-                        cx,
-                    ) {
-                        this.child(left_buttons)
+                    if !layout.left.is_empty() {
+                        this.child(platform_linux::LinuxWindowControls::new(
+                            "left",
+                            layout.left.clone(),
+                            close_action.as_ref().boxed_clone(),
+                        ))
                     } else {
                         this.pl_2()
                     }
@@ -209,14 +208,12 @@ impl Render for PlatformTitleBar {
                                 .unwrap_or_else(|| window.button_layout());
 
                             let mut result = title_bar;
-                            if let Some(right_buttons) = platform_linux::render_window_buttons(
-                                &button_layout.right,
-                                "right",
-                                close_action.as_ref(),
-                                window,
-                                cx,
-                            ) {
-                                result = result.child(right_buttons);
+                            if !button_layout.right.is_empty() {
+                                result = result.child(platform_linux::LinuxWindowControls::new(
+                                    "right",
+                                    button_layout.right,
+                                    close_action.as_ref().boxed_clone(),
+                                ));
                             }
 
                             result.when(supported_controls.window_menu, |titlebar| {

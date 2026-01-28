@@ -1,41 +1,56 @@
 use gpui::{Action, AnyElement, Hsla, MouseButton, prelude::*, svg};
 use ui::prelude::*;
 
-/// Renders window control buttons for the given side
-pub fn render_window_buttons(
-    buttons: &[gpui::WindowButton],
-    side: &str,
-    close_action: &dyn Action,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<AnyElement> {
-    if buttons.is_empty() {
-        return None;
+#[derive(IntoElement)]
+pub struct LinuxWindowControls {
+    side: String,
+    buttons: Vec<gpui::WindowButton>,
+    close_action: Box<dyn Action>,
+}
+
+impl LinuxWindowControls {
+    pub fn new(
+        side: impl Into<String>,
+        buttons: Vec<gpui::WindowButton>,
+        close_action: Box<dyn Action>,
+    ) -> Self {
+        Self {
+            side: side.into(),
+            buttons,
+            close_action,
+        }
     }
+}
 
-    let is_maximized = window.is_maximized();
-    let button_elements: Vec<AnyElement> = buttons
-        .iter()
-        .enumerate()
-        .map(|(i, &button)| {
-            create_window_button(
-                button,
-                format!("{}-{}", side, i),
-                is_maximized,
-                close_action,
-                cx,
-            )
-        })
-        .collect();
+impl RenderOnce for LinuxWindowControls {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.buttons.is_empty() {
+            return h_flex();
+        }
 
-    Some(
+        let is_maximized = window.is_maximized();
+        let side = self.side.clone();
+        let button_elements: Vec<AnyElement> = self
+            .buttons
+            .into_iter()
+            .enumerate()
+            .map(|(i, button)| {
+                create_window_button(
+                    button,
+                    format!("{}-{}", side, i),
+                    is_maximized,
+                    &*self.close_action,
+                    cx,
+                )
+            })
+            .collect();
+
         h_flex()
             .gap_3()
             .px_3()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .children(button_elements)
-            .into_any_element(),
-    )
+    }
 }
 
 fn create_window_button(

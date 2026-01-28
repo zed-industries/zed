@@ -224,7 +224,7 @@ impl Render for TitleBar {
         );
 
         if show_menus {
-            let button_layout = TitleBarSettings::get_global(cx).button_layout.clone();
+            let button_layout = title_bar_settings.button_layout;
             self.platform_titlebar.update(cx, |this, _| {
                 this.set_button_layout(button_layout);
                 this.set_children(
@@ -253,7 +253,7 @@ impl Render for TitleBar {
                 )
                 .into_any_element()
         } else {
-            let button_layout = TitleBarSettings::get_global(cx).button_layout.clone();
+            let button_layout = title_bar_settings.button_layout;
             self.platform_titlebar.update(cx, |this, _| {
                 this.set_button_layout(button_layout);
                 this.set_children(children);
