@@ -120,7 +120,21 @@ pub async fn fetch_captured_examples_after(
         step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
         step_progress.set_substatus("parsing");
 
-        all_examples.extend(examples_from_response(&response)?);
+        let example_index = response
+            .result_set_meta_data
+            .as_ref()
+            .and_then(|m| {
+                m.row_type.iter().enumerate().find_map(|(index, col)| {
+                    if col.name.eq_ignore_ascii_case("example") {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(0);
+
+        all_examples.extend(examples_from_response(&response, example_index)?);
 
         if num_partitions > 1 {
             let statement_handle = response
@@ -144,7 +158,7 @@ pub async fn fetch_captured_examples_after(
                 )
                 .await?;
 
-                all_examples.extend(examples_from_response(&partition_response)?);
+                all_examples.extend(examples_from_response(&partition_response, example_index)?);
             }
         }
 
@@ -192,6 +206,7 @@ struct SnowflakeColumnMeta {
 
 fn examples_from_response(
     response: &SnowflakeStatementResponse,
+    example_index: usize,
 ) -> Result<impl Iterator<Item = Example> + '_> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
@@ -201,20 +216,6 @@ fn examples_from_response(
             );
         }
     }
-
-    let example_index = response
-        .result_set_meta_data
-        .as_ref()
-        .and_then(|m| {
-            m.row_type.iter().enumerate().find_map(|(index, col)| {
-                if col.name.eq_ignore_ascii_case("example") {
-                    Some(index)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or(0);
 
     let iter = response.data.iter().enumerate().filter_map(move |(row_index, data_row)| {
         let Some(example_value) = data_row.get(example_index) else {
@@ -527,7 +528,21 @@ pub async fn fetch_rejected_examples_after(
         step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
         step_progress.set_substatus("parsing");
 
-        all_examples.extend(rejected_examples_from_response(&response)?);
+        let column_indices = get_column_indices(
+            &response.result_set_meta_data,
+            &[
+                "request_id",
+                "device_id",
+                "time",
+                "input",
+                "prompt",
+                "output",
+                "was_shown",
+                "reason",
+            ],
+        );
+
+        all_examples.extend(rejected_examples_from_response(&response, &column_indices)?);
 
         if num_partitions > 1 {
             let statement_handle = response
@@ -551,7 +566,10 @@ pub async fn fetch_rejected_examples_after(
                 )
                 .await?;
 
-                all_examples.extend(rejected_examples_from_response(&partition_response)?);
+                all_examples.extend(rejected_examples_from_response(
+                    &partition_response,
+                    &column_indices,
+                )?);
             }
         }
 
@@ -759,9 +777,10 @@ fn requested_examples_from_response<'a>(
     Ok(iter)
 }
 
-fn rejected_examples_from_response(
-    response: &SnowflakeStatementResponse,
-) -> Result<impl Iterator<Item = Example> + '_> {
+fn rejected_examples_from_response<'a>(
+    response: &'a SnowflakeStatementResponse,
+    column_indices: &'a std::collections::HashMap<String, usize>,
+) -> Result<impl Iterator<Item = Example> + 'a> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -770,20 +789,6 @@ fn rejected_examples_from_response(
             );
         }
     }
-
-    let column_indices = get_column_indices(
-        &response.result_set_meta_data,
-        &[
-            "request_id",
-            "device_id",
-            "time",
-            "input",
-            "prompt",
-            "output",
-            "was_shown",
-            "reason",
-        ],
-    );
 
     let iter = response
         .data
