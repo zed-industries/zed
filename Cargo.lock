@@ -7196,6 +7196,7 @@ dependencies = [
  "anyhow",
  "collections",
  "db",
+ "feature_flags",
  "fs",
  "git",
  "git_ui",
@@ -20886,7 +20887,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.222.0"
+version = "0.223.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

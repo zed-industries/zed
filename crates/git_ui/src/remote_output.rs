@@ -168,9 +168,9 @@ mod tests {
     #[test]
     fn test_push_new_branch_pull_request() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
@@ -201,9 +201,9 @@ mod tests {
     #[test]
     fn test_push_new_branch_merge_request() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
@@ -237,9 +237,9 @@ mod tests {
     #[test]
     fn test_push_branch_existing_merge_request() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 
@@ -270,9 +270,9 @@ mod tests {
     #[test]
     fn test_push_new_branch_no_link() {
         let action = RemoteAction::Push(
-            SharedString::new("test_branch"),
+            SharedString::new_static("test_branch"),
             Remote {
-                name: SharedString::new("test_remote"),
+                name: SharedString::new_static("test_remote"),
             },
         );
 

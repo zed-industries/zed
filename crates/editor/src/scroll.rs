@@ -238,6 +238,7 @@ pub struct ScrollManager {
     minimap_thumb_state: Option<ScrollbarThumbState>,
     scroll_animation: Option<ScrollAnimation>,
     pub(crate) scroll_animation_duration: Duration,
+    _save_scroll_position_task: Task<()>,
 }
 
 impl ScrollManager {
@@ -262,6 +263,7 @@ impl ScrollManager {
             scroll_animation_duration: Duration::from_secs_f32(
                 editor_settings.smooth_scroll.duration,
             ),
+            _save_scroll_position_task: Task::ready(()),
         }
     }
 
@@ -350,23 +352,23 @@ impl ScrollManager {
         self.show_scrollbars(window, cx);
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
+            let executor = cx.background_executor().clone();
 
-            cx.foreground_executor()
-                .spawn(async move {
-                    log::debug!(
-                        "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
-                    );
-                    DB.save_scroll_position(
-                        item_id,
-                        workspace_id,
-                        top_row,
-                        anchor.offset.x,
-                        anchor.offset.y,
-                    )
-                    .await
-                    .log_err()
-                })
-                .detach()
+            self._save_scroll_position_task = cx.background_executor().spawn(async move {
+                executor.timer(Duration::from_millis(10)).await;
+                log::debug!(
+                    "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
+                );
+                DB.save_scroll_position(
+                    item_id,
+                    workspace_id,
+                    top_row,
+                    anchor.offset.x,
+                    anchor.offset.y,
+                )
+                .await
+                .log_err();
+            });
         }
         cx.notify();
 

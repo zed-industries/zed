@@ -733,6 +733,10 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects to the start of the next larger syntax node.
+        SelectToStartOfLargerSyntaxNode,
+        /// Selects to the end of the next larger syntax node.
+        SelectToEndOfLargerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
         /// Selects the next syntax node sibling.
