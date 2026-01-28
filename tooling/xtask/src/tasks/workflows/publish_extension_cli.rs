@@ -73,7 +73,7 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
         Job::default()
             .with_repository_owner_guard()
             .needs(vec![publish_job.name.clone()])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(generate_token)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
