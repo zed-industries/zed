@@ -1028,46 +1028,81 @@ impl EditPredictionButton {
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
 
             menu.separator()
-                .item(
-                    ContextMenuEntry::new("Copilot: Next Edit Suggestions")
-                        .toggleable(IconPosition::Start, next_edit_suggestions)
-                        .handler({
-                            let fs = self.fs.clone();
-                            move |_, cx| {
-                                update_settings_file(fs.clone(), cx, move |settings, _| {
-                                    settings
-                                        .project
-                                        .all_languages
-                                        .edit_predictions
-                                        .get_or_insert_default()
-                                        .copilot
-                                        .get_or_insert_default()
-                                        .enable_next_edit_suggestions =
-                                        Some(!next_edit_suggestions);
-                                });
-                            }
-                        }),
-                )
                 .header("GitHub Copilot Usage")
                 .custom_row(|_window, cx| {
-                    h_flex()
+                    let used_percentage = 45.;
+                    v_flex()
                         .flex_1()
-                        .gap_1p5()
+                        .gap_1()
                         .child(
-                            Label::new("Usage")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            h_flex()
+                                .justify_between()
+                                .child(
+                                    Label::new("Premium Requests")
+                                        .size(LabelSize::Default)
+                                        .color(Color::Default),
+                                )
+                                .child(
+                                    Label::new(format!("{used_percentage:.0}%"))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
                         )
-                        .child(ProgressBar::new("copilot_usage", 30., 100., cx))
+                        .child(ProgressBar::new("copilot_usage", used_percentage, 100., cx))
                         .into_any_element()
                 })
-                .separator()
-                .separator()
-                .link(
-                    "Go to Copilot Settings",
-                    OpenBrowser { url: settings_url }.boxed_clone(),
-                )
-                .action("Sign Out", copilot::SignOut.boxed_clone())
+            // menu.separator()
+            //     .item(
+            //         ContextMenuEntry::new("Copilot: Next Edit Suggestions")
+            //             .toggleable(IconPosition::Start, next_edit_suggestions)
+            //             .handler({
+            //                 let fs = self.fs.clone();
+            //                 move |_, cx| {
+            //                     update_settings_file(fs.clone(), cx, move |settings, _| {
+            //                         settings
+            //                             .project
+            //                             .all_languages
+            //                             .edit_predictions
+            //                             .get_or_insert_default()
+            //                             .copilot
+            //                             .get_or_insert_default()
+            //                             .enable_next_edit_suggestions =
+            //                             Some(!next_edit_suggestions);
+            //                     });
+            //                 }
+            //             }),
+            //     )
+            //     .separator()
+            //     .link(
+            //         "Go to Copilot Settings",
+            //         OpenBrowser { url: settings_url }.boxed_clone(),
+            //     )
+            //     .separator()
+            //     .header("GitHub Copilot Usage")
+            //     .custom_row(|_window, cx| {
+            //         let used_percentage = 30.;
+            //         v_flex()
+            //             .flex_1()
+            //             .gap_1()
+            //             .child(
+            //                 h_flex()
+            //                     .justify_between()
+            //                     .child(
+            //                         Label::new("Premium Requests")
+            //                             .size(LabelSize::Default)
+            //                             .color(Color::Default),
+            //                     )
+            //                     .child(
+            //                         Label::new(format!("{used_percentage:.0}%"))
+            //                             .size(LabelSize::Small)
+            //                             .color(Color::Muted),
+            //                     ),
+            //             )
+            //             .child(ProgressBar::new("copilot_usage", used_percentage, 100., cx))
+            //             .into_any_element()
+            //     })
+            //     .separator()
+            //     .action("Sign Out", copilot::SignOut.boxed_clone())
         })
     }
 
