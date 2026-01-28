@@ -29,6 +29,7 @@ use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
+use libc::COPYFILE_RUN_IN_PLACE;
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
@@ -785,63 +786,47 @@ fn main() {
                 let failfast_on_single_example = examples.len() == 1;
 
                 // For --markdown mode, create the output directory if it doesn't exist
-                let markdown_output_dir = if args.markdown {
+                if args.markdown {
                     let dir = output.as_ref().expect("--markdown requires -o");
                     if !dir.exists() {
                         std::fs::create_dir_all(dir)
                             .expect("Failed to create markdown output directory");
                     }
-                    Some(dir.clone())
-                } else {
-                    None
-                };
+                }
 
-                // For --in-place, write to a temp file and rename at the end to avoid data loss on interruption
-                let in_place_temp_path = if args.in_place {
-                    output.as_ref().map(|path| {
-                        let mut temp_path = path.clone();
-                        temp_path.set_extension("jsonl.tmp");
-                        temp_path
-                    })
-                } else {
-                    None
-                };
-
-                let output_sender: Option<mpsc::UnboundedSender<String>> = if !args.markdown
-                    && (output.is_some() || !matches!(command, Command::Eval(_)))
+                // Set up JSONL output writer (not used in markdown mode)
+                let mut output_sender: Option<mpsc::UnboundedSender<String>> = None;
+                let mut in_place_temp_path: Option<PathBuf> = None;
+                if !args.markdown
+                    && let Some(output_path) = output.as_ref()
                 {
-                    let write_path = in_place_temp_path.as_ref().or(output.as_ref());
-                    write_path.map(|path| {
-                        let file = if args.in_place {
-                            // For --in-place, write to temp file (truncate if exists)
-                            OpenOptions::new()
-                                .create(true)
-                                .write(true)
-                                .truncate(true)
-                                .open(path)
-                                .expect("Failed to open temp output file")
-                        } else {
-                            // For regular output, append to support resuming
-                            OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(path)
-                                .expect("Failed to open output file")
-                        };
-                        let mut writer = BufWriter::new(file);
-                        let (sender, mut receiver) = mpsc::unbounded::<String>();
-                        cx.background_spawn(async move {
-                            while let Some(line) = receiver.next().await {
-                                writeln!(writer, "{}", line).expect("Failed to write example");
-                                writer.flush().expect("Failed to flush output");
-                            }
-                        })
-                        .detach();
-                        sender
+                    let write_path = if args.in_place {
+                        let temp = output_path.with_extension("jsonl.tmp");
+                        in_place_temp_path = Some(temp.clone());
+                        temp
+                    } else {
+                        output_path.clone()
+                    };
+
+                    let file = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(args.in_place)
+                        .append(!args.in_place)
+                        .open(&write_path)
+                        .expect("Failed to open output file");
+
+                    let mut writer = BufWriter::new(file);
+                    let (sender, mut receiver) = mpsc::unbounded::<String>();
+                    cx.background_spawn(async move {
+                        while let Some(line) = receiver.next().await {
+                            writeln!(writer, "{}", line).expect("Failed to write example");
+                            writer.flush().expect("Failed to flush output");
+                        }
                     })
-                } else {
-                    None
-                };
+                    .detach();
+                    output_sender = Some(sender);
+                }
 
                 let grouped_examples = Mutex::new(group_examples_by_repo(examples));
                 let finished_examples = Mutex::new(Vec::new());
@@ -958,7 +943,9 @@ fn main() {
 
                                 let should_write = !failed || args.failed == FailedHandling::Keep;
                                 if should_write {
-                                    if let Some(ref markdown_dir) = markdown_output_dir {
+                                    if args.markdown {
+                                        let markdown_dir =
+                                            output.as_ref().expect("--markdown requires -o");
                                         let filename = format!("{}.md", example.spec.filename());
                                         let path = markdown_dir.join(&filename);
                                         let markdown = example.spec.to_markdown();
@@ -1044,7 +1031,8 @@ fn main() {
                 };
 
                 // For --in-place, atomically rename temp file to original
-                if let (Some(temp_path), Some(final_path)) = (&in_place_temp_path, &output) {
+                if let Some(temp_path) = &in_place_temp_path {
+                    let final_path = output.as_ref().expect("in_place_temp_path requires output");
                     std::fs::rename(temp_path, final_path)
                         .expect("Failed to rename temp file to final output");
                 }
