@@ -9647,7 +9647,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, _cx| {
-            let ThreadState::Ready { resumed_without_history, .. } = &view.thread_state else {
+            let ThreadState::Ready(ReadyThreadState { resumed_without_history, .. }) = &view.thread_state else {
                 panic!("Expected Ready state");
             };
             assert!(*resumed_without_history);
@@ -9675,7 +9675,7 @@ pub(crate) mod tests {
 
         // Check that the refusal error is set
         thread_view.read_with(cx, |thread_view, _cx| {
-            let ThreadState::Ready { thread_error, .. } = &thread_view.thread_state else {
+            let ThreadState::Ready(ReadyThreadState { thread_error, .. }) = &thread_view.thread_state else {
                 panic!("Expected Ready state");
             };
             assert!(
@@ -11705,10 +11705,10 @@ pub(crate) mod tests {
 
         // Verify default granularity is the last option (index 2 = "Only this time")
         thread_view.read_with(cx, |thread_view, _cx| {
-            let selected = if let ThreadState::Ready {
+            let selected = if let ThreadState::Ready(ReadyThreadState {
                 selected_permission_granularity,
                 ..
-            } = &thread_view.thread_state
+            }) = &thread_view.thread_state
             {
                 selected_permission_granularity.get(&tool_call_id)
             } else {
@@ -11736,10 +11736,10 @@ pub(crate) mod tests {
 
         // Verify the selection was updated
         thread_view.read_with(cx, |thread_view, _cx| {
-            let selected = if let ThreadState::Ready {
+            let selected = if let ThreadState::Ready(ReadyThreadState {
                 selected_permission_granularity,
                 ..
-            } = &thread_view.thread_state
+            }) = &thread_view.thread_state
             {
                 selected_permission_granularity.get(&tool_call_id)
             } else {
