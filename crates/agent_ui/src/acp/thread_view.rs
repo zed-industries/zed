@@ -344,8 +344,6 @@ pub struct AcpThreadView {
     profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>, // keep
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
-    thread_error: Option<ThreadError>,
-    thread_error_markdown: Option<Entity<Markdown>>,
     command_load_errors: Vec<CommandLoadError>, // keep
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
@@ -406,6 +404,8 @@ enum ThreadState {
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
         permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
         thread_retry_status: Option<RetryStatus>,
+        thread_error: Option<ThreadError>,
+        thread_error_markdown: Option<Entity<Markdown>>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -572,8 +572,6 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             list_state,
-            thread_error: None,
-            thread_error_markdown: None,
             command_load_errors,
             command_load_errors_dismissed: false,
             slash_command_registry,
@@ -911,6 +909,8 @@ impl AcpThreadView {
                             model_selector,
                             permission_dropdown_handle: PopoverMenuHandle::default(),
                             thread_retry_status: None,
+                            thread_error: None,
+                            thread_error_markdown: None,
                             _subscriptions: subscriptions,
                         };
 
@@ -1063,12 +1063,22 @@ impl AcpThreadView {
         // If we're in a LoadError state OR have a thread_error set (which can happen
         // when agent.connect() fails during loading), retry loading the thread.
         // This handles the case where a thread is restored before authentication completes.
-        let should_retry =
-            matches!(&self.thread_state, ThreadState::LoadError(_)) || self.thread_error.is_some();
+        let should_retry = match &self.thread_state {
+            ThreadState::LoadError(_) => true,
+            ThreadState::Ready { thread_error, .. } => thread_error.is_some(),
+            _ => false,
+        };
 
         if should_retry {
-            self.thread_error = None;
-            self.thread_error_markdown = None;
+            if let ThreadState::Ready {
+                thread_error,
+                thread_error_markdown,
+                ..
+            } = &mut self.thread_state
+            {
+                *thread_error = None;
+                *thread_error_markdown = None;
+            }
             self.reset(window, cx);
         }
     }
@@ -1151,13 +1161,14 @@ impl AcpThreadView {
     }
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        self.thread_error.take();
         if let ThreadState::Ready {
             thread_retry_status,
+            thread_error,
             ..
         } = &mut self.thread_state
         {
             thread_retry_status.take();
+            thread_error.take();
         }
         self.user_interrupted_generation = true;
 
@@ -1436,7 +1447,9 @@ impl AcpThreadView {
     }
 
     fn retry_generation(&mut self, cx: &mut Context<Self>) {
-        self.thread_error.take();
+        if let ThreadState::Ready { thread_error, .. } = &mut self.thread_state {
+            thread_error.take();
+        }
         let Some(thread) = self.thread() else {
             return;
         };
@@ -1624,7 +1637,9 @@ impl AcpThreadView {
             )
         });
 
-        self.thread_error.take();
+        if let ThreadState::Ready { thread_error, .. } = &mut self.thread_state {
+            thread_error.take();
+        }
         self.editing_message.take();
         self.thread_feedback.clear();
 
@@ -2000,9 +2015,11 @@ impl AcpThreadView {
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
-        let thread_error = ThreadError::from_err(error, &self.agent);
-        self.emit_thread_error_telemetry(&thread_error, cx);
-        self.thread_error = Some(thread_error);
+        let error = ThreadError::from_err(error, &self.agent);
+        self.emit_thread_error_telemetry(&error, cx);
+        if let ThreadState::Ready { thread_error, .. } = &mut self.thread_state {
+            *thread_error = Some(error);
+        }
         cx.notify();
     }
 
@@ -2054,8 +2071,15 @@ impl AcpThreadView {
     }
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
-        self.thread_error = None;
-        self.thread_error_markdown = None;
+        if let ThreadState::Ready {
+            thread_error,
+            thread_error_markdown,
+            ..
+        } = &mut self.thread_state
+        {
+            *thread_error = None;
+            *thread_error_markdown = None;
+        }
         self.token_limit_callout_dismissed = true;
         cx.notify();
     }
@@ -2150,16 +2174,17 @@ impl AcpThreadView {
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::Refusal => {
+                let error = ThreadError::Refusal;
+                self.emit_thread_error_telemetry(&error, cx);
                 if let ThreadState::Ready {
                     thread_retry_status,
+                    thread_error,
                     ..
                 } = &mut self.thread_state
                 {
                     thread_retry_status.take();
+                    *thread_error = Some(error);
                 }
-                let thread_error = ThreadError::Refusal;
-                self.emit_thread_error_telemetry(&thread_error, cx);
-                self.thread_error = Some(thread_error);
                 let model_or_agent_name = self.current_model_name(cx);
                 let notification_message =
                     format!("{} refused to respond to this request", model_or_agent_name);
@@ -2318,7 +2343,6 @@ impl AcpThreadView {
                             ..Default::default()
                         };
 
-                        self.thread_error.take();
                         configuration_view.take();
                         pending_auth_method.replace(method.clone());
 
@@ -2423,7 +2447,6 @@ impl AcpThreadView {
             return;
         }
 
-        self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
         let authenticate = if (method.0.as_ref() == "claude-login"
@@ -8120,7 +8143,10 @@ impl AcpThreadView {
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
-        let content = match self.thread_error.as_ref()? {
+        let ThreadState::Ready { thread_error, .. } = &self.thread_state else {
+            return None;
+        };
+        let content = match thread_error.as_ref()? {
             ThreadError::Other { message, .. } => {
                 self.render_any_thread_error(message.clone(), window, cx)
             }
@@ -8222,11 +8248,21 @@ impl AcpThreadView {
             .thread()
             .map_or(false, |thread| thread.read(cx).can_retry(cx));
 
-        let markdown = if let Some(markdown) = &self.thread_error_markdown {
+        let markdown = if let ThreadState::Ready {
+            thread_error_markdown: Some(markdown),
+            ..
+        } = &self.thread_state
+        {
             markdown.clone()
         } else {
             let markdown = cx.new(|cx| Markdown::new(error.clone(), None, None, cx));
-            self.thread_error_markdown = Some(markdown.clone());
+            if let ThreadState::Ready {
+                thread_error_markdown,
+                ..
+            } = &mut self.thread_state
+            {
+                *thread_error_markdown = Some(markdown.clone());
+            }
             markdown
         };
 
@@ -9076,8 +9112,11 @@ pub(crate) mod tests {
 
         // Check that the refusal error is set
         thread_view.read_with(cx, |thread_view, _cx| {
+            let ThreadState::Ready { thread_error, .. } = &thread_view.thread_state else {
+                panic!("Expected Ready state");
+            };
             assert!(
-                matches!(thread_view.thread_error, Some(ThreadError::Refusal)),
+                matches!(thread_error, Some(ThreadError::Refusal)),
                 "Expected refusal error to be set"
             );
         });
