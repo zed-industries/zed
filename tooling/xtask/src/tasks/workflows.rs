@@ -16,6 +16,7 @@ mod extension_tests;
 mod extension_workflow_rollout;
 mod extensions;
 mod nix_build;
+mod publish_extension_cli;
 mod release_nightly;
 mod run_bundling;
 
@@ -144,6 +145,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(run_agent_evals::run_unit_evals),
         WorkflowFile::zed(run_bundling::run_bundling),
         WorkflowFile::zed(run_tests::run_tests),
+        WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension_shared(extensions::bump_version::bump_version),
