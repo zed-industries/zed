@@ -330,7 +330,7 @@ pub struct AcpThreadView {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     thread_state: ThreadState,
-    login: Option<task::SpawnInTerminal>,
+    login: Option<task::SpawnInTerminal>, // is some <=> Ready | Unauthenticated
     recent_history_entries: Vec<AgentSessionInfo>,
     history: Entity<AcpThreadHistory>,
     _history_subscription: Subscription,
@@ -339,8 +339,6 @@ pub struct AcpThreadView {
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    command_load_errors: Vec<CommandLoadError>,
-    command_load_errors_dismissed: bool,
     slash_command_registry: Option<Entity<SlashCommandRegistry>>,
     auth_task: Option<Task<()>>,
     _subscriptions: [Subscription; 4],
@@ -400,7 +398,6 @@ impl AcpThreadView {
         let available_commands = Rc::new(RefCell::new(vec![]));
         let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
         let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
-        let mut command_load_errors = Vec::new();
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let agent_display_name = agent_server_store
@@ -493,7 +490,6 @@ impl AcpThreadView {
                 &mut errors,
                 &server_command_names,
             );
-            command_load_errors = errors.clone();
             *cached_user_commands.borrow_mut() = commands;
             *cached_user_command_errors.borrow_mut() = errors;
 
@@ -530,8 +526,6 @@ impl AcpThreadView {
             message_editor,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            command_load_errors,
-            command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
             recent_history_entries,
@@ -862,6 +856,7 @@ impl AcpThreadView {
 
                         this.thread_state = ThreadState::Ready(ReadyThreadState::new(
                             thread,
+                            workspace.clone(),
                             entry_view_state,
                             title_editor,
                             config_options_view,
@@ -1046,47 +1041,6 @@ impl AcpThreadView {
         &self.workspace
     }
 
-    pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
-        match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState { mode_selector, .. }) => mode_selector.as_ref(),
-            ThreadState::Unauthenticated { .. }
-            | ThreadState::Loading { .. }
-            | ThreadState::LoadError { .. } => None,
-        }
-    }
-
-    pub fn model_selector(&self) -> Option<&Entity<AcpModelSelectorPopover>> {
-        match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState { model_selector, .. }) => model_selector.as_ref(),
-            ThreadState::Unauthenticated { .. }
-            | ThreadState::Loading { .. }
-            | ThreadState::LoadError { .. } => None,
-        }
-    }
-
-    fn profile_selector(&self) -> Option<&Entity<ProfileSelector>> {
-        match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState {
-                profile_selector, ..
-            }) => profile_selector.as_ref(),
-            ThreadState::Unauthenticated { .. }
-            | ThreadState::Loading { .. }
-            | ThreadState::LoadError { .. } => None,
-        }
-    }
-
-    fn config_options_view(&self) -> Option<&Entity<ConfigOptionsView>> {
-        match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState {
-                config_options_view,
-                ..
-            }) => config_options_view.as_ref(),
-            ThreadState::Unauthenticated { .. }
-            | ThreadState::Loading { .. }
-            | ThreadState::LoadError { .. } => None,
-        }
-    }
-
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
             ThreadState::Ready(ReadyThreadState { .. }) | ThreadState::Unauthenticated { .. } => {
@@ -1104,13 +1058,7 @@ impl AcpThreadView {
         }
     }
 
-    pub fn title_editor(&self) -> Option<Entity<Editor>> {
-        if let ThreadState::Ready(ReadyThreadState { title_editor, .. }) = &self.thread_state {
-            title_editor.clone()
-        } else {
-            None
-        }
-    }
+    // todo! cameron here
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         if let ThreadState::Ready(ReadyThreadState {
@@ -1269,47 +1217,17 @@ impl AcpThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ThreadState::Ready(ReadyThreadState {
-            editor_expanded, ..
-        }) = &self.thread_state
-        else {
-            return;
-        };
-        self.set_editor_is_expanded(!*editor_expanded, cx);
-        cx.stop_propagation();
-        cx.notify();
+        let editor = self.message_editor.clone();
+        if let Some(ready) = self.as_ready_mut() {
+            ready.expand_message_editor(editor, cx);
+        }
     }
 
     fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
-        let ThreadState::Ready(ReadyThreadState {
-            editor_expanded, ..
-        }) = &mut self.thread_state
-        else {
-            return;
-        };
-        *editor_expanded = is_expanded;
-        self.message_editor.update(cx, |editor, cx| {
-            if is_expanded {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-                    },
-                    cx,
-                )
-            } else {
-                let agent_settings = AgentSettings::get_global(cx);
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: agent_settings.message_editor_min_lines,
-                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
-                    },
-                    cx,
-                )
-            }
-        });
-        cx.notify();
+        let editor = self.message_editor.clone();
+        if let Some(ready) = self.as_ready_mut() {
+            ready.set_editor_is_expanded(is_expanded, editor, cx);
+        }
     }
 
     pub fn handle_title_editor_event(
@@ -1319,26 +1237,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ready) = self.as_ready() else { return };
-        let thread = &ready.thread;
-
-        match event {
-            EditorEvent::BufferEdited => {
-                let new_title = title_editor.read(cx).text(cx);
-                thread.update(cx, |thread, cx| {
-                    thread
-                        .set_title(new_title.into(), cx)
-                        .detach_and_log_err(cx);
-                })
-            }
-            EditorEvent::Blurred => {
-                if title_editor.read(cx).text(cx).is_empty() {
-                    title_editor.update(cx, |editor, cx| {
-                        editor.set_text("New Thread", window, cx);
-                    });
-                }
-            }
-            _ => {}
+        if let Some(ready) = self.as_ready_mut() {
+            ready.handle_title_editor_event(title_editor, event, window, cx);
         }
     }
 
@@ -1440,28 +1340,9 @@ impl AcpThreadView {
     }
 
     fn retry_generation(&mut self, cx: &mut Context<Self>) {
-        if let ThreadState::Ready(ReadyThreadState { thread_error, .. }) = &mut self.thread_state {
-            thread_error.take();
-        }
-        let Some(ready) = self.as_ready() else {
-            return;
+        if let Some(ready) = self.as_ready_mut() {
+            ready.retry_generation(cx);
         };
-        let thread = &ready.thread;
-        if !thread.read(cx).can_retry(cx) {
-            return;
-        }
-
-        let task = thread.update(cx, |thread, cx| thread.retry(cx));
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-
-            this.update(cx, |this, cx| {
-                if let Err(err) = result {
-                    this.handle_thread_error(err, cx);
-                }
-            })
-        })
-        .detach();
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1597,25 +1478,17 @@ impl AcpThreadView {
     }
 
     fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
-        let ThreadState::Ready(ReadyThreadState {
-            turn_generation,
-            turn_started_at,
-            last_turn_duration,
-            last_turn_tokens,
-            turn_tokens,
-            _turn_timer_task,
-            ..
-        }) = &mut self.thread_state
+        let ThreadState::Ready(ReadyThreadState { turn_fields, .. }) = &mut self.thread_state
         else {
             return 0;
         };
-        *turn_generation += 1;
-        let generation = *turn_generation;
-        *turn_started_at = Some(Instant::now());
-        *last_turn_duration = None;
-        *last_turn_tokens = None;
-        *turn_tokens = Some(0);
-        *_turn_timer_task = Some(cx.spawn(async move |this, cx| {
+        turn_fields.turn_generation += 1;
+        let generation = turn_fields.turn_generation;
+        turn_fields.turn_started_at = Some(Instant::now());
+        turn_fields.last_turn_duration = None;
+        turn_fields.last_turn_tokens = None;
+        turn_fields.turn_tokens = Some(0);
+        turn_fields._turn_timer_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
@@ -1627,37 +1500,32 @@ impl AcpThreadView {
     }
 
     fn stop_turn(&mut self, generation: usize) {
-        let ThreadState::Ready(ReadyThreadState {
-            turn_generation,
-            turn_started_at,
-            last_turn_duration,
-            last_turn_tokens,
-            turn_tokens,
-            _turn_timer_task,
-            ..
-        }) = &mut self.thread_state
+        let ThreadState::Ready(ReadyThreadState { turn_fields, .. }) = &mut self.thread_state
         else {
             return;
         };
-        if *turn_generation != generation {
+        if turn_fields.turn_generation != generation {
             return;
         }
-        *last_turn_duration = turn_started_at.take().map(|started| started.elapsed());
-        *last_turn_tokens = turn_tokens.take();
-        *_turn_timer_task = None;
+        turn_fields.last_turn_duration = turn_fields
+            .turn_started_at
+            .take()
+            .map(|started| started.elapsed());
+        turn_fields.last_turn_tokens = turn_fields.turn_tokens.take();
+        turn_fields._turn_timer_task = None;
     }
 
     fn update_turn_tokens(&mut self, cx: &App) {
         let ThreadState::Ready(ReadyThreadState {
             thread,
-            turn_tokens,
+            turn_fields,
             ..
         }) = &mut self.thread_state
         else {
             return;
         };
         if let Some(usage) = thread.read(cx).token_usage() {
-            if let Some(tokens) = turn_tokens {
+            if let Some(tokens) = &mut turn_fields.turn_tokens {
                 *tokens += usage.output_tokens;
             }
         }
@@ -1859,10 +1727,10 @@ impl AcpThreadView {
     }
 
     fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let is_idle = self
-            .as_ready()
-            .map(|r| r.thread.read(cx).status() == acp_thread::ThreadStatus::Idle)
-            .unwrap_or(true);
+        let Some(ready) = self.as_ready() else {
+            return;
+        };
+        let is_idle = ready.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
 
         if is_idle {
             self.send_impl(self.message_editor.clone(), window, cx);
@@ -1922,7 +1790,7 @@ impl AcpThreadView {
         index: usize,
         is_send_now: bool,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AcpThreadView>,
     ) {
         let Some(queued) = self.remove_from_queue(index, cx) else {
             return;
@@ -2342,7 +2210,10 @@ impl AcpThreadView {
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
-                if let Some(title_editor) = self.title_editor() {
+                if let Some(title_editor) = self
+                    .as_ready()
+                    .and_then(|ready| ready.title_editor.as_ref())
+                {
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
                             editor.set_text(title, window, cx);
@@ -6552,13 +6423,9 @@ impl AcpThreadView {
     fn render_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
-        let editor_expanded = matches!(
-            &self.thread_state,
-            ThreadState::Ready(ReadyThreadState {
-                editor_expanded: true,
-                ..
-            })
-        );
+        let editor_expanded = self
+            .as_ready()
+            .is_some_and(|ready_state| ready_state.editor_expanded);
         let (expand_icon, expand_tooltip) = if editor_expanded {
             (IconName::Minimize, "Minimize Message Editor")
         } else {
@@ -6644,12 +6511,17 @@ impl AcpThreadView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.render_thinking_toggle(cx))
-                            .children(self.profile_selector().cloned())
-                            // Either config_options_view OR (mode_selector + model_selector)
-                            .children(self.config_options_view().cloned())
-                            .when(self.config_options_view().is_none(), |this| {
-                                this.children(self.mode_selector().cloned())
-                                    .children(self.model_selector().cloned())
+                            .when_some(self.as_ready(), |this, ready_state| {
+                                this.children(ready_state.profile_selector.clone())
+                                    .map(|this| {
+                                        // Either config_options_view OR (mode_selector + model_selector)
+                                        match ready_state.config_options_view.clone() {
+                                            Some(config_view) => this.child(config_view),
+                                            None => this
+                                                .children(ready_state.mode_selector.clone())
+                                                .children(ready_state.model_selector.clone()),
+                                        }
+                                    })
                             })
                             .child(self.render_send_button(cx)),
                     ),
@@ -6683,23 +6555,16 @@ impl AcpThreadView {
     }
 
     fn has_queued_messages(&self) -> bool {
-        match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState {
-                local_queued_messages,
-                ..
-            }) => !local_queued_messages.is_empty(),
-            _ => false,
-        }
+        self.as_ready()
+            .map(|ready| ready.has_queued_messages())
+            .unwrap_or(false)
     }
 
     /// Syncs the has_queued_message flag to the native thread (if applicable).
     /// This flag tells the native thread to end its turn at the next message boundary.
     fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
-        if let Some(native_thread) = self.as_native_thread(cx) {
-            let has_queued = self.has_queued_messages();
-            native_thread.update(cx, |thread, _| {
-                thread.set_has_queued_message(has_queued);
-            });
+        if let Some(ready) = self.as_ready() {
+            ready.sync_queue_flag_to_native_thread(cx);
         }
     }
 
@@ -6723,17 +6588,8 @@ impl AcpThreadView {
     }
 
     fn remove_from_queue(&mut self, index: usize, cx: &mut Context<Self>) -> Option<QueuedMessage> {
-        match &mut self.thread_state {
-            ThreadState::Ready(ReadyThreadState {
-                local_queued_messages,
-                ..
-            }) if index < local_queued_messages.len() => {
-                let removed = local_queued_messages.remove(index);
-                self.sync_queue_flag_to_native_thread(cx);
-                Some(removed)
-            }
-            _ => None,
-        }
+        self.as_ready_mut()
+            .and_then(|ready| ready.remove_from_queue(index, cx))
     }
 
     fn update_queued_message(
@@ -7887,8 +7743,7 @@ impl AcpThreadView {
     fn render_generating(&self, confirmation: bool, cx: &App) -> impl IntoElement {
         let ThreadState::Ready(ReadyThreadState {
             thread,
-            turn_started_at,
-            turn_tokens,
+            turn_fields,
             ..
         }) = &self.thread_state
         else {
@@ -7898,7 +7753,7 @@ impl AcpThreadView {
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let elapsed_label = show_stats
             .then(|| {
-                turn_started_at.and_then(|started_at| {
+                turn_fields.turn_started_at.and_then(|started_at| {
                     let elapsed = started_at.elapsed();
                     (elapsed > STOPWATCH_THRESHOLD).then(|| duration_alt_display(elapsed))
                 })
@@ -7910,7 +7765,8 @@ impl AcpThreadView {
         let turn_tokens_label = elapsed_label
             .is_some()
             .then(|| {
-                turn_tokens
+                turn_fields
+                    .turn_tokens
                     .filter(|&tokens| tokens > TOKEN_THRESHOLD)
                     .map(|tokens| crate::text_thread_editor::humanize_token_count(tokens))
             })
@@ -8012,19 +7868,15 @@ impl AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
-        let ThreadState::Ready(ReadyThreadState {
-            last_turn_duration,
-            last_turn_tokens,
-            ..
-        }) = &self.thread_state
-        else {
+        let ThreadState::Ready(ReadyThreadState { turn_fields, .. }) = &self.thread_state else {
             return div().into_any_element();
         };
 
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let last_turn_clock = show_stats
             .then(|| {
-                last_turn_duration
+                turn_fields
+                    .last_turn_duration
                     .filter(|&duration| duration > STOPWATCH_THRESHOLD)
                     .map(|duration| {
                         Label::new(duration_alt_display(duration))
@@ -8037,7 +7889,8 @@ impl AcpThreadView {
         let last_turn_tokens_label = last_turn_clock
             .is_some()
             .then(|| {
-                last_turn_tokens
+                turn_fields
+                    .last_turn_tokens
                     .filter(|&tokens| tokens > TOKEN_THRESHOLD)
                     .map(|tokens| {
                         Label::new(format!(
@@ -8373,55 +8226,6 @@ impl AcpThreadView {
         });
     }
 
-    fn render_thread_retry_status_callout(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Callout> {
-        let ThreadState::Ready(ReadyThreadState {
-            thread_retry_status,
-            ..
-        }) = &self.thread_state
-        else {
-            return None;
-        };
-        let state = thread_retry_status.as_ref()?;
-
-        let next_attempt_in = state
-            .duration
-            .saturating_sub(Instant::now().saturating_duration_since(state.started_at));
-        if next_attempt_in.is_zero() {
-            return None;
-        }
-
-        let next_attempt_in_secs = next_attempt_in.as_secs() + 1;
-
-        let retry_message = if state.max_attempts == 1 {
-            if next_attempt_in_secs == 1 {
-                "Retrying. Next attempt in 1 second.".to_string()
-            } else {
-                format!("Retrying. Next attempt in {next_attempt_in_secs} seconds.")
-            }
-        } else if next_attempt_in_secs == 1 {
-            format!(
-                "Retrying. Next attempt in 1 second (Attempt {} of {}).",
-                state.attempt, state.max_attempts,
-            )
-        } else {
-            format!(
-                "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
-                state.attempt, state.max_attempts,
-            )
-        };
-
-        Some(
-            Callout::new()
-                .severity(Severity::Warning)
-                .title(state.last_error.clone())
-                .description(retry_message),
-        )
-    }
-
     fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
         Callout::new()
             .icon(IconName::Warning)
@@ -8457,106 +8261,10 @@ impl AcpThreadView {
             )
     }
 
-    fn render_command_load_errors(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if self.command_load_errors_dismissed || self.command_load_errors.is_empty() {
-            return None;
-        }
-
-        let error_count = self.command_load_errors.len();
-        let title = if error_count == 1 {
-            "Failed to load slash command"
-        } else {
-            "Failed to load slash commands"
-        };
-
-        let workspace = self.workspace.clone();
-
-        Some(
-            v_flex()
-                .w_full()
-                .p_2()
-                .gap_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().surface_background)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    Label::new(title)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Warning),
-                                ),
-                        )
-                        .child(
-                            IconButton::new("dismiss-command-errors", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.clear_command_load_errors(cx);
-                                })),
-                        ),
-                )
-                .children(self.command_load_errors.iter().enumerate().map({
-                    move |(i, error)| {
-                        let path = error.path.clone();
-                        let workspace = workspace.clone();
-                        let file_name = error
-                            .path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| error.path.display().to_string());
-
-                        h_flex()
-                            .id(ElementId::Name(format!("command-error-{i}").into()))
-                            .gap_1()
-                            .px_1()
-                            .py_0p5()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                            .tooltip(Tooltip::text(format!(
-                                "Click to open {}\n\n{}",
-                                error.path.display(),
-                                error.message
-                            )))
-                            .on_click({
-                                move |_, window, cx| {
-                                    if let Some(workspace) = workspace.upgrade() {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    path.clone(),
-                                                    OpenOptions::default(),
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                        });
-                                    }
-                                }
-                            })
-                            .child(
-                                Label::new(format!("• {}: {}", file_name, error.message))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                    }
-                })),
-        )
-    }
-
     fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
-        self.command_load_errors_dismissed = true;
+        if let Some(ready_state) = self.as_ready_mut() {
+            ready_state.command_load_errors_dismissed = true;
+        }
         cx.notify();
     }
 
@@ -8572,35 +8280,10 @@ impl AcpThreadView {
         registry: &Entity<SlashCommandRegistry>,
         cx: &mut Context<Self>,
     ) {
-        let (mut commands, mut errors) = registry.read_with(cx, |registry, _| {
-            (registry.commands().clone(), registry.errors().to_vec())
-        });
-
-        let ThreadState::Ready(ReadyThreadState {
-            available_commands,
-            cached_user_commands,
-            cached_user_command_errors,
-            ..
-        }) = &self.thread_state
-        else {
+        let Some(thread_state) = self.as_ready_mut() else {
             return;
         };
-
-        let server_command_names = available_commands
-            .borrow()
-            .iter()
-            .map(|command| command.name.clone())
-            .collect::<HashSet<_>>();
-        user_slash_command::apply_server_command_conflicts_to_map(
-            &mut commands,
-            &mut errors,
-            &server_command_names,
-        );
-
-        self.command_load_errors = errors.clone();
-        self.command_load_errors_dismissed = false;
-        *cached_user_commands.borrow_mut() = commands;
-        *cached_user_command_errors.borrow_mut() = errors;
+        thread_state.refresh_cached_user_commands_from_registry(registry, cx);
         cx.notify();
     }
 
@@ -8609,33 +8292,22 @@ impl AcpThreadView {
         &self,
         _cx: &App,
     ) -> collections::HashMap<String, UserSlashCommand> {
-        let ThreadState::Ready(ReadyThreadState {
-            cached_user_commands,
-            ..
-        }) = &self.thread_state
-        else {
+        let Some(thread_state) = &self.as_ready() else {
             return collections::HashMap::default();
         };
-        cached_user_commands.borrow().clone()
+        thread_state.cached_user_commands.borrow().clone()
     }
 
     /// Returns the cached slash command errors, if available.
-    pub fn cached_slash_command_errors(&self, _cx: &App) -> Vec<CommandLoadError> {
-        let ThreadState::Ready(ReadyThreadState {
-            cached_user_command_errors,
-            ..
-        }) = &self.thread_state
-        else {
+    fn cached_slash_command_errors(&self, _cx: &App) -> Vec<CommandLoadError> {
+        let Some(thread_state) = &self.as_ready() else {
             return Vec::new();
         };
-        cached_user_command_errors.borrow().clone()
+        thread_state.cached_user_command_errors.borrow().clone()
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
-        let ThreadState::Ready(ReadyThreadState { thread_error, .. }) = &self.thread_state else {
-            return None;
-        };
-        let content = match thread_error.as_ref()? {
+        let content = match self.as_ready()?.thread_error.as_ref()? {
             ThreadError::Other { message, .. } => {
                 self.render_any_thread_error(message.clone(), window, cx)
             }
@@ -8682,18 +8354,11 @@ impl AcpThreadView {
     }
 
     fn current_mode_id(&self, cx: &App) -> Option<Arc<str>> {
-        if let Some(thread) = self.as_native_thread(cx) {
-            Some(thread.read(cx).profile().0.clone())
-        } else if let Some(mode_selector) = self.mode_selector() {
-            Some(mode_selector.read(cx).mode().0)
-        } else {
-            None
-        }
+        self.as_ready().and_then(|ready| ready.current_mode_id(cx))
     }
 
     fn current_model_id(&self, cx: &App) -> Option<String> {
-        self.model_selector()
-            .and_then(|selector| selector.read(cx).active_model(cx).map(|m| m.id.to_string()))
+        self.as_ready().and_then(|ready| ready.current_model_id(cx))
     }
 
     fn current_model_name(&self, cx: &App) -> SharedString {
@@ -8701,7 +8366,8 @@ impl AcpThreadView {
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
-            self.model_selector()
+            self.as_ready()
+                .and_then(|ready| ready.model_selector.as_ref())
                 .and_then(|selector| selector.read(cx).active_model(cx))
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
@@ -8714,7 +8380,9 @@ impl AcpThreadView {
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
         let model_or_agent_name = self.current_model_name(cx);
         let refusal_message = format!(
-            "{} refused to respond to this prompt. This can happen when a model believes the prompt violates its content policy or safety guidelines, so rephrasing it can sometimes address the issue.",
+            "{} refused to respond to this prompt. \
+            This can happen when a model believes the prompt violates its content policy \
+            or safety guidelines, so rephrasing it can sometimes address the issue.",
             model_or_agent_name
         );
 
@@ -8725,6 +8393,12 @@ impl AcpThreadView {
             .description(refusal_message.clone())
             .actions_slot(self.create_copy_button(&refusal_message))
             .dismiss_action(self.dismiss_error_button(cx))
+    }
+    
+    fn set_can_fast_track_queue(&mut self, value: bool) {
+        if let Some(ready) = self.as_ready_mut() {
+            ready.can_fast_track_queue = value;
+        }
     }
 
     fn render_any_thread_error(
@@ -8972,8 +8646,9 @@ impl AcpThreadView {
 
 pub struct ReadyThreadState {
     pub thread: Entity<AcpThread>,
+    workspace: WeakEntity<Workspace>,
     entry_view_state: Entity<EntryViewState>,
-    title_editor: Option<Entity<Editor>>,
+    pub title_editor: Option<Entity<Editor>>,
     config_options_view: Option<Entity<ConfigOptionsView>>,
     mode_selector: Option<Entity<ModeSelector>>,
     model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -9006,12 +8681,8 @@ pub struct ReadyThreadState {
     queued_message_editors: Vec<Entity<MessageEditor>>,
     queued_message_editor_subscriptions: Vec<Subscription>,
     last_synced_queue_length: usize,
-    turn_tokens: Option<u64>,
-    last_turn_tokens: Option<u64>,
-    turn_started_at: Option<Instant>,
-    last_turn_duration: Option<Duration>,
-    turn_generation: usize,
-    _turn_timer_task: Option<Task<()>>,
+    turn_fields: TurnFields,
+    command_load_errors_dismissed: bool,
     discarded_partial_edits: HashSet<agent_client_protocol::ToolCallId>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
@@ -9029,9 +8700,20 @@ pub struct ReadyThreadState {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Default)]
+struct TurnFields {
+    _turn_timer_task: Option<Task<()>>,
+    last_turn_duration: Option<Duration>,
+    last_turn_tokens: Option<u64>,
+    turn_generation: usize,
+    turn_started_at: Option<Instant>,
+    turn_tokens: Option<u64>,
+}
+
 impl ReadyThreadState {
     fn new(
         thread: Entity<AcpThread>,
+        workspace: WeakEntity<Workspace>,
         entry_view_state: Entity<EntryViewState>,
         title_editor: Option<Entity<Editor>>,
         config_options_view: Option<Entity<ConfigOptionsView>>,
@@ -9049,6 +8731,7 @@ impl ReadyThreadState {
     ) -> Self {
         Self {
             thread,
+            workspace,
             entry_view_state,
             title_editor,
             config_options_view,
@@ -9062,6 +8745,7 @@ impl ReadyThreadState {
             cached_user_command_errors,
             resumed_without_history,
             resume_thread_metadata,
+            command_load_errors_dismissed: false,
             _subscriptions: subscriptions,
             permission_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
@@ -9084,12 +8768,7 @@ impl ReadyThreadState {
             queued_message_editors: Vec::new(),
             queued_message_editor_subscriptions: Vec::new(),
             last_synced_queue_length: 0,
-            turn_tokens: None,
-            last_turn_tokens: None,
-            turn_started_at: None,
-            last_turn_duration: None,
-            turn_generation: 0,
-            _turn_timer_task: None,
+            turn_fields: TurnFields::default(),
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
@@ -9101,7 +8780,664 @@ impl ReadyThreadState {
             hovered_edited_file_buttons: None,
         }
     }
+
+    fn refresh_cached_user_commands_from_registry(
+        &mut self,
+        registry: &Entity<SlashCommandRegistry>,
+        cx: &App,
+    ) {
+        let (mut commands, mut errors) = registry.read_with(cx, |registry, _| {
+            (registry.commands().clone(), registry.errors().to_vec())
+        });
+        let server_command_names = self
+            .available_commands
+            .borrow()
+            .iter()
+            .map(|command| command.name.clone())
+            .collect::<HashSet<_>>();
+        user_slash_command::apply_server_command_conflicts_to_map(
+            &mut commands,
+            &mut errors,
+            &server_command_names,
+        );
+
+        self.command_load_errors_dismissed = false;
+        *self.cached_user_commands.borrow_mut() = commands;
+        *self.cached_user_command_errors.borrow_mut() = errors;
+    }
+
+    fn remove_from_queue(
+        &mut self,
+        index: usize,
+        cx: &mut Context<AcpThreadView>,
+    ) -> Option<QueuedMessage> {
+        if index < self.local_queued_messages.len() {
+            let removed = self.local_queued_messages.remove(index);
+            self.sync_queue_flag_to_native_thread(cx);
+            Some(removed)
+        } else {
+            None
+        }
+    }
+
+    fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<AcpThreadView>) {
+        if let Some(native_thread) = self.as_native_thread(cx) {
+            let has_queued = self.has_queued_messages();
+            native_thread.update(cx, |thread, _| {
+                thread.set_has_queued_message(has_queued);
+            });
+        }
+    }
+
+    fn send_queued_message_at_index(
+        &mut self,
+        index: usize,
+        is_send_now: bool,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let Some(queued) = self.remove_from_queue(index, cx) else {
+            return;
+        };
+        let content = queued.content;
+        let tracked_buffers = queued.tracked_buffers;
+
+        // Only increment skip count for "Send Now" operations (out-of-order sends)
+        // Normal auto-processing from the Stopped handler doesn't need to skip.
+        // We only skip the Stopped event from the cancelled generation, NOT the
+        // Stopped event from the newly sent message (which should trigger queue processing).
+        if is_send_now {
+            let is_generating =
+                self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+            self.skip_queue_processing_count += if is_generating { 1 } else { 0 };
+        }
+
+        let cancelled = self.thread.update(cx, |thread, cx| thread.cancel(cx));
+
+        let workspace = self.workspace.clone();
+
+        let should_be_following = self.should_be_following;
+        let contents_task = cx.spawn_in(window, async move |_this, cx| {
+            cancelled.await;
+            if should_be_following {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.follow(CollaboratorId::Agent, window, cx);
+                    })
+                    .ok();
+            }
+
+            Ok(Some((content, tracked_buffers)))
+        });
+
+        self.send_content(contents_task, window, cx);
+    }
+
+    fn current_model_id(&self, cx: &App) -> Option<String> {
+        let selector = self.model_selector.as_ref()?;
+        let model = selector.read(cx).active_model(cx)?;
+        Some(model.id.to_string())
+    }
+
+    fn current_mode_id(&self, cx: &App) -> Option<Arc<str>> {
+        if let Some(thread) = self.as_native_thread(cx) {
+            Some(thread.read(cx).profile().0.clone())
+        } else {
+            let mode_selector = self.mode_selector.as_ref()?;
+            Some(mode_selector.read(cx).mode().0)
+        }
+    }
+
+    fn send_content(
+        &mut self,
+        contents_task: Task<anyhow::Result<Option<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let session_id = self.thread.read(cx).session_id().clone();
+        let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
+        let thread = self.thread.downgrade();
+
+        self.is_loading_contents = true;
+
+        let model_id = self.current_model_id(cx);
+        let mode_id = self.current_mode_id(cx);
+        let guard = cx.new(|_| ());
+        cx.observe_release(&guard, |this, _guard, cx| {
+            if let ThreadState::Ready(ReadyThreadState {
+                is_loading_contents,
+                ..
+            }) = &mut this.thread_state
+            {
+                *is_loading_contents = false;
+            }
+            cx.notify();
+        })
+        .detach();
+
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let Some((contents, tracked_buffers)) = contents_task.await? else {
+                return Ok(());
+            };
+
+            let generation = this.update_in(cx, |this, _window, cx| {
+                this.in_flight_prompt = Some(contents.clone());
+                let generation = this.start_turn(cx);
+                this.set_editor_is_expanded(false, cx);
+                this.scroll_to_bottom(cx);
+                generation
+            })?;
+
+            let _stop_turn = defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                move || {
+                    this.update(&mut cx, |this, cx| {
+                        this.stop_turn(generation);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            });
+            let turn_start_time = Instant::now();
+            let send = thread.update(cx, |thread, cx| {
+                thread.action_log().update(cx, |action_log, cx| {
+                    for buffer in tracked_buffers {
+                        action_log.buffer_read(buffer, cx)
+                    }
+                });
+                drop(guard);
+
+                telemetry::event!(
+                    "Agent Message Sent",
+                    agent = agent_telemetry_id,
+                    session = session_id,
+                    model = model_id,
+                    mode = mode_id
+                );
+
+                thread.send(contents, cx)
+            })?;
+            let res = send.await;
+            let turn_time_ms = turn_start_time.elapsed().as_millis();
+            drop(_stop_turn);
+            let status = if res.is_ok() {
+                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
+                "success"
+            } else {
+                "failure"
+            };
+            telemetry::event!(
+                "Agent Turn Completed",
+                agent = agent_telemetry_id,
+                session = session_id,
+                model = model_id,
+                mode = mode_id,
+                status,
+                turn_time_ms,
+            );
+            res
+        });
+
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = task.await {
+                this.update(cx, |this, cx| {
+                    this.handle_thread_error(err, cx);
+                })
+                .ok();
+            } else {
+                this.update(cx, |this, cx| {
+                    if let ThreadState::Ready(ReadyThreadState {
+                        should_be_following,
+                        ..
+                    }) = &mut this.thread_state
+                    {
+                        *should_be_following = this
+                            .workspace
+                            .update(cx, |workspace, _| {
+                                workspace.is_being_followed(CollaboratorId::Agent)
+                            })
+                            .unwrap_or_default();
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn render_command_load_errors(
+        &self,
+        cx: &mut Context<AcpThreadView>,
+    ) -> Option<impl IntoElement> {
+        let errors = self.cached_user_command_errors.borrow();
+
+        if self.command_load_errors_dismissed || errors.is_empty() {
+            return None;
+        }
+
+        let workspace = self.workspace.clone();
+
+        let error_count = errors.len();
+        let title = if error_count == 1 {
+            "Failed to load slash command"
+        } else {
+            "Failed to load slash commands"
+        };
+
+        Some(
+            v_flex()
+                .w_full()
+                .p_2()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().surface_background)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new(title)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                ),
+                        )
+                        .child(
+                            IconButton::new("dismiss-command-errors", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Dismiss"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.clear_command_load_errors(cx);
+                                })),
+                        ),
+                )
+                .children(errors.iter().enumerate().map({
+                    move |(i, error)| {
+                        let path = error.path.clone();
+                        let workspace = workspace.clone();
+                        let file_name = error
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| error.path.display().to_string());
+
+                        h_flex()
+                            .id(ElementId::Name(format!("command-error-{i}").into()))
+                            .gap_1()
+                            .px_1()
+                            .py_0p5()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text(format!(
+                                "Click to open {}\n\n{}",
+                                error.path.display(),
+                                error.message
+                            )))
+                            .on_click({
+                                move |_, window, cx| {
+                                    if let Some(workspace) = workspace.upgrade() {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    path.clone(),
+                                                    OpenOptions::default(),
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        });
+                                    }
+                                }
+                            })
+                            .child(
+                                Label::new(format!("• {}: {}", file_name, error.message))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                    }
+                })),
+        )
+    }
+
+    fn render_thread_retry_status_callout(&self) -> Option<Callout> {
+        let state = self.thread_retry_status.as_ref()?;
+
+        let next_attempt_in = state
+            .duration
+            .saturating_sub(Instant::now().saturating_duration_since(state.started_at));
+        if next_attempt_in.is_zero() {
+            return None;
+        }
+
+        let next_attempt_in_secs = next_attempt_in.as_secs() + 1;
+
+        let retry_message = if state.max_attempts == 1 {
+            if next_attempt_in_secs == 1 {
+                "Retrying. Next attempt in 1 second.".to_string()
+            } else {
+                format!("Retrying. Next attempt in {next_attempt_in_secs} seconds.")
+            }
+        } else if next_attempt_in_secs == 1 {
+            format!(
+                "Retrying. Next attempt in 1 second (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
+        } else {
+            format!(
+                "Retrying. Next attempt in {next_attempt_in_secs} seconds (Attempt {} of {}).",
+                state.attempt, state.max_attempts,
+            )
+        };
+
+        Some(
+            Callout::new()
+                .severity(Severity::Warning)
+                .title(state.last_error.clone())
+                .description(retry_message),
+        )
+    }
+
+    pub fn expand_message_editor(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        self.set_editor_is_expanded(!self.editor_expanded, message_editor, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn set_editor_is_expanded(
+        &mut self,
+        is_expanded: bool,
+        message_editor: Entity<MessageEditor>,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        self.editor_expanded = is_expanded;
+        message_editor.update(cx, |editor, cx| {
+            if is_expanded {
+                editor.set_mode(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+                    },
+                    cx,
+                )
+            } else {
+                let agent_settings = AgentSettings::get_global(cx);
+                editor.set_mode(
+                    EditorMode::AutoHeight {
+                        min_lines: agent_settings.message_editor_min_lines,
+                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
+                    },
+                    cx,
+                )
+            }
+        });
+        cx.notify();
+    }
+
+    pub fn handle_title_editor_event(
+        &mut self,
+        title_editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let thread = &self.thread;
+
+        match event {
+            EditorEvent::BufferEdited => {
+                let new_title = title_editor.read(cx).text(cx);
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .set_title(new_title.into(), cx)
+                        .detach_and_log_err(cx);
+                })
+            }
+            EditorEvent::Blurred => {
+                if title_editor.read(cx).text(cx).is_empty() {
+                    title_editor.update(cx, |editor, cx| {
+                        editor.set_text("New Thread", window, cx);
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn retry_generation(&mut self, cx: &mut Context<AcpThreadView>) {
+        self.thread_error.take();
+
+        let thread = &self.thread;
+        if !thread.read(cx).can_retry(cx) {
+            return;
+        }
+
+        let task = thread.update(cx, |thread, cx| thread.retry(cx));
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+
+            this.update(cx, |this, cx| {
+                if let Err(err) = result {
+                    this.handle_thread_error(err, cx);
+                }
+            })
+        })
+        .detach();
+    }
+
+    fn has_queued_messages(&self) -> bool {
+        !self.local_queued_messages.is_empty()
+    }
+
+    fn send(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        agent: Rc<dyn AgentServer>,
+        login: Option<task::SpawnInTerminal>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let thread = &self.thread;
+
+        if self.is_loading_contents {
+            return;
+        }
+
+        let is_editor_empty = message_editor.read(cx).is_empty(cx);
+        let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
+
+        let has_queued = self.has_queued_messages();
+        if is_editor_empty && self.can_fast_track_queue && has_queued {
+            self.can_fast_track_queue = false;
+            self.send_queued_message_at_index(0, true, window, cx);
+            return;
+        }
+
+        if is_editor_empty {
+            return;
+        }
+
+        if is_generating {
+            self.queue_message(message_editor, window, cx);
+            return;
+        }
+
+        let text = message_editor.read(cx).text(cx);
+        let text = text.trim();
+        if text == "/login" || text == "/logout" {
+            let connection = thread.read(cx).connection().clone();
+            let can_login = !connection.auth_methods().is_empty() || login.is_some();
+            // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
+            let logout_supported = text == "/logout"
+                && self
+                    .available_commands
+                    .borrow()
+                    .iter()
+                    .any(|command| command.name == "logout");
+            if can_login && !logout_supported {
+                message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+
+                let this = cx.weak_entity();
+                let agent = agent.clone();
+                window.defer(cx, |window, cx| {
+                    AcpThreadView::handle_auth_required(
+                        this,
+                        AuthRequired::new(),
+                        agent,
+                        connection,
+                        window,
+                        cx,
+                    );
+                });
+                cx.notify();
+                return;
+            }
+        }
+
+        self.send_impl(message_editor, window, cx)
+    }
+
+    pub(crate) fn as_native_connection(
+        &self,
+        cx: &App,
+    ) -> Option<Rc<agent::NativeAgentConnection>> {
+        let acp_thread = self.thread.read(cx);
+        acp_thread.connection().clone().downcast()
+    }
+
+    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
+        let acp_thread = self.thread.read(cx);
+        self.as_native_connection(cx)?
+            .thread(acp_thread.session_id(), cx)
+    }
+
+    fn send_impl(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
+            // Include full contents when using minimal profile
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+
+        let cached_commands = &self.cached_user_commands;
+        let cached_errors = &self.cached_user_command_errors;
+        let contents = message_editor.update(cx, |message_editor, cx| {
+            message_editor.contents_with_cache(
+                full_mention_content,
+                Some(cached_commands.borrow().clone()),
+                Some(cached_errors.borrow().clone()),
+                cx,
+            )
+        });
+
+        self.thread_error.take();
+        self.thread_feedback.clear();
+        self.editing_message.take();
+
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
+        }
+
+        let contents_task = cx.spawn_in(window, async move |_this, cx| {
+            let (contents, tracked_buffers) = contents.await?;
+
+            if contents.is_empty() {
+                return Ok(None);
+            }
+
+            // todo! check
+            let _ = cx.update(|window, cx| {
+                message_editor.update(cx, |message_editor, cx| {
+                    message_editor.clear(window, cx);
+                });
+            });
+
+            Ok(Some((contents, tracked_buffers)))
+        });
+
+        self.send_content(contents_task, window, cx);
+    }
+
+    fn queue_message(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let is_idle = self.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
+
+        if is_idle {
+            self.send_impl(message_editor.clone(), window, cx);
+            return;
+        }
+
+        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+
+        let cached_commands = self.cached_user_commands.borrow().clone();
+        let cached_errors = self.cached_user_command_errors.borrow().clone();
+        let contents = message_editor.update(cx, |message_editor, cx| {
+            message_editor.contents_with_cache(
+                full_mention_content,
+                Some(cached_commands),
+                Some(cached_errors),
+                cx,
+            )
+        });
+
+        // let message_editor = message_editor.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (content, tracked_buffers) = contents.await?;
+
+            if content.is_empty() {
+                return Ok::<(), anyhow::Error>(());
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                this.add_to_queue(content, tracked_buffers, cx);
+                // Enable fast-track: user can press Enter again to send this queued message immediately
+                this.set_can_fast_track_queue(true);
+                message_editor.update(cx, |message_editor, cx| {
+                    message_editor.clear(window, cx);
+                });
+                cx.notify();
+            })?;
+            Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 }
+
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
     Icon::new(IconName::LoadCircle)
@@ -9200,7 +9536,10 @@ impl Render for AcpThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if let Some(config_options_view) = this.config_options_view() {
+                if let Some(config_options_view) = this
+                    .as_ready()
+                    .and_then(|ready| ready.config_options_view.as_ref())
+                {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
                             acp::SessionConfigOptionCategory::Mode,
@@ -9213,14 +9552,23 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(profile_selector) = this.profile_selector() {
+                if let Some(profile_selector) = this
+                    .as_ready()
+                    .and_then(|ready| ready.profile_selector.as_ref())
+                {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
-                } else if let Some(mode_selector) = this.mode_selector() {
+                } else if let Some(mode_selector) = this
+                    .as_ready()
+                    .and_then(|ready| ready.mode_selector.as_ref())
+                {
                     mode_selector.read(cx).menu_handle().toggle(window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(config_options_view) = this.config_options_view() {
+                if let Some(config_options_view) = this
+                    .as_ready()
+                    .and_then(|ready| ready.config_options_view.as_ref())
+                {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
                             acp::SessionConfigOptionCategory::Mode,
@@ -9233,18 +9581,27 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(profile_selector) = this.profile_selector() {
+                if let Some(profile_selector) = this
+                    .as_ready()
+                    .and_then(|ready| ready.profile_selector.as_ref())
+                {
                     profile_selector.update(cx, |profile_selector, cx| {
                         profile_selector.cycle_profile(cx);
                     });
-                } else if let Some(mode_selector) = this.mode_selector() {
+                } else if let Some(mode_selector) = this
+                    .as_ready()
+                    .and_then(|ready| ready.mode_selector.as_ref())
+                {
                     mode_selector.update(cx, |mode_selector, cx| {
                         mode_selector.cycle_mode(window, cx);
                     });
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                if let Some(config_options_view) = this.config_options_view() {
+                if let Some(config_options_view) = this
+                    .as_ready()
+                    .and_then(|ready| ready.config_options_view.as_ref())
+                {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
                             acp::SessionConfigOptionCategory::Model,
@@ -9257,13 +9614,19 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(model_selector) = this.model_selector() {
+                if let Some(model_selector) = this
+                    .as_ready()
+                    .and_then(|ready| ready.model_selector.as_ref())
+                {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
-                if let Some(config_options_view) = this.config_options_view() {
+                if let Some(config_options_view) = this
+                    .as_ready()
+                    .and_then(|ready| ready.config_options_view.as_ref())
+                {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
                             acp::SessionConfigOptionCategory::Model,
@@ -9276,7 +9639,10 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(model_selector) = this.model_selector() {
+                if let Some(model_selector) = this
+                    .as_ready()
+                    .and_then(|ready| ready.model_selector.as_ref())
+                {
                     model_selector.update(cx, |model_selector, cx| {
                         model_selector.cycle_favorite_models(window, cx);
                     });
@@ -9315,18 +9681,14 @@ impl Render for AcpThreadView {
                     .justify_end()
                     .child(self.render_load_error(e, window, cx))
                     .into_any(),
-                ThreadState::Ready(ReadyThreadState {
-                    list_state,
-                    resumed_without_history,
-                    ..
-                }) => v_flex().flex_1().map(|this| {
-                    let this = this.when(*resumed_without_history, |this| {
+                ThreadState::Ready(thread_state) => v_flex().flex_1().map(|this| {
+                    let this = this.when(thread_state.resumed_without_history, |this| {
                         this.child(self.render_resume_notice(cx))
                     });
                     if has_messages {
                         this.child(
                             list(
-                                list_state.clone(),
+                                thread_state.list_state.clone(),
                                 cx.processor(|this, index: usize, window, cx| {
                                     let Some((entry, len)) = this.as_ready().and_then(|ready| {
                                         let entries = &ready.thread.read(cx).entries();
@@ -9341,7 +9703,7 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(list_state, window, cx)
+                        .vertical_scrollbar_for(&thread_state.list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
@@ -9357,11 +9719,13 @@ impl Render for AcpThreadView {
                 }
                 _ => this,
             })
-            .children(self.render_thread_retry_status_callout(window, cx))
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })
-            .children(self.render_command_load_errors(cx))
+            .when_some(self.as_ready(), |this, thread_state| {
+                this.children(thread_state.render_thread_retry_status_callout())
+                    .children(thread_state.render_command_load_errors(cx))
+            })
             .children(self.render_thread_error(window, cx))
             .when_some(
                 match has_messages {
@@ -9372,10 +9736,7 @@ impl Render for AcpThreadView {
                 },
                 |this, version| this.child(self.render_new_version_callout(version, cx)),
             )
-            .children(
-                self.render_token_limit_callout(cx)
-                    .map(|token_limit_callout| token_limit_callout.into_any_element()),
-            )
+            .children(self.render_token_limit_callout(cx))
             .child(self.render_message_editor(window, cx))
     }
 }

@@ -1638,7 +1638,7 @@ impl AgentPanel {
                     .as_native_thread(cx)
                     .map_or(false, |t| t.read(cx).is_generating_title());
 
-                if let Some(title_editor) = thread_view.read(cx).title_editor() {
+                if let Some(title_editor) = thread_view.read(cx).as_ready().and_then(|ready| ready.title_editor.clone()) {
                     let container = div()
                         .w_full()
                         .on_action({
