@@ -769,6 +769,9 @@ pub async fn fetch_rated_examples_after(
             WHERE event_type = ?
                 AND (? IS NULL OR event_properties:rating::string = ?)
                 AND time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND event_properties:inputs IS NOT NULL
+                AND event_properties:inputs:cursor_excerpt IS NOT NULL
+                AND event_properties:output IS NOT NULL
             ORDER BY time ASC
             LIMIT ?
         "#};
@@ -907,13 +910,7 @@ fn rated_examples_from_response<'a>(
 
             let inputs_json = get_json("inputs");
             let inputs: Option<ZetaPromptInput> = match &inputs_json {
-                Some(v) => match serde_json::from_value({
-                    let mut value = v.clone();
-                    if let Some(obj) = value.as_object_mut() && !obj.contains_key("cursor_excerpt") {
-                        obj.insert("cursor_excerpt".to_string(), "".into());
-                    }
-                    value
-                }) {
+                Some(v) => match serde_json::from_value(v.clone()) {
                     Ok(parsed) => Some(parsed),
                     Err(e) => {
                         log::warn!(
