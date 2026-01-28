@@ -284,6 +284,25 @@ impl ProtoConversion for dap_types::StackFrame {
     }
 }
 
+impl ProtoConversion for dap_types::ModuleId {
+    type ProtoType = proto::dap_module_id::Id;
+    type Output = Self;
+
+    fn to_proto(self) -> Self::ProtoType {
+        match self {
+            Self::Number(num) => Self::ProtoType::Number(num),
+            Self::String(string) => Self::ProtoType::String(string),
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self::Output {
+        match payload {
+            Self::ProtoType::Number(num) => Self::Number(num),
+            Self::ProtoType::String(string) => Self::String(string),
+        }
+    }
+}
+
 impl ProtoConversion for dap_types::Module {
     type ProtoType = DapModule;
     type Output = Result<Self>;
