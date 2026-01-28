@@ -323,39 +323,29 @@ impl DiffStats {
 }
 
 pub struct AcpThreadView {
-    agent: Rc<dyn AgentServer>, // keep
-    agent_server_store: Entity<AgentServerStore>, // keep
-    workspace: WeakEntity<Workspace>, // keep
-    project: Entity<Project>, // keep
-    thread_store: Option<Entity<ThreadStore>>, // keep
-    prompt_store: Option<Entity<PromptStore>>, // keep
-    thread_state: ThreadState, // keep
-    /// Tracks the selected granularity index for each tool call's permission dropdown.
-    /// The index corresponds to the position in the allow_options list.
-    /// Default is the last option (index pointing to "Only this time").
-    selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
-    login: Option<task::SpawnInTerminal>, // keep
-    recent_history_entries: Vec<AgentSessionInfo>, // keep
-    history: Entity<AcpThreadHistory>, // keep
-    _history_subscription: Subscription, // keep
-    hovered_recent_history_item: Option<usize>, // keep
-    message_editor: Entity<MessageEditor>, // keep
-    focus_handle: FocusHandle, // keep
-    notifications: Vec<WindowHandle<AgentNotification>>, // keep
-    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
-    command_load_errors: Vec<CommandLoadError>, // keep
-    command_load_errors_dismissed: bool, // keep
-    slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
-    auth_task: Option<Task<()>>, // keep
-    resume_thread_metadata: Option<AgentSessionInfo>,
-    _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 4], // keep
-    show_codex_windows_warning: bool, // keep
-    in_flight_prompt: Option<Vec<acp::ContentBlock>>, // keep
-    skip_queue_processing_count: usize,
-    user_interrupted_generation: bool,
-    can_fast_track_queue: bool,
-    hovered_edited_file_buttons: Option<usize>,
+    agent: Rc<dyn AgentServer>,
+    agent_server_store: Entity<AgentServerStore>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    thread_store: Option<Entity<ThreadStore>>,
+    prompt_store: Option<Entity<PromptStore>>,
+    thread_state: ThreadState,
+    login: Option<task::SpawnInTerminal>,
+    recent_history_entries: Vec<AgentSessionInfo>,
+    history: Entity<AcpThreadHistory>,
+    _history_subscription: Subscription,
+    hovered_recent_history_item: Option<usize>,
+    message_editor: Entity<MessageEditor>,
+    focus_handle: FocusHandle,
+    notifications: Vec<WindowHandle<AgentNotification>>,
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
+    command_load_errors: Vec<CommandLoadError>,
+    command_load_errors_dismissed: bool,
+    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
+    auth_task: Option<Task<()>>,
+    _subscriptions: [Subscription; 4],
+    show_codex_windows_warning: bool,
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 enum ThreadState {
@@ -406,6 +396,16 @@ enum ThreadState {
         is_loading_contents: bool,
         new_server_version_available: Option<SharedString>,
         resumed_without_history: bool,
+        /// Tracks the selected granularity index for each tool call's permission dropdown.
+        /// The index corresponds to the position in the allow_options list.
+        /// Default is the last option (index pointing to "Only this time").
+        selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
+        resume_thread_metadata: Option<AgentSessionInfo>,
+        _cancel_task: Option<Task<()>>,
+        skip_queue_processing_count: usize,
+        user_interrupted_generation: bool,
+        can_fast_track_queue: bool,
+        hovered_edited_file_buttons: Option<usize>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -555,7 +555,6 @@ impl AcpThreadView {
             project: project.clone(),
             thread_store,
             prompt_store,
-            selected_permission_granularity: HashMap::default(),
             thread_state: Self::initial_state(
                 agent.clone(),
                 resume_thread.clone(),
@@ -581,15 +580,9 @@ impl AcpThreadView {
             _history_subscription: history_subscription,
             hovered_recent_history_item: None,
             _subscriptions: subscriptions,
-            _cancel_task: None,
             focus_handle: cx.focus_handle(),
-            resume_thread_metadata: resume_thread,
             show_codex_windows_warning,
             in_flight_prompt: None,
-            skip_queue_processing_count: 0,
-            user_interrupted_generation: false,
-            can_fast_track_queue: false,
-            hovered_edited_file_buttons: None,
         }
     }
 
@@ -598,6 +591,16 @@ impl AcpThreadView {
         let available_commands = Rc::new(RefCell::new(vec![]));
         let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
         let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
+
+        let resume_thread_metadata = if let ThreadState::Ready {
+            resume_thread_metadata,
+            ..
+        } = &self.thread_state
+        {
+            resume_thread_metadata.clone()
+        } else {
+            None
+        };
 
         self.message_editor.update(cx, |editor, cx| {
             editor.set_command_state(
@@ -611,7 +614,7 @@ impl AcpThreadView {
 
         self.thread_state = Self::initial_state(
             self.agent.clone(),
-            self.resume_thread_metadata.clone(),
+            resume_thread_metadata,
             self.workspace.clone(),
             self.project.clone(),
             prompt_capabilities,
@@ -946,6 +949,13 @@ impl AcpThreadView {
                             is_loading_contents: false,
                             new_server_version_available: None,
                             resumed_without_history,
+                            selected_permission_granularity: HashMap::default(),
+                            resume_thread_metadata: resume_thread.clone(),
+                            _cancel_task: None,
+                            skip_queue_processing_count: 0,
+                            user_interrupted_generation: false,
+                            can_fast_track_queue: false,
+                            hovered_edited_file_buttons: None,
                             _subscriptions: subscriptions,
                         };
 
@@ -1245,16 +1255,16 @@ impl AcpThreadView {
         if let ThreadState::Ready {
             thread_retry_status,
             thread_error,
+            user_interrupted_generation,
+            _cancel_task,
+            thread,
             ..
         } = &mut self.thread_state
         {
             thread_retry_status.take();
             thread_error.take();
-        }
-        self.user_interrupted_generation = true;
-
-        if let Some(thread) = self.thread() {
-            self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
+            *user_interrupted_generation = true;
+            *_cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
         }
     }
 
@@ -1361,7 +1371,13 @@ impl AcpThreadView {
             };
 
             this.update_in(cx, |this, window, cx| {
-                this.resume_thread_metadata = Some(thread_metadata);
+                if let ThreadState::Ready {
+                    resume_thread_metadata,
+                    ..
+                } = &mut this.thread_state
+                {
+                    *resume_thread_metadata = Some(thread_metadata);
+                }
                 this.reset(window, cx);
             })?;
 
@@ -1578,8 +1594,23 @@ impl AcpThreadView {
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
         let has_queued = self.has_queued_messages();
-        if is_editor_empty && self.can_fast_track_queue && has_queued {
-            self.can_fast_track_queue = false;
+        let can_fast_track_queue = if let ThreadState::Ready {
+            can_fast_track_queue,
+            ..
+        } = &self.thread_state
+        {
+            *can_fast_track_queue
+        } else {
+            false
+        };
+        if is_editor_empty && can_fast_track_queue && has_queued {
+            if let ThreadState::Ready {
+                can_fast_track_queue,
+                ..
+            } = &mut self.thread_state
+            {
+                *can_fast_track_queue = false;
+            }
             self.send_queued_message_at_index(0, true, window, cx);
             return;
         }
@@ -1659,8 +1690,15 @@ impl AcpThreadView {
             return;
         };
 
-        self.skip_queue_processing_count = 0;
-        self.user_interrupted_generation = true;
+        if let ThreadState::Ready {
+            skip_queue_processing_count,
+            user_interrupted_generation,
+            ..
+        } = &mut self.thread_state
+        {
+            *skip_queue_processing_count = 0;
+            *user_interrupted_generation = true;
+        }
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
@@ -1979,7 +2017,13 @@ impl AcpThreadView {
             this.update_in(cx, |this, window, cx| {
                 this.add_to_queue(content, tracked_buffers, cx);
                 // Enable fast-track: user can press Enter again to send this queued message immediately
-                this.can_fast_track_queue = true;
+                if let ThreadState::Ready {
+                    can_fast_track_queue,
+                    ..
+                } = &mut this.thread_state
+                {
+                    *can_fast_track_queue = true;
+                }
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
@@ -2013,7 +2057,13 @@ impl AcpThreadView {
         // Stopped event from the newly sent message (which should trigger queue processing).
         if is_send_now {
             let is_generating = thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
-            self.skip_queue_processing_count += if is_generating { 1 } else { 0 };
+            if let ThreadState::Ready {
+                skip_queue_processing_count,
+                ..
+            } = &mut self.thread_state
+            {
+                *skip_queue_processing_count += if is_generating { 1 } else { 0 };
+            }
         }
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
@@ -2330,27 +2380,35 @@ impl AcpThreadView {
                     cx,
                 );
 
-                if self.skip_queue_processing_count > 0 {
-                    self.skip_queue_processing_count -= 1;
-                } else if self.user_interrupted_generation {
-                    // Manual interruption: don't auto-process queue.
-                    // Reset the flag so future completions can process normally.
-                    self.user_interrupted_generation = false;
-                } else {
-                    let has_queued = self.has_queued_messages();
-                    // Don't auto-send if the first message editor is currently focused
-                    let is_first_editor_focused = match &self.thread_state {
-                        ThreadState::Ready {
-                            queued_message_editors,
-                            ..
-                        } => queued_message_editors
+                let should_send_queued = if let ThreadState::Ready {
+                    skip_queue_processing_count,
+                    user_interrupted_generation,
+                    queued_message_editors,
+                    local_queued_messages,
+                    ..
+                } = &mut self.thread_state
+                {
+                    if *skip_queue_processing_count > 0 {
+                        *skip_queue_processing_count -= 1;
+                        false
+                    } else if *user_interrupted_generation {
+                        // Manual interruption: don't auto-process queue.
+                        // Reset the flag so future completions can process normally.
+                        *user_interrupted_generation = false;
+                        false
+                    } else {
+                        let has_queued = !local_queued_messages.is_empty();
+                        // Don't auto-send if the first message editor is currently focused
+                        let is_first_editor_focused = queued_message_editors
                             .first()
-                            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window)),
-                        _ => false,
-                    };
-                    if has_queued && !is_first_editor_focused {
-                        self.send_queued_message_at_index(0, false, window, cx);
+                            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
+                        has_queued && !is_first_editor_focused
                     }
+                } else {
+                    false
+                };
+                if should_send_queued {
+                    self.send_queued_message_at_index(0, false, window, cx);
                 }
 
                 self.history.update(cx, |history, cx| history.refresh(cx));
@@ -4454,11 +4512,18 @@ impl AcpThreadView {
         });
 
         // Get the selected granularity index, defaulting to the last option ("Only this time")
-        let selected_index = self
-            .selected_permission_granularity
-            .get(&tool_call_id)
-            .copied()
-            .unwrap_or_else(|| choices.len().saturating_sub(1));
+        let selected_index = if let ThreadState::Ready {
+            selected_permission_granularity,
+            ..
+        } = &self.thread_state
+        {
+            selected_permission_granularity
+                .get(&tool_call_id)
+                .copied()
+                .unwrap_or_else(|| choices.len().saturating_sub(1))
+        } else {
+            choices.len().saturating_sub(1)
+        };
 
         let selected_choice = choices.get(selected_index).or(choices.last());
 
@@ -6006,10 +6071,16 @@ impl AcpThreadView {
             .gap_1()
             .bg(editor_bg_color)
             .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                if *is_hovered {
-                    this.hovered_edited_file_buttons = Some(index);
-                } else if this.hovered_edited_file_buttons == Some(index) {
-                    this.hovered_edited_file_buttons = None;
+                if let ThreadState::Ready {
+                    hovered_edited_file_buttons,
+                    ..
+                } = &mut this.thread_state
+                {
+                    if *is_hovered {
+                        *hovered_edited_file_buttons = Some(index);
+                    } else if *hovered_edited_file_buttons == Some(index) {
+                        *hovered_edited_file_buttons = None;
+                    }
                 }
                 cx.notify();
             }));
@@ -6237,7 +6308,10 @@ impl AcpThreadView {
                                         .label_size(LabelSize::XSmall),
                                     )
                                     .when(
-                                        self.hovered_edited_file_buttons != Some(index),
+                                        !matches!(
+                                            &self.thread_state,
+                                            ThreadState::Ready { hovered_edited_file_buttons: Some(i), .. } if *i == index
+                                        ),
                                         |this| {
                                             let full_path = full_path.clone();
                                             this.hover(|s| s.bg(cx.theme().colors().element_hover))
@@ -6314,7 +6388,13 @@ impl AcpThreadView {
                     .key_binding(KeyBinding::for_action(&ClearMessageQueue, cx))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.clear_queue(cx);
-                        this.can_fast_track_queue = false;
+                        if let ThreadState::Ready {
+                            can_fast_track_queue,
+                            ..
+                        } = &mut this.thread_state
+                        {
+                            *can_fast_track_queue = false;
+                        }
                         cx.notify();
                     })),
             )
@@ -6338,7 +6418,15 @@ impl AcpThreadView {
         };
 
         let queue_len = queued_message_editors.len();
-        let can_fast_track = self.can_fast_track_queue && queue_len > 0;
+        let can_fast_track = if let ThreadState::Ready {
+            can_fast_track_queue,
+            ..
+        } = &self.thread_state
+        {
+            *can_fast_track_queue && queue_len > 0
+        } else {
+            false
+        };
 
         v_flex()
             .id("message_queue_list")
@@ -7106,11 +7194,18 @@ impl AcpThreadView {
         };
 
         // Get selected index, defaulting to last option ("Only this time")
-        let selected_index = self
-            .selected_permission_granularity
-            .get(&tool_call_id)
-            .copied()
-            .unwrap_or_else(|| choices.len().saturating_sub(1));
+        let selected_index = if let ThreadState::Ready {
+            selected_permission_granularity,
+            ..
+        } = &self.thread_state
+        {
+            selected_permission_granularity
+                .get(&tool_call_id)
+                .copied()
+                .unwrap_or_else(|| choices.len().saturating_sub(1))
+        } else {
+            choices.len().saturating_sub(1)
+        };
 
         let selected_choice = choices.get(selected_index).or(choices.last())?;
 
@@ -7152,9 +7247,14 @@ impl AcpThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
-        self.selected_permission_granularity
-            .insert(tool_call_id, action.index);
+        if let ThreadState::Ready {
+            selected_permission_granularity,
+            ..
+        } = &mut self.thread_state
+        {
+            let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+            selected_permission_granularity.insert(tool_call_id, action.index);
+        }
         cx.notify();
     }
 
@@ -9018,7 +9118,13 @@ impl Render for AcpThreadView {
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.clear_queue(cx);
-                this.can_fast_track_queue = false;
+                if let ThreadState::Ready {
+                    can_fast_track_queue,
+                    ..
+                } = &mut this.thread_state
+                {
+                    *can_fast_track_queue = false;
+                }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
@@ -11597,9 +11703,15 @@ pub(crate) mod tests {
 
         // Verify default granularity is the last option (index 2 = "Only this time")
         thread_view.read_with(cx, |thread_view, _cx| {
-            let selected = thread_view
-                .selected_permission_granularity
-                .get(&tool_call_id);
+            let selected = if let ThreadState::Ready {
+                selected_permission_granularity,
+                ..
+            } = &thread_view.thread_state
+            {
+                selected_permission_granularity.get(&tool_call_id)
+            } else {
+                None
+            };
             assert!(
                 selected.is_none(),
                 "Should have no selection initially (defaults to last)"
@@ -11622,9 +11734,15 @@ pub(crate) mod tests {
 
         // Verify the selection was updated
         thread_view.read_with(cx, |thread_view, _cx| {
-            let selected = thread_view
-                .selected_permission_granularity
-                .get(&tool_call_id);
+            let selected = if let ThreadState::Ready {
+                selected_permission_granularity,
+                ..
+            } = &thread_view.thread_state
+            {
+                selected_permission_granularity.get(&tool_call_id)
+            } else {
+                None
+            };
             assert_eq!(selected, Some(&0), "Should have selected index 0");
         });
     }
