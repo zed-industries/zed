@@ -642,6 +642,8 @@ jobs:
         )
         echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
+      env:
+        GH_TOKEN: ${{ github.token }}
     - name: release::send_slack_message
       run: |
         curl -X POST -H 'Content-type: application/json'\
