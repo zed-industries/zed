@@ -50,10 +50,18 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: publish_extension_cli::update_sha_in_zed::replace_sha
       run: |
         sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
             tooling/xtask/src/tasks/workflows/extension_tests.rs
+      shell: bash -euxo pipefail {0}
+    - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
+      run: cargo xtask workflows
       shell: bash -euxo pipefail {0}
     - name: publish_extension_cli::create_pull_request_zed
       uses: peter-evans/create-pull-request@v7

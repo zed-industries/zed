@@ -65,6 +65,10 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
         "#})
     }
 
+    fn regenerate_workflows() -> Step<Run> {
+        named::bash("cargo xtask workflows")
+    }
+
     named::job(
         Job::default()
             .with_repository_owner_guard()
@@ -72,7 +76,9 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
             .runs_on(runners::LINUX_SMALL)
             .add_step(generate_token)
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(replace_sha())
+            .add_step(regenerate_workflows())
             .add_step(create_pull_request_zed(&generated_token)),
     )
 }
