@@ -347,7 +347,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    last_synced_queue_length: usize,
     discarded_partial_edits: HashSet<acp::ToolCallId>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
@@ -400,6 +399,7 @@ enum ThreadState {
         local_queued_messages: Vec<QueuedMessage>,
         queued_message_editors: Vec<Entity<MessageEditor>>,
         queued_message_editor_subscriptions: Vec<Subscription>,
+        last_synced_queue_length: usize,
         turn_tokens: Option<u64>,
         last_turn_tokens: Option<u64>,
         turn_started_at: Option<Instant>,
@@ -576,7 +576,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            last_synced_queue_length: 0,
             discarded_partial_edits: HashSet::default(),
             recent_history_entries,
             history,
@@ -943,6 +942,7 @@ impl AcpThreadView {
                             local_queued_messages: Vec::new(),
                             queued_message_editors: Vec::new(),
                             queued_message_editor_subscriptions: Vec::new(),
+                            last_synced_queue_length: 0,
                             turn_tokens: None,
                             last_turn_tokens: None,
                             turn_started_at: None,
@@ -6781,6 +6781,7 @@ impl AcpThreadView {
         let ThreadState::Ready {
             queued_message_editors,
             queued_message_editor_subscriptions,
+            last_synced_queue_length,
             prompt_capabilities,
             available_commands,
             ..
@@ -6793,7 +6794,7 @@ impl AcpThreadView {
 
         let current_count = queued_message_editors.len();
 
-        if current_count == needed_count && needed_count == self.last_synced_queue_length {
+        if current_count == needed_count && needed_count == *last_synced_queue_length {
             return;
         }
 
@@ -6862,7 +6863,13 @@ impl AcpThreadView {
             queued_message_editor_subscriptions.push(subscription);
         }
 
-        self.last_synced_queue_length = needed_count;
+        if let ThreadState::Ready {
+            last_synced_queue_length,
+            ..
+        } = &mut self.thread_state
+        {
+            *last_synced_queue_length = needed_count;
+        }
     }
 
     fn is_imported_thread(&self, cx: &App) -> bool {
