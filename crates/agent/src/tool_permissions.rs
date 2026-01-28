@@ -12,110 +12,112 @@ pub enum ToolPermissionDecision {
     Confirm,
 }
 
-/// Determines the permission decision for a tool invocation based on configured rules.
-///
-/// # Precedence Order (highest to lowest)
-///
-/// 1. **`always_allow_tool_actions`** - When enabled, allows all tool actions except those
-///    blocked by `always_deny` patterns. This global setting takes precedence over
-///    `always_confirm` patterns and `default_mode`.
-/// 2. **`always_deny`** - If any deny pattern matches, the tool call is blocked immediately.
-///    This takes precedence over all other rules for security (including `always_allow_tool_actions`).
-/// 3. **`always_confirm`** - If any confirm pattern matches (and no deny matched),
-///    the user is prompted for confirmation (unless `always_allow_tool_actions` is enabled).
-/// 4. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
-///    the tool call proceeds without prompting.
-/// 5. **`default_mode`** - If no patterns match, falls back to the tool's default mode.
-///
-/// # Pattern Matching Tips
-///
-/// Patterns are matched as regular expressions against the tool input (e.g., the command
-/// string for the terminal tool). Some tips for writing effective patterns:
-///
-/// - Use word boundaries (`\b`) to avoid partial matches. For example, pattern `rm` will
-///   match "storm" and "arms", but `\brm\b` will only match the standalone word "rm".
-///   This is important for security rules where you want to block specific commands
-///   without accidentally blocking unrelated commands that happen to contain the same
-///   substring.
-/// - Patterns are case-insensitive by default. Set `case_sensitive: true` for exact matching.
-/// - Use `^` and `$` anchors to match the start/end of the input.
-pub fn decide_permission(
-    tool_name: &str,
-    input: &str,
-    permissions: &ToolPermissions,
-    always_allow_tool_actions: bool,
-) -> ToolPermissionDecision {
-    // If always_allow_tool_actions is enabled, bypass all permission checks.
-    if always_allow_tool_actions {
-        return ToolPermissionDecision::Allow;
-    }
-
-    let rules = match permissions.tools.get(tool_name) {
-        Some(rules) => rules,
-        None => {
-            return ToolPermissionDecision::Confirm;
-        }
-    };
-
-    // Check for invalid regex patterns before evaluating rules.
-    // If any patterns failed to compile, block the tool call entirely.
-    if let Some(error) = check_invalid_patterns(tool_name, rules) {
-        return ToolPermissionDecision::Deny(error);
-    }
-
-    // For the terminal tool, parse the command to extract all sub-commands.
-    // This prevents shell injection attacks where a user configures an allow
-    // pattern like "^ls" and an attacker crafts "ls && rm -rf /".
-    //
-    // If parsing fails or the shell syntax is unsupported, always_allow is
-    // disabled for this command (we set allow_enabled to false to signal this).
-    if tool_name == TerminalTool::name() {
-        // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
-        // These shells use && / || / ; / | with the same semantics:
-        // - Posix (sh, bash, dash, zsh)
-        // - Fish 3.0+ (added && / || support in 2018)
-        // - PowerShell 7+ (added && / || support in 2020)
-        // - Pwsh (PowerShell 7.x)
-        // - Cmd (Windows - same && / || semantics)
-        // - Xonsh (supports bash syntax for subprocesses)
-        // - Csh / Tcsh (similar syntax)
-        //
-        // These shells have incompatible syntax and will fail to parse:
-        // - Nushell (uses `and` / `or` keywords, different pipeline model)
-        // - Elvish (uses `and` / `or` keywords)
-        // - Rc (Plan 9 shell - no && / || operators)
-        let shell_kind = ShellKind::system();
-        let shell_supports_posix_chaining = matches!(
-            shell_kind,
-            ShellKind::Posix
-                | ShellKind::Fish
-                | ShellKind::PowerShell
-                | ShellKind::Pwsh
-                | ShellKind::Cmd
-                | ShellKind::Xonsh
-                | ShellKind::Csh
-                | ShellKind::Tcsh
-        );
-
-        if !shell_supports_posix_chaining {
-            // For shells with incompatible syntax, we can't reliably parse
-            // the command to extract sub-commands. Disable "always allow"
-            // to be safe, but still check deny/confirm patterns.
-            return check_commands(std::iter::once(input.to_string()), rules, tool_name, false);
+impl ToolPermissionDecision {
+    /// Determines the permission decision for a tool invocation based on configured rules.
+    ///
+    /// # Precedence Order (highest to lowest)
+    ///
+    /// 1. **`always_allow_tool_actions`** - When enabled, allows all tool actions except those
+    ///    blocked by `always_deny` patterns. This global setting takes precedence over
+    ///    `always_confirm` patterns and `default_mode`.
+    /// 2. **`always_deny`** - If any deny pattern matches, the tool call is blocked immediately.
+    ///    This takes precedence over all other rules for security (including `always_allow_tool_actions`).
+    /// 3. **`always_confirm`** - If any confirm pattern matches (and no deny matched),
+    ///    the user is prompted for confirmation (unless `always_allow_tool_actions` is enabled).
+    /// 4. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
+    ///    the tool call proceeds without prompting.
+    /// 5. **`default_mode`** - If no patterns match, falls back to the tool's default mode.
+    ///
+    /// # Shell Compatibility (Terminal Tool Only)
+    ///
+    /// For the terminal tool, commands are parsed to extract sub-commands for security.
+    /// This parsing only works for shells with POSIX-like `&&` / `||` / `;` / `|` syntax:
+    ///
+    /// **Compatible shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
+    ///
+    /// **Incompatible shells:** Nushell, Elvish, Rc (Plan 9)
+    ///
+    /// For incompatible shells, `always_allow` patterns are disabled for safety.
+    ///
+    /// # Pattern Matching Tips
+    ///
+    /// Patterns are matched as regular expressions against the tool input (e.g., the command
+    /// string for the terminal tool). Some tips for writing effective patterns:
+    ///
+    /// - Use word boundaries (`\b`) to avoid partial matches. For example, pattern `rm` will
+    ///   match "storm" and "arms", but `\brm\b` will only match the standalone word "rm".
+    ///   This is important for security rules where you want to block specific commands
+    ///   without accidentally blocking unrelated commands that happen to contain the same
+    ///   substring.
+    /// - Patterns are case-insensitive by default. Set `case_sensitive: true` for exact matching.
+    /// - Use `^` and `$` anchors to match the start/end of the input.
+    pub fn from_input(
+        tool_name: &str,
+        input: &str,
+        permissions: &ToolPermissions,
+        always_allow_tool_actions: bool,
+        shell_kind: ShellKind,
+    ) -> ToolPermissionDecision {
+        // If always_allow_tool_actions is enabled, bypass all permission checks.
+        if always_allow_tool_actions {
+            return ToolPermissionDecision::Allow;
         }
 
-        match extract_commands(input) {
-            Some(commands) => check_commands(commands, rules, tool_name, true),
+        let rules = match permissions.tools.get(tool_name) {
+            Some(rules) => rules,
             None => {
-                // The command failed to parse, so we check to see if we should auto-deny
-                // or auto-confirm; if neither auto-deny nor auto-confirm applies here,
-                // fall back on the default (based on the user's settings, which is Confirm
-                // if not specified otherwise). Ignore "always allow" when it failed to parse.
-                check_commands(std::iter::once(input.to_string()), rules, tool_name, false)
+                return ToolPermissionDecision::Confirm;
             }
+        };
+
+        // Check for invalid regex patterns before evaluating rules.
+        // If any patterns failed to compile, block the tool call entirely.
+        if let Some(error) = check_invalid_patterns(tool_name, rules) {
+            return ToolPermissionDecision::Deny(error);
         }
-    } else {
-        check_commands(std::iter::once(input.to_string()), rules, tool_name, true)
+
+        // For the terminal tool, parse the command to extract all sub-commands.
+        // This prevents shell injection attacks where a user configures an allow
+        // pattern like "^ls" and an attacker crafts "ls && rm -rf /".
+        //
+        // If parsing fails or the shell syntax is unsupported, always_allow is
+        // disabled for this command (we set allow_enabled to false to signal this).
+        if tool_name == TerminalTool::name() {
+            // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
+            // See the doc comment above for the list of compatible/incompatible shells.
+            let shell_supports_posix_chaining = matches!(
+                shell_kind,
+                ShellKind::Posix
+                    | ShellKind::Fish
+                    | ShellKind::PowerShell
+                    | ShellKind::Pwsh
+                    | ShellKind::Cmd
+                    | ShellKind::Xonsh
+                    | ShellKind::Csh
+                    | ShellKind::Tcsh
+            );
+
+            if !shell_supports_posix_chaining {
+                // For shells with incompatible syntax, we can't reliably parse
+                // the command to extract sub-commands. Disable "always allow"
+                // to be safe, but still check deny/confirm patterns.
+                return check_commands(std::iter::once(input.to_string()), rules, tool_name, false);
+            }
+
+            match extract_commands(input) {
+                Some(commands) => check_commands(commands, rules, tool_name, true),
+                None => {
+                    // The command failed to parse, so we check to see if we should auto-deny
+                    // or auto-confirm; if neither auto-deny nor auto-confirm applies here,
+                    // fall back on the default (based on the user's settings, which is Confirm
+                    // if not specified otherwise). Ignore "always allow" when it failed to parse.
+                    check_commands(std::iter::once(input.to_string()), rules, tool_name, false)
+                }
+            }
+        } else {
+            check_commands(std::iter::once(input.to_string()), rules, tool_name, true)
+        }
     }
 }
 
@@ -194,17 +196,18 @@ fn check_invalid_patterns(tool_name: &str, rules: &ToolRules) -> Option<String> 
 ///
 /// This is the primary entry point for tools to check permissions. It extracts
 /// `tool_permissions` and `always_allow_tool_actions` from the settings and
-/// delegates to [`decide_permission`].
+/// delegates to [`ToolPermissionDecision::from_input`], using the system shell.
 pub fn decide_permission_from_settings(
     tool_name: &str,
     input: &str,
     settings: &AgentSettings,
 ) -> ToolPermissionDecision {
-    decide_permission(
+    ToolPermissionDecision::from_input(
         tool_name,
         input,
         &settings.tool_permissions,
         settings.always_allow_tool_actions,
+        ShellKind::system(),
     )
 }
 
@@ -310,11 +313,12 @@ mod tests {
                     invalid_patterns: vec![],
                 },
             );
-            decide_permission(
+            ToolPermissionDecision::from_input(
                 self.tool,
                 self.input,
                 &ToolPermissions { tools },
                 self.global,
+                ShellKind::Posix,
             )
         }
     }
@@ -324,13 +328,14 @@ mod tests {
     }
 
     fn no_rules(input: &str, global: bool) -> ToolPermissionDecision {
-        decide_permission(
+        ToolPermissionDecision::from_input(
             "terminal",
             input,
             &ToolPermissions {
                 tools: collections::HashMap::default(),
             },
             global,
+            ShellKind::Posix,
         )
     }
 
@@ -581,16 +586,16 @@ mod tests {
         let p = ToolPermissions { tools };
         // With always_allow_tool_actions=true, even default_mode: Deny is overridden
         assert_eq!(
-            decide_permission("terminal", "x", &p, true),
+            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
         // With always_allow_tool_actions=false, default_mode: Deny is respected
         assert!(matches!(
-            decide_permission("terminal", "x", &p, false),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            decide_permission("edit_file", "x", &p, false),
+            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
     }
@@ -610,7 +615,7 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert_eq!(
-            decide_permission("terminal", "x", &p, true),
+            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
     }
@@ -638,12 +643,12 @@ mod tests {
         };
         // With global=true, all checks are bypassed including invalid pattern check
         assert!(matches!(
-            decide_permission("terminal", "echo hi", &p, true),
+            ToolPermissionDecision::from_input("terminal", "echo hi", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         ));
         // With global=false, invalid patterns block the tool
         assert!(matches!(
-            decide_permission("terminal", "echo hi", &p, false),
+            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Deny(_)
         ));
     }
@@ -852,11 +857,17 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert!(matches!(
-            decide_permission("terminal", "x", &p, false),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            decide_permission("mcp:srv:terminal", "x", &p, false),
+            ToolPermissionDecision::from_input(
+                "mcp:srv:terminal",
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Allow
         );
     }
