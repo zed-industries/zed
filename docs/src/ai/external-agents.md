@@ -195,30 +195,21 @@ And to give it context, you can @-mention files, symbols, or fetch the web.
 
 ## Add More Agents {#add-more-agents}
 
+### Via Agent Server Extensions
+
+<div class="warning">
+
+Note that starting from v0.221.x, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
+Learn more about it in [the release blog post](https://zed.dev/blog/acp-registry).
+At some point in the near future, Agent Server extensions should be deprecated.
+
+</div>
+
 Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
 
 See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with `zed: extensions`, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
 
-You can also add agents through your `settings.json`, by specifying certain fields under `agent_servers`, like so:
-
-```json [settings]
-{
-  "agent_servers": {
-    "My Custom Agent": {
-      "type": "custom",
-      "command": "node",
-      "args": ["~/projects/agent/index.js", "--acp"],
-      "env": {}
-    }
-  }
-}
-```
-
-This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
-
-It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
-
-### Custom Keybinding For Extension-Based Agents
+#### Custom Keybindings
 
 To assign a custom keybinding to start a new thread for agents that were added by installing agent server extensions, add the following snippet to your `keymap.json` file:
 
@@ -245,6 +236,47 @@ To assign a custom keybinding to start a new thread for agents that were added b
 
 > For most extensions, the `agent.custom.name` attribute matches the name of the agent that appears in the [Agent Panel](../ai/agent-panel.md) UI.
 > In some cases however, the name might need to be written differently (e.g. in lowercase).
+
+### Via The ACP Registry
+
+#### Overview
+
+As mentioned above, the Agent Server extensions should be deprecated in the near future to give room to the ACP Registry.
+
+[The ACP Registry](https://github.com/agentclientprotocol/registry) is an easy way for developers to distribute their ACP-compatible agents to any client that speaks the protocol.
+And for clients, it's the easiest way to get the latest version of the agent.
+
+At the moment, the registry is a curated set of agents, including only the ones that [support authentication](https://agentclientprotocol.com/rfds/auth-methods).
+
+#### Using it in Zed
+
+Use the `zed: acp registry` command to quickly go to the ACP Registry page.
+There's also a button ("Add Agent") that takes you there in the Agent Pane's configuration view.
+
+From there, you can just install agents from the registry and use them right away in Zed's Agent Panel.
+
+If you installed the same agent through both the extension and the registry, the registry version takes precedence.
+
+### Custom Agents
+
+You can also add agents through your `settings.json`, by specifying certain fields under `agent_servers`, like so:
+
+```json [settings]
+{
+  "agent_servers": {
+    "My Custom Agent": {
+      "type": "custom",
+      "command": "node",
+      "args": ["~/projects/agent/index.js", "--acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
+
+It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
 
 ## Debugging Agents
 
