@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
-use rand::{SeedableRng, rngs::StdRng};
+
 use std::{
     cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
 };
@@ -116,16 +116,14 @@ impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
-        let liveness = std::sync::Arc::new(());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor =
-            ForegroundExecutor::new(arc_dispatcher, Arc::downgrade(&liveness));
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let app = App::new_app(platform.clone(), liveness, asset_source, http_client);
+        let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -147,7 +145,7 @@ impl TestAppContext {
 
     /// Create a single TestAppContext, for non-multi-client tests
     pub fn single() -> Self {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let dispatcher = TestDispatcher::new(0);
         Self::build(dispatcher, None)
     }
 
@@ -587,20 +585,13 @@ impl<V: 'static> Entity<V> {
             tx.try_send(()).ok();
         });
 
-        let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(5)
-        } else {
-            Duration::from_secs(1)
-        };
-
         cx.executor().advance_clock(advance_clock_by);
 
         async move {
-            let notification = crate::util::smol_timeout(duration, rx.recv())
+            rx.recv()
                 .await
-                .expect("next notification timed out");
+                .expect("entity dropped while test was waiting for its next notification");
             drop(subscription);
-            notification.expect("entity dropped while test was waiting for its next notification")
         }
     }
 }
@@ -640,31 +631,25 @@ impl<V> Entity<V> {
         let handle = self.downgrade();
 
         async move {
-            crate::util::smol_timeout(Duration::from_secs(1), async move {
-                loop {
-                    {
-                        let cx = cx.borrow();
-                        let cx = &*cx;
-                        if predicate(
-                            handle
-                                .upgrade()
-                                .expect("view dropped with pending condition")
-                                .read(cx),
-                            cx,
-                        ) {
-                            break;
-                        }
+            loop {
+                {
+                    let cx = cx.borrow();
+                    let cx = &*cx;
+                    if predicate(
+                        handle
+                            .upgrade()
+                            .expect("view dropped with pending condition")
+                            .read(cx),
+                        cx,
+                    ) {
+                        break;
                     }
-
-                    cx.borrow().background_executor().start_waiting();
-                    rx.recv()
-                        .await
-                        .expect("view dropped with pending condition");
-                    cx.borrow().background_executor().finish_waiting();
                 }
-            })
-            .await
-            .expect("condition timed out");
+
+                rx.recv()
+                    .await
+                    .expect("view dropped with pending condition");
+            }
             drop(subscriptions);
         }
     }

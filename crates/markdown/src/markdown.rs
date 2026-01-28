@@ -27,7 +27,7 @@ use gpui::{
     MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
     Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
-use language::{Language, LanguageRegistry, Rope};
+use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
@@ -1120,7 +1120,7 @@ impl Element for MarkdownElement {
                                     .when(!self.style.table_columns_min_size, |this| {
                                         this.grid_cols(column_count as u16)
                                     })
-                                    .size_full()
+                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1451,7 +1451,7 @@ fn render_copy_code_block_button(
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-markdown-code", id);
 
-    CopyButton::new(code.clone()).custom_on_click({
+    CopyButton::new(id.clone(), code.clone()).custom_on_click({
         let markdown = markdown;
         move |_window, cx| {
             let id = id.clone();
@@ -1775,6 +1775,7 @@ impl MarkdownElementBuilder {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
+            language: self.code_block_stack.last().cloned().flatten(),
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
@@ -1796,6 +1797,7 @@ struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
+    language: Option<Arc<Language>>,
 }
 
 impl RenderedLine {
@@ -1827,6 +1829,40 @@ impl RenderedLine {
             Err(ix) => &self.source_mappings[ix - 1],
         };
         mapping.source_index + (rendered_index - mapping.rendered_index)
+    }
+
+    /// Returns the source index for use as an exclusive range end at a word/selection boundary.
+    /// When the rendered index is exactly at the start of a segment with a gap from the previous
+    /// segment (e.g., after stripped markdown syntax like backticks), this returns the end of the
+    /// previous segment rather than the start of the current one.
+    fn source_index_for_exclusive_rendered_end(&self, rendered_index: usize) -> usize {
+        if rendered_index >= self.layout.len() {
+            return self.source_end;
+        }
+
+        let ix = match self
+            .source_mappings
+            .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
+        {
+            Ok(ix) => ix,
+            Err(ix) => {
+                return self.source_mappings[ix - 1].source_index
+                    + (rendered_index - self.source_mappings[ix - 1].rendered_index);
+            }
+        };
+
+        // Exact match at the start of a segment. Check if there's a gap from the previous segment.
+        if ix > 0 {
+            let prev_mapping = &self.source_mappings[ix - 1];
+            let mapping = &self.source_mappings[ix];
+            let prev_segment_len = mapping.rendered_index - prev_mapping.rendered_index;
+            let prev_source_end = prev_mapping.source_index + prev_segment_len;
+            if prev_source_end < mapping.source_index {
+                return prev_source_end;
+            }
+        }
+
+        self.source_mappings[ix].source_index
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
@@ -1923,19 +1959,38 @@ impl RenderedText {
             let rendered_index_in_line =
                 line.rendered_index_for_source_index(source_index) - line_rendered_start;
             let text = line.layout.text();
-            let previous_space = if let Some(idx) = text[0..rendered_index_in_line].rfind(' ') {
-                idx + ' '.len_utf8()
-            } else {
-                0
-            };
-            let next_space = if let Some(idx) = text[rendered_index_in_line..].find(' ') {
-                rendered_index_in_line + idx
-            } else {
-                text.len()
-            };
 
-            return line.source_index_for_rendered_index(line_rendered_start + previous_space)
-                ..line.source_index_for_rendered_index(line_rendered_start + next_space);
+            let scope = line.language.as_ref().map(|l| l.default_scope());
+            let classifier = CharClassifier::new(scope);
+
+            let mut prev_chars = text[..rendered_index_in_line].chars().rev().peekable();
+            let mut next_chars = text[rendered_index_in_line..].chars().peekable();
+
+            let word_kind = std::cmp::max(
+                prev_chars.peek().map(|&c| classifier.kind(c)),
+                next_chars.peek().map(|&c| classifier.kind(c)),
+            );
+
+            let mut start = rendered_index_in_line;
+            for c in prev_chars {
+                if Some(classifier.kind(c)) == word_kind {
+                    start -= c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            let mut end = rendered_index_in_line;
+            for c in next_chars {
+                if Some(classifier.kind(c)) == word_kind {
+                    end += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            return line.source_index_for_rendered_index(line_rendered_start + start)
+                ..line.source_index_for_exclusive_rendered_end(line_rendered_start + end);
         }
 
         source_index..source_index
@@ -1999,6 +2054,8 @@ impl RenderedText {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, size};
+    use language::{Language, LanguageConfig, LanguageMatcher};
+    use std::sync::Arc;
 
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
@@ -2052,6 +2109,14 @@ mod tests {
     }
 
     fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
+        render_markdown_with_language_registry(markdown, None, cx)
+    }
+
+    fn render_markdown_with_language_registry(
+        markdown: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
         struct TestWindow;
 
         impl Render for TestWindow {
@@ -2061,12 +2126,21 @@ mod tests {
         }
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        let markdown =
+            cx.new(|cx| Markdown::new(markdown.to_string().into(), language_registry, None, cx));
         cx.run_until_parked();
         let (rendered, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
-            |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button: false,
+                        copy_button_on_hover: false,
+                        border: false,
+                    },
+                )
+            },
         );
         rendered.text
     }
@@ -2206,6 +2280,82 @@ mod tests {
         let word_range = rendered.surrounding_word_range(51); // Inside "code"
         let selected_text = rendered.text_for_range(word_range);
         assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_inline_code_word_selection_excludes_backticks(cx: &mut TestAppContext) {
+        // Test that double-clicking on inline code selects just the code content,
+        // not the backticks. This verifies the fix for the bug where selecting
+        // inline code would include the trailing backtick.
+        let rendered = render_markdown("use `blah` here", cx);
+
+        // Source layout: "use `blah` here"
+        //                 0123456789...
+        // The inline code "blah" is at source positions 5-8 (content range 5..9)
+
+        // Click inside "blah" - should select just "blah", not "blah`"
+        let word_range = rendered.surrounding_word_range(6); // 'l' in "blah"
+
+        // text_for_range extracts from the rendered text (without backticks), so it
+        // would return "blah" even with a wrong source range. We check it anyway.
+        let selected_text = rendered.text_for_range(word_range.clone());
+        assert_eq!(selected_text, "blah");
+
+        // The source range is what matters for copy_as_markdown and selected_text,
+        // which extract directly from the source. With the bug, this would be 5..10
+        // which includes the closing backtick at position 9.
+        assert_eq!(word_range, 5..9);
+    }
+
+    #[gpui::test]
+    fn test_surrounding_word_range_respects_word_characters(cx: &mut TestAppContext) {
+        let rendered = render_markdown("foo.bar() baz", cx);
+
+        // Double clicking on 'f' in "foo" - should select just "foo"
+        let word_range = rendered.surrounding_word_range(0);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "foo");
+
+        // Double clicking on 'b' in "bar" - should select just "bar"
+        let word_range = rendered.surrounding_word_range(4);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "bar");
+
+        // Double clicking on 'b' in "baz" - should select "baz"
+        let word_range = rendered.surrounding_word_range(10);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "baz");
+
+        // Double clicking selects word characters in code blocks
+        let javascript_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".to_string()],
+                    ..Default::default()
+                },
+                word_characters: ['$', '#'].into_iter().collect(),
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(javascript_language);
+
+        let rendered = render_markdown_with_language_registry(
+            "```javascript\n$foo #bar\n```",
+            Some(language_registry),
+            cx,
+        );
+
+        let word_range = rendered.surrounding_word_range(14);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "$foo");
+
+        let word_range = rendered.surrounding_word_range(19);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "#bar");
     }
 
     #[gpui::test]

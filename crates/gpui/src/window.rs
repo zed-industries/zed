@@ -217,19 +217,77 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
+    /// Fallback arena used when no app-specific arena is active.
+    /// In production, each window draw sets CURRENT_ELEMENT_ARENA to the app's arena.
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(1024 * 1024));
+
+    /// Points to the current App's element arena during draw operations.
+    /// This allows multiple test Apps to have isolated arenas, preventing
+    /// cross-session corruption when the scheduler interleaves their tasks.
+    static CURRENT_ELEMENT_ARENA: Cell<Option<*const RefCell<Arena>>> = const { Cell::new(None) };
+}
+
+/// Allocates an element in the current arena. Uses the app-specific arena if one
+/// is active (during draw), otherwise falls back to the thread-local ELEMENT_ARENA.
+pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
+    CURRENT_ELEMENT_ARENA.with(|current| {
+        if let Some(arena_ptr) = current.get() {
+            // SAFETY: The pointer is valid for the duration of the draw operation
+            // that set it, and we're being called during that same draw.
+            let arena_cell = unsafe { &*arena_ptr };
+            f(&mut arena_cell.borrow_mut())
+        } else {
+            ELEMENT_ARENA.with_borrow_mut(f)
+        }
+    })
+}
+
+/// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
+/// When dropped, restores the previous arena (supporting nested draws).
+pub(crate) struct ElementArenaScope {
+    previous: Option<*const RefCell<Arena>>,
+}
+
+impl ElementArenaScope {
+    /// Enter a scope where element allocations use the given arena.
+    pub(crate) fn enter(arena: &RefCell<Arena>) -> Self {
+        let previous = CURRENT_ELEMENT_ARENA.with(|current| {
+            let prev = current.get();
+            current.set(Some(arena as *const RefCell<Arena>));
+            prev
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for ElementArenaScope {
+    fn drop(&mut self) {
+        CURRENT_ELEMENT_ARENA.with(|current| {
+            current.set(self.previous);
+        });
+    }
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
-pub struct ArenaClearNeeded;
+pub struct ArenaClearNeeded {
+    arena: *const RefCell<Arena>,
+}
 
 impl ArenaClearNeeded {
+    /// Create a new ArenaClearNeeded that will clear the given arena.
+    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
+        Self {
+            arena: arena as *const RefCell<Arena>,
+        }
+    }
+
     /// Clear the element arena.
     pub fn clear(self) {
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            element_arena.clear();
-        });
+        // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
+        // at the end of draw() and must be cleared before the next draw.
+        let arena_cell = unsafe { &*self.arena };
+        arena_cell.borrow_mut().clear();
     }
 }
 
@@ -666,6 +724,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
+    rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
@@ -1983,10 +2042,22 @@ impl Window {
         element_id: ElementId,
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+        self.with_id(element_id, |this| {
+            let global_id = GlobalElementId(Arc::from(&*this.element_id_stack));
 
-        let result = f(&global_id, self);
+            f(&global_id, this)
+        })
+    }
+
+    /// Calls the provided closure with the element ID pushed on the stack.
+    #[inline]
+    pub fn with_id<R>(
+        &mut self,
+        element_id: impl Into<ElementId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id.into());
+        let result = f(self);
         self.element_id_stack.pop();
         result
     }
@@ -2075,6 +2146,10 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // Set up the per-App arena for element allocation during this draw.
+        // This ensures that multiple test Apps have isolated arenas.
+        let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -2142,7 +2217,7 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
-        ArenaClearNeeded
+        ArenaClearNeeded::new(&cx.element_arena)
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2336,8 +2411,13 @@ impl Window {
             let prepaint_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
-                        element.prepaint(window, cx)
+                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                        window.with_absolute_element_offset(
+                            deferred_draw.absolute_offset,
+                            |window| {
+                                element.prepaint(window, cx);
+                            },
+                        );
                     });
                 })
             } else {
@@ -2371,7 +2451,9 @@ impl Window {
             let paint_start = self.paint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    element.paint(window, cx);
+                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                        element.paint(window, cx);
+                    })
                 })
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
@@ -2434,6 +2516,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -2769,11 +2852,6 @@ impl Window {
         })
     }
 
-    /// Immediately push an element ID onto the stack. Useful for simplifying IDs in lists
-    pub fn with_id<R>(&mut self, id: impl Into<ElementId>, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.with_global_id(id.into(), |_, window| f(window))
-    }
-
     /// Use a piece of state that exists as long this element is being rendered in consecutive frames, without needing to specify a key
     ///
     /// NOTE: This method uses the location of the caller to generate an ID for this state.
@@ -2935,6 +3013,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            rem_size: self.rem_size(),
             priority,
             element: Some(element),
             absolute_offset,
@@ -3566,6 +3645,7 @@ impl Window {
         self.rendered_entity_stack.last().copied().unwrap()
     }
 
+    #[inline]
     pub(crate) fn with_rendered_view<R>(
         &mut self,
         id: EntityId,

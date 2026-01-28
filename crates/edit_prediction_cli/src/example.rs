@@ -1,5 +1,6 @@
+use crate::PredictionProvider;
 use crate::paths::WORKTREES_DIR;
-use crate::{PredictionProvider, PromptFormat};
+use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use edit_prediction::example_spec::ExampleSpec;
@@ -9,12 +10,12 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
-use std::sync::Arc;
 use std::{
     borrow::Cow,
+    collections::VecDeque,
     io::Read,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use zeta_prompt::RelatedFile;
 
@@ -26,12 +27,7 @@ pub struct Example {
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub buffer: Option<ExampleBuffer>,
-
-    /// The context retrieved for the prediction. This requires the worktree to
-    /// be loaded and the language server to be started.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<ExampleContext>,
+    pub prompt_inputs: Option<ExamplePromptInputs>,
 
     /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,6 +41,10 @@ pub struct Example {
     /// predictions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub score: Vec<ExampleScore>,
+
+    /// QA evaluation results for each prediction (indexed parallel to `predictions`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qa: Vec<Option<QaResult>>,
 
     /// The application state used to process this example.
     #[serde(skip)]
@@ -60,37 +60,54 @@ pub struct ExampleState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleContext {
-    pub files: Arc<[RelatedFile]>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleBuffer {
+pub struct ExamplePromptInputs {
     pub content: String,
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
-    pub context_range: Range<usize>,
-    pub editable_range: Range<usize>,
+    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
+    pub related_files: Option<Vec<RelatedFile>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrompt {
     pub input: String,
     pub expected_output: String,
-    pub format: PromptFormat,
+    pub rejected_output: Option<String>, // For DPO
+    pub provider: PredictionProvider,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrediction {
-    pub actual_patch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_patch: Option<String>,
+    #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub provider: PredictionProvider,
+}
+
+fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
+    pub braces_disbalance: usize,
+    #[serde(default)]
+    pub exact_lines_tp: usize,
+    #[serde(default)]
+    pub exact_lines_fp: usize,
+    #[serde(default)]
+    pub exact_lines_fn: usize,
+    #[serde(default)]
+    pub reversal_ratio: f32,
 }
 
 impl Example {
@@ -225,9 +242,9 @@ pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
     });
 }
 
-pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+pub fn group_examples_by_repo(examples: Vec<Example>) -> VecDeque<Vec<Example>> {
     let mut examples_by_repo = HashMap::default();
-    for example in examples.iter_mut() {
+    for example in examples {
         examples_by_repo
             .entry(example.spec.repository_url.clone())
             .or_insert_with(Vec::new)
@@ -240,11 +257,11 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
     let spec = ExampleSpec::from_markdown(input)?;
     Ok(Example {
         spec,
-        buffer: None,
-        context: None,
+        prompt_inputs: None,
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
+        qa: Vec::new(),
         state: None,
     })
 }

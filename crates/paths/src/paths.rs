@@ -36,6 +36,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
     *CACHED
 }
 
+// Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
@@ -502,8 +503,10 @@ fn vscode_user_data_paths() -> Vec<PathBuf> {
     // https://github.com/microsoft/vscode/blob/23e7148cdb6d8a27f0109ff77e5b1e019f8da051/src/vs/platform/environment/node/userDataPath.ts#L45
     const VSCODE_PRODUCT_NAMES: &[&str] = &[
         "Code",
+        "Code - Insiders",
         "Code - OSS",
         "VSCodium",
+        "VSCodium - Insiders",
         "Code Dev",
         "Code - OSS Dev",
         "code-oss-dev",

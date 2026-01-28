@@ -32,7 +32,7 @@ jobs:
           days-before-stale: 60
           days-before-close: 14
           only-issue-types: "Bug,Crash"
-          operations-per-run: ${{ inputs.operations-per-run || 1000 }}
+          operations-per-run: ${{ inputs.operations-per-run || 2000 }}
           ascending: true
           enable-statistics: true
           debug-only: ${{ inputs.debug-only }}
