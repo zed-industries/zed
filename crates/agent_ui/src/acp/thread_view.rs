@@ -348,7 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    editing_message: Option<usize>,
     local_queued_messages: Vec<QueuedMessage>,
     queued_message_editors: Vec<Entity<MessageEditor>>,
     queued_message_editor_subscriptions: Vec<Subscription>,
@@ -406,6 +405,7 @@ enum ThreadState {
         queue_expanded: bool,
         editor_expanded: bool,
         should_be_following: bool,
+        editing_message: Option<usize>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,7 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            editing_message: None,
             local_queued_messages: Vec::new(),
             queued_message_editors: Vec::new(),
             queued_message_editor_subscriptions: Vec::new(),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             queue_expanded: true,
                             editor_expanded: false,
                             should_be_following: false,
+                            editing_message: None,
                             _subscriptions: subscriptions,
                         };
 
@@ -1119,6 +1119,28 @@ impl AcpThreadView {
     fn list_state_mut(&mut self) -> Option<&mut ListState> {
         match &mut self.thread_state {
             ThreadState::Ready { list_state, .. } => Some(list_state),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn editing_message(&self) -> Option<usize> {
+        match &self.thread_state {
+            ThreadState::Ready {
+                editing_message, ..
+            } => *editing_message,
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn editing_message_mut(&mut self) -> Option<&mut Option<usize>> {
+        match &mut self.thread_state {
+            ThreadState::Ready {
+                editing_message, ..
+            } => Some(editing_message),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -1446,7 +1468,9 @@ impl AcpThreadView {
                         thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
                 {
-                    self.editing_message = Some(event.entry_index);
+                    if let Some(editing_message) = self.editing_message_mut() {
+                        *editing_message = Some(event.entry_index);
+                    }
                     cx.notify();
                 }
             }
@@ -1457,7 +1481,9 @@ impl AcpThreadView {
                     && user_message.id.is_some()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
-                        self.editing_message = None;
+                        if let Some(editing_message) = self.editing_message_mut() {
+                            *editing_message = None;
+                        }
                         cx.notify();
                     }
                 }
@@ -1670,13 +1696,14 @@ impl AcpThreadView {
         if let ThreadState::Ready {
             thread_error,
             thread_feedback,
+            editing_message,
             ..
         } = &mut self.thread_state
         {
             thread_error.take();
             thread_feedback.clear();
+            editing_message.take();
         }
-        self.editing_message.take();
 
         if let ThreadState::Ready {
             should_be_following: true,
@@ -1934,7 +1961,7 @@ impl AcpThreadView {
             return;
         };
 
-        if let Some(index) = self.editing_message.take()
+        if let Some(index) = self.editing_message_mut().and_then(|e| e.take())
             && let Some(entry_view_state) = self.entry_view_state()
             && let Some(editor) = entry_view_state
                 .read(cx)
@@ -2770,7 +2797,7 @@ impl AcpThreadView {
                     return Empty.into_any_element();
                 };
 
-                let editing = self.editing_message == Some(entry_ix);
+                let editing = self.editing_message() == Some(entry_ix);
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
 
@@ -3082,8 +3109,8 @@ impl AcpThreadView {
             primary
         };
 
-        if let Some(editing_index) = self.editing_message.as_ref()
-            && *editing_index < entry_ix
+        if let Some(editing_index) = self.editing_message()
+            && editing_index < entry_ix
         {
             let backdrop = div()
                 .id(("backdrop", entry_ix))
@@ -8615,7 +8642,7 @@ impl AcpThreadView {
     /// Returns the currently active editor, either for a message that is being
     /// edited or the editor for a new message.
     fn active_editor(&self, cx: &App) -> Entity<MessageEditor> {
-        if let Some(index) = self.editing_message
+        if let Some(index) = self.editing_message()
             && let Some(entry_view_state) = self.entry_view_state()
             && let Some(editor) = entry_view_state
                 .read(cx)
@@ -10136,7 +10163,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
-            assert_eq!(view.editing_message, None);
+            assert_eq!(view.editing_message(), None);
 
             view.entry_view_state()
                 .unwrap()
@@ -10151,7 +10178,7 @@ pub(crate) mod tests {
         // Focus
         cx.focus(&user_message_editor);
         thread_view.read_with(cx, |view, _cx| {
-            assert_eq!(view.editing_message, Some(0));
+            assert_eq!(view.editing_message(), Some(0));
         });
 
         // Edit
@@ -10165,7 +10192,7 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, _cx| {
-            assert_eq!(view.editing_message, None);
+            assert_eq!(view.editing_message(), None);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -10227,7 +10254,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
-            assert_eq!(view.editing_message, None);
+            assert_eq!(view.editing_message(), None);
             assert_eq!(view.thread().unwrap().read(cx).entries().len(), 2);
 
             view.entry_view_state()
@@ -10260,7 +10287,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, cx| {
-            assert_eq!(view.editing_message, None);
+            assert_eq!(view.editing_message(), None);
 
             let entries = view.thread().unwrap().read(cx).entries();
             assert_eq!(entries.len(), 2);
@@ -10324,7 +10351,7 @@ pub(crate) mod tests {
         cx.focus(&user_message_editor);
 
         thread_view.read_with(cx, |view, _cx| {
-            assert_eq!(view.editing_message, Some(0));
+            assert_eq!(view.editing_message(), Some(0));
         });
 
         // Edit
@@ -10333,7 +10360,7 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, _cx| {
-            assert_eq!(view.editing_message, Some(0));
+            assert_eq!(view.editing_message(), Some(0));
         });
 
         // Finish streaming response
@@ -10347,7 +10374,7 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, _cx| {
-            assert_eq!(view.editing_message, Some(0));
+            assert_eq!(view.editing_message(), Some(0));
         });
 
         cx.run_until_parked();
@@ -10355,7 +10382,7 @@ pub(crate) mod tests {
         // Should still be editing
         cx.update(|window, cx| {
             assert!(user_message_editor.focus_handle(cx).is_focused(window));
-            assert_eq!(thread_view.read(cx).editing_message, Some(0));
+            assert_eq!(thread_view.read(cx).editing_message(), Some(0));
             assert_eq!(
                 user_message_editor.read(cx).text(cx),
                 "Edited message content"
@@ -10661,7 +10688,7 @@ pub(crate) mod tests {
 
         cx.focus(&user_message_editor);
         thread_view.read_with(cx, |thread_view, _cx| {
-            assert_eq!(thread_view.editing_message, Some(0));
+            assert_eq!(thread_view.editing_message(), Some(0));
         });
 
         // Ensure to edit the focused message before proceeding otherwise, since
@@ -10696,7 +10723,7 @@ pub(crate) mod tests {
             .unwrap();
 
         thread_view.update_in(cx, |thread_view, window, cx| {
-            assert_eq!(thread_view.editing_message, Some(0));
+            assert_eq!(thread_view.editing_message(), Some(0));
             thread_view.insert_selections(window, cx);
         });
 
