@@ -226,8 +226,17 @@ pub fn decide_permission_from_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pattern_extraction::extract_terminal_pattern;
     use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
     use std::sync::Arc;
+
+    fn pattern(command: &str) -> &'static str {
+        Box::leak(
+            extract_terminal_pattern(command)
+                .expect("failed to extract pattern")
+                .into_boxed_str(),
+        )
+    }
 
     struct PermTest {
         tool: &'static str,
@@ -368,13 +377,15 @@ mod tests {
     // allow pattern matches
     #[test]
     fn allow_exact_match() {
-        t("cargo test").allow(&["^cargo\\s"]).is_allow();
+        t("cargo test").allow(&[pattern("cargo")]).is_allow();
     }
     #[test]
     fn allow_one_of_many_patterns() {
-        t("npm install").allow(&["^cargo\\s", "^npm\\s"]).is_allow();
+        t("npm install")
+            .allow(&[pattern("cargo"), pattern("npm")])
+            .is_allow();
         t("git status")
-            .allow(&["^cargo", "^npm", "^git"])
+            .allow(&[pattern("cargo"), pattern("npm"), pattern("git")])
             .is_allow();
     }
     #[test]
@@ -389,12 +400,12 @@ mod tests {
     // allow pattern doesn't match -> falls through
     #[test]
     fn allow_no_match_confirms() {
-        t("python x.py").allow(&["^cargo\\s"]).is_confirm();
+        t("python x.py").allow(&[pattern("cargo")]).is_confirm();
     }
     #[test]
     fn allow_no_match_global_allows() {
         t("python x.py")
-            .allow(&["^cargo\\s"])
+            .allow(&[pattern("cargo")])
             .global(true)
             .is_allow();
     }
@@ -431,12 +442,14 @@ mod tests {
     // confirm pattern matches
     #[test]
     fn confirm_requires_confirm() {
-        t("sudo apt install").confirm(&["sudo\\s"]).is_confirm();
+        t("sudo apt install")
+            .confirm(&[pattern("sudo")])
+            .is_confirm();
     }
     #[test]
     fn global_overrides_confirm() {
         t("sudo reboot")
-            .confirm(&["sudo\\s"])
+            .confirm(&[pattern("sudo")])
             .global(true)
             .is_allow();
     }
@@ -452,7 +465,7 @@ mod tests {
     #[test]
     fn confirm_beats_allow() {
         t("git push --force")
-            .allow(&["^git\\s"])
+            .allow(&[pattern("git")])
             .confirm(&["--force"])
             .is_confirm();
     }
@@ -466,7 +479,7 @@ mod tests {
     #[test]
     fn allow_when_confirm_no_match() {
         t("git status")
-            .allow(&["^git\\s"])
+            .allow(&[pattern("git")])
             .confirm(&["--force"])
             .is_allow();
     }
@@ -677,12 +690,12 @@ mod tests {
 
     #[test]
     fn shell_injection_via_backticks_not_allowed() {
-        t("echo `rm -rf /`").allow(&["^echo\\s"]).is_confirm();
+        t("echo `rm -rf /`").allow(&[pattern("echo")]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_dollar_parens_not_allowed() {
-        t("echo $(rm -rf /)").allow(&["^echo\\s"]).is_confirm();
+        t("echo $(rm -rf /)").allow(&[pattern("echo")]).is_confirm();
     }
 
     #[test]
@@ -753,6 +766,36 @@ mod tests {
         t("ls && sudo reboot")
             .allow(&["^ls"])
             .confirm(&["^sudo"])
+            .is_confirm();
+    }
+
+    #[test]
+    fn always_allow_button_works_end_to_end() {
+        // This test verifies that the "Always Allow" button behavior works correctly:
+        // 1. User runs a command like "cargo build"
+        // 2. They click "Always Allow for `cargo` commands"
+        // 3. The pattern extracted from that command should match future cargo commands
+        let original_command = "cargo build --release";
+        let extracted_pattern = pattern(original_command);
+
+        // The extracted pattern should allow the original command
+        t(original_command).allow(&[extracted_pattern]).is_allow();
+
+        // It should also allow other commands with the same base command
+        t("cargo test").allow(&[extracted_pattern]).is_allow();
+        t("cargo fmt").allow(&[extracted_pattern]).is_allow();
+
+        // But not commands with different base commands
+        t("npm install").allow(&[extracted_pattern]).is_confirm();
+
+        // And it should work with subcommand extraction (chained commands)
+        t("cargo build && cargo test")
+            .allow(&[extracted_pattern])
+            .is_allow();
+
+        // But reject if any subcommand doesn't match
+        t("cargo build && npm install")
+            .allow(&[extracted_pattern])
             .is_confirm();
     }
 
@@ -831,25 +874,27 @@ mod tests {
 
     #[test]
     fn case_insensitive_by_default() {
-        t("CARGO TEST").allow(&["^cargo\\s"]).is_allow();
-        t("Cargo Test").allow(&["^cargo\\s"]).is_allow();
+        t("CARGO TEST").allow(&[pattern("cargo")]).is_allow();
+        t("Cargo Test").allow(&[pattern("cargo")]).is_allow();
     }
 
     #[test]
     fn case_sensitive_allow() {
         t("cargo test")
-            .allow_case_sensitive(&["^cargo\\s"])
+            .allow_case_sensitive(&[pattern("cargo")])
             .is_allow();
         t("CARGO TEST")
-            .allow_case_sensitive(&["^cargo\\s"])
+            .allow_case_sensitive(&[pattern("cargo")])
             .is_confirm();
     }
 
     #[test]
     fn case_sensitive_deny() {
-        t("rm -rf /").deny_case_sensitive(&["^rm\\s"]).is_deny();
+        t("rm -rf /")
+            .deny_case_sensitive(&[pattern("rm")])
+            .is_deny();
         t("RM -RF /")
-            .deny_case_sensitive(&["^rm\\s"])
+            .deny_case_sensitive(&[pattern("rm")])
             .mode(ToolPermissionMode::Allow)
             .is_allow();
     }
