@@ -35,7 +35,7 @@ use git::{
     StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Entity,
+    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
     PromptLevel, ScrollStrategy, Subscription, Task, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, point, size, uniform_list,
@@ -5767,8 +5767,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
             .size(ButtonSize::None)
-            .label_size(LabelSize::Small)
-            .color(Color::Muted);
+            .label_size(LabelSize::Small);
 
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
@@ -5779,8 +5778,16 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                repo_selector_trigger.disabled(single_repo).truncate(true),
-                Tooltip::text("Switch Active Repository"),
+                repo_selector_trigger
+                    .when(single_repo, |this| this.disabled(true).color(Color::Muted))
+                    .truncate(true),
+                move |_, cx| {
+                    if single_repo {
+                        cx.new(|_| Empty).into()
+                    } else {
+                        Tooltip::simple("Switch Active Repository", cx)
+                    }
+                },
             )
             .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
