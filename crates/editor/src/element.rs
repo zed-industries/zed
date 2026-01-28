@@ -3812,6 +3812,7 @@ impl EditorElement {
 
     fn render_block(
         &self,
+        has_sticky_headers: bool,
         block: &Block,
         available_width: AvailableSpace,
         block_id: BlockId,
@@ -3968,7 +3969,14 @@ impl EditorElement {
 
                         result = result.child(div().pr(editor_margins.right).child(
                             self.render_buffer_header(
-                                false, excerpt, false, selected, false, jump_data, window, cx,
+                                has_sticky_headers,
+                                excerpt,
+                                false,
+                                selected,
+                                false,
+                                jump_data,
+                                window,
+                                cx,
                             ),
                         ));
                     } else {
@@ -4465,6 +4473,7 @@ impl EditorElement {
 
     fn render_blocks(
         &self,
+        has_sticky_headers: bool,
         rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
@@ -4505,6 +4514,7 @@ impl EditorElement {
             }
 
             if let Some((element, element_size, row, x_offset)) = self.render_block(
+                has_sticky_headers,
                 block,
                 AvailableSpace::MinContent,
                 block_id,
@@ -4564,6 +4574,7 @@ impl EditorElement {
             }
 
             if let Some((element, element_size, row, x_offset)) = self.render_block(
+                has_sticky_headers,
                 block,
                 width,
                 block_id,
@@ -4621,6 +4632,7 @@ impl EditorElement {
             };
 
             if let Some((element, element_size, _, x_offset)) = self.render_block(
+                has_sticky_headers,
                 &block,
                 width,
                 focused_block.id,
@@ -10158,6 +10170,33 @@ impl Element for EditorElement {
 
                     let mut scroll_width = scrollbar_layout_information.scroll_range.width;
 
+                    let scroll_pixel_position = point(
+                        scroll_position.x * f64::from(em_advance),
+                        scroll_position.y * f64::from(line_height),
+                    );
+                    let sticky_headers =
+                        if !is_minimap && EditorSettings::get_global(cx).sticky_scroll.enabled {
+                            let relative = self.editor.read(cx).relative_line_numbers(cx);
+                            self.layout_sticky_headers(
+                                &snapshot,
+                                editor_width,
+                                is_row_soft_wrapped,
+                                line_height,
+                                scroll_pixel_position,
+                                content_origin,
+                                &gutter_dimensions,
+                                &gutter_hitbox,
+                                &text_hitbox,
+                                &style,
+                                relative,
+                                current_selection_head,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            None
+                        };
+
                     let sticky_header_excerpt = if snapshot.buffer_snapshot().show_headers() {
                         snapshot.sticky_header_excerpt(scroll_position.y)
                     } else {
@@ -10169,8 +10208,8 @@ impl Element for EditorElement {
                     let blocks = (!is_minimap)
                         .then(|| {
                             window.with_element_namespace("blocks", |window| {
-                                // TODO send along whether you have sticky headers for rendering buffer_header
                                 self.render_blocks(
+                                    sticky_headers.is_some(),
                                     start_row..end_row,
                                     &snapshot,
                                     &hitbox,
@@ -10223,32 +10262,6 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_advance),
-                        scroll_position.y * f64::from(line_height),
-                    );
-                    let sticky_headers =
-                        if !is_minimap && EditorSettings::get_global(cx).sticky_scroll.enabled {
-                            let relative = self.editor.read(cx).relative_line_numbers(cx);
-                            self.layout_sticky_headers(
-                                &snapshot,
-                                editor_width,
-                                is_row_soft_wrapped,
-                                line_height,
-                                scroll_pixel_position,
-                                content_origin,
-                                &gutter_dimensions,
-                                &gutter_hitbox,
-                                &text_hitbox,
-                                &style,
-                                relative,
-                                current_selection_head,
-                                window,
-                                cx,
-                            )
-                        } else {
-                            None
-                        };
                     self.editor.update(cx, |editor, _| {
                         editor.scroll_manager.set_sticky_header_line_count(
                             sticky_headers.as_ref().map_or(0, |h| h.lines.len()),
