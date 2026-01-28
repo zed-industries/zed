@@ -116,11 +116,6 @@ impl JsonView {
                                 })
                                 .collect::<Vec<_>>(),
                         )
-                        .child(
-                            div()
-                                .pl(px(indent as f32))
-                                .child(Label::new("}").color(Color::Muted)),
-                        )
                     })
                     .into_any_element()
             }
@@ -181,11 +176,6 @@ impl JsonView {
                                     self.render_value(child_path, None, v, depth + 1, window, cx)
                                 })
                                 .collect::<Vec<_>>(),
-                        )
-                        .child(
-                            div()
-                                .pl(px(indent as f32))
-                                .child(Label::new("]").color(Color::Muted)),
                         )
                     })
                     .into_any_element()
