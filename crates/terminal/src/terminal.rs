@@ -968,7 +968,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
+            AlacTermEvent::Exit => self.register_task_finished(None, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -994,8 +994,8 @@ impl Terminal {
                     .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
-            AlacTermEvent::ChildExit(raw_status) => {
-                self.register_task_finished(Some(raw_status), cx);
+            AlacTermEvent::ChildExit(exit_status) => {
+                self.register_task_finished(Some(exit_status), cx);
             }
         }
     }
@@ -2203,18 +2203,11 @@ impl Terminal {
         Task::ready(None)
     }
 
-    fn register_task_finished(&mut self, raw_status: Option<i32>, cx: &mut Context<Terminal>) {
-        let exit_status: Option<ExitStatus> = raw_status.map(|value| {
-            #[cfg(unix)]
-            {
-                std::os::unix::process::ExitStatusExt::from_raw(value)
-            }
-            #[cfg(windows)]
-            {
-                std::os::windows::process::ExitStatusExt::from_raw(value as u32)
-            }
-        });
-
+    fn register_task_finished(
+        &mut self,
+        exit_status: Option<ExitStatus>,
+        cx: &mut Context<Terminal>,
+    ) {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(exit_status).ok();
         }
