@@ -617,6 +617,7 @@ impl QuickSearch {
             return;
         };
 
+        self.save_history(cx);
         cx.emit(DismissEvent);
 
         workspace
