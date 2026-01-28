@@ -256,6 +256,30 @@ impl ShellKind {
         Self::new(&get_system_shell(), cfg!(windows))
     }
 
+    /// Returns whether this shell uses POSIX-like command chaining syntax (`&&`, `||`, `;`, `|`).
+    ///
+    /// This is used to determine if we can safely parse shell commands to extract sub-commands
+    /// for security purposes (e.g., preventing shell injection in "always allow" patterns).
+    ///
+    /// **Compatible shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
+    ///
+    /// **Incompatible shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
+    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
+    pub fn supports_posix_chaining(&self) -> bool {
+        matches!(
+            self,
+            ShellKind::Posix
+                | ShellKind::Fish
+                | ShellKind::PowerShell
+                | ShellKind::Pwsh
+                | ShellKind::Cmd
+                | ShellKind::Xonsh
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+        )
+    }
+
     pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
         let program = program.as_ref();
         let program = program
