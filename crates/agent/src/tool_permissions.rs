@@ -86,22 +86,22 @@ impl ToolPermissionDecision {
         if tool_name == TerminalTool::name() {
             // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
             // See the doc comment above for the list of compatible/incompatible shells.
-            let shell_supports_posix_chaining = matches!(
-                shell_kind,
-                ShellKind::Posix
-                    | ShellKind::Fish
-                    | ShellKind::PowerShell
-                    | ShellKind::Pwsh
-                    | ShellKind::Cmd
-                    | ShellKind::Xonsh
-                    | ShellKind::Csh
-                    | ShellKind::Tcsh
-            );
-
-            if !shell_supports_posix_chaining {
+            if !shell_kind.supports_posix_chaining() {
                 // For shells with incompatible syntax, we can't reliably parse
-                // the command to extract sub-commands. Disable "always allow"
-                // to be safe, but still check deny/confirm patterns.
+                // the command to extract sub-commands.
+                if !rules.always_allow.is_empty() {
+                    // If the user has configured always_allow patterns, we must deny
+                    // because we can't safely verify the command doesn't contain
+                    // hidden sub-commands that bypass the allow patterns.
+                    return ToolPermissionDecision::Deny(format!(
+                        "The {} shell does not support \"always allow\" patterns for the terminal \
+                         tool because Zed cannot parse its command chaining syntax. Please remove \
+                         the always_allow patterns from your tool_permissions settings, or switch \
+                         to a supported shell (bash, zsh, fish, powershell, etc.).",
+                        shell_kind
+                    ));
+                }
+                // No always_allow rules, so we can still check deny/confirm patterns.
                 return check_commands(std::iter::once(input.to_string()), rules, tool_name, false);
             }
 

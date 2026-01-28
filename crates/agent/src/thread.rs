@@ -626,9 +626,20 @@ impl ToolPermissionContext {
     /// Tests should use this function rather than manually constructing options.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
+        use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
         let input_value = &self.input_value;
+
+        // For the terminal tool, "Always allow" options are only available when the
+        // user's shell supports POSIX-like command chaining syntax (&&, ||, ;, |).
+        // This is because we need to parse commands to safely verify that all
+        // sub-commands match the allow patterns.
+        let shell_supports_always_allow = if tool_name == "terminal" {
+            ShellKind::system().supports_posix_chaining()
+        } else {
+            true
+        };
 
         let (pattern, pattern_display) = match tool_name.as_str() {
             "terminal" => (
@@ -663,27 +674,29 @@ impl ToolPermissionContext {
             });
         };
 
-        push_choice(
-            format!("Always for {}", tool_name.replace('_', " ")),
-            format!("always_allow:{}", tool_name),
-            format!("always_deny:{}", tool_name),
-            acp::PermissionOptionKind::AllowAlways,
-            acp::PermissionOptionKind::RejectAlways,
-        );
-
-        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-            let button_text = match tool_name.as_str() {
-                "terminal" => format!("Always for `{}` commands", display),
-                "fetch" => format!("Always for `{}`", display),
-                _ => format!("Always for `{}`", display),
-            };
+        if shell_supports_always_allow {
             push_choice(
-                button_text,
-                format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                format!("Always for {}", tool_name.replace('_', " ")),
+                format!("always_allow:{}", tool_name),
+                format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
                 acp::PermissionOptionKind::RejectAlways,
             );
+
+            if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+                let button_text = match tool_name.as_str() {
+                    "terminal" => format!("Always for `{}` commands", display),
+                    "fetch" => format!("Always for `{}`", display),
+                    _ => format!("Always for `{}`", display),
+                };
+                push_choice(
+                    button_text,
+                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::RejectAlways,
+                );
+            }
         }
 
         push_choice(
