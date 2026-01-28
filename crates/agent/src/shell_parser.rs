@@ -3,7 +3,7 @@ use brush_parser::word::WordPiece;
 use brush_parser::{Parser, ParserOptions, SourceInfo};
 use std::io::BufReader;
 
-pub fn extract_commands(command: &str) -> Result<impl Iterator<Item = String>, ShellParseError> {
+pub fn extract_commands(command: &str) -> Result<Vec<String>, ShellParseError> {
     let reader = BufReader::new(command.as_bytes());
     let options = ParserOptions::default();
     let source_info = SourceInfo::default();
@@ -16,7 +16,7 @@ pub fn extract_commands(command: &str) -> Result<impl Iterator<Item = String>, S
     let mut commands = Vec::new();
     extract_commands_from_program(&program, &mut commands);
 
-    Ok(commands.into_iter())
+    Ok(commands)
 }
 
 #[derive(Debug, Clone)]
@@ -290,105 +290,101 @@ mod tests {
 
     #[test]
     fn test_simple_command() {
-        let commands: Vec<_> = extract_commands("ls").unwrap().collect();
+        let commands = extract_commands("ls").unwrap();
         assert_eq!(commands, vec!["ls"]);
     }
 
     #[test]
     fn test_command_with_args() {
-        let commands: Vec<_> = extract_commands("ls -la /tmp").unwrap().collect();
+        let commands = extract_commands("ls -la /tmp").unwrap();
         assert_eq!(commands, vec!["ls -la /tmp"]);
     }
 
     #[test]
     fn test_and_operator() {
-        let commands: Vec<_> = extract_commands("ls && rm -rf /").unwrap().collect();
+        let commands = extract_commands("ls && rm -rf /").unwrap();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_or_operator() {
-        let commands: Vec<_> = extract_commands("ls || rm -rf /").unwrap().collect();
+        let commands = extract_commands("ls || rm -rf /").unwrap();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_semicolon() {
-        let commands: Vec<_> = extract_commands("ls; rm -rf /").unwrap().collect();
+        let commands = extract_commands("ls; rm -rf /").unwrap();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_pipe() {
-        let commands: Vec<_> = extract_commands("ls | xargs rm -rf").unwrap().collect();
+        let commands = extract_commands("ls | xargs rm -rf").unwrap();
         assert_eq!(commands, vec!["ls", "xargs rm -rf"]);
     }
 
     #[test]
     fn test_background() {
-        let commands: Vec<_> = extract_commands("ls & rm -rf /").unwrap().collect();
+        let commands = extract_commands("ls & rm -rf /").unwrap();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_command_substitution_dollar() {
-        let commands: Vec<_> = extract_commands("echo $(whoami)").unwrap().collect();
+        let commands = extract_commands("echo $(whoami)").unwrap();
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.contains(&"whoami".to_string()));
     }
 
     #[test]
     fn test_command_substitution_backticks() {
-        let commands: Vec<_> = extract_commands("echo `whoami`").unwrap().collect();
+        let commands = extract_commands("echo `whoami`").unwrap();
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.contains(&"whoami".to_string()));
     }
 
     #[test]
     fn test_process_substitution_input() {
-        let commands: Vec<_> = extract_commands("cat <(ls)").unwrap().collect();
+        let commands = extract_commands("cat <(ls)").unwrap();
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"ls".to_string()));
     }
 
     #[test]
     fn test_process_substitution_output() {
-        let commands: Vec<_> = extract_commands("ls >(cat)").unwrap().collect();
+        let commands = extract_commands("ls >(cat)").unwrap();
         assert!(commands.iter().any(|c| c.contains("ls")));
         assert!(commands.contains(&"cat".to_string()));
     }
 
     #[test]
     fn test_newline_separator() {
-        let commands: Vec<_> = extract_commands("ls\nrm -rf /").unwrap().collect();
+        let commands = extract_commands("ls\nrm -rf /").unwrap();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_subshell() {
-        let commands: Vec<_> = extract_commands("(ls && rm -rf /)").unwrap().collect();
+        let commands = extract_commands("(ls && rm -rf /)").unwrap();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_mixed_operators() {
-        let commands: Vec<_> = extract_commands("ls; echo hello && rm -rf /")
-            .unwrap()
-            .collect();
+        let commands = extract_commands("ls; echo hello && rm -rf /").unwrap();
         assert_eq!(commands, vec!["ls", "echo hello", "rm -rf /"]);
     }
 
     #[test]
     fn test_no_spaces_around_operators() {
-        let commands: Vec<_> = extract_commands("ls&&rm").unwrap().collect();
+        let commands = extract_commands("ls&&rm").unwrap();
         assert_eq!(commands, vec!["ls", "rm"]);
     }
 
     #[test]
     fn test_nested_command_substitution() {
-        let commands: Vec<_> = extract_commands("echo $(cat $(whoami).txt)")
-            .unwrap()
-            .collect();
+        let commands = extract_commands("echo $(cat $(whoami).txt)").unwrap();
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"whoami".to_string()));
@@ -396,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_empty_command() {
-        let commands: Vec<_> = extract_commands("").unwrap().collect();
+        let commands = extract_commands("").unwrap();
         assert!(commands.is_empty());
     }
 
