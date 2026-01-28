@@ -1,4 +1,6 @@
+use crate::AgentTool;
 use crate::shell_parser::extract_commands;
+use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
 
@@ -67,44 +69,85 @@ pub fn decide_permission(
     // pattern like "^ls" and an attacker crafts "ls && rm -rf /".
     //
     // If parsing fails or the shell syntax is unsupported, always_allow is
-    // disabled for this command (we set commands_to_check to None to signal this).
-    let (commands_to_check, allow_enabled) = if tool_name == "terminal" {
+    // disabled for this command (we set allow_enabled to false to signal this).
+    if tool_name == TerminalTool::name() {
         match extract_commands(input) {
-            Ok(commands) if !commands.is_empty() => (commands, true),
-            Ok(_) => (vec![input.to_string()], false),
-            Err(_) => (vec![input.to_string()], false),
+            Ok(iter) => check_commands(iter, input, rules, tool_name, true),
+            Err(_) => check_commands(
+                std::iter::once(input.to_string()),
+                input,
+                rules,
+                tool_name,
+                false,
+            ),
         }
     } else {
-        (vec![input.to_string()], true)
-    };
+        check_commands(
+            std::iter::once(input.to_string()),
+            input,
+            rules,
+            tool_name,
+            true,
+        )
+    }
+}
 
-    // DENY: If ANY sub-command matches a deny pattern, deny the entire command.
-    for cmd in &commands_to_check {
-        if rules.always_deny.iter().any(|r| r.is_match(cmd)) {
+fn check_commands(
+    commands: impl IntoIterator<Item = String>,
+    input: &str,
+    rules: &ToolRules,
+    tool_name: &str,
+    allow_enabled: bool,
+) -> ToolPermissionDecision {
+    // Single pass through all commands:
+    // - DENY: If ANY command matches a deny pattern, deny immediately (short-circuit)
+    // - CONFIRM: Track if ANY command matches a confirm pattern
+    // - ALLOW: Track if ALL commands match at least one allow pattern
+    let mut any_matched_confirm = false;
+    let mut all_matched_allow = true;
+    let mut had_any_commands = false;
+
+    for command in commands {
+        had_any_commands = true;
+
+        // DENY: immediate return if any command matches a deny pattern
+        if rules.always_deny.iter().any(|r| r.is_match(&command)) {
             return ToolPermissionDecision::Deny(format!(
                 "Command blocked by security rule for {} tool",
                 tool_name
             ));
         }
-    }
 
-    // CONFIRM: If ANY sub-command matches a confirm pattern, require confirmation.
-    for cmd in &commands_to_check {
-        if rules.always_confirm.iter().any(|r| r.is_match(cmd)) {
-            return ToolPermissionDecision::Confirm;
+        // CONFIRM: remember if any command matches a confirm pattern
+        if rules.always_confirm.iter().any(|r| r.is_match(&command)) {
+            any_matched_confirm = true;
+        }
+
+        // ALLOW: track if all commands match at least one allow pattern
+        if !rules.always_allow.iter().any(|r| r.is_match(&command)) {
+            all_matched_allow = false;
         }
     }
 
-    // ALLOW: ALL sub-commands must match at least one allow pattern.
-    // This is only available when parsing succeeded (allow_enabled is true).
-    if allow_enabled {
-        let all_allowed = commands_to_check
-            .iter()
-            .all(|cmd| rules.always_allow.iter().any(|r| r.is_match(cmd)));
+    // After processing all commands, check accumulated state
+    if any_matched_confirm {
+        return ToolPermissionDecision::Confirm;
+    }
 
-        if all_allowed && !commands_to_check.is_empty() {
-            return ToolPermissionDecision::Allow;
-        }
+    // If we had no commands (empty iterator), fall back to treating input as single command
+    // with allow disabled
+    if !had_any_commands {
+        return check_commands(
+            std::iter::once(input.to_string()),
+            input,
+            rules,
+            tool_name,
+            false,
+        );
+    }
+
+    if allow_enabled && all_matched_allow {
+        return ToolPermissionDecision::Allow;
     }
 
     match rules.default_mode {

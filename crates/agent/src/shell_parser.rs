@@ -3,7 +3,9 @@ use brush_parser::word::WordPiece;
 use brush_parser::{Parser, ParserOptions, SourceInfo};
 use std::io::BufReader;
 
-pub fn extract_commands(command: &str) -> Result<Vec<String>, ShellParseError> {
+type CommandIter<'a> = Box<dyn Iterator<Item = String> + 'a>;
+
+pub fn extract_commands(command: &str) -> Result<impl Iterator<Item = String>, ShellParseError> {
     let reader = BufReader::new(command.as_bytes());
     let options = ParserOptions::default();
     let source_info = SourceInfo::default();
@@ -13,10 +15,7 @@ pub fn extract_commands(command: &str) -> Result<Vec<String>, ShellParseError> {
         .parse_program()
         .map_err(|e| ShellParseError::ParseError(e.to_string()))?;
 
-    let mut commands = Vec::new();
-    extract_commands_from_program(&program, &mut commands);
-
-    Ok(commands)
+    Ok(extract_commands_from_program(program))
 }
 
 #[derive(Debug, Clone)]
@@ -25,163 +24,176 @@ pub enum ShellParseError {
     ParseError(String),
 }
 
-fn extract_commands_from_program(program: &ast::Program, commands: &mut Vec<String>) {
-    for complete_command in &program.complete_commands {
-        extract_commands_from_compound_list(complete_command, commands);
-    }
+fn extract_commands_from_program(program: ast::Program) -> impl Iterator<Item = String> {
+    program
+        .complete_commands
+        .into_iter()
+        .flat_map(extract_commands_from_compound_list)
 }
 
-fn extract_commands_from_compound_list(
-    compound_list: &ast::CompoundList,
-    commands: &mut Vec<String>,
-) {
-    for item in &compound_list.0 {
-        extract_commands_from_and_or_list(&item.0, commands);
-    }
+fn extract_commands_from_compound_list(compound_list: ast::CompoundList) -> CommandIter<'static> {
+    Box::new(
+        compound_list
+            .0
+            .into_iter()
+            .flat_map(|item| extract_commands_from_and_or_list(item.0)),
+    )
 }
 
-fn extract_commands_from_and_or_list(and_or_list: &ast::AndOrList, commands: &mut Vec<String>) {
-    extract_commands_from_pipeline(&and_or_list.first, commands);
-
-    for and_or in &and_or_list.additional {
-        match and_or {
-            ast::AndOr::And(pipeline) | ast::AndOr::Or(pipeline) => {
-                extract_commands_from_pipeline(pipeline, commands);
-            }
-        }
-    }
+fn extract_commands_from_and_or_list(and_or_list: ast::AndOrList) -> CommandIter<'static> {
+    let first = extract_commands_from_pipeline(and_or_list.first);
+    let additional = and_or_list.additional.into_iter().flat_map(|and_or| {
+        let pipeline = match and_or {
+            ast::AndOr::And(pipeline) | ast::AndOr::Or(pipeline) => pipeline,
+        };
+        extract_commands_from_pipeline(pipeline)
+    });
+    Box::new(first.chain(additional))
 }
 
-fn extract_commands_from_pipeline(pipeline: &ast::Pipeline, commands: &mut Vec<String>) {
-    for command in &pipeline.seq {
-        extract_commands_from_command(command, commands);
-    }
+fn extract_commands_from_pipeline(pipeline: ast::Pipeline) -> CommandIter<'static> {
+    Box::new(
+        pipeline
+            .seq
+            .into_iter()
+            .flat_map(extract_commands_from_command),
+    )
 }
 
-fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<String>) {
+fn extract_commands_from_command(command: ast::Command) -> CommandIter<'static> {
     match command {
         ast::Command::Simple(simple_command) => {
-            extract_commands_from_simple_command(simple_command, commands);
+            extract_commands_from_simple_command(simple_command)
         }
         ast::Command::Compound(compound_command, _redirect_list) => {
-            extract_commands_from_compound_command(compound_command, commands);
+            extract_commands_from_compound_command(compound_command)
         }
-        ast::Command::Function(func_def) => {
-            extract_commands_from_function_body(&func_def.body, commands);
-        }
+        ast::Command::Function(func_def) => extract_commands_from_function_body(func_def.body),
         ast::Command::ExtendedTest(test_expr) => {
-            extract_commands_from_extended_test_expr(test_expr, commands);
+            extract_commands_from_extended_test_expr(test_expr)
         }
     }
 }
 
 fn extract_commands_from_simple_command(
-    simple_command: &ast::SimpleCommand,
-    commands: &mut Vec<String>,
-) {
+    simple_command: ast::SimpleCommand,
+) -> CommandIter<'static> {
     let command_str = simple_command.to_string();
-    if !command_str.trim().is_empty() {
-        commands.push(command_str);
-    }
+    let main_command = if !command_str.trim().is_empty() {
+        Some(command_str)
+    } else {
+        None
+    };
 
-    if let Some(prefix) = &simple_command.prefix {
-        extract_commands_from_command_prefix(prefix, commands);
-    }
-    if let Some(word) = &simple_command.word_or_name {
-        extract_commands_from_word(word, commands);
-    }
-    if let Some(suffix) = &simple_command.suffix {
-        extract_commands_from_command_suffix(suffix, commands);
-    }
+    let prefix_commands = simple_command
+        .prefix
+        .into_iter()
+        .flat_map(extract_commands_from_command_prefix);
+
+    let word_commands = simple_command
+        .word_or_name
+        .into_iter()
+        .flat_map(extract_commands_from_word);
+
+    let suffix_commands = simple_command
+        .suffix
+        .into_iter()
+        .flat_map(extract_commands_from_command_suffix);
+
+    Box::new(
+        main_command
+            .into_iter()
+            .chain(prefix_commands)
+            .chain(word_commands)
+            .chain(suffix_commands),
+    )
 }
 
-fn extract_commands_from_command_prefix(prefix: &ast::CommandPrefix, commands: &mut Vec<String>) {
-    for item in &prefix.0 {
-        extract_commands_from_prefix_or_suffix_item(item, commands);
-    }
+fn extract_commands_from_command_prefix(prefix: ast::CommandPrefix) -> CommandIter<'static> {
+    Box::new(
+        prefix
+            .0
+            .into_iter()
+            .flat_map(extract_commands_from_prefix_or_suffix_item),
+    )
 }
 
-fn extract_commands_from_command_suffix(suffix: &ast::CommandSuffix, commands: &mut Vec<String>) {
-    for item in &suffix.0 {
-        extract_commands_from_prefix_or_suffix_item(item, commands);
-    }
+fn extract_commands_from_command_suffix(suffix: ast::CommandSuffix) -> CommandIter<'static> {
+    Box::new(
+        suffix
+            .0
+            .into_iter()
+            .flat_map(extract_commands_from_prefix_or_suffix_item),
+    )
 }
 
 fn extract_commands_from_prefix_or_suffix_item(
-    item: &ast::CommandPrefixOrSuffixItem,
-    commands: &mut Vec<String>,
-) {
+    item: ast::CommandPrefixOrSuffixItem,
+) -> CommandIter<'static> {
     match item {
         ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
-            extract_commands_from_io_redirect(redirect, commands);
+            extract_commands_from_io_redirect(redirect)
         }
         ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, _word) => {
-            extract_commands_from_assignment(assignment, commands);
+            extract_commands_from_assignment(assignment)
         }
-        ast::CommandPrefixOrSuffixItem::Word(word) => {
-            extract_commands_from_word(word, commands);
-        }
+        ast::CommandPrefixOrSuffixItem::Word(word) => extract_commands_from_word(word),
         ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_kind, subshell) => {
-            extract_commands_from_compound_list(&subshell.list, commands);
+            extract_commands_from_compound_list(subshell.list)
         }
     }
 }
 
-fn extract_commands_from_io_redirect(redirect: &ast::IoRedirect, commands: &mut Vec<String>) {
+fn extract_commands_from_io_redirect(redirect: ast::IoRedirect) -> CommandIter<'static> {
     match redirect {
         ast::IoRedirect::File(_fd, _kind, target) => {
             if let ast::IoFileRedirectTarget::ProcessSubstitution(_kind, subshell) = target {
-                extract_commands_from_compound_list(&subshell.list, commands);
+                extract_commands_from_compound_list(subshell.list)
+            } else {
+                Box::new(std::iter::empty())
             }
         }
-        ast::IoRedirect::HereDocument(_fd, _here_doc) => {}
-        ast::IoRedirect::HereString(_fd, word) => {
-            extract_commands_from_word(word, commands);
-        }
-        ast::IoRedirect::OutputAndError(word, _) => {
-            extract_commands_from_word(word, commands);
-        }
+        ast::IoRedirect::HereDocument(_fd, _here_doc) => Box::new(std::iter::empty()),
+        ast::IoRedirect::HereString(_fd, word) => extract_commands_from_word(word),
+        ast::IoRedirect::OutputAndError(word, _) => extract_commands_from_word(word),
     }
 }
 
-fn extract_commands_from_assignment(assignment: &ast::Assignment, commands: &mut Vec<String>) {
-    match &assignment.value {
-        ast::AssignmentValue::Scalar(word) => {
-            extract_commands_from_word(word, commands);
-        }
+fn extract_commands_from_assignment(assignment: ast::Assignment) -> CommandIter<'static> {
+    match assignment.value {
+        ast::AssignmentValue::Scalar(word) => extract_commands_from_word(word),
         ast::AssignmentValue::Array(words) => {
-            for (opt_word, word) in words {
-                if let Some(w) = opt_word {
-                    extract_commands_from_word(w, commands);
-                }
-                extract_commands_from_word(word, commands);
-            }
+            Box::new(words.into_iter().flat_map(|(opt_word, word)| {
+                let opt_iter = opt_word.into_iter().flat_map(extract_commands_from_word);
+                let word_iter = extract_commands_from_word(word);
+                opt_iter.chain(word_iter)
+            }))
         }
     }
 }
 
-fn extract_commands_from_word(word: &ast::Word, commands: &mut Vec<String>) {
+fn extract_commands_from_word(word: ast::Word) -> CommandIter<'static> {
     let options = ParserOptions::default();
-    if let Ok(pieces) = brush_parser::word::parse(&word.value, &options) {
-        for piece_with_source in pieces {
-            extract_commands_from_word_piece(&piece_with_source.piece, commands);
-        }
+    match brush_parser::word::parse(&word.value, &options) {
+        Ok(pieces) => Box::new(pieces.into_iter().flat_map(|piece_with_source| {
+            extract_commands_from_word_piece(piece_with_source.piece)
+        })),
+        Err(_) => Box::new(std::iter::empty()),
     }
 }
 
-fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String>) {
+fn extract_commands_from_word_piece(piece: WordPiece) -> CommandIter<'static> {
     match piece {
         WordPiece::CommandSubstitution(cmd_str)
-        | WordPiece::BackquotedCommandSubstitution(cmd_str) => {
-            if let Ok(nested_commands) = extract_commands(cmd_str) {
-                commands.extend(nested_commands);
-            }
-        }
+        | WordPiece::BackquotedCommandSubstitution(cmd_str) => match extract_commands(&cmd_str) {
+            Ok(iter) => Box::new(iter.collect::<Vec<_>>().into_iter()),
+            Err(_) => Box::new(std::iter::empty()),
+        },
         WordPiece::DoubleQuotedSequence(pieces)
         | WordPiece::GettextDoubleQuotedSequence(pieces) => {
-            for inner_piece_with_source in pieces {
-                extract_commands_from_word_piece(&inner_piece_with_source.piece, commands);
-            }
+            Box::new(pieces.into_iter().flat_map(|inner_piece_with_source| {
+                extract_commands_from_word_piece(inner_piece_with_source.piece)
+            }))
         }
         WordPiece::EscapeSequence(_)
         | WordPiece::SingleQuotedText(_)
@@ -189,97 +201,97 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
         | WordPiece::AnsiCQuotedText(_)
         | WordPiece::TildePrefix(_)
         | WordPiece::ParameterExpansion(_)
-        | WordPiece::ArithmeticExpression(_) => {}
+        | WordPiece::ArithmeticExpression(_) => Box::new(std::iter::empty()),
     }
 }
 
 fn extract_commands_from_compound_command(
-    compound_command: &ast::CompoundCommand,
-    commands: &mut Vec<String>,
-) {
+    compound_command: ast::CompoundCommand,
+) -> CommandIter<'static> {
     match compound_command {
         ast::CompoundCommand::BraceGroup(brace_group) => {
-            extract_commands_from_compound_list(&brace_group.list, commands);
+            extract_commands_from_compound_list(brace_group.list)
         }
         ast::CompoundCommand::Subshell(subshell) => {
-            extract_commands_from_compound_list(&subshell.list, commands);
+            extract_commands_from_compound_list(subshell.list)
         }
         ast::CompoundCommand::ForClause(for_clause) => {
-            if let Some(words) = &for_clause.values {
-                for word in words {
-                    extract_commands_from_word(word, commands);
-                }
-            }
-            extract_commands_from_do_group(&for_clause.body, commands);
+            let word_commands = for_clause
+                .values
+                .into_iter()
+                .flat_map(|words| words.into_iter().flat_map(extract_commands_from_word));
+            let body_commands = extract_commands_from_do_group(for_clause.body);
+            Box::new(word_commands.chain(body_commands))
         }
         ast::CompoundCommand::CaseClause(case_clause) => {
-            extract_commands_from_word(&case_clause.value, commands);
-            for item in &case_clause.cases {
-                if let Some(body) = &item.cmd {
-                    extract_commands_from_compound_list(body, commands);
-                }
-            }
+            let value_commands = extract_commands_from_word(case_clause.value);
+            let case_commands = case_clause.cases.into_iter().flat_map(|item| {
+                item.cmd
+                    .into_iter()
+                    .flat_map(extract_commands_from_compound_list)
+            });
+            Box::new(value_commands.chain(case_commands))
         }
         ast::CompoundCommand::IfClause(if_clause) => {
-            extract_commands_from_compound_list(&if_clause.condition, commands);
-            extract_commands_from_compound_list(&if_clause.then, commands);
-            if let Some(elses) = &if_clause.elses {
-                for else_item in elses {
-                    if let Some(condition) = &else_item.condition {
-                        extract_commands_from_compound_list(condition, commands);
-                    }
-                    extract_commands_from_compound_list(&else_item.body, commands);
-                }
-            }
+            let condition_commands = extract_commands_from_compound_list(if_clause.condition);
+            let then_commands = extract_commands_from_compound_list(if_clause.then);
+            let else_commands = if_clause.elses.into_iter().flat_map(|elses| {
+                elses.into_iter().flat_map(|else_item| {
+                    let cond_iter = else_item
+                        .condition
+                        .into_iter()
+                        .flat_map(extract_commands_from_compound_list);
+                    let body_iter = extract_commands_from_compound_list(else_item.body);
+                    cond_iter.chain(body_iter)
+                })
+            });
+            Box::new(condition_commands.chain(then_commands).chain(else_commands))
         }
         ast::CompoundCommand::WhileClause(while_clause)
         | ast::CompoundCommand::UntilClause(while_clause) => {
-            extract_commands_from_compound_list(&while_clause.0, commands);
-            extract_commands_from_do_group(&while_clause.1, commands);
+            let condition_commands = extract_commands_from_compound_list(while_clause.0);
+            let body_commands = extract_commands_from_do_group(while_clause.1);
+            Box::new(condition_commands.chain(body_commands))
         }
         ast::CompoundCommand::ArithmeticForClause(arith_for) => {
-            extract_commands_from_do_group(&arith_for.body, commands);
+            extract_commands_from_do_group(arith_for.body)
         }
-        ast::CompoundCommand::Arithmetic(_arith_cmd) => {}
+        ast::CompoundCommand::Arithmetic(_arith_cmd) => Box::new(std::iter::empty()),
     }
 }
 
-fn extract_commands_from_do_group(do_group: &ast::DoGroupCommand, commands: &mut Vec<String>) {
-    extract_commands_from_compound_list(&do_group.list, commands);
+fn extract_commands_from_do_group(do_group: ast::DoGroupCommand) -> CommandIter<'static> {
+    extract_commands_from_compound_list(do_group.list)
 }
 
-fn extract_commands_from_function_body(func_body: &ast::FunctionBody, commands: &mut Vec<String>) {
-    extract_commands_from_compound_command(&func_body.0, commands);
+fn extract_commands_from_function_body(func_body: ast::FunctionBody) -> CommandIter<'static> {
+    extract_commands_from_compound_command(func_body.0)
 }
 
 fn extract_commands_from_extended_test_expr(
-    test_expr: &ast::ExtendedTestExprCommand,
-    commands: &mut Vec<String>,
-) {
-    extract_commands_from_extended_test_expr_inner(&test_expr.expr, commands);
+    test_expr: ast::ExtendedTestExprCommand,
+) -> CommandIter<'static> {
+    extract_commands_from_extended_test_expr_inner(test_expr.expr)
 }
 
 fn extract_commands_from_extended_test_expr_inner(
-    expr: &ast::ExtendedTestExpr,
-    commands: &mut Vec<String>,
-) {
+    expr: ast::ExtendedTestExpr,
+) -> CommandIter<'static> {
     match expr {
-        ast::ExtendedTestExpr::Not(inner) => {
-            extract_commands_from_extended_test_expr_inner(inner, commands);
-        }
+        ast::ExtendedTestExpr::Not(inner) => extract_commands_from_extended_test_expr_inner(*inner),
         ast::ExtendedTestExpr::And(left, right) | ast::ExtendedTestExpr::Or(left, right) => {
-            extract_commands_from_extended_test_expr_inner(left, commands);
-            extract_commands_from_extended_test_expr_inner(right, commands);
+            let left_commands = extract_commands_from_extended_test_expr_inner(*left);
+            let right_commands = extract_commands_from_extended_test_expr_inner(*right);
+            Box::new(left_commands.chain(right_commands))
         }
         ast::ExtendedTestExpr::Parenthesized(inner) => {
-            extract_commands_from_extended_test_expr_inner(inner, commands);
+            extract_commands_from_extended_test_expr_inner(*inner)
         }
-        ast::ExtendedTestExpr::UnaryTest(_, word) => {
-            extract_commands_from_word(word, commands);
-        }
+        ast::ExtendedTestExpr::UnaryTest(_, word) => extract_commands_from_word(word),
         ast::ExtendedTestExpr::BinaryTest(_, word1, word2) => {
-            extract_commands_from_word(word1, commands);
-            extract_commands_from_word(word2, commands);
+            let word1_commands = extract_commands_from_word(word1);
+            let word2_commands = extract_commands_from_word(word2);
+            Box::new(word1_commands.chain(word2_commands))
         }
     }
 }
@@ -290,101 +302,105 @@ mod tests {
 
     #[test]
     fn test_simple_command() {
-        let commands = extract_commands("ls").unwrap();
+        let commands: Vec<_> = extract_commands("ls").unwrap().collect();
         assert_eq!(commands, vec!["ls"]);
     }
 
     #[test]
     fn test_command_with_args() {
-        let commands = extract_commands("ls -la /tmp").unwrap();
+        let commands: Vec<_> = extract_commands("ls -la /tmp").unwrap().collect();
         assert_eq!(commands, vec!["ls -la /tmp"]);
     }
 
     #[test]
     fn test_and_operator() {
-        let commands = extract_commands("ls && rm -rf /").unwrap();
+        let commands: Vec<_> = extract_commands("ls && rm -rf /").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_or_operator() {
-        let commands = extract_commands("ls || rm -rf /").unwrap();
+        let commands: Vec<_> = extract_commands("ls || rm -rf /").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_semicolon() {
-        let commands = extract_commands("ls; rm -rf /").unwrap();
+        let commands: Vec<_> = extract_commands("ls; rm -rf /").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_pipe() {
-        let commands = extract_commands("ls | xargs rm -rf").unwrap();
+        let commands: Vec<_> = extract_commands("ls | xargs rm -rf").unwrap().collect();
         assert_eq!(commands, vec!["ls", "xargs rm -rf"]);
     }
 
     #[test]
     fn test_background() {
-        let commands = extract_commands("ls & rm -rf /").unwrap();
+        let commands: Vec<_> = extract_commands("ls & rm -rf /").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_command_substitution_dollar() {
-        let commands = extract_commands("echo $(whoami)").unwrap();
+        let commands: Vec<_> = extract_commands("echo $(whoami)").unwrap().collect();
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.contains(&"whoami".to_string()));
     }
 
     #[test]
     fn test_command_substitution_backticks() {
-        let commands = extract_commands("echo `whoami`").unwrap();
+        let commands: Vec<_> = extract_commands("echo `whoami`").unwrap().collect();
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.contains(&"whoami".to_string()));
     }
 
     #[test]
     fn test_process_substitution_input() {
-        let commands = extract_commands("cat <(ls)").unwrap();
+        let commands: Vec<_> = extract_commands("cat <(ls)").unwrap().collect();
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"ls".to_string()));
     }
 
     #[test]
     fn test_process_substitution_output() {
-        let commands = extract_commands("ls >(cat)").unwrap();
+        let commands: Vec<_> = extract_commands("ls >(cat)").unwrap().collect();
         assert!(commands.iter().any(|c| c.contains("ls")));
         assert!(commands.contains(&"cat".to_string()));
     }
 
     #[test]
     fn test_newline_separator() {
-        let commands = extract_commands("ls\nrm -rf /").unwrap();
+        let commands: Vec<_> = extract_commands("ls\nrm -rf /").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_subshell() {
-        let commands = extract_commands("(ls && rm -rf /)").unwrap();
+        let commands: Vec<_> = extract_commands("(ls && rm -rf /)").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_mixed_operators() {
-        let commands = extract_commands("ls; echo hello && rm -rf /").unwrap();
+        let commands: Vec<_> = extract_commands("ls; echo hello && rm -rf /")
+            .unwrap()
+            .collect();
         assert_eq!(commands, vec!["ls", "echo hello", "rm -rf /"]);
     }
 
     #[test]
     fn test_no_spaces_around_operators() {
-        let commands = extract_commands("ls&&rm").unwrap();
+        let commands: Vec<_> = extract_commands("ls&&rm").unwrap().collect();
         assert_eq!(commands, vec!["ls", "rm"]);
     }
 
     #[test]
     fn test_nested_command_substitution() {
-        let commands = extract_commands("echo $(cat $(whoami).txt)").unwrap();
+        let commands: Vec<_> = extract_commands("echo $(cat $(whoami).txt)")
+            .unwrap()
+            .collect();
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"whoami".to_string()));
@@ -392,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_empty_command() {
-        let commands = extract_commands("").unwrap();
+        let commands: Vec<_> = extract_commands("").unwrap().collect();
         assert!(commands.is_empty());
     }
 
