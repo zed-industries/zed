@@ -1451,6 +1451,9 @@ impl App {
         });
     }
 
+    // prolog/epilogue
+    // &mut dyn FnMut
+    // Box<dyn FnOnce>
     fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
@@ -1462,29 +1465,35 @@ impl App {
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            cx.window_update_stack.pop();
 
-            if window.removed {
-                cx.window_handles.remove(&id);
-                cx.windows.remove(id);
+            fn epilogue(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
 
-                cx.window_closed_observers.clone().retain(&(), |callback| {
-                    callback(cx);
-                    true
-                });
+                if window.removed {
+                    cx.window_handles.remove(&id);
+                    cx.windows.remove(id);
 
-                let quit_on_empty = match cx.quit_mode {
-                    QuitMode::Explicit => false,
-                    QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => cfg!(not(target_os = "macos")),
-                };
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx);
+                        true
+                    });
 
-                if quit_on_empty && cx.windows.is_empty() {
-                    cx.quit();
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
+
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(id)?.replace(window);
                 }
-            } else {
-                cx.windows.get_mut(id)?.replace(window);
+                Some(())
             }
+
+            epilogue(id, window, cx)?;
 
             Some(result)
         })
