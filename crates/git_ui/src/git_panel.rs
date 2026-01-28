@@ -704,13 +704,7 @@ impl GitPanel {
                 editor.clear(window, cx);
             });
 
-            let mut commit_message_buffer = commit_editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap();
-
+            let mut commit_message_buffer = Self::commit_message_buffer_impl(&commit_editor, cx);
             let _commit_message_buffer_subscription =
                 Self::subscribe_to_commit_message_buffer(&mut commit_message_buffer, window, cx);
 
@@ -2011,7 +2005,11 @@ impl GitPanel {
     }
 
     pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
-        self.commit_editor
+        Self::commit_message_buffer_impl(&self.commit_editor, cx)
+    }
+
+    fn commit_message_buffer_impl(commit_editor: &Entity<Editor>, cx: &App) -> Entity<Buffer> {
+        commit_editor
             .read(cx)
             .buffer()
             .read(cx)
