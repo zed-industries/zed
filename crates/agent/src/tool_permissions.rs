@@ -70,8 +70,8 @@ pub fn decide_permission(
     // disabled for this command (we set allow_enabled to false to signal this).
     if tool_name == TerminalTool::name() {
         match extract_commands(input) {
-            Ok(iter) => check_commands(iter, rules, tool_name, true),
-            Err(_) => check_commands(std::iter::once(input.to_string()), rules, tool_name, false),
+            Some(commands) => check_commands(commands, rules, tool_name, true),
+            None => check_commands(std::iter::once(input.to_string()), rules, tool_name, false),
         }
     } else {
         check_commands(std::iter::once(input.to_string()), rules, tool_name, true)

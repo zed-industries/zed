@@ -3,26 +3,18 @@ use brush_parser::word::WordPiece;
 use brush_parser::{Parser, ParserOptions, SourceInfo};
 use std::io::BufReader;
 
-pub fn extract_commands(command: &str) -> Result<Vec<String>, ShellParseError> {
+pub fn extract_commands(command: &str) -> Option<Vec<String>> {
     let reader = BufReader::new(command.as_bytes());
     let options = ParserOptions::default();
     let source_info = SourceInfo::default();
     let mut parser = Parser::new(reader, &options, &source_info);
 
-    let program = parser
-        .parse_program()
-        .map_err(|e| ShellParseError::ParseError(e.to_string()))?;
+    let program = parser.parse_program().ok()?;
 
     let mut commands = Vec::new();
     extract_commands_from_program(&program, &mut commands);
 
-    Ok(commands)
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub enum ShellParseError {
-    ParseError(String),
+    Some(commands)
 }
 
 fn extract_commands_from_program(program: &ast::Program, commands: &mut Vec<String>) {
@@ -173,7 +165,7 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
     match piece {
         WordPiece::CommandSubstitution(cmd_str)
         | WordPiece::BackquotedCommandSubstitution(cmd_str) => {
-            if let Ok(nested_commands) = extract_commands(cmd_str) {
+            if let Some(nested_commands) = extract_commands(cmd_str) {
                 commands.extend(nested_commands);
             }
         }
@@ -290,101 +282,101 @@ mod tests {
 
     #[test]
     fn test_simple_command() {
-        let commands = extract_commands("ls").unwrap();
+        let commands = extract_commands("ls").expect("parse failed");
         assert_eq!(commands, vec!["ls"]);
     }
 
     #[test]
     fn test_command_with_args() {
-        let commands = extract_commands("ls -la /tmp").unwrap();
+        let commands = extract_commands("ls -la /tmp").expect("parse failed");
         assert_eq!(commands, vec!["ls -la /tmp"]);
     }
 
     #[test]
     fn test_and_operator() {
-        let commands = extract_commands("ls && rm -rf /").unwrap();
+        let commands = extract_commands("ls && rm -rf /").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_or_operator() {
-        let commands = extract_commands("ls || rm -rf /").unwrap();
+        let commands = extract_commands("ls || rm -rf /").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_semicolon() {
-        let commands = extract_commands("ls; rm -rf /").unwrap();
+        let commands = extract_commands("ls; rm -rf /").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_pipe() {
-        let commands = extract_commands("ls | xargs rm -rf").unwrap();
+        let commands = extract_commands("ls | xargs rm -rf").expect("parse failed");
         assert_eq!(commands, vec!["ls", "xargs rm -rf"]);
     }
 
     #[test]
     fn test_background() {
-        let commands = extract_commands("ls & rm -rf /").unwrap();
+        let commands = extract_commands("ls & rm -rf /").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_command_substitution_dollar() {
-        let commands = extract_commands("echo $(whoami)").unwrap();
+        let commands = extract_commands("echo $(whoami)").expect("parse failed");
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.contains(&"whoami".to_string()));
     }
 
     #[test]
     fn test_command_substitution_backticks() {
-        let commands = extract_commands("echo `whoami`").unwrap();
+        let commands = extract_commands("echo `whoami`").expect("parse failed");
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.contains(&"whoami".to_string()));
     }
 
     #[test]
     fn test_process_substitution_input() {
-        let commands = extract_commands("cat <(ls)").unwrap();
+        let commands = extract_commands("cat <(ls)").expect("parse failed");
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"ls".to_string()));
     }
 
     #[test]
     fn test_process_substitution_output() {
-        let commands = extract_commands("ls >(cat)").unwrap();
+        let commands = extract_commands("ls >(cat)").expect("parse failed");
         assert!(commands.iter().any(|c| c.contains("ls")));
         assert!(commands.contains(&"cat".to_string()));
     }
 
     #[test]
     fn test_newline_separator() {
-        let commands = extract_commands("ls\nrm -rf /").unwrap();
+        let commands = extract_commands("ls\nrm -rf /").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_subshell() {
-        let commands = extract_commands("(ls && rm -rf /)").unwrap();
+        let commands = extract_commands("(ls && rm -rf /)").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm -rf /"]);
     }
 
     #[test]
     fn test_mixed_operators() {
-        let commands = extract_commands("ls; echo hello && rm -rf /").unwrap();
+        let commands = extract_commands("ls; echo hello && rm -rf /").expect("parse failed");
         assert_eq!(commands, vec!["ls", "echo hello", "rm -rf /"]);
     }
 
     #[test]
     fn test_no_spaces_around_operators() {
-        let commands = extract_commands("ls&&rm").unwrap();
+        let commands = extract_commands("ls&&rm").expect("parse failed");
         assert_eq!(commands, vec!["ls", "rm"]);
     }
 
     #[test]
     fn test_nested_command_substitution() {
-        let commands = extract_commands("echo $(cat $(whoami).txt)").unwrap();
+        let commands = extract_commands("echo $(cat $(whoami).txt)").expect("parse failed");
         assert!(commands.iter().any(|c| c.contains("echo")));
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"whoami".to_string()));
@@ -392,13 +384,13 @@ mod tests {
 
     #[test]
     fn test_empty_command() {
-        let commands = extract_commands("").unwrap();
+        let commands = extract_commands("").expect("parse failed");
         assert!(commands.is_empty());
     }
 
     #[test]
-    fn test_invalid_syntax_error() {
+    fn test_invalid_syntax_returns_none() {
         let result = extract_commands("ls &&");
-        assert!(result.is_err());
+        assert!(result.is_none());
     }
 }
