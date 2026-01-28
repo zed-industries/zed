@@ -38,23 +38,16 @@ pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,
 }
-
-/// Toggles the tab switcher showing all tabs across all panes.
-#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = tab_switcher)]
-#[serde(deny_unknown_fields)]
-pub struct ToggleAll {
-    /// When true, deduplicates tabs by project path, previews in the active
-    /// pane, and always opens selected items in the active pane.
-    #[serde(default)]
-    pub follow_mode: bool,
-}
-
 actions!(
     tab_switcher,
     [
         /// Closes the selected item in the tab switcher.
         CloseSelectedItem,
+        /// Toggles between showing all tabs or just the current pane's tabs.
+        ToggleAll,
+        /// Toggles the tab switcher showing all tabs across all panes, deduplicated by path.
+        /// Opens selected items in the active pane.
+        ToggleUnique,
     ]
 );
 
@@ -87,9 +80,21 @@ impl TabSwitcher {
                     .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
         });
-        workspace.register_action(|workspace, action: &ToggleAll, window, cx| {
+        workspace.register_action(|workspace, _action: &ToggleAll, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, false, true, action.follow_mode, window, cx);
+                Self::open(workspace, false, true, false, window, cx);
+                return;
+            };
+
+            tab_switcher.update(cx, |tab_switcher, cx| {
+                tab_switcher
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
+            });
+        });
+        workspace.register_action(|workspace, _action: &ToggleUnique, window, cx| {
+            let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
+                Self::open(workspace, false, true, true, window, cx);
                 return;
             };
 
@@ -105,7 +110,7 @@ impl TabSwitcher {
         workspace: &mut Workspace,
         select_last: bool,
         is_global: bool,
-        follow_mode: bool,
+        is_unique: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -144,7 +149,7 @@ impl TabSwitcher {
                 weak_pane,
                 weak_workspace,
                 is_global,
-                follow_mode,
+                is_unique,
                 window,
                 cx,
                 original_items,
@@ -247,8 +252,7 @@ pub struct TabSwitcherDelegate {
     matches: Vec<TabMatch>,
     original_items: Vec<(Entity<Pane>, usize)>,
     is_all_panes: bool,
-    follow_mode: bool,
-    preview_added_item_id: Option<EntityId>,
+    is_unique: bool,
     restored_items: bool,
 }
 
@@ -332,7 +336,7 @@ impl TabSwitcherDelegate {
         pane: WeakEntity<Pane>,
         workspace: WeakEntity<Workspace>,
         is_all_panes: bool,
-        follow_mode: bool,
+        is_unique: bool,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
@@ -347,8 +351,7 @@ impl TabSwitcherDelegate {
             project,
             matches: Vec::new(),
             is_all_panes,
-            follow_mode,
-            preview_added_item_id: None,
+            is_unique,
             original_items,
             restored_items: false,
         }
@@ -363,20 +366,16 @@ impl TabSwitcherDelegate {
             return;
         };
         cx.subscribe_in(&workspace, window, |tab_switcher, _, event, window, cx| {
-            tab_switcher.picker.update(cx, |picker, cx| {
-                // In follow mode, ignore workspace events since we manage preview state ourselves
-                // and don't want the list re-sorting during navigation
-                if picker.delegate.follow_mode {
-                    return;
-                }
-
-                match event {
-                    WorkspaceEvent::ItemAdded { .. } | WorkspaceEvent::PaneRemoved => {
+            match event {
+                WorkspaceEvent::ItemAdded { .. } | WorkspaceEvent::PaneRemoved => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
                         let query = picker.query(cx);
                         picker.delegate.update_matches(query, window, cx);
                         cx.notify();
-                    }
-                    WorkspaceEvent::ItemRemoved { .. } => {
+                    })
+                }
+                WorkspaceEvent::ItemRemoved { .. } => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
                         let query = picker.query(cx);
                         picker.delegate.update_matches(query, window, cx);
 
@@ -387,10 +386,10 @@ impl TabSwitcherDelegate {
                         // updated to match the pane's state.
                         picker.delegate.sync_selected_index(cx);
                         cx.notify();
-                    }
-                    _ => {}
+                    })
                 }
-            })
+                _ => {}
+            };
         })
         .detach();
     }
@@ -426,22 +425,10 @@ impl TabSwitcherDelegate {
             }
         }
 
-        let matches = if query.is_empty() {
+        let mut matches = if query.is_empty() {
             let history = workspace.read(cx).recently_activated_items(cx);
             all_items
                 .sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
-
-            if self.follow_mode {
-                let mut seen_paths: HashSet<project::ProjectPath> = HashSet::default();
-                all_items.retain(|tab| {
-                    if let Some(path) = tab.item.project_path(cx) {
-                        seen_paths.insert(path)
-                    } else {
-                        true
-                    }
-                });
-            }
-
             all_items
         } else {
             let candidates = all_items
@@ -454,7 +441,7 @@ impl TabSwitcherDelegate {
                     ))
                 })
                 .collect::<Vec<_>>();
-            let mut results: Vec<TabMatch> = smol::block_on(fuzzy::match_strings(
+            smol::block_on(fuzzy::match_strings(
                 &candidates,
                 &query,
                 true,
@@ -465,21 +452,19 @@ impl TabSwitcherDelegate {
             ))
             .into_iter()
             .map(|m| all_items[m.candidate_id].clone())
-            .collect();
-
-            if self.follow_mode {
-                let mut seen_paths: HashSet<project::ProjectPath> = HashSet::default();
-                results.retain(|tab| {
-                    if let Some(path) = tab.item.project_path(cx) {
-                        seen_paths.insert(path)
-                    } else {
-                        true
-                    }
-                });
-            }
-
-            results
+            .collect()
         };
+
+        if self.is_unique {
+            let mut seen_paths: HashSet<project::ProjectPath> = HashSet::default();
+            matches.retain(|tab| {
+                if let Some(path) = tab.item.project_path(cx) {
+                    seen_paths.insert(path)
+                } else {
+                    true
+                }
+            });
+        }
 
         let selected_item_id = self.selected_item_id();
         self.matches = matches;
@@ -562,6 +547,7 @@ impl TabSwitcherDelegate {
         }
 
         if let Some(selected_item_id) = prev_selected_item_id {
+            // If the previously selected item is still in the list, select its new position.
             if let Some(item_index) = self
                 .matches
                 .iter()
@@ -569,6 +555,7 @@ impl TabSwitcherDelegate {
             {
                 return item_index;
             }
+            // Otherwise, try to preserve the previously selected index.
             return self.selected_index.min(self.matches.len() - 1);
         }
 
@@ -579,7 +566,7 @@ impl TabSwitcherDelegate {
         }
 
         // This only runs when initially opening the picker
-        // Index 0 is already active (MRU sorted), so don't preselect it for switching.
+        // Index 0 is already active, so don't preselect it for switching.
         if self.matches.len() > 1 {
             self.set_selected_index(1, window, cx);
             return 1;
@@ -598,55 +585,41 @@ impl TabSwitcherDelegate {
             return;
         };
 
-        if self.follow_mode {
-            if let Some(project_path) = tab_match.item.project_path(cx) {
-                let Some(workspace) = self.workspace.upgrade() else {
-                    return;
-                };
-                // Collect panes and items to close first to avoid borrow conflicts
-                let panes_and_items: Vec<_> = workspace
-                    .read(cx)
-                    .panes()
-                    .iter()
-                    .map(|pane| {
-                        let items_to_close: Vec<_> = pane
-                            .read(cx)
-                            .items()
-                            .filter(|item| item.project_path(cx) == Some(project_path.clone()))
-                            .map(|item| item.item_id())
-                            .collect();
-                        (pane.clone(), items_to_close)
-                    })
-                    .collect();
-
-                for (pane, items_to_close) in panes_and_items {
-                    for item_id in items_to_close {
-                        pane.update(cx, |pane, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                                .detach_and_log_err(cx);
-                        });
-                    }
-                }
-
-                // Remove from matches without re-sorting (we ignore workspace events in follow mode)
-                self.matches.remove(ix);
-                self.selected_index = self.selected_index.min(self.matches.len().saturating_sub(1));
+        if self.is_unique && let Some(project_path) = tab_match.item.project_path(cx) {
+            let Some(workspace) = self.workspace.upgrade() else {
                 return;
+            };
+            let panes_and_items: Vec<_> = workspace
+                .read(cx)
+                .panes()
+                .iter()
+                .map(|pane| {
+                    let items_to_close: Vec<_> = pane
+                        .read(cx)
+                        .items()
+                        .filter(|item| item.project_path(cx) == Some(project_path.clone()))
+                        .map(|item| item.item_id())
+                        .collect();
+                    (pane.clone(), items_to_close)
+                })
+                .collect();
+
+            for (pane, items_to_close) in panes_and_items {
+                for item_id in items_to_close {
+                    pane.update(cx, |pane, cx| {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
             }
-        }
-
-        let Some(pane) = tab_match.pane.upgrade() else {
-            return;
-        };
-        pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, window, cx)
-                .detach_and_log_err(cx);
-        });
-
-        // Remove from matches in follow mode without re-sorting
-        if self.follow_mode {
-            self.matches.remove(ix);
-            self.selected_index = self.selected_index.min(self.matches.len().saturating_sub(1));
+        } else {
+            let Some(pane) = tab_match.pane.upgrade() else {
+                return;
+            };
+            pane.update(cx, |pane, cx| {
+                pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, window, cx)
+                    .detach_and_log_err(cx);
+            });
         }
     }
 
@@ -678,131 +651,72 @@ impl TabSwitcherDelegate {
         self.selected_index = index;
     }
 
-    fn confirm_follow_mode(
+    fn confirm_unique(
         &mut self,
         selected_match: TabMatch,
         window: &mut Window,
         cx: &mut Context<Picker<TabSwitcherDelegate>>,
     ) {
-        let Some(current_pane) = self.pane.upgrade() else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
-        if let Some(project_path) = selected_match.item.project_path(cx) {
-            let was_preview = selected_match.preview;
-            if let Some(item_id) = self.preview_added_item_id.take() {
-                current_pane.update(cx, |pane, cx| {
-                    pane.close_item_by_id(item_id, SaveIntent::Skip, window, cx)
-                        .detach_and_log_err(cx);
-                });
-            }
+        let current_pane = self
+            .pane
+            .upgrade()
+            .filter(|pane| {
+                workspace
+                    .read(cx)
+                    .panes()
+                    .iter()
+                    .any(|p| p.entity_id() == pane.entity_id())
+            })
+            .or_else(|| selected_match.pane.upgrade());
 
+        let Some(current_pane) = current_pane else {
+            return;
+        };
+
+        if let Some(index) = current_pane
+            .read(cx)
+            .index_for_item(selected_match.item.as_ref())
+        {
+            current_pane.update(cx, |pane, cx| {
+                pane.activate_item(index, true, true, window, cx);
+            });
+        } else if selected_match.item.project_path(cx).is_some()
+            && selected_match.item.can_split(cx)
+        {
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
-            workspace
-                .update(cx, |workspace, cx| {
-                    workspace.open_path_preview(
-                        project_path,
-                        Some(current_pane.downgrade()),
-                        true,
-                        was_preview,
-                        true,
-                        window,
-                        cx,
-                    )
-                })
-                .detach_and_log_err(cx);
-        } else {
-            self.preview_added_item_id = None;
-
-            // Check if source pane is the same as current pane (single pane scenario)
-            let source_is_current = selected_match
-                .pane
-                .upgrade()
-                .map(|source| source.entity_id() == current_pane.entity_id())
-                .unwrap_or(false);
-
-            if source_is_current {
-                // Item is already in current pane, just activate it
-                if let Some(index) = current_pane
-                    .read(cx)
-                    .index_for_item(selected_match.item.as_ref())
-                {
-                    current_pane.update(cx, |pane, cx| {
-                        pane.activate_item(index, true, true, window, cx);
-                    });
+            let database_id = workspace.read(cx).database_id();
+            let task = selected_match.item.clone_on_split(database_id, window, cx);
+            let current_pane = current_pane.downgrade();
+            cx.spawn_in(window, async move |_, cx| {
+                if let Some(clone) = task.await {
+                    current_pane
+                        .update_in(cx, |pane, window, cx| {
+                            pane.add_item(clone, true, true, None, window, cx);
+                        })
+                        .log_err();
                 }
-            } else {
-                // Item in different pane - remove from source, then activate
-                let item_id = selected_match.item.item_id();
-
-                if let Some(source_pane) = selected_match.pane.upgrade() {
-                    source_pane.update(cx, |pane, cx| {
-                        // Allow pane to close if it becomes empty
-                        pane.remove_item(item_id, false, true, window, cx);
-                    });
-                }
-
-                let Some(workspace) = self.workspace.upgrade() else {
-                    return;
-                };
-                workspace.update(cx, |workspace, cx| {
-                    workspace.activate_item(selected_match.item.as_ref(), true, true, window, cx);
-                });
-            }
-        }
-    }
-
-    fn set_selected_index_follow_mode(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Picker<TabSwitcherDelegate>>,
-    ) {
-        self.restore_follow_mode_preview_state(window, cx);
-
-        let Some(selected_match) = self.matches.get(self.selected_index()).cloned() else {
-            return;
-        };
-        let Some(current_pane) = self.pane.upgrade() else {
-            return;
-        };
-
-        let item_in_current_pane = current_pane
-            .read(cx)
-            .index_for_item(selected_match.item.as_ref());
-
-        if let Some(index) = item_in_current_pane {
-            // No need to track state - original_items will restore on dismiss.
-            current_pane.update(cx, |pane, cx| {
-                pane.activate_item(index, false, false, window, cx);
-            });
+            })
+            .detach();
         } else {
-            let item = selected_match.item.boxed_clone();
-            let item_id = item.item_id();
-            current_pane.update(cx, |pane, cx| {
-                pane.add_item(item, false, false, None, window, cx);
-            });
-            self.preview_added_item_id = Some(item_id);
+            let Some(source_pane) = selected_match.pane.upgrade() else {
+                return;
+            };
+            workspace::move_item(
+                &source_pane,
+                &current_pane,
+                selected_match.item.item_id(),
+                current_pane.read(cx).items_len(),
+                true,
+                window,
+                cx,
+            );
         }
-    }
-
-    fn restore_follow_mode_preview_state(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Picker<TabSwitcherDelegate>>,
-    ) {
-        let Some(item_id) = self.preview_added_item_id.take() else {
-            return;
-        };
-        let Some(current_pane) = self.pane.upgrade() else {
-            return;
-        };
-
-        current_pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(item_id, SaveIntent::Skip, window, cx)
-                .detach_and_log_err(cx);
-        });
     }
 }
 
@@ -833,9 +747,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     ) {
         self.selected_index = ix;
 
-        if self.follow_mode {
-            self.set_selected_index_follow_mode(window, cx);
-        } else {
+        if !self.is_unique {
             let Some(selected_match) = self.matches.get(self.selected_index()) else {
                 return;
             };
@@ -846,7 +758,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                         pane.activate_item(index, false, false, window, cx);
                     }
                 })
-                .log_err();
+                .ok();
         }
         cx.notify();
     }
@@ -882,8 +794,8 @@ impl PickerDelegate for TabSwitcherDelegate {
             })
         }
 
-        if self.follow_mode {
-            self.confirm_follow_mode(selected_match, window, cx);
+        if self.is_unique {
+            self.confirm_unique(selected_match, window, cx);
         } else {
             selected_match
                 .pane
@@ -892,13 +804,11 @@ impl PickerDelegate for TabSwitcherDelegate {
                         pane.activate_item(index, true, true, window, cx);
                     }
                 })
-                .log_err();
+                .ok();
         }
     }
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
-        self.restore_follow_mode_preview_state(window, cx);
-
         if !self.restored_items {
             for (pane, index) in self.original_items.iter() {
                 pane.update(cx, |this, cx| {
