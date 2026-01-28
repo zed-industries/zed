@@ -2396,7 +2396,11 @@ impl Window {
 
         // Process deferred draws in multiple rounds to support nesting.
         // Each round processes all current deferred draws, which may produce new ones.
+        let mut depth = 0;
         loop {
+            // Limit maximum nesting depth to prevent infinite loops.
+            assert!(depth < 10, "Exceeded maximum (10) deferred depth");
+            depth += 1;
             let deferred_count = self.next_frame.deferred_draws.len();
             if deferred_count == 0 {
                 break;
