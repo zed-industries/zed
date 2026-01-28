@@ -9857,6 +9857,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16154,6 +16155,7 @@ dependencies = [
  "multi_buffer",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]

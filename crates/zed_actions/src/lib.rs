@@ -651,3 +651,33 @@ pub mod wsl_actions {
         pub create_new_window: bool,
     }
 }
+
+pub mod preview {
+    pub mod markdown {
+        use gpui::actions;
+
+        actions!(
+            markdown,
+            [
+                /// Opens a markdown preview for the current file.
+                OpenPreview,
+                /// Opens a markdown preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+
+    pub mod svg {
+        use gpui::actions;
+
+        actions!(
+            svg,
+            [
+                /// Opens an SVG preview for the current file.
+                OpenPreview,
+                /// Opens an SVG preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+}
