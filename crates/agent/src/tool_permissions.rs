@@ -42,16 +42,17 @@ pub fn decide_permission(
     permissions: &ToolPermissions,
     always_allow_tool_actions: bool,
 ) -> ToolPermissionDecision {
+    // If always_allow_tool_actions is enabled, bypass all permission checks.
+    if always_allow_tool_actions {
+        return ToolPermissionDecision::Allow;
+    }
+
     let rules = permissions.tools.get(tool_name);
 
     let rules = match rules {
         Some(rules) => rules,
         None => {
-            return if always_allow_tool_actions {
-                ToolPermissionDecision::Allow
-            } else {
-                ToolPermissionDecision::Confirm
-            };
+            return ToolPermissionDecision::Confirm;
         }
     };
 
@@ -64,14 +65,17 @@ pub fn decide_permission(
     // For the terminal tool, parse the command to extract all sub-commands.
     // This prevents shell injection attacks where a user configures an allow
     // pattern like "^ls" and an attacker crafts "ls && rm -rf /".
-    let commands_to_check = if tool_name == "terminal" {
+    //
+    // If parsing fails or the shell syntax is unsupported, always_allow is
+    // disabled for this command (we set commands_to_check to None to signal this).
+    let (commands_to_check, allow_enabled) = if tool_name == "terminal" {
         match extract_commands(input) {
-            Ok(commands) if !commands.is_empty() => commands,
-            Ok(_) => vec![input.to_string()],
-            Err(_) => vec![input.to_string()],
+            Ok(commands) if !commands.is_empty() => (commands, true),
+            Ok(_) => (vec![input.to_string()], false),
+            Err(_) => (vec![input.to_string()], false),
         }
     } else {
-        vec![input.to_string()]
+        (vec![input.to_string()], true)
     };
 
     // DENY: If ANY sub-command matches a deny pattern, deny the entire command.
@@ -85,25 +89,22 @@ pub fn decide_permission(
     }
 
     // CONFIRM: If ANY sub-command matches a confirm pattern, require confirmation.
-    if !always_allow_tool_actions {
-        for cmd in &commands_to_check {
-            if rules.always_confirm.iter().any(|r| r.is_match(cmd)) {
-                return ToolPermissionDecision::Confirm;
-            }
+    for cmd in &commands_to_check {
+        if rules.always_confirm.iter().any(|r| r.is_match(cmd)) {
+            return ToolPermissionDecision::Confirm;
         }
     }
 
     // ALLOW: ALL sub-commands must match at least one allow pattern.
-    let all_allowed = commands_to_check
-        .iter()
-        .all(|cmd| rules.always_allow.iter().any(|r| r.is_match(cmd)));
+    // This is only available when parsing succeeded (allow_enabled is true).
+    if allow_enabled {
+        let all_allowed = commands_to_check
+            .iter()
+            .all(|cmd| rules.always_allow.iter().any(|r| r.is_match(cmd)));
 
-    if all_allowed && !commands_to_check.is_empty() {
-        return ToolPermissionDecision::Allow;
-    }
-
-    if always_allow_tool_actions {
-        return ToolPermissionDecision::Allow;
+        if all_allowed && !commands_to_check.is_empty() {
+            return ToolPermissionDecision::Allow;
+        }
     }
 
     match rules.default_mode {
@@ -317,8 +318,9 @@ mod tests {
         t("rm -rf /").deny(&["rm\\s+-rf"]).is_deny();
     }
     #[test]
-    fn deny_blocks_with_global() {
-        t("rm -rf /").deny(&["rm\\s+-rf"]).global(true).is_deny();
+    fn global_bypasses_deny() {
+        // always_allow_tool_actions bypasses ALL checks, including deny
+        t("rm -rf /").deny(&["rm\\s+-rf"]).global(true).is_allow();
     }
     #[test]
     fn deny_blocks_with_mode_allow() {
@@ -556,7 +558,7 @@ mod tests {
         );
     }
 
-    // invalid patterns block the tool
+    // invalid patterns block the tool (but global bypasses all checks)
     #[test]
     fn invalid_pattern_blocks() {
         let mut tools = collections::HashMap::default();
@@ -574,9 +576,17 @@ mod tests {
                 }],
             },
         );
-        let p = ToolPermissions { tools };
+        let p = ToolPermissions {
+            tools: tools.clone(),
+        };
+        // With global=true, all checks are bypassed including invalid pattern check
         assert!(matches!(
             decide_permission("terminal", "echo hi", &p, true),
+            ToolPermissionDecision::Allow
+        ));
+        // With global=false, invalid patterns block the tool
+        assert!(matches!(
+            decide_permission("terminal", "echo hi", &p, false),
             ToolPermissionDecision::Deny(_)
         ));
     }
