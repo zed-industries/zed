@@ -1,5 +1,14 @@
 # Agent Server Extensions
 
+<div class="warning">
+
+Note that starting from v0.221.x, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
+You can learn more about it in [the release blog post](https://zed.dev/blog/acp-registry)
+
+At some point in the near future, Agent Server extensions should be deprecated.
+
+</div>
+
 Agent Servers are programs that provide AI agent implementations through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 Agent Server Extensions let you package up an Agent Server so that users can install the extension and have your agent easily available to use in Zed.
 
@@ -7,7 +16,7 @@ You can see the current Agent Server extensions either by opening the Extensions
 
 ## Defining Agent Server Extensions
 
-An extension can register one or more agent servers in the `extension.toml` like so:
+An extension can register one or more agent servers in the `extension.toml`:
 
 ```toml
 [agent_servers.my-agent]
