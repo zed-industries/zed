@@ -1459,11 +1459,15 @@ impl App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx.windows.get_mut(id)?.take()?;
+            fn prologue(id: WindowId, cx: &mut App) -> Option<(AnyView, Box<Window>)> {
+                let mut window = cx.windows.get_mut(id)?.take()?;
 
-            let root_view = window.root.clone().unwrap();
+                let root_view = window.root.clone().unwrap();
 
-            cx.window_update_stack.push(window.handle.id);
+                cx.window_update_stack.push(window.handle.id);
+                Some((root_view, window))
+            }
+            let (root_view, mut window) = prologue(id, cx)?;
             let result = update(root_view, &mut window, cx);
 
             fn epilogue(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
