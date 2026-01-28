@@ -323,35 +323,35 @@ impl DiffStats {
 }
 
 pub struct AcpThreadView {
-    agent: Rc<dyn AgentServer>,
-    agent_server_store: Entity<AgentServerStore>,
-    workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
-    thread_store: Option<Entity<ThreadStore>>,
-    prompt_store: Option<Entity<PromptStore>>,
-    thread_state: ThreadState,
+    agent: Rc<dyn AgentServer>, // keep
+    agent_server_store: Entity<AgentServerStore>, // keep
+    workspace: WeakEntity<Workspace>, // keep
+    project: Entity<Project>, // keep
+    thread_store: Option<Entity<ThreadStore>>, // keep
+    prompt_store: Option<Entity<PromptStore>>, // keep
+    thread_state: ThreadState, // keep
     /// Tracks the selected granularity index for each tool call's permission dropdown.
     /// The index corresponds to the position in the allow_options list.
     /// Default is the last option (index pointing to "Only this time").
     selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
-    login: Option<task::SpawnInTerminal>,
-    recent_history_entries: Vec<AgentSessionInfo>,
-    history: Entity<AcpThreadHistory>,
-    _history_subscription: Subscription,
-    hovered_recent_history_item: Option<usize>,
-    message_editor: Entity<MessageEditor>,
-    focus_handle: FocusHandle,
-    notifications: Vec<WindowHandle<AgentNotification>>,
-    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    command_load_errors: Vec<CommandLoadError>,
-    command_load_errors_dismissed: bool,
-    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
-    auth_task: Option<Task<()>>,
+    login: Option<task::SpawnInTerminal>, // keep
+    recent_history_entries: Vec<AgentSessionInfo>, // keep
+    history: Entity<AcpThreadHistory>, // keep
+    _history_subscription: Subscription, // keep
+    hovered_recent_history_item: Option<usize>, // keep
+    message_editor: Entity<MessageEditor>, // keep
+    focus_handle: FocusHandle, // keep
+    notifications: Vec<WindowHandle<AgentNotification>>, // keep
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
+    command_load_errors: Vec<CommandLoadError>, // keep
+    command_load_errors_dismissed: bool, // keep
+    slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
+    auth_task: Option<Task<()>>, // keep
     resume_thread_metadata: Option<AgentSessionInfo>,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 4],
-    show_codex_windows_warning: bool,
-    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
+    _subscriptions: [Subscription; 4], // keep
+    show_codex_windows_warning: bool, // keep
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>, // keep
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
     can_fast_track_queue: bool,
