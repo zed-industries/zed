@@ -8282,7 +8282,12 @@ pub fn open_paths(
         .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
-        if open_options.open_new_workspace != Some(true) {
+        // If replace_window is specified, use it directly instead of searching for existing windows
+        if let Some(replace_window) = open_options.replace_window.as_ref() {
+            existing = Some(replace_window.clone());
+        }
+
+        if open_options.open_new_workspace != Some(true) && existing.is_none() {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
