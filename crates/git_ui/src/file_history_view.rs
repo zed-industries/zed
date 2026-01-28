@@ -527,7 +527,7 @@ impl Render for FileHistoryView {
                                 .child(Divider::vertical())
                             })
                             .child(
-                                Label::new(format!("{} / {} commits", entry_count, total_count))
+                                Label::new(format!("{} commits", total_count))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
