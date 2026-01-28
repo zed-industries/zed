@@ -4949,12 +4949,11 @@ impl EditorElement {
         style: &EditorStyle,
         cx: &App,
     ) -> Vec<StickyHeader> {
-        let mut scroll_top = snapshot.scroll_position().y;
-        if !snapshot.is_singleton() {
-            scroll_top = scroll_top + FILE_HEADER_HEIGHT as f64;
-        }
+        let scroll_top = snapshot.scroll_position().y;
+        let mut excerpt_scroll_top = scroll_top;
 
-        let mut end_rows = Vec::<DisplayRow>::new();
+        let mut end_rows: std::collections::HashMap<ExcerptId, Vec<DisplayRow>> =
+            std::collections::HashMap::new();
         let mut rows = Vec::<StickyHeader>::new();
 
         let items = editor
@@ -4964,6 +4963,19 @@ impl EditorElement {
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
+
+            if !snapshot.is_singleton() {
+                let excerpt_range = snapshot
+                    .buffer_snapshot()
+                    .range_for_excerpt(item.range.start.excerpt_id)
+                    .expect("TODO");
+                let excerpt_scroll_offset = snapshot
+                    .display_snapshot
+                    .point_to_display_point(excerpt_range.start, Bias::Left)
+                    .row()
+                    .as_f64();
+                excerpt_scroll_top = excerpt_scroll_offset; // + FILE_HEADER_HEIGHT as f64;
+            }
 
             let sticky_row = snapshot
                 .display_snapshot
@@ -4980,31 +4992,55 @@ impl EditorElement {
             }
 
             while end_rows
-                .last()
-                .is_some_and(|&last_end| last_end <= sticky_row)
+                .get_mut(&item.range.start.excerpt_id.clone())
+                .is_some_and(|rows: &mut Vec<DisplayRow>| {
+                    rows.last().is_some_and(|&last_end| last_end <= sticky_row)
+                })
             {
-                end_rows.pop();
+                end_rows
+                    .get_mut(&item.range.start.excerpt_id.clone())
+                    .map(|rows: &mut Vec<DisplayRow>| rows.pop());
             }
-            let depth = end_rows.len();
+            let depth = end_rows
+                .get(&item.range.start.excerpt_id.clone())
+                .map_or(0, |rows| rows.len());
 
             let adjusted_scroll_top = scroll_top + depth as f64;
 
-            if sticky_row.as_f64() > adjusted_scroll_top || end_row.as_f64() <= adjusted_scroll_top
-            {
-                continue;
+            if !snapshot.is_singleton() {
+                if (sticky_row.as_f64() > excerpt_scroll_top
+                    || end_row.as_f64() <= excerpt_scroll_top)
+                    && sticky_row.as_f64() > adjusted_scroll_top + FILE_HEADER_HEIGHT as f64
+                {
+                    dbg!("skip due to wrong range relative to excerpt");
+                    continue;
+                }
+                if end_row.as_f64() <= adjusted_scroll_top + FILE_HEADER_HEIGHT as f64 {
+                    dbg!("skip due to scrolling out of view from the top");
+                    continue;
+                }
+            } else {
+                if sticky_row.as_f64() > adjusted_scroll_top
+                    || end_row.as_f64() <= adjusted_scroll_top
+                {
+                    continue;
+                }
             }
 
             let max_scroll_offset = max_sticky_row.as_f64() - scroll_top;
             let mut offset = (depth as f64).min(max_scroll_offset);
-
             let extra = FILE_HEADER_HEIGHT as f64;
 
             if !snapshot.is_singleton() {
-                // Why is this needed if scroll_top is already adjusted for the header height?
-                offset = offset + extra;
+                offset = (offset + excerpt_scroll_top - scroll_top)
+                    .max((extra + depth as f64).min(max_scroll_offset));
             }
 
-            end_rows.push(end_row);
+            if let Some(rows) = end_rows.get_mut(&item.range.start.excerpt_id.clone()) {
+                rows.push(end_row);
+            } else {
+                end_rows.insert(item.range.start.excerpt_id.clone(), vec![end_row]);
+            }
             rows.push(StickyHeader {
                 item,
                 sticky_row,
