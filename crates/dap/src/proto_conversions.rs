@@ -20,8 +20,8 @@ where
     type ProtoType = Vec<T::ProtoType>;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
-        self.iter().map(|item| item.to_proto()).collect()
+    fn to_proto(self) -> Self::ProtoType {
+        self.into_iter().map(|item| item.to_proto()).collect()
     }
 
     fn from_proto(payload: Self::ProtoType) -> Self {
@@ -36,18 +36,15 @@ impl ProtoConversion for dap_types::Scope {
     type ProtoType = DapScope;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         Self::ProtoType {
-            name: self.name.clone(),
-            presentation_hint: self
-                .presentation_hint
-                .as_ref()
-                .map(|hint| hint.to_proto().into()),
+            name: self.name,
+            presentation_hint: self.presentation_hint.map(|hint| hint.to_proto().into()),
             variables_reference: self.variables_reference,
             named_variables: self.named_variables,
             indexed_variables: self.indexed_variables,
             expensive: self.expensive,
-            source: self.source.as_ref().map(Source::to_proto),
+            source: self.source.map(Source::to_proto),
             line: self.line,
             end_line: self.end_line,
             column: self.column,
@@ -79,16 +76,16 @@ impl ProtoConversion for dap_types::Variable {
     type ProtoType = DapVariable;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         Self::ProtoType {
-            name: self.name.clone(),
-            value: self.value.clone(),
-            r#type: self.type_.clone(),
-            evaluate_name: self.evaluate_name.clone(),
+            name: self.name,
+            value: self.value,
+            r#type: self.type_,
+            evaluate_name: self.evaluate_name,
             variables_reference: self.variables_reference,
             named_variables: self.named_variables,
             indexed_variables: self.indexed_variables,
-            memory_reference: self.memory_reference.clone(),
+            memory_reference: self.memory_reference,
         }
     }
 
@@ -113,14 +110,14 @@ impl ProtoConversion for dap_types::ScopePresentationHint {
     type ProtoType = DapScopePresentationHint;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::ScopePresentationHint::Locals => DapScopePresentationHint::Locals,
             dap_types::ScopePresentationHint::Arguments => DapScopePresentationHint::Arguments,
             dap_types::ScopePresentationHint::Registers => DapScopePresentationHint::Registers,
             dap_types::ScopePresentationHint::ReturnValue => DapScopePresentationHint::ReturnValue,
             dap_types::ScopePresentationHint::Unknown => DapScopePresentationHint::ScopeUnknown,
-            &_ => unreachable!(),
+            _ => unreachable!(),
         }
     }
 
@@ -139,7 +136,7 @@ impl ProtoConversion for dap_types::SourcePresentationHint {
     type ProtoType = DapSourcePresentationHint;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::SourcePresentationHint::Normal => DapSourcePresentationHint::SourceNormal,
             dap_types::SourcePresentationHint::Emphasize => DapSourcePresentationHint::Emphasize,
@@ -166,10 +163,10 @@ impl ProtoConversion for dap_types::Checksum {
     type ProtoType = DapChecksum;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         DapChecksum {
             algorithm: self.algorithm.to_proto().into(),
-            checksum: self.checksum.clone(),
+            checksum: self.checksum,
         }
     }
 
@@ -185,7 +182,7 @@ impl ProtoConversion for dap_types::ChecksumAlgorithm {
     type ProtoType = DapChecksumAlgorithm;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::ChecksumAlgorithm::Md5 => DapChecksumAlgorithm::Md5,
             dap_types::ChecksumAlgorithm::Sha1 => DapChecksumAlgorithm::Sha1,
@@ -209,37 +206,29 @@ impl ProtoConversion for dap_types::Source {
     type ProtoType = DapSource;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         Self::ProtoType {
-            name: self.name.clone(),
-            path: self.path.clone(),
+            name: self.name,
+            path: self.path,
             source_reference: self.source_reference,
             presentation_hint: self.presentation_hint.map(|hint| hint.to_proto().into()),
-            origin: self.origin.clone(),
-            sources: self
-                .sources
-                .clone()
-                .map(|src| src.to_proto())
-                .unwrap_or_default(),
+            origin: self.origin,
+            sources: self.sources.map(|src| src.to_proto()).unwrap_or_default(),
             adapter_data: Default::default(), // TODO Debugger Collab
-            checksums: self
-                .checksums
-                .clone()
-                .map(|c| c.to_proto())
-                .unwrap_or_default(),
+            checksums: self.checksums.map(|c| c.to_proto()).unwrap_or_default(),
         }
     }
 
     fn from_proto(payload: Self::ProtoType) -> Self {
         Self {
-            name: payload.name.clone(),
-            path: payload.path.clone(),
+            name: payload.name,
+            path: payload.path,
             source_reference: payload.source_reference,
             presentation_hint: payload
                 .presentation_hint
                 .and_then(DapSourcePresentationHint::from_i32)
                 .map(dap_types::SourcePresentationHint::from_proto),
-            origin: payload.origin.clone(),
+            origin: payload.origin,
             sources: Some(Vec::<dap_types::Source>::from_proto(payload.sources)),
             checksums: Some(Vec::<dap_types::Checksum>::from_proto(payload.checksums)),
             adapter_data: None, // TODO Debugger Collab
@@ -251,17 +240,17 @@ impl ProtoConversion for dap_types::StackFrame {
     type ProtoType = DapStackFrame;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         Self::ProtoType {
             id: self.id,
             name: self.name.clone(),
-            source: self.source.as_ref().map(|src| src.to_proto()),
+            source: self.source.map(|src| src.to_proto()),
             line: self.line,
             column: self.column,
             end_line: self.end_line,
             end_column: self.end_column,
             can_restart: self.can_restart,
-            instruction_pointer_reference: self.instruction_pointer_reference.clone(),
+            instruction_pointer_reference: self.instruction_pointer_reference,
             module_id: None,         // TODO Debugger Collab
             presentation_hint: None, // TODO Debugger Collab
         }
@@ -307,23 +296,20 @@ impl ProtoConversion for dap_types::Module {
     type ProtoType = DapModule;
     type Output = Result<Self>;
 
-    fn to_proto(&self) -> Self::ProtoType {
-        let id = match &self.id {
-            dap_types::ModuleId::Number(num) => proto::dap_module_id::Id::Number(*num),
-            dap_types::ModuleId::String(string) => proto::dap_module_id::Id::String(string.clone()),
-        };
-
+    fn to_proto(self) -> Self::ProtoType {
         DapModule {
-            id: Some(proto::DapModuleId { id: Some(id) }),
-            name: self.name.clone(),
-            path: self.path.clone(),
+            id: Some(proto::DapModuleId {
+                id: Some(self.id.to_proto()),
+            }),
+            name: self.name,
+            path: self.path,
             is_optimized: self.is_optimized,
             is_user_code: self.is_user_code,
-            version: self.version.clone(),
-            symbol_status: self.symbol_status.clone(),
-            symbol_file_path: self.symbol_file_path.clone(),
-            date_time_stamp: self.date_time_stamp.clone(),
-            address_range: self.address_range.clone(),
+            version: self.version,
+            symbol_status: self.symbol_status,
+            symbol_file_path: self.symbol_file_path,
+            date_time_stamp: self.date_time_stamp,
+            address_range: self.address_range,
         }
     }
 
@@ -357,7 +343,7 @@ impl ProtoConversion for dap_types::SteppingGranularity {
     type ProtoType = proto::SteppingGranularity;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::SteppingGranularity::Statement => proto::SteppingGranularity::Statement,
             dap_types::SteppingGranularity::Line => proto::SteppingGranularity::Line,
@@ -378,7 +364,7 @@ impl ProtoConversion for dap_types::OutputEventCategory {
     type ProtoType = proto::DapOutputCategory;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             Self::Console => proto::DapOutputCategory::ConsoleOutput,
             Self::Important => proto::DapOutputCategory::Important,
@@ -403,15 +389,12 @@ impl ProtoConversion for dap_types::OutputEvent {
     type ProtoType = proto::DapOutputEvent;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         proto::DapOutputEvent {
-            category: self
-                .category
-                .as_ref()
-                .map(|category| category.to_proto().into()),
+            category: self.category.map(|category| category.to_proto().into()),
             output: self.output.clone(),
             variables_reference: self.variables_reference,
-            source: self.source.as_ref().map(|source| source.to_proto()),
+            source: self.source.map(|source| source.to_proto()),
             line: self.line.map(|line| line as u32),
             column: self.column.map(|column| column as u32),
             group: self.group.map(|group| group.to_proto().into()),
@@ -424,7 +407,7 @@ impl ProtoConversion for dap_types::OutputEvent {
                 .category
                 .and_then(proto::DapOutputCategory::from_i32)
                 .map(OutputEventCategory::from_proto),
-            output: payload.output.clone(),
+            output: payload.output,
             variables_reference: payload.variables_reference,
             source: payload.source.map(Source::from_proto),
             line: payload.line.map(|line| line as u64),
@@ -443,7 +426,7 @@ impl ProtoConversion for dap_types::OutputEventGroup {
     type ProtoType = proto::DapOutputEventGroup;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::OutputEventGroup::Start => proto::DapOutputEventGroup::Start,
             dap_types::OutputEventGroup::StartCollapsed => {
@@ -466,21 +449,20 @@ impl ProtoConversion for dap_types::CompletionItem {
     type ProtoType = proto::DapCompletionItem;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         proto::DapCompletionItem {
             label: self.label.clone(),
             text: self.text.clone(),
             detail: self.detail.clone(),
             typ: self
                 .type_
-                .as_ref()
                 .map(ProtoConversion::to_proto)
                 .map(|typ| typ.into()),
             start: self.start,
             length: self.length,
             selection_start: self.selection_start,
             selection_length: self.selection_length,
-            sort_text: self.sort_text.clone(),
+            sort_text: self.sort_text,
         }
     }
 
@@ -505,7 +487,7 @@ impl ProtoConversion for dap_types::EvaluateArgumentsContext {
     type ProtoType = DapEvaluateContext;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::EvaluateArgumentsContext::Variables => {
                 proto::DapEvaluateContext::EvaluateVariables
@@ -541,7 +523,7 @@ impl ProtoConversion for dap_types::CompletionItemType {
     type ProtoType = proto::DapCompletionItemType;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         match self {
             dap_types::CompletionItemType::Class => proto::DapCompletionItemType::Class,
             dap_types::CompletionItemType::Color => proto::DapCompletionItemType::Color,
@@ -594,10 +576,10 @@ impl ProtoConversion for dap_types::Thread {
     type ProtoType = proto::DapThread;
     type Output = Self;
 
-    fn to_proto(&self) -> Self::ProtoType {
+    fn to_proto(self) -> Self::ProtoType {
         proto::DapThread {
             id: self.id,
-            name: self.name.clone(),
+            name: self.name,
         }
     }
 
