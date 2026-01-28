@@ -33,9 +33,10 @@ You will be provided with:
 # Output Format
 
 - Briefly explain the user's current intent based on the edit history and their current cursor location.
-- Output the entire editable region, applying the edits that you predict the user will make next.
-- If you're unsure some portion of the next edit, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
-- Wrap the edited code in a codeblock with exactly five backticks.
+- Output a markdown codeblock containing an updated version of the current file excerpt, applying the edits that you predict the user will make next. Include the `<|editable_region_start|>` and `<|editable_region_end|>` tags in their original location.
+- Note that you may only apply edits within the editable region. Content before the `<|editable_region_start|>` tag or after the `<|editable_region_end|>` tag must be unchanged.
+- If the next edit has some uncertainty, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
+  -e.g. if a user is typing `func<|user_cursor|>`, but you don't know what the function name should be, you can predict `function <|user_cursor|>() {}`
 
 ## Example 1
 
@@ -69,11 +70,15 @@ fn calculate_total(products: &[Product]) -> u32 {
 The user is computing a sum based on a list of products. The only numeric field on `Product` is `price`, so they must intend to sum the prices.
 
 `````
+fn calculate_total(products: &[Product]) -> u32 {
+<|editable_region_start|>
     let mut total = 0;
     for product in products {
         total += product.price;
     }
     total
+<|editable_region_end|>
+}
 `````
 
 ## Example 2
@@ -83,22 +88,29 @@ The user appears to be typing a print call, but it's not clear what data they in
 ### Current File
 
 `````
+// handle the close button click
+<|editable_region_start|>
 fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
     modal_state.close();
     epr<|user_cursor|>;
+<|editable_region_end|>
 }
 `````
 
 ### Output
 
-The user is clearly starting to type `eprintln!()`, however, what they intend to print is not obvious. I should fill in the print call and string literal, with the cursor positioned inside the string literal so the user can print whatever they want
+The user is clearly starting to type `eprintln!()`, however, what they intend to print is not obvious. I should fill in the print call and string literal, with the cursor positioned inside the string literal so the user can print whatever they want.
 
 `````
+// handle the close button click
+<|editable_region_start|>
 fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
     modal_state.close();
     eprintln!("<|user_cursor|>");
+<|editable_region_end|>
 }
 `````
+
 
 # 1. User Edits History
 
