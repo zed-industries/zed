@@ -1983,12 +1983,12 @@ impl Interactivity {
     ) {
         use crate::{BorderStyle, TextAlign};
 
-        if global_id.is_some()
+        if let Some(global_id) = global_id
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(window)
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-            let element_id = format!("{:?}", global_id.unwrap());
+            let element_id = format!("{global_id:?}");
             let str_len = element_id.len();
 
             let render_debug_text = |window: &mut Window| {

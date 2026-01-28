@@ -4,6 +4,7 @@
 //! chronologically-ordered unified diff (a "commit").
 //!
 //! TODO: Port Python code to generate chronologically-ordered commits
+use crate::FailedHandling;
 use crate::reorder_patch::{Patch, PatchLine, extract_edits, locate_edited_line};
 
 /// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
@@ -116,6 +117,7 @@ pub fn run_split_commit(
     args: &SplitCommitArgs,
     inputs: &[PathBuf],
     output_path: Option<&PathBuf>,
+    failed: FailedHandling,
 ) -> Result<()> {
     use std::collections::HashSet;
     use std::io::BufRead;
@@ -158,22 +160,34 @@ pub fn run_split_commit(
                 for sample_idx in 0..num_samples {
                     let sample_seed = base_seed.wrapping_add(sample_idx as u64);
 
-                    let case = generate_evaluation_example_from_ordered_commit(
+                    let case = match generate_evaluation_example_from_ordered_commit(
                         &annotated.reordered_commit,
                         &annotated.repo_url,
                         &annotated.commit_sha,
                         None, // Use random split point for multi-sample mode
                         Some(sample_seed),
                         Some(sample_idx),
-                    )
-                    .with_context(|| {
-                        format!(
-                            "failed to generate evaluation example for commit {} at line {} (sample {})",
-                            annotated.commit_sha,
-                            line_num + 1,
-                            sample_idx
-                        )
-                    })?;
+                    ) {
+                        Ok(case) => case,
+                        Err(e) => {
+                            let err_msg = format!(
+                                "failed to generate evaluation example for commit {} at line {} (sample {}): {}",
+                                annotated.commit_sha,
+                                line_num + 1,
+                                sample_idx,
+                                e
+                            );
+                            match failed {
+                                FailedHandling::Skip | FailedHandling::SkipNoFiles => {
+                                    eprintln!("{}", err_msg);
+                                    continue;
+                                }
+                                FailedHandling::Keep => {
+                                    anyhow::bail!(err_msg);
+                                }
+                            }
+                        }
+                    };
 
                     let json = if args.pretty {
                         serde_json::to_string_pretty(&case)
@@ -188,21 +202,33 @@ pub fn run_split_commit(
                     }
                 }
             } else {
-                let case = generate_evaluation_example_from_ordered_commit(
+                let case = match generate_evaluation_example_from_ordered_commit(
                     &annotated.reordered_commit,
                     &annotated.repo_url,
                     &annotated.commit_sha,
                     split_point.clone(),
                     args.seed,
                     None,
-                )
-                .with_context(|| {
-                    format!(
-                        "failed to generate evaluation example for commit {} at line {}",
-                        annotated.commit_sha,
-                        line_num + 1
-                    )
-                })?;
+                ) {
+                    Ok(case) => case,
+                    Err(e) => {
+                        let err_msg = format!(
+                            "failed to generate evaluation example for commit {} at line {}: {}",
+                            annotated.commit_sha,
+                            line_num + 1,
+                            e
+                        );
+                        match failed {
+                            FailedHandling::Skip | FailedHandling::SkipNoFiles => {
+                                eprintln!("{}", err_msg);
+                                continue;
+                            }
+                            FailedHandling::Keep => {
+                                anyhow::bail!(err_msg);
+                            }
+                        }
+                    }
+                };
 
                 let json = if args.pretty {
                     serde_json::to_string_pretty(&case)
@@ -337,13 +363,15 @@ pub fn generate_evaluation_example_from_ordered_commit(
         repository_url: repository_url.to_string(),
         revision: format!("{}~1", commit_hash),
         edit_history: split_commit.source_patch.clone(),
-        // cursor_position: cursor.to_string(),
         cursor_path: Path::new(&cursor.file).into(),
         cursor_position: cursor_excerpt,
         expected_patches: vec![split_commit.target_patch],
         tags: vec![],
         reasoning: None,
         uncommitted_diff: String::new(),
+        rejected_patch: None,
+        captured_prompt_input: None,
+        telemetry: None,
     })
 }
 
@@ -1367,13 +1395,15 @@ Date: Mon Jan 1 00:00:00 2024
             repository_url: "https://github.com/test/repo".to_string(),
             revision: "abc123~1".to_string(),
             edit_history: "patch1".to_string(),
-            // cursor_position: "file.rs:10:5".to_string(),
             cursor_path: Path::new("file.rs").into(),
             cursor_position: "some code<|user_cursor|>".to_string(),
             expected_patches: vec!["patch".to_string()],
             tags: vec![],
             reasoning: None,
             uncommitted_diff: String::new(),
+            rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
         };
 
         let json = serde_json::to_string(&case).unwrap();

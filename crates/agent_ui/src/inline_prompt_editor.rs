@@ -1,4 +1,6 @@
+use crate::acp::AcpThreadHistory;
 use agent::ThreadStore;
+use agent_settings::AgentSettings;
 use collections::{HashMap, VecDeque};
 use editor::actions::Paste;
 use editor::code_context_menus::CodeContextMenu;
@@ -6,7 +8,6 @@ use editor::display_map::{CreaseId, EditorMargins};
 use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
-    actions::{MoveDown, MoveUp},
 };
 use fs::Fs;
 use gpui::{
@@ -29,7 +30,10 @@ use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-use zed_actions::agent::ToggleModelSelector;
+use zed_actions::{
+    agent::ToggleModelSelector,
+    editor::{MoveDown, MoveUp},
+};
 
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
@@ -60,7 +64,7 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    thread_store: Entity<ThreadStore>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
@@ -331,7 +335,7 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.thread_store.clone(),
+                self.history.clone(),
                 self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
@@ -847,72 +851,78 @@ impl<T: 'static> PromptEditor<T> {
 
                     let mut buttons = Vec::new();
 
-                    buttons.push(
-                        h_flex()
-                            .pl_1()
-                            .gap_1()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                IconButton::new("thumbs-up", IconName::ThumbsUp)
-                                    .shape(IconButtonShape::Square)
-                                    .map(|this| {
-                                        if rated {
-                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
-                                                move |_, cx| {
-                                                    Tooltip::with_meta(
-                                                        "Good Result",
-                                                        None,
-                                                        "You already rated this result",
-                                                        cx,
-                                                    )
-                                                },
-                                            )
-                                        } else {
-                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
-                                                Tooltip::for_action(
-                                                    "Good Result",
-                                                    &ThumbsUpResult,
-                                                    cx,
+                    if AgentSettings::get_global(cx).enable_feedback {
+                        buttons.push(
+                            h_flex()
+                                .pl_1()
+                                .gap_1()
+                                .border_l_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    IconButton::new("thumbs-up", IconName::ThumbsUp)
+                                        .shape(IconButtonShape::Square)
+                                        .map(|this| {
+                                            if rated {
+                                                this.disabled(true)
+                                                    .icon_color(Color::Disabled)
+                                                    .tooltip(move |_, cx| {
+                                                        Tooltip::with_meta(
+                                                            "Good Result",
+                                                            None,
+                                                            "You already rated this result",
+                                                            cx,
+                                                        )
+                                                    })
+                                            } else {
+                                                this.icon_color(Color::Muted).tooltip(
+                                                    move |_, cx| {
+                                                        Tooltip::for_action(
+                                                            "Good Result",
+                                                            &ThumbsUpResult,
+                                                            cx,
+                                                        )
+                                                    },
                                                 )
-                                            })
-                                        }
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.thumbs_up(&ThumbsUpResult, window, cx);
-                                    })),
-                            )
-                            .child(
-                                IconButton::new("thumbs-down", IconName::ThumbsDown)
-                                    .shape(IconButtonShape::Square)
-                                    .map(|this| {
-                                        if rated {
-                                            this.disabled(true).icon_color(Color::Disabled).tooltip(
-                                                move |_, cx| {
-                                                    Tooltip::with_meta(
-                                                        "Bad Result",
-                                                        None,
-                                                        "You already rated this result",
-                                                        cx,
-                                                    )
-                                                },
-                                            )
-                                        } else {
-                                            this.icon_color(Color::Muted).tooltip(move |_, cx| {
-                                                Tooltip::for_action(
-                                                    "Bad Result",
-                                                    &ThumbsDownResult,
-                                                    cx,
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.thumbs_up(&ThumbsUpResult, window, cx);
+                                        })),
+                                )
+                                .child(
+                                    IconButton::new("thumbs-down", IconName::ThumbsDown)
+                                        .shape(IconButtonShape::Square)
+                                        .map(|this| {
+                                            if rated {
+                                                this.disabled(true)
+                                                    .icon_color(Color::Disabled)
+                                                    .tooltip(move |_, cx| {
+                                                        Tooltip::with_meta(
+                                                            "Bad Result",
+                                                            None,
+                                                            "You already rated this result",
+                                                            cx,
+                                                        )
+                                                    })
+                                            } else {
+                                                this.icon_color(Color::Muted).tooltip(
+                                                    move |_, cx| {
+                                                        Tooltip::for_action(
+                                                            "Bad Result",
+                                                            &ThumbsDownResult,
+                                                            cx,
+                                                        )
+                                                    },
                                                 )
-                                            })
-                                        }
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.thumbs_down(&ThumbsDownResult, window, cx);
-                                    })),
-                            )
-                            .into_any_element(),
-                    );
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.thumbs_down(&ThumbsDownResult, window, cx);
+                                        })),
+                                )
+                                .into_any_element(),
+                        );
+                    }
 
                     buttons.push(accept);
 
@@ -1108,14 +1118,13 @@ impl<T: 'static> PromptEditor<T> {
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let font_size = settings.buffer_font_size(cx);
-                let line_height = font_size * 1.2;
 
                 let text_style = TextStyle {
                     color: colors.editor_foreground,
                     font_family: settings.buffer_font.family.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
-                    line_height: line_height.into(),
+                    line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
 
@@ -1211,6 +1220,7 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1249,15 +1259,15 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
 
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
+        let mention_set = cx
+            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            thread_store,
+            history,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
@@ -1369,6 +1379,7 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1402,15 +1413,15 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
 
-        let mention_set =
-            cx.new(|_cx| MentionSet::new(project, thread_store.clone(), prompt_store.clone()));
+        let mention_set = cx
+            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            thread_store,
+            history,
             prompt_store,
             workspace,
             model_selector: cx.new(|cx| {

@@ -1,6 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use project::Project;
@@ -89,7 +90,7 @@ impl AgentTool for DiagnosticsTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         match input.path {
@@ -98,13 +99,18 @@ impl AgentTool for DiagnosticsTool {
                     return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
                 };
 
-                let buffer = self
+                let open_buffer_task = self
                     .project
                     .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
                 cx.spawn(async move |cx| {
+                    let buffer = futures::select! {
+                        result = open_buffer_task.fuse() => result?,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            anyhow::bail!("Diagnostics cancelled by user");
+                        }
+                    };
                     let mut output = String::new();
-                    let buffer = buffer.await?;
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                     for (_, group) in snapshot.diagnostic_groups(None) {

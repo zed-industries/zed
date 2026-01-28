@@ -1,15 +1,21 @@
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::FxHashSet;
+use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use language::Buffer;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
+use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+};
 
 /// Saves files that have unsaved changes.
 ///
@@ -58,13 +64,71 @@ impl AgentTool for SaveFileTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
+        let settings = AgentSettings::get_global(cx);
+        let mut needs_confirmation = false;
+
+        for path in &input.paths {
+            let path_str = path.to_string_lossy();
+            let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+            match decision {
+                ToolPermissionDecision::Allow => {}
+                ToolPermissionDecision::Deny(reason) => {
+                    return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                }
+                ToolPermissionDecision::Confirm => {
+                    needs_confirmation = true;
+                }
+            }
+        }
+
+        let authorize = if needs_confirmation {
+            let title = if input.paths.len() == 1 {
+                format!(
+                    "Save {}",
+                    MarkdownInlineCode(&input.paths[0].to_string_lossy())
+                )
+            } else {
+                let paths: Vec<_> = input
+                    .paths
+                    .iter()
+                    .take(3)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect();
+                if input.paths.len() > 3 {
+                    format!(
+                        "Save {}, and {} more",
+                        paths.join(", "),
+                        input.paths.len() - 3
+                    )
+                } else {
+                    format!("Save {}", paths.join(", "))
+                }
+            };
+            let first_path = input
+                .paths
+                .first()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let context = crate::ToolPermissionContext {
+                tool_name: "save_file".to_string(),
+                input_value: first_path,
+            };
+            Some(event_stream.authorize(title, context, cx))
+        } else {
+            None
+        };
+
         let project = self.project.clone();
         let input_paths = input.paths;
 
         cx.spawn(async move |cx| {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
             let mut buffers_to_save: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
             let mut saved_paths: Vec<PathBuf> = Vec::new();
@@ -85,11 +149,18 @@ impl AgentTool for SaveFileTool {
                 let open_buffer_task =
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-                let buffer = match open_buffer_task.await {
-                    Ok(buffer) => buffer,
-                    Err(error) => {
-                        open_errors.push((path, error.to_string()));
-                        continue;
+                let buffer = futures::select! {
+                    result = open_buffer_task.fuse() => {
+                        match result {
+                            Ok(buffer) => buffer,
+                            Err(error) => {
+                                open_errors.push((path, error.to_string()));
+                                continue;
+                            }
+                        }
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Save cancelled by user");
                     }
                 };
 
@@ -116,7 +187,13 @@ impl AgentTool for SaveFileTool {
 
                 let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
 
-                if let Err(error) = save_task.await {
+                let save_result = futures::select! {
+                    result = save_task.fuse() => result,
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Save cancelled by user");
+                    }
+                };
+                if let Err(error) = save_result {
                     save_errors.push((path_for_buffer, error.to_string()));
                 }
             }
@@ -181,6 +258,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        });
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.always_allow_tool_actions = true;
+            AgentSettings::override_global(settings, cx);
         });
     }
 

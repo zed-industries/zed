@@ -232,6 +232,13 @@ impl Editor {
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };
+                let Some(mb_anchor) = self
+                    .buffer()
+                    .read(cx)
+                    .buffer_anchor_to_anchor(&buffer, anchor, cx)
+                else {
+                    return Task::ready(Ok(Navigated::No));
+                };
                 let links = hovered_link_state
                     .links
                     .into_iter()
@@ -243,8 +250,10 @@ impl Editor {
                         }
                     })
                     .collect();
+                let nav_entry = self.navigation_entry(mb_anchor, cx);
                 let split = Self::is_alt_pressed(&modifiers, cx);
-                let navigate_task = self.navigate_to_hover_links(None, links, split, window, cx);
+                let navigate_task =
+                    self.navigate_to_hover_links(None, links, nav_entry, split, window, cx);
                 self.select(SelectPhase::End, window, cx);
                 return navigate_task;
             }

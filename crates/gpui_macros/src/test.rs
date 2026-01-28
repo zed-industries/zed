@@ -191,9 +191,9 @@ fn generate_test_function(
                     &[#seeds],
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+                        let foreground_executor = gpui::ForegroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
                         #cx_vars
-                        executor.block_test(#inner_fn_name(#inner_fn_args));
+                        foreground_executor.block_test(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
                     },
                     #on_failure_fn_name

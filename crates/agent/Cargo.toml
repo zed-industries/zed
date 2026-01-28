@@ -19,6 +19,7 @@ workspace = true
 
 [dependencies]
 acp_thread.workspace = true
+brush-parser.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
@@ -26,6 +27,7 @@ agent_settings.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
@@ -66,6 +68,7 @@ telemetry.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
+url.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true

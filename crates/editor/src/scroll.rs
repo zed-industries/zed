@@ -152,6 +152,8 @@ pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
+    /// Number of sticky header lines currently being rendered for the current scroll position.
+    sticky_header_line_count: usize,
     /// The second element indicates whether the autoscroll request is local
     /// (true) or remote (false). Local requests are initiated by user actions,
     /// while remote requests come from external sources.
@@ -169,6 +171,7 @@ pub struct ScrollManager {
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
+    _save_scroll_position_task: Task<()>,
 }
 
 impl ScrollManager {
@@ -177,6 +180,7 @@ impl ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
+            sticky_header_line_count: 0,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -186,12 +190,14 @@ impl ScrollManager {
             visible_column_count: None,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
+            _save_scroll_position_task: Task::ready(()),
         }
     }
 
     pub fn clone_state(&mut self, other: &Self) {
         self.anchor = other.anchor;
         self.ongoing = other.ongoing;
+        self.sticky_header_line_count = other.sticky_header_line_count;
     }
 
     pub fn anchor(&self) -> ScrollAnchor {
@@ -209,6 +215,14 @@ impl ScrollManager {
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.anchor.scroll_position(snapshot)
+    }
+
+    pub fn sticky_header_line_count(&self) -> usize {
+        self.sticky_header_line_count
+    }
+
+    pub fn set_sticky_header_line_count(&mut self, count: usize) {
+        self.sticky_header_line_count = count;
     }
 
     fn set_scroll_position(
@@ -303,23 +317,23 @@ impl ScrollManager {
         self.show_scrollbars(window, cx);
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
+            let executor = cx.background_executor().clone();
 
-            cx.foreground_executor()
-                .spawn(async move {
-                    log::debug!(
-                        "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
-                    );
-                    DB.save_scroll_position(
-                        item_id,
-                        workspace_id,
-                        top_row,
-                        anchor.offset.x,
-                        anchor.offset.y,
-                    )
-                    .await
-                    .log_err()
-                })
-                .detach()
+            self._save_scroll_position_task = cx.background_executor().spawn(async move {
+                executor.timer(Duration::from_millis(10)).await;
+                log::debug!(
+                    "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
+                );
+                DB.save_scroll_position(
+                    item_id,
+                    workspace_id,
+                    top_row,
+                    anchor.offset.x,
+                    anchor.offset.y,
+                )
+                .await
+                .log_err();
+            });
         }
         cx.notify();
 
@@ -351,6 +365,10 @@ impl ScrollManager {
 
     pub fn scrollbars_visible(&self) -> bool {
         self.show_scrollbars
+    }
+
+    pub fn has_autoscroll_request(&self) -> bool {
+        self.autoscroll_request.is_some()
     }
 
     pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
@@ -576,14 +594,30 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> WasScrolled {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.set_scroll_position_taking_display_map(
+        let was_scrolled = self.set_scroll_position_taking_display_map(
             scroll_position,
             local,
             autoscroll,
             map,
             window,
             cx,
-        )
+        );
+
+        if local && was_scrolled.0 {
+            if let Some(companion) = self.scroll_companion.as_ref().and_then(|c| c.upgrade()) {
+                companion.update(cx, |companion_editor, cx| {
+                    companion_editor.set_scroll_position_internal(
+                        scroll_position,
+                        false,
+                        false,
+                        window,
+                        cx,
+                    );
+                });
+            }
+        }
+
+        was_scrolled
     }
 
     fn set_scroll_position_taking_display_map(

@@ -168,6 +168,8 @@ type: (primitive_type) @type.builtin
 [
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"

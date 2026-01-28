@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     Vim,
-    motion::right,
+    motion::{is_subword_end, is_subword_start, right},
     state::{Mode, Operator},
 };
 use editor::{
@@ -862,11 +862,8 @@ fn in_subword(
         .buffer_chars_at(offset)
         .next()
         .map(|(c, _)| {
-            if classifier.is_word('-') {
-                !classifier.is_whitespace(c) && c != '_' && c != '-'
-            } else {
-                !classifier.is_whitespace(c) && c != '_'
-            }
+            let is_separator = "._-".contains(c);
+            !classifier.is_whitespace(c) && !is_separator
         })
         .unwrap_or(false);
 
@@ -877,28 +874,19 @@ fn in_subword(
             movement::FindRange::SingleLine,
             |left, right| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
-                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                    || left == '_' && right != '_'
-                    || left.is_lowercase() && right.is_uppercase();
-                is_word_start || is_subword_start
+                is_word_start || is_subword_start(left, right, "._-")
             },
         )
     } else {
         movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
             let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                || left == '_' && right != '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
+            is_word_start || is_subword_start(left, right, "._-")
         })
     };
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
+        is_word_end || is_subword_end(left, right, "._-")
     });
 
     Some(start..end)
@@ -1039,20 +1027,17 @@ fn around_subword(
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
         |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
-                || left != '_' && right == '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_start =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(left);
+            is_word_start || is_subword_start(left, right, "._-")
         },
     );
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
+        let is_separator = |c: char| "._-".contains(c);
+        let is_word_end = classifier.kind(left) != classifier.kind(right) && !is_separator(right);
+        is_word_end || is_subword_end(left, right, "._-")
     });
 
     Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
@@ -3908,5 +3893,74 @@ mod test {
             "#},
             Mode::VisualLine,
         );
+    }
+
+    #[gpui::test]
+    async fn test_subword_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword object so we can use the
+        // bindings in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::Subword {
+                    ignore_punctuation: false,
+                },
+                Some("vim_operator"),
+            )]);
+        });
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇ_bar_baz", Mode::Insert);
+
+        cx.set_state("foo_bar_baˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_bar_ˇ", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇBarBaz", Mode::Insert);
+
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooBarˇ", Mode::Insert);
+
+        cx.set_state("foo.ˇbar.baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo.ˇ.baz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
     }
 }

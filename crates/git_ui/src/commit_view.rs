@@ -204,6 +204,7 @@ impl CommitView {
 
             editor.disable_inline_diagnostics();
             editor.set_show_breakpoints(false, cx);
+            editor.set_show_diff_review_button(true, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
             editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
@@ -883,7 +884,7 @@ async fn build_buffer_diff(
             diff.update_diff(
                 buffer.text.clone(),
                 old_text.map(|old_text| Arc::from(old_text.as_str())),
-                true,
+                Some(true),
                 language.clone(),
                 cx,
             )
@@ -1004,7 +1005,7 @@ impl Item for CommitView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {

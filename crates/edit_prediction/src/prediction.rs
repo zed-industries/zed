@@ -148,7 +148,7 @@ mod tests {
             edit_preview,
             inputs: ZetaPromptInput {
                 events: vec![],
-                related_files: vec![].into(),
+                related_files: vec![],
                 cursor_path: Path::new("path.txt").into(),
                 cursor_offset_in_excerpt: 0,
                 cursor_excerpt: "".into(),

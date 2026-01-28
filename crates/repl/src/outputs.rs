@@ -128,6 +128,43 @@ pub enum Output {
 }
 
 impl Output {
+    pub fn to_nbformat(&self, cx: &App) -> Option<nbformat::v4::Output> {
+        match self {
+            Output::Stream { content } => {
+                let text = content.read(cx).full_text();
+                Some(nbformat::v4::Output::Stream {
+                    name: "stdout".to_string(),
+                    text: nbformat::v4::MultilineString(text),
+                })
+            }
+            Output::Plain { content, .. } => {
+                let text = content.read(cx).full_text();
+                let mut data = jupyter_protocol::media::Media::default();
+                data.content.push(jupyter_protocol::MediaType::Plain(text));
+                Some(nbformat::v4::Output::DisplayData(
+                    nbformat::v4::DisplayData {
+                        data,
+                        metadata: serde_json::Map::new(),
+                    },
+                ))
+            }
+            Output::ErrorOutput(error_view) => {
+                let traceback_text = error_view.traceback.read(cx).full_text();
+                let traceback_lines: Vec<String> =
+                    traceback_text.lines().map(|s| s.to_string()).collect();
+                Some(nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                    ename: error_view.ename.clone(),
+                    evalue: error_view.evalue.clone(),
+                    traceback: traceback_lines,
+                }))
+            }
+            Output::Message(_) | Output::ClearOutputWaitMarker => None,
+            Output::Image { .. } | Output::Table { .. } | Output::Markdown { .. } => None,
+        }
+    }
+}
+
+impl Output {
     fn render_output_controls<V: OutputContent + 'static>(
         v: Entity<V>,
         workspace: WeakEntity<Workspace>,
@@ -217,12 +254,20 @@ impl Output {
             Self::ClearOutputWaitMarker => None,
         };
 
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+
         h_flex()
             .id("output-content")
             .w_full()
-            .overflow_x_scroll()
+            .when(needs_horizontal_scroll, |el| el.overflow_x_scroll())
             .items_start()
-            .child(div().flex_1().children(content))
+            .child(
+                div()
+                    .when(!needs_horizontal_scroll, |el| {
+                        el.flex_1().w_full().overflow_x_hidden()
+                    })
+                    .children(content),
+            )
             .children(match self {
                 Self::Plain { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
@@ -246,7 +291,8 @@ impl Output {
                             let traceback_text = traceback.read(cx).full_text();
                             let full_error = format!("{}: {}\n{}", ename, evalue, traceback_text);
 
-                            CopyButton::new(full_error).tooltip_label("Copy Full Error")
+                            CopyButton::new("copy-full-error", full_error)
+                                .tooltip_label("Copy Full Error")
                         })
                         .child(
                             IconButton::new(
