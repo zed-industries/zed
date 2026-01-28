@@ -140,9 +140,9 @@
 (comment) @comment
 
 ; Go directives
-((comment) @attribute
- (#match? @attribute "^//go:"))
+((comment) @preproc
+ (#match? @preproc "^//go:"))
 
-((comment) @attribute
- (#match? @attribute "^// \\+build"))
+((comment) @preproc
+ (#match? @preproc "^// \\+build"))
 
