@@ -702,10 +702,10 @@ impl ToolPermissionContext {
             );
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-                let button_text = match tool_name.as_str() {
-                    "terminal" => format!("Always for `{}` commands", display),
-                    "fetch" => format!("Always for `{}`", display),
-                    _ => format!("Always for `{}`", display),
+                let button_text = if tool_name == TerminalTool::name() {
+                    format!("Always for `{}` commands", display)
+                } else {
+                    format!("Always for `{}`", display)
                 };
                 push_choice(
                     button_text,
