@@ -487,16 +487,12 @@ impl Telemetry {
                 continue;
             };
 
-            let project_type = if file_name == "pnpm-lock.yaml" {
-                Some("pnpm")
-            } else if file_name == "yarn.lock" {
-                Some("yarn")
-            } else if file_name == "package.json" {
-                Some("node")
-            } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                Some("dotnet")
-            } else {
-                None
+            let project_type = match file_name {
+                "pnpm-lock.yaml" => Some("pnpm"),
+                "yarn.lock" => Some("yarn"),
+                "package.json" => Some("node"),
+                _ if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) => Some("dotnet"),
+                _ => None,
             };
 
             if let Some(project_type) = project_type {
@@ -669,9 +665,7 @@ impl Telemetry {
 }
 
 pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
-        return None;
-    };
+    let checksum_seed = ZED_CLIENT_CHECKSUM_SEED.as_ref()?;
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);
