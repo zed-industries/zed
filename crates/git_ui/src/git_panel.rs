@@ -109,6 +109,10 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+        /// Next commit message editor history item
+        NextCommitEditorHistoryItem,
+        /// Previous commit message editor history item
+        PrevCommitEditorHistoryItem,
     ]
 );
 
@@ -2065,6 +2069,24 @@ impl GitPanel {
         if self.commit(&self.commit_editor.focus_handle(cx), window, cx) {
             telemetry::event!("Git Committed", source = "Git Panel");
         }
+    }
+
+    fn next_commit_editor_history_item(
+        &mut self,
+        _: &NextCommitEditorHistoryItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!("Next editor history item");
+    }
+
+    fn prev_commit_editor_history_item(
+        &mut self,
+        _: &PrevCommitEditorHistoryItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!("Previous editor history item");
     }
 
     /// Commits staged changes with the current commit message.
@@ -5492,6 +5514,8 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::next_commit_editor_history_item))
+            .on_action(cx.listener(Self::prev_commit_editor_history_item))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
