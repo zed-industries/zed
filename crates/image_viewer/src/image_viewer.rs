@@ -324,9 +324,9 @@ impl Element for ImageContentElement {
         let image_view = self.image_view.read(cx);
         let image = image_view.image_item.read(cx).image.clone();
 
-        let initial_zoom_level = image_view
-            .container_bounds
-            .is_none()
+        let first_layout = image_view.container_bounds.is_none();
+
+        let initial_zoom_level = first_layout
             .then(|| {
                 image_view
                     .image_size
@@ -344,6 +344,11 @@ impl Element for ImageContentElement {
         let scaled_size = image_view
             .image_size
             .map(|(w, h)| (px(w as f32 * zoom_level), px(h as f32 * zoom_level)));
+
+        // Trigger a redraw once this finished loading
+        if first_layout {
+            let _ = image.clone().use_render_image(window, cx);
+        }
 
         let (mut left, mut top) = (px(0.0), px(0.0));
         let mut scaled_width = px(0.0);
