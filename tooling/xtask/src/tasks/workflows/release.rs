@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow, ctx::Context};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
@@ -344,7 +344,9 @@ fn generate_slack_message(expression: String) -> (Step<Run>, StepOutput) {
         echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
         "#
     };
-    let generate_step = named::bash(&script).id("generate-webhook-message");
+    let generate_step = named::bash(&script)
+        .id("generate-webhook-message")
+        .add_env(("GH_TOKEN", Context::github().token()));
 
     let output = StepOutput::new(&generate_step, "message");
 
