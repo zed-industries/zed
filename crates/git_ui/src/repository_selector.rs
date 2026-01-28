@@ -59,12 +59,16 @@ impl RepositorySelector {
         });
 
         let active_repository = git_store.read(cx).active_repository();
+        let selected_index = active_repository
+            .as_ref()
+            .and_then(|active| filtered_repositories.iter().position(|repo| repo == active))
+            .unwrap_or(0);
         let delegate = RepositorySelectorDelegate {
             repository_selector: cx.entity().downgrade(),
             repository_entries,
             filtered_repositories,
             active_repository,
-            selected_index: 0,
+            selected_index,
         };
 
         let picker = cx.new(|cx| {
@@ -140,7 +144,15 @@ impl RepositorySelectorDelegate {
     pub fn update_repository_entries(&mut self, all_repositories: Vec<Entity<Repository>>) {
         self.repository_entries = all_repositories.clone();
         self.filtered_repositories = all_repositories;
-        self.selected_index = 0;
+        self.selected_index = self
+            .active_repository
+            .as_ref()
+            .and_then(|active| {
+                self.filtered_repositories
+                    .iter()
+                    .position(|repo| repo == active)
+            })
+            .unwrap_or(0);
     }
 }
 
@@ -210,8 +222,14 @@ impl PickerDelegate for RepositorySelectorDelegate {
                         .to_lowercase()
                         .cmp(&b.read(cx).display_name().to_lowercase())
                 });
+                let selected_index = this
+                    .delegate
+                    .active_repository
+                    .as_ref()
+                    .and_then(|active| sorted_repositories.iter().position(|repo| repo == active))
+                    .unwrap_or(0);
                 this.delegate.filtered_repositories = sorted_repositories;
-                this.delegate.set_selected_index(0, window, cx);
+                this.delegate.set_selected_index(selected_index, window, cx);
                 cx.notify();
             })
             .ok();
