@@ -4925,7 +4925,7 @@ impl EditorElement {
         })
     }
 
-    pub(crate) fn sticky_headers(
+    pub fn sticky_headers(
         editor: &Editor,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
@@ -8564,7 +8564,7 @@ fn render_blame_entry(
 }
 
 #[derive(Debug)]
-pub(crate) struct LineWithInvisibles {
+pub struct LineWithInvisibles {
     fragments: SmallVec<[LineFragment; 1]>,
     invisibles: Vec<Invisible>,
     len: usize,
@@ -12069,7 +12069,7 @@ impl HighlightedRange {
     }
 }
 
-pub(crate) struct StickyHeader {
+pub struct StickyHeader {
     pub item: language::OutlineItem<Anchor>,
     pub sticky_row: DisplayRow,
     pub start_point: Point,

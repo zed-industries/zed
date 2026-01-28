@@ -1,6 +1,6 @@
 mod actions;
 pub(crate) mod autoscroll;
-pub(crate) mod scroll_amount;
+pub mod scroll_amount;
 
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{

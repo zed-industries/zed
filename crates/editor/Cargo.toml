@@ -11,9 +11,16 @@ workspace = true
 [lib]
 path = "src/editor.rs"
 doctest = false
+test = false
+
+[[test]]
+name = "editor_tests"
+required-features = ["test-support"]
+path = "tests/integration/editor_tests.rs"
 
 [features]
 test-support = [
+    "ctor",
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
@@ -37,6 +44,7 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 convert_case.workspace = true
+ctor = { workspace = true, optional = true }
 dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
@@ -101,7 +109,7 @@ zlog.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-ctor.workspace = true
+editor = {workspace = true, features = ["test-support"]}
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }

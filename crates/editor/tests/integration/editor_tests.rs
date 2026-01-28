@@ -1,77 +1,109 @@
-use super::*;
-use crate::{
-    JoinLines,
-    code_context_menus::CodeContextMenu,
-    edit_prediction_tests::FakeEditPredictionDelegate,
+mod code_completion_tests;
+mod edit_prediction_tests;
+
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use collections::{HashMap, HashSet};
+use edit_prediction_tests::FakeEditPredictionDelegate;
+use editor::{
+    actions::*,
+    code_context_menus::{CodeContextMenu, CompletionsMenu},
+    display_map::{
+        BlockPlacement, BlockProperties, BlockStyle, Crease, DisplayRow, ToDisplayPoint,
+    },
     element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{Autoscroll, ScrollAnchor, ScrollOffset, scroll_amount::ScrollAmount},
     test::{
         assert_text_with_selections, build_editor,
         editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
     },
+    *,
 };
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
-use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Rgba, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    AppContext, BackgroundExecutor, Bounds, ClipboardItem, DismissEvent, Entity,
+    EntityInputHandler, EventEmitter, Focusable, Hsla, Modifiers, Rgba, SharedString,
+    TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions, div, size,
 };
 use indoc::indoc;
+use itertools::Itertools;
 use language::{
-    BracketPairConfig,
-    Capability::ReadWrite,
-    DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
-    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
+    BlockCommentConfig, BracketPair, BracketPairConfig, Buffer,
+    Capability::{self, ReadWrite},
+    DiagnosticSourceKind, FakeLspAdapter, HighlightedText, IndentGuideSettings, Language,
+    LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
     language_settings::{
-        CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
+        self, CompletionSettingsContent, Formatter, FormatterList, LanguageSettingsContent,
+        LspInsertMode,
     },
     tree_sitter_python,
 };
-use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
-use lsp::CompletionParams;
+use lsp::{CodeActionKind, CompletionParams, LanguageServerId};
 use multi_buffer::{
-    ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
+    ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
+    MultiBufferRow, PathKey,
 };
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project,
-    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+    debugger::breakpoint_store::{
+        Breakpoint, BreakpointEditAction, BreakpointState, SourceBreakpoint,
+    },
+    lsp_store::FormatTrigger,
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
+use rope::OffsetUtf16;
+use rpc::proto::PeerId;
 use serde_json::{self, json};
 use settings::{
-    AllLanguageSettingsContent, DelayMs, EditorSettingsContent, IndentGuideBackgroundColoring,
-    IndentGuideColoring, InlayHintSettingsContent, ProjectSettingsContent, SearchSettingsContent,
-    SettingsStore,
+    AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GoToDefinitionFallback,
+    IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
+    ProjectSettingsContent, SearchSettingsContent, Settings, SettingsStore, WordsCompletionMode,
 };
-use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
+use snippet::Snippet;
+use std::{
+    any::TypeId,
+    cell::RefCell,
+    collections::BTreeMap,
+    future::Future,
+    mem,
+    num::NonZeroU32,
+    ops::{Deref as _, Range},
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::{Arc, atomic::AtomicBool},
+    time::{Duration, Instant},
+};
 use std::{
     iter,
     sync::atomic::{self, AtomicUsize},
 };
 use test::build_editor_with_project;
-use text::ToPoint as _;
+use text::{BufferId, ToPoint as _};
+use ui::{
+    ActiveTheme, App, BorrowAppContext, Context, Element as _, IntoElement, Render, VisualContext,
+    Window, px,
+};
 use unindent::Unindent;
 use util::{
-    assert_set_eq, path,
+    TryFutureExt, assert_set_eq, path,
     rel_path::rel_path,
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
-    OpenOptions, ViewId,
-    item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
+    CloseActiveItem, CloseAllItems, CloseOtherItems, CollaboratorId, MoveItemToPaneInDirection,
+    NavigationEntry, OpenOptions, SplitDirection, ViewId, Workspace,
+    item::{FollowEvent, FollowableItem, Item, ItemBufferKind, ItemHandle, SaveOptions},
     register_project_item,
 };
+use zed_actions::editor::{MoveDown, MoveUp};
 
 fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<DisplayPoint>> {
     editor
@@ -868,7 +900,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
             fn pop_history(editor: &mut Editor, cx: &mut App) -> Option<NavigationEntry> {
-                editor.nav_history.as_mut().unwrap().pop_backward(cx)
+                editor.nav_history_mut().unwrap().pop_backward(cx)
             }
 
             // Move the cursor a small distance.
@@ -1127,7 +1159,7 @@ fn test_fold_action(cx: &mut TestAppContext) {
         editor.unfold_lines(&UnfoldLines, window, cx);
         assert_eq!(
             editor.display_text(cx),
-            editor.buffer.read(cx).read(cx).text()
+            editor.buffer().read(cx).read(cx).text()
         );
     });
 }
@@ -1209,7 +1241,7 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
         editor.unfold_lines(&UnfoldLines, window, cx);
         assert_eq!(
             editor.display_text(cx),
-            editor.buffer.read(cx).read(cx).text()
+            editor.buffer().read(cx).read(cx).text()
         );
     });
 }
@@ -1302,7 +1334,7 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
         editor.unfold_lines(&UnfoldLines, window, cx);
         assert_eq!(
             editor.display_text(cx),
-            editor.buffer.read(cx).read(cx).text()
+            editor.buffer().read(cx).read(cx).text()
         );
     });
 }
@@ -1411,7 +1443,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
 
         assert_eq!(
             editor.display_text(cx),
-            editor.buffer.read(cx).read(cx).text()
+            editor.buffer().read(cx).read(cx).text()
         );
         let (_, positions) = marked_text_ranges(
             &"
@@ -3014,17 +3046,17 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
             ])
         });
         editor.delete_to_previous_word_start(&del_to_prev_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\nthree\n");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "one\n2\nthree\n");
         editor.delete_to_previous_word_start(&del_to_prev_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\nthree");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "one\n2\nthree");
         editor.delete_to_previous_word_start(&del_to_prev_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2\n");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "one\n2\n");
         editor.delete_to_previous_word_start(&del_to_prev_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n2");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "one\n2");
         editor.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "one\n");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "one\n");
         editor.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "");
     });
 }
 
@@ -3052,21 +3084,21 @@ fn test_delete_to_previous_subword_start_or_newline(cx: &mut TestAppContext) {
             ])
         });
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n\nbaz");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "fooBar\n\nbaz");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n\n");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "fooBar\n\n");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "fooBar\n");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "fooBar");
         editor.delete_to_previous_subword_start(&del_to_prev_sub_word_start, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "foo");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "foo");
         editor.delete_to_previous_subword_start(
             &del_to_prev_sub_word_start_ignore_newlines,
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "");
     });
 }
 
@@ -3095,27 +3127,27 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
         });
         editor.delete_to_next_word_end(&del_to_next_word_end, window, cx);
         assert_eq!(
-            editor.buffer.read(cx).read(cx).text(),
+            editor.buffer().read(cx).read(cx).text(),
             "one\n   two\nthree\n   four"
         );
         editor.delete_to_next_word_end(&del_to_next_word_end, window, cx);
         assert_eq!(
-            editor.buffer.read(cx).read(cx).text(),
+            editor.buffer().read(cx).read(cx).text(),
             "\n   two\nthree\n   four"
         );
         editor.delete_to_next_word_end(&del_to_next_word_end, window, cx);
         assert_eq!(
-            editor.buffer.read(cx).read(cx).text(),
+            editor.buffer().read(cx).read(cx).text(),
             "two\nthree\n   four"
         );
         editor.delete_to_next_word_end(&del_to_next_word_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\nthree\n   four");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "\nthree\n   four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   four");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "\n   four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "");
     });
 }
 
@@ -3144,22 +3176,25 @@ fn test_delete_to_next_subword_end_or_newline(cx: &mut TestAppContext) {
         });
         // Delete "\n" (empty line)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "fooBar\n   bazQux");
+        assert_eq!(
+            editor.buffer().read(cx).read(cx).text(),
+            "fooBar\n   bazQux"
+        );
         // Delete "foo" (subword boundary)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "Bar\n   bazQux");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "Bar\n   bazQux");
         // Delete "Bar"
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   bazQux");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "\n   bazQux");
         // Delete "\n   " (newline + leading whitespace)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "bazQux");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "bazQux");
         // Delete "baz" (subword boundary)
         editor.delete_to_next_subword_end(&del_to_next_subword_end, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "Qux");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "Qux");
         // With ignore_newlines, delete "Qux"
         editor.delete_to_next_subword_end(&del_to_next_subword_end_ignore_newlines, window, cx);
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
+        assert_eq!(editor.buffer().read(cx).read(cx).text(), "");
     });
 }
 
@@ -3288,7 +3323,7 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
-        editor.buffer.update(cx, |buffer, cx| {
+        editor.buffer().update(cx, |buffer, cx| {
             buffer.edit(
                 [
                     (Point::new(1, 2)..Point::new(3, 0), ""),
@@ -3820,7 +3855,7 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
-        editor.buffer.update(cx, |buffer, cx| {
+        editor.buffer().update(cx, |buffer, cx| {
             buffer.edit(
                 [
                     (MultiBufferOffset(2)..MultiBufferOffset(5), ""),
@@ -4685,7 +4720,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         );
 
         // reset to test indentation
-        editor.buffer.update(cx, |buffer, cx| {
+        editor.buffer().update(cx, |buffer, cx| {
             buffer.edit(
                 [
                     (Point::new(1, 0)..Point::new(1, 2), "  "),
@@ -6092,7 +6127,7 @@ fn test_move_line_up_selection_at_end_of_fold(cx: &mut TestAppContext) {
         });
         assert_eq!(editor.display_text(cx), "\n\n\n\n\n\naaaa⋯\ncccc");
         editor.move_line_up(&MoveLineUp, window, cx);
-        let buffer_text = editor.buffer.read(cx).snapshot(cx).text();
+        let buffer_text = editor.buffer().read(cx).snapshot(cx).text();
         assert_eq!(buffer_text, "\n\n\n\n\naaaa\nbbbb\n\ncccc");
     });
 }
@@ -6106,7 +6141,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.insert_blocks(
             [BlockProperties {
                 style: BlockStyle::Fixed,
@@ -9330,7 +9365,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -9515,7 +9550,7 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     // Test case 1: Cursor at end of word
@@ -9585,7 +9620,7 @@ async fn test_select_larger_syntax_node_for_cursor_at_symbol(cx: &mut TestAppCon
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     // Test case 1: Cursor after '{'
@@ -9762,7 +9797,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     // Test 1: Cursor on a letter of a string word
@@ -10148,7 +10183,7 @@ async fn test_autoindent(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -10217,7 +10252,7 @@ async fn test_autoindent_disabled(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -11263,7 +11298,7 @@ async fn test_surround_with_pair(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -11413,7 +11448,7 @@ async fn test_delete_autoclose_pair(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -11609,7 +11644,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -12007,7 +12042,7 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
         cx.simulate_input(input_to_simulate); // fails correctly
 
         cx.update_editor(|editor, _, _| {
-            let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu.borrow()
+            let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu().borrow()
             else {
                 assert!(!should_match_snippet); // no completions! don't even show the menu
                 return;
@@ -12126,7 +12161,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
                 )
             })
             .unwrap();
-        cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+        cx.executor().advance_clock(editor::FORMAT_TIMEOUT);
         save.await;
         assert_eq!(
             editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12749,7 +12784,7 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
             )
         })
         .unwrap();
-    cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+    cx.executor().advance_clock(editor::FORMAT_TIMEOUT);
     save.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -12945,7 +12980,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
             )
         })
         .unwrap();
-    cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+    cx.executor().advance_clock(editor::FORMAT_TIMEOUT);
     format.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -13162,7 +13197,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             .unindent()
         );
 
-        editor.buffer.update(cx, |buffer, cx| {
+        editor.buffer().update(cx, |buffer, cx| {
             let ix = buffer.len(cx);
             buffer.edit([(ix..ix, "edited\n")], None, cx);
         });
@@ -13347,7 +13382,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
             )
         })
         .unwrap();
-    cx.executor().advance_clock(super::CODE_ACTION_TIMEOUT);
+    cx.executor().advance_clock(editor::CODE_ACTION_TIMEOUT);
     format.await;
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
@@ -14025,7 +14060,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
             signature.signatures[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
-        editor.signature_help_state = SignatureHelpState::default();
+        editor.signature_help_state = Default::default();
     });
 
     // Ensure that signature_help is called when auto signature help override is enabled
@@ -15294,9 +15329,9 @@ async fn test_completion(cx: &mut TestAppContext) {
         additional edit
     "});
     cx.simulate_keystroke(" ");
-    assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
+    assert!(cx.editor(|e, _, _| e.context_menu().borrow_mut().is_none()));
     cx.simulate_keystroke("s");
-    assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
+    assert!(cx.editor(|e, _, _| e.context_menu().borrow_mut().is_none()));
 
     cx.assert_editor_state(indoc! {"
         one.second_completion
@@ -15359,10 +15394,10 @@ async fn test_completion(cx: &mut TestAppContext) {
     });
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
-    assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
+    assert!(cx.editor(|e, _, _| e.context_menu().borrow_mut().is_none()));
     cx.simulate_keystrokes("c l o");
     cx.assert_editor_state("editor.cloˇ");
-    assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
+    assert!(cx.editor(|e, _, _| e.context_menu().borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
         editor.show_completions(&ShowCompletions, window, cx);
     });
@@ -15491,7 +15526,8 @@ async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
     cx.run_until_parked();
     editor.update(cx, |editor, _| {
         assert!(editor.context_menu_visible());
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             let completion_labels = menu
                 .completions
@@ -15530,7 +15566,8 @@ async fn test_completion_can_run_commands(cx: &mut TestAppContext) {
     cx.run_until_parked();
     editor.update(cx, |editor, _| {
         assert!(editor.context_menu_visible());
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             let completion_labels = menu
                 .completions
@@ -15748,7 +15785,8 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, window, cx| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(
                 completion_menu_entries(menu),
@@ -15772,7 +15810,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["one", "three", "two"],
                 "When LSP server is slow, document words can be shown instead, if configured accordingly");
@@ -15832,7 +15870,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(
                 completion_menu_entries(menu),
@@ -15888,7 +15926,8 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(
                 completion_menu_entries(menu),
@@ -15905,7 +15944,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(
                 completion_menu_entries(menu),
@@ -15944,7 +15983,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, window, cx| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(
                 completion_menu_entries(menu),
@@ -15970,7 +16009,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["33", "35f32"], "The digit is in the completion query, \
                 return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
@@ -16000,7 +16039,7 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
     cx.simulate_keystroke("w");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if editor.context_menu.borrow_mut().is_some() {
+        if editor.context_menu().borrow_mut().is_some() {
             panic!(
                 "expected completion menu to be hidden, as words completion threshold is not met"
             );
@@ -16012,7 +16051,7 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["wowser", "wowen", "wow"], "Even though the threshold is not met, invoking word completions with an action should provide the completions");
         } else {
@@ -16022,7 +16061,7 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
         editor.cancel(&Cancel, window, cx);
     });
     cx.update_editor(|editor, _, _| {
-        if editor.context_menu.borrow_mut().is_some() {
+        if editor.context_menu().borrow_mut().is_some() {
             panic!("expected completion menu to be hidden after canceling");
         }
     });
@@ -16030,7 +16069,7 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
     cx.simulate_keystroke("o");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if editor.context_menu.borrow_mut().is_some() {
+        if editor.context_menu().borrow_mut().is_some() {
             panic!(
                 "expected completion menu to be hidden, as words completion threshold is not met still"
             );
@@ -16040,7 +16079,7 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
     cx.simulate_keystroke("w");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
         } else {
@@ -16072,7 +16111,7 @@ async fn test_word_completions_disabled(cx: &mut TestAppContext) {
     cx.simulate_keystroke("w");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if editor.context_menu.borrow_mut().is_some() {
+        if editor.context_menu().borrow_mut().is_some() {
             panic!(
                 "expected completion menu to be hidden, as words completion are disabled for this editor"
             );
@@ -16084,7 +16123,7 @@ async fn test_word_completions_disabled(cx: &mut TestAppContext) {
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if editor.context_menu.borrow_mut().is_some() {
+        if editor.context_menu().borrow_mut().is_some() {
             panic!(
                 "expected completion menu to be hidden even if called for explicitly, as words completion are disabled for this editor"
             );
@@ -16115,7 +16154,7 @@ async fn test_word_completions_disabled_with_no_provider(cx: &mut TestAppContext
     cx.simulate_keystroke("w");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if editor.context_menu.borrow_mut().is_some() {
+        if editor.context_menu().borrow_mut().is_some() {
             panic!("expected completion menu to be hidden, as disabled in settings");
         }
     });
@@ -16276,7 +16315,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
 
     editor.update(cx, |editor, _| {
         assert!(editor.context_menu_visible());
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow_mut().as_ref()
         {
             let completion_labels = menu
                 .completions
@@ -16344,7 +16383,8 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["first", "last"]);
         } else {
@@ -16354,7 +16394,8 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
 
     cx.update_editor(|editor, window, cx| {
         editor.move_page_down(&MovePageDown::default(), window, cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert!(
                 menu.selected_item == 1,
@@ -16367,7 +16408,8 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
 
     cx.update_editor(|editor, window, cx| {
         editor.move_page_up(&MovePageUp::default(), window, cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert!(
                 menu.selected_item == 0,
@@ -17557,7 +17599,7 @@ async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -17601,7 +17643,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         struct Type1;
         struct Type2;
 
-        let buffer = editor.buffer.read(cx).snapshot(cx);
+        let buffer = editor.buffer().read(cx).snapshot(cx);
 
         let anchor_range =
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
@@ -17916,7 +17958,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             Editor::from_state_proto(
                 workspace_entity,
                 ViewId {
-                    creator: CollaboratorId::PeerId(PeerId::default()),
+                    creator: CollaboratorId::PeerId(Default::default()),
                     id: 0,
                 },
                 &mut state_message,
@@ -17954,7 +17996,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     // Insert some excerpts.
     leader.update(cx, |leader, cx| {
-        leader.buffer.update(cx, |multibuffer, cx| {
+        leader.buffer().update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
                 PathKey::with_sort_prefix(1, rel_path("b.txt").into_arc()),
                 buffer_1.clone(),
@@ -18022,7 +18064,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     // Remove some excerpts.
     leader.update(cx, |leader, cx| {
-        leader.buffer.update(cx, |multibuffer, cx| {
+        leader.buffer().update(cx, |multibuffer, cx| {
             let excerpt_ids = multibuffer.excerpt_ids();
             multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
             multibuffer.remove_excerpts([excerpt_ids[0]], cx);
@@ -18990,7 +19032,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        let context_menu = editor.context_menu.borrow_mut();
+        let context_menu = editor.context_menu().borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
@@ -19046,7 +19088,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     cx.run_until_parked();
 
     cx.update_editor(|editor, _, _| {
-        let context_menu = editor.context_menu.borrow_mut();
+        let context_menu = editor.context_menu().borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
@@ -19166,7 +19208,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
             "Hover popover should be hidden when code action menu is shown"
         );
         // Hide code actions
-        editor.context_menu.take();
+        editor.context_menu().take();
     });
 
     // Case 2: Test that code completions hide hover popover
@@ -19315,7 +19357,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        let context_menu = editor.context_menu.borrow_mut();
+        let context_menu = editor.context_menu().borrow_mut();
         let context_menu = context_menu
             .as_ref()
             .expect("Should have the context menu deployed");
@@ -19478,7 +19520,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
         .await;
     cx.run_until_parked();
     cx.update_editor(|editor, _, _| {
-        let menu = editor.context_menu.borrow_mut();
+        let menu = editor.context_menu().borrow_mut();
         match menu.as_ref().expect("should have the completions menu") {
             CodeContextMenu::Completions(completions_menu) => {
                 assert_eq!(
@@ -19599,7 +19641,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.simulate_keystroke("-");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(
                 completion_menu_entries(menu),
@@ -19613,7 +19656,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["bg-blue", "bg-yellow"]);
         } else {
@@ -19627,7 +19671,8 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        if let Some(CodeContextMenu::Completions(menu)) =
+            editor.context_menu().borrow_mut().as_ref()
         {
             assert_eq!(completion_menu_entries(menu), &["bg-yellow"]);
         } else {
@@ -20300,7 +20345,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
                 BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
             });
             editor
-                .buffer
+                .buffer()
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
         }
     });
@@ -20927,7 +20972,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
                     BufferDiff::new_with_base_text(diff_base, &buffer.read(cx).text_snapshot(), cx)
                 });
                 editor
-                    .buffer
+                    .buffer()
                     .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
             }
         })
@@ -21035,7 +21080,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
                 BufferDiff::new_with_base_text(base, &buffer.read(cx).text_snapshot(), cx)
             });
             editor
-                .buffer
+                .buffer()
                 .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
         })
         .unwrap();
@@ -21811,7 +21856,7 @@ fn assert_indent_guides(
 ) {
     let indent_guides = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx).display_snapshot;
-        let mut indent_guides: Vec<_> = crate::indent_guides::indent_guides_in_range(
+        let mut indent_guides: Vec<_> = editor::indent_guides::indent_guides_in_range(
             editor,
             MultiBufferRow(range.start)..MultiBufferRow(range.end),
             true,
@@ -22561,7 +22606,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let excerpt_id = editor.buffer().read(cx).excerpt_ids()[0];
         hunks
             .into_iter()
             .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
@@ -22651,7 +22696,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let excerpt_id = editor.buffer().read(cx).excerpt_ids()[0];
         hunks
             .into_iter()
             .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
@@ -22716,7 +22761,7 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let excerpt_id = editor.buffer().read(cx).excerpt_ids()[0];
         hunks
             .into_iter()
             .map(|hunk| Anchor::range_in_buffer(excerpt_id, hunk.buffer_range))
@@ -22764,7 +22809,7 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
     // Expanding a diff hunk at the first line inserts deleted lines above the first buffer line.
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let excerpt_id = editor.buffer().read(cx).excerpt_ids()[0];
         let hunks = editor
             .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
@@ -23917,7 +23962,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
         editor.highlight_text::<TestHighlight>(
             vec![highlight_range.clone()],
-            HighlightStyle::color(Hsla::green()),
+            gpui::HighlightStyle::color(Hsla::green()),
             cx,
         );
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -25682,7 +25727,7 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
         .unwrap();
     editor.update_in(cx, |editor, window, cx| {
         editor.open_context_menu(&OpenContextMenu, window, cx);
-        assert!(editor.mouse_context_menu.is_some());
+        assert!(editor.has_mouse_context_menu());
     });
     workspace
         .update(cx, |workspace, window, cx| {
@@ -25690,7 +25735,7 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.read(|cx| {
-        assert!(editor.read(cx).mouse_context_menu.is_none());
+        assert!(!editor.read(cx).has_mouse_context_menu());
     });
 }
 
@@ -25701,7 +25746,7 @@ fn set_linked_edit_ranges(
     cx: &mut Context<Editor>,
 ) {
     let Some((buffer, _)) = editor
-        .buffer
+        .buffer()
         .read(cx)
         .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
     else {
@@ -27005,7 +27050,7 @@ pub fn handle_signature_help_request(
 #[track_caller]
 pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorLspTestContext) {
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow().as_ref() {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu().borrow().as_ref() {
             let entries = menu.entries.borrow();
             let entries = entries
                 .iter()
@@ -27091,7 +27136,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
     });
 
     let get_completions = |cx: &mut EditorLspTestContext| {
-        cx.update_editor(|editor, _, _| match &*editor.context_menu.borrow() {
+        cx.update_editor(|editor, _, _| match &*editor.context_menu().borrow() {
             Some(CodeContextMenu::Completions(context_menu)) => {
                 let entries = context_menu.entries.borrow();
                 entries
@@ -28245,7 +28290,7 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
 
     // Wait for parsing to complete
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
@@ -31588,7 +31633,7 @@ async fn test_move_to_start_end_of_larger_syntax_node_single_cursor(cx: &mut Tes
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     // Test case 1: Move to end of syntax nodes
@@ -31780,7 +31825,7 @@ async fn test_move_to_start_end_of_larger_syntax_node_two_cursors(cx: &mut TestA
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     // Test case 1: Move to end of syntax nodes with two cursors
@@ -31927,7 +31972,7 @@ async fn test_move_to_start_end_of_larger_syntax_node_with_selections_and_string
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
     editor
-        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer().read(cx).is_parsing(cx))
         .await;
 
     // Test case 1: With existing selection, move_to_end keeps selection

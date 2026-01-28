@@ -9,7 +9,7 @@ use util::ResultExt;
 use crate::Editor;
 
 #[derive(Clone, Default)]
-pub(super) struct LinkedEditingRanges(
+pub struct LinkedEditingRanges(
     /// Ranges are non-overlapping and sorted by .0 (thus, [x + 1].start > [x].end must hold)
     pub HashMap<BufferId, Vec<(Range<text::Anchor>, Vec<Range<text::Anchor>>)>>,
 );

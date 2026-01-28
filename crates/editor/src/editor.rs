@@ -18,16 +18,16 @@ mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
-mod element;
+pub mod element;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 pub mod hover_popover;
-mod indent_guides;
+pub mod indent_guides;
 mod inlays;
 pub mod items;
 mod jsx_tag_auto_close;
-mod linked_editing_ranges;
+pub mod linked_editing_ranges;
 mod lsp_colors;
 mod lsp_ext;
 mod mouse_context_menu;
@@ -40,14 +40,8 @@ mod split;
 pub mod split_editor_view;
 pub mod tasks;
 
-#[cfg(test)]
-mod code_completion_tests;
-#[cfg(test)]
-mod edit_prediction_tests;
-#[cfg(test)]
-mod editor_tests;
 mod signature_help;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub mod test;
 
 pub(crate) use actions::*;
@@ -224,8 +218,10 @@ use crate::{
     },
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
-    signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
+    signature_help::SignatureHelpState,
 };
+
+pub use signature_help::SignatureHelpHiddenBy;
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
@@ -238,9 +234,9 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
-pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
-pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
-pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
+pub const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
+pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 pub const FETCH_COLORS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
@@ -278,8 +274,8 @@ impl ReportEditorEvent {
 
 pub enum ActiveDebugLine {}
 pub enum DebugStackFrameLine {}
-enum DocumentHighlightRead {}
-enum DocumentHighlightWrite {}
+pub enum DocumentHighlightRead {}
+pub enum DocumentHighlightWrite {}
 enum InputComposition {}
 pub enum PendingInput {}
 enum SelectedTextHighlight {}
@@ -306,7 +302,7 @@ impl Navigated {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DisplayDiffHunk {
+pub enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
     },
@@ -625,13 +621,13 @@ pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
 
 type CompletionId = usize;
 
-pub(crate) enum EditDisplayMode {
+pub enum EditDisplayMode {
     TabAccept,
     DiffPopover,
     Inline,
 }
 
-enum EditPrediction {
+pub enum EditPrediction {
     Edit {
         edits: Vec<(Range<Anchor>, Arc<str>)>,
         edit_preview: Option<EditPreview>,
@@ -650,9 +646,9 @@ enum EditPrediction {
     },
 }
 
-struct EditPredictionState {
+pub struct EditPredictionState {
     inlay_ids: Vec<InlayId>,
-    completion: EditPrediction,
+    pub completion: EditPrediction,
     completion_id: Option<SharedString>,
     invalidation_range: Option<Range<Anchor>>,
 }
@@ -849,15 +845,15 @@ impl BufferSerialization {
 }
 
 #[derive(Clone, Debug)]
-struct RunnableTasks {
-    templates: Vec<(TaskSourceKind, TaskTemplate)>,
-    offset: multi_buffer::Anchor,
+pub struct RunnableTasks {
+    pub templates: Vec<(TaskSourceKind, TaskTemplate)>,
+    pub offset: multi_buffer::Anchor,
     // We need the column at which the task context evaluation should take place (when we're spawning it via gutter).
-    column: u32,
+    pub column: u32,
     // Values of all named captures, including those starting with '_'
-    extra_variables: HashMap<String, String>,
+    pub extra_variables: HashMap<String, String>,
     // Full range of the tagged region. We use it to determine which `extra_variables` to grab for context resolution in e.g. a modal.
-    context_range: Range<BufferOffset>,
+    pub context_range: Range<BufferOffset>,
 }
 
 impl RunnableTasks {
@@ -1033,7 +1029,7 @@ struct PhantomBreakpointIndicator {
 /// Represents a diff review button indicator that shows up when hovering over lines in the gutter
 /// in diff view mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PhantomDiffReviewIndicator {
+pub struct PhantomDiffReviewIndicator {
     /// The starting anchor of the selection (or the only row if not dragging).
     pub start: Anchor,
     /// The ending anchor of the selection. Equal to start_anchor for single-line selection.
@@ -1044,7 +1040,7 @@ pub(crate) struct PhantomDiffReviewIndicator {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DiffReviewDragState {
+pub struct DiffReviewDragState {
     pub start_anchor: Anchor,
     pub current_anchor: Anchor,
 }
@@ -1096,7 +1092,7 @@ impl StoredReviewComment {
 }
 
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
-pub(crate) struct DiffReviewOverlay {
+pub struct DiffReviewOverlay {
     pub anchor_range: Range<Anchor>,
     /// The block ID for the overlay.
     pub block_id: CustomBlockId,
@@ -1195,7 +1191,7 @@ pub struct Editor {
     completion_tasks: Vec<(CompletionId, Task<()>)>,
     inline_blame_popover: Option<InlineBlamePopover>,
     inline_blame_popover_show_task: Option<Task<()>>,
-    signature_help_state: SignatureHelpState,
+    pub signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
@@ -1206,7 +1202,7 @@ pub struct Editor {
     debounced_selection_highlight_complete: bool,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
-    linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
+    pub linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
@@ -1232,7 +1228,7 @@ pub struct Editor {
     hovered_link_state: Option<HoveredLinkState>,
     edit_prediction_provider: Option<RegisteredEditPredictionDelegate>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
-    active_edit_prediction: Option<EditPredictionState>,
+    pub active_edit_prediction: Option<EditPredictionState>,
     /// Used to prevent flickering as the user types while the menu is open
     stale_edit_prediction_in_menu: Option<EditPredictionState>,
     edit_prediction_settings: EditPredictionSettings,
@@ -1281,15 +1277,15 @@ pub struct Editor {
     last_bounds: Option<Bounds<Pixels>>,
     last_position_map: Option<Rc<PositionMap>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
-    tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
+    pub tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
-    pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
-    pub(crate) diff_review_drag_state: Option<DiffReviewDragState>,
+    pub gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
+    pub diff_review_drag_state: Option<DiffReviewDragState>,
     /// Active diff review overlays. Multiple overlays can be open simultaneously
     /// when hunks have comments stored.
-    pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
+    pub diff_review_overlays: Vec<DiffReviewOverlay>,
     /// Stored review comments grouped by hunk.
     /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
     /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
@@ -1302,7 +1298,7 @@ pub struct Editor {
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
-    next_scroll_position: NextScrollCursorCenterTopBottom,
+    pub next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
@@ -1352,7 +1348,7 @@ fn debounce_value(debounce_ms: u64) -> Option<Duration> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-enum NextScrollCursorCenterTopBottom {
+pub enum NextScrollCursorCenterTopBottom {
     #[default]
     Center,
     Top,
@@ -1804,11 +1800,11 @@ enum SelectSyntaxNodeScrollBehavior {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct NavigationData {
-    cursor_anchor: Anchor,
-    cursor_position: Point,
-    scroll_anchor: ScrollAnchor,
-    scroll_top_row: u32,
+pub struct NavigationData {
+    pub cursor_anchor: Anchor,
+    pub cursor_position: Point,
+    pub scroll_anchor: ScrollAnchor,
+    pub scroll_top_row: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3154,7 +3150,7 @@ impl Editor {
         self.completion_provider = provider;
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
         self.completion_provider.clone()
     }
@@ -3912,7 +3908,7 @@ impl Editor {
         }
     }
 
-    fn extend_selection(
+    pub fn extend_selection(
         &mut self,
         position: DisplayPoint,
         click_count: usize,
@@ -3979,7 +3975,7 @@ impl Editor {
         });
     }
 
-    fn begin_selection(
+    pub fn begin_selection(
         &mut self,
         position: DisplayPoint,
         add: bool,
@@ -4143,7 +4139,7 @@ impl Editor {
         }
     }
 
-    fn update_selection(
+    pub fn update_selection(
         &mut self,
         position: DisplayPoint,
         goal_column: u32,
@@ -4242,7 +4238,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn end_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn end_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.columnar_selection_state.take();
         if let Some(pending_mode) = self.selections.pending_mode() {
             let selections = self
@@ -5379,7 +5375,7 @@ impl Editor {
         });
     }
 
-    fn trigger_completion_on_input(
+    pub fn trigger_completion_on_input(
         &mut self,
         text: &str,
         trigger_in_words: bool,
@@ -8280,7 +8276,7 @@ impl Editor {
         }
     }
 
-    fn update_visible_edit_prediction(
+    pub fn update_visible_edit_prediction(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -8976,7 +8972,7 @@ impl Editor {
         Some((buffer, *row, tasks))
     }
 
-    fn find_enclosing_node_task(
+    pub fn find_enclosing_node_task(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
@@ -11234,7 +11230,7 @@ impl Editor {
         false
     }
 
-    fn wrap_selections_in_tag(
+    pub fn wrap_selections_in_tag(
         &mut self,
         _: &WrapSelectionsInTag,
         window: &mut Window,
@@ -11602,7 +11598,7 @@ impl Editor {
         }
     }
 
-    fn breakpoints_at_cursors(
+    pub fn breakpoints_at_cursors(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -11746,7 +11742,7 @@ impl Editor {
         cx.notify();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn breakpoint_store(&self) -> Option<Entity<BreakpointStore>> {
         self.breakpoint_store.clone()
     }
@@ -12051,7 +12047,7 @@ impl Editor {
         });
     }
 
-    fn manipulate_immutable_lines<Fn>(
+    pub fn manipulate_immutable_lines<Fn>(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -14945,7 +14941,9 @@ impl Editor {
     pub fn nav_history(&self) -> Option<&ItemNavHistory> {
         self.nav_history.as_ref()
     }
-
+    pub fn nav_history_mut(&mut self) -> Option<&mut ItemNavHistory> {
+        self.nav_history.as_mut()
+    }
     pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
         self.push_to_nav_history(
             self.selections.newest_anchor().head(),
@@ -17321,7 +17319,7 @@ impl Editor {
             })
     }
 
-    fn go_to_prev_hunk(
+    pub fn go_to_prev_hunk(
         &mut self,
         _: &GoToPreviousHunk,
         window: &mut Window,
@@ -18713,7 +18711,7 @@ impl Editor {
         self.pending_rename.as_ref()
     }
 
-    fn format(
+    pub fn format(
         &mut self,
         _: &Format,
         window: &mut Window,
@@ -18764,7 +18762,7 @@ impl Editor {
         ))
     }
 
-    fn perform_format(
+    pub fn perform_format(
         &mut self,
         project: Entity<Project>,
         trigger: FormatTrigger,
@@ -18873,7 +18871,7 @@ impl Editor {
         ))
     }
 
-    fn perform_code_action_kind(
+    pub fn perform_code_action_kind(
         &mut self,
         project: Entity<Project>,
         kind: CodeActionKind,
@@ -19577,7 +19575,7 @@ impl Editor {
         }
     }
 
-    fn fold_at_level(
+    pub fn fold_at_level(
         &mut self,
         fold_at: &FoldAtLevel,
         window: &mut Window,
@@ -20409,7 +20407,7 @@ impl Editor {
         })
     }
 
-    fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
+    pub fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
         self.buffer.update(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             let excerpt_id = range.end.excerpt_id;
@@ -20787,7 +20785,7 @@ impl Editor {
 
     // Called by the element. This method is not designed to be called outside of the editor
     // element's layout code because it does not notify when rewrapping is computed synchronously.
-    pub(crate) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
+    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
         if self.is_empty(cx) {
             self.placeholder_display_map
                 .as_ref()
@@ -21121,7 +21119,7 @@ impl Editor {
     /// Calculates the appropriate block height for the diff review overlay.
     /// Height is in lines: 2 for input row, 1 for header when comments exist,
     /// and 2 lines per comment when expanded.
-    fn calculate_overlay_height(
+    pub fn calculate_overlay_height(
         &self,
         hunk_key: &DiffHunkKey,
         comments_expanded: bool,
@@ -23228,7 +23226,7 @@ impl Editor {
         self.sorted_background_highlights_in_range(start..end, &snapshot, cx.theme())
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn sorted_background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
@@ -24174,7 +24172,7 @@ impl Editor {
         });
     }
 
-    fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
+    pub fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
         let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
         Some(
@@ -24220,7 +24218,7 @@ impl Editor {
         file_extension: Option<String>,
         cx: &App,
     ) {
-        if cfg!(any(test, feature = "test-support")) {
+        if cfg!(feature = "test-support") {
             return;
         }
 
@@ -26856,7 +26854,7 @@ impl EditorSnapshot {
         hunks
     }
 
-    fn display_diff_hunks_for_rows<'a>(
+    pub fn display_diff_hunks_for_rows<'a>(
         &'a self,
         display_rows: Range<DisplayRow>,
         folded_buffers: &'a HashSet<BufferId>,
@@ -27109,7 +27107,7 @@ impl EditorSnapshot {
     /// Returns the line delta from `base` to `line` in the multibuffer, ignoring wrapped lines.
     ///
     /// This is positive if `base` is before `line`.
-    fn relative_line_delta(
+    pub fn relative_line_delta(
         &self,
         current_selection_head: DisplayRow,
         first_visible_row: DisplayRow,
@@ -27787,7 +27785,7 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-fn edit_prediction_edit_text(
+pub fn edit_prediction_edit_text(
     current_snapshot: &BufferSnapshot,
     edits: &[(Range<Anchor>, impl AsRef<str>)],
     edit_preview: &EditPreview,
@@ -27894,7 +27892,7 @@ pub fn styled_runs_for_code_label<'a>(
         })
 }
 
-pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {
+pub fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {
     let mut prev_index = 0;
     let mut prev_codepoint: Option<char> = None;
     text.char_indices()
@@ -27920,7 +27918,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
 /// every non-word character).
 ///
 /// Shorter suffixes are returned first.
-pub(crate) fn snippet_candidate_suffixes(
+pub fn snippet_candidate_suffixes(
     text: &str,
     is_word_char: impl Fn(char) -> bool,
 ) -> impl std::iter::Iterator<Item = &str> {

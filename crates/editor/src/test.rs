@@ -22,7 +22,7 @@ use project::{Project, project_settings::DiagnosticSeverity};
 use ui::{App, BorrowAppContext, px};
 use util::test::{generate_marked_text, marked_text_offsets, marked_text_ranges};
 
-#[cfg(test)]
+#[cfg(feature = "test-support")]
 #[ctor::ctor]
 fn init_logger() {
     zlog::init_test();
@@ -125,8 +125,8 @@ pub fn assert_text_with_selections(
 
 // RA thinks this is dead code even though it is used in a whole lot of tests
 #[allow(dead_code)]
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn build_editor(
+#[cfg(feature = "test-support")]
+pub fn build_editor(
     buffer: Entity<MultiBuffer>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -134,7 +134,7 @@ pub(crate) fn build_editor(
     Editor::new(EditorMode::full(), buffer, None, window, cx)
 }
 
-pub(crate) fn build_editor_with_project(
+pub fn build_editor_with_project(
     project: Entity<Project>,
     buffer: Entity<MultiBuffer>,
     window: &mut Window,
