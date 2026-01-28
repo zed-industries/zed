@@ -6420,18 +6420,85 @@ fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
 }
 
 #[inline]
+fn is_entry_dir(kind: &EntryKind) -> bool {
+    matches!(
+        kind,
+        EntryKind::UnloadedDir | EntryKind::PendingDir | EntryKind::Dir
+    )
+}
+
+#[inline]
+fn sort_mode_rank(is_dir: bool, mode: &settings::ProjectPanelSortMode) -> Option<u8> {
+    match mode {
+        settings::ProjectPanelSortMode::Mixed => None,
+        settings::ProjectPanelSortMode::DirectoriesFirst => Some(if is_dir { 0 } else { 1 }),
+        settings::ProjectPanelSortMode::FilesFirst => Some(if is_dir { 1 } else { 0 }),
+    }
+}
+
+#[inline]
+fn ordering_for_first_entry(first_is_new: bool, new_before_other: bool) -> cmp::Ordering {
+    match (first_is_new, new_before_other) {
+        (true, true) => cmp::Ordering::Less,
+        (true, false) => cmp::Ordering::Greater,
+        (false, true) => cmp::Ordering::Greater,
+        (false, false) => cmp::Ordering::Less,
+    }
+}
+
+/// Compare two entries when creating a new entry.
+///
+/// ## Calculation
+/// | Mode             | Creating | Placement In Parent       |
+/// |------------------|----------|---------------------------|
+/// | DirectoriesFirst | dir      | top                       |
+/// | DirectoriesFirst | file     | top of files (after dirs) |
+/// | Mixed            | dir      | top                       |
+/// | Mixed            | file     | top                       |
+/// | FilesFirst       | dir      | top of dirs (after files) |
+/// | FilesFirst       | file     | top                       |
+#[inline]
+fn cmp_new_entry(
+    a: &Entry,
+    b: &Entry,
+    mode: &settings::ProjectPanelSortMode,
+) -> Option<cmp::Ordering> {
+    let (new_entry, other, first_is_new) = if a.id == NEW_ENTRY_ID {
+        (a, b, true)
+    } else {
+        (b, a, false)
+    };
+
+    if other.path.parent()? != new_entry.path.parent()? {
+        return None;
+    }
+
+    let new_is_dir = is_entry_dir(&new_entry.kind);
+    let other_is_dir = is_entry_dir(&other.kind);
+
+    if let (Some(new_rank), Some(other_rank)) = (
+        sort_mode_rank(new_is_dir, mode),
+        sort_mode_rank(other_is_dir, mode),
+    ) {
+        match new_rank.cmp(&other_rank) {
+            cmp::Ordering::Less => return Some(ordering_for_first_entry(first_is_new, true)),
+            cmp::Ordering::Greater => return Some(ordering_for_first_entry(first_is_new, false)),
+            _ => {}
+        }
+    } else {
+        if new_is_dir != other_is_dir {
+            return None;
+        }
+    }
+
+    Some(ordering_for_first_entry(first_is_new, true))
+}
+
+#[inline]
 fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
     if a.id == NEW_ENTRY_ID || b.id == NEW_ENTRY_ID {
-        let (new_entry, other) = if a.id == NEW_ENTRY_ID { (a, b) } else { (b, a) };
-
-        if let Some(new_parent) = new_entry.path.parent() {
-            if other.path.starts_with(new_parent) && other.path.as_ref() != new_parent {
-                return if a.id == NEW_ENTRY_ID {
-                    cmp::Ordering::Less
-                } else {
-                    cmp::Ordering::Greater
-                };
-            }
+        if let Some(ordering) = cmp_new_entry(a, b, mode) {
+            return ordering;
         }
     }
 
