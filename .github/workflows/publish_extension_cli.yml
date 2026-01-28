@@ -34,3 +34,81 @@ jobs:
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+  update_sha_in_zed:
+    needs:
+    - publish_job
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: publish_extension_cli::update_sha_in_zed::replace_sha
+      run: |
+        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
+            tooling/xtask/src/tasks/workflows/extension_tests.rs
+      shell: bash -euxo pipefail {0}
+    - name: publish_extension_cli::create_pull_request_zed
+      uses: peter-evans/create-pull-request@v7
+      with:
+        title: Update `ZED_EXTENSION_CLI_SHA` to ${{ github.sha }}
+        body: |
+          This PR updates the `ZED_EXTENSION_CLI_SHA` constant to `${{ github.sha }}`.
+
+          This was triggered by a new release of the `zed-extension` CLI.
+        commit-message: Update ZED_EXTENSION_CLI_SHA to ${{ github.sha }}
+        branch: update-extension-cli-sha
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+        assignees: ${{ github.actor }}
+  update_sha_in_extensions:
+    needs:
+    - publish_job
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: zed-industries
+        repositories: extensions
+    - name: publish_extension_cli::update_sha_in_extensions::checkout_extensions_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        repository: zed-industries/extensions
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: publish_extension_cli::update_sha_in_extensions::replace_sha
+      run: |
+        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: ${{ github.sha }}/" \
+            .github/workflows/ci.yml
+      shell: bash -euxo pipefail {0}
+    - name: publish_extension_cli::create_pull_request_extensions
+      uses: peter-evans/create-pull-request@v7
+      with:
+        title: Update `ZED_EXTENSION_CLI_SHA` to ${{ github.sha }}
+        body: |
+          This PR updates the `ZED_EXTENSION_CLI_SHA` constant to `${{ github.sha }}`.
+
+          This was triggered by a new release of the `zed-extension` CLI.
+        commit-message: Update ZED_EXTENSION_CLI_SHA to ${{ github.sha }}
+        branch: update-extension-cli-sha
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+        labels: allow-no-extension
+        assignees: ${{ github.actor }}
