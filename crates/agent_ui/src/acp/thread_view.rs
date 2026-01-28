@@ -348,7 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    expanded_subagents: HashSet<acp::SessionId>,
     subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -406,6 +405,7 @@ enum ThreadState {
         expanded_tool_calls: HashSet<acp::ToolCallId>,
         expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
         expanded_thinking_blocks: HashSet<(usize, usize)>,
+        expanded_subagents: HashSet<acp::SessionId>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,7 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            expanded_subagents: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             editing_message: None,
             local_queued_messages: Vec::new(),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             expanded_tool_calls: HashSet::default(),
                             expanded_tool_call_raw_inputs: HashSet::default(),
                             expanded_thinking_blocks: HashSet::default(),
+                            expanded_subagents: HashSet::default(),
                             _subscriptions: subscriptions,
                         };
 
@@ -3892,7 +3892,11 @@ impl AcpThreadView {
         let action_log = thread_read.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let is_expanded = self.expanded_subagents.contains(&session_id);
+        let is_expanded = if let ThreadState::Ready { expanded_subagents, .. } = &self.thread_state {
+            expanded_subagents.contains(&session_id)
+        } else {
+            false
+        };
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
@@ -3983,12 +3987,14 @@ impl AcpThreadView {
                             .visible_on_hover(card_header_id)
                             .on_click(cx.listener({
                                 move |this, _, _, cx| {
-                                    if this.expanded_subagents.contains(&session_id) {
-                                        this.expanded_subagents.remove(&session_id);
-                                    } else {
-                                        this.expanded_subagents.insert(session_id.clone());
+                                    if let ThreadState::Ready { expanded_subagents, .. } = &mut this.thread_state {
+                                        if expanded_subagents.contains(&session_id) {
+                                            expanded_subagents.remove(&session_id);
+                                        } else {
+                                            expanded_subagents.insert(session_id.clone());
+                                        }
+                                        cx.notify();
                                     }
-                                    cx.notify();
                                 }
                             })),
                         )
@@ -8639,8 +8645,10 @@ impl AcpThreadView {
     /// Expands a subagent card so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_subagent(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        self.expanded_subagents.insert(session_id);
-        cx.notify();
+        if let ThreadState::Ready { expanded_subagents, .. } = &mut self.thread_state {
+            expanded_subagents.insert(session_id);
+            cx.notify();
+        }
     }
 }
 
