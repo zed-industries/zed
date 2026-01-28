@@ -49,9 +49,7 @@ pub fn decide_permission(
         return ToolPermissionDecision::Allow;
     }
 
-    let rules = permissions.tools.get(tool_name);
-
-    let rules = match rules {
+    let rules = match permissions.tools.get(tool_name) {
         Some(rules) => rules,
         None => {
             return ToolPermissionDecision::Confirm;
