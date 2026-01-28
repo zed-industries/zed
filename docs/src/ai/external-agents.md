@@ -209,34 +209,6 @@ Add more external agents to Zed by installing [Agent Server extensions](../exten
 
 See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with `zed: extensions`, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
 
-#### Custom Keybindings
-
-To assign a custom keybinding to start a new thread for agents that were added by installing agent server extensions, add the following snippet to your `keymap.json` file:
-
-```json [keymap]
-{
-  "bindings": {
-    "cmd-alt-n": [ // Your custom keybinding
-      "agent::NewExternalAgentThread",
-      {
-        "agent": {
-          "custom": {
-            "name": "My Agent", // The agent name as defined in the extension or in settings.json (e.g., "opencode", "Auggie CLI", etc.)
-            "command": {
-              "command": "my-agent", // The agent name in lowercase with no spaces
-              "args": ["acp"]
-            }
-          }
-        }
-      }
-    ]
-  }
-},
-```
-
-> For most extensions, the `agent.custom.name` attribute matches the name of the agent that appears in the [Agent Panel](../ai/agent-panel.md) UI.
-> In some cases however, the name might need to be written differently (e.g. in lowercase).
-
 ### Via The ACP Registry
 
 #### Overview
