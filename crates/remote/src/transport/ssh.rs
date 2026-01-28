@@ -1706,7 +1706,7 @@ fn build_command_windows(
         )?;
     }
 
-    // Windows OpenSSH has an 8K character limit for command lines. Sending a lot of environment varaibles easily puts us over the limit.
+    // Windows OpenSSH has an 8K character limit for command lines. Sending a lot of environment variables easily puts us over the limit.
     // Until we have a better solution for this, we just won't set environment variables for now.
     // for (k, v) in input_env.iter() {
     //     write!(
