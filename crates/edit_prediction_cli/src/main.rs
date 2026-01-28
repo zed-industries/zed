@@ -29,7 +29,6 @@ use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
-use libc::COPYFILE_RUN_IN_PLACE;
 use zeta_prompt::ZetaVersion;
 
 use reqwest_client::ReqwestClient;
@@ -119,6 +118,13 @@ Inputs can be file paths or special specifiers:
       Fetch rejected edit predictions from Snowflake after the given RFC3339 timestamp.
       These are predictions that were shown to users but rejected (useful for DPO training).
 
+  rated-after:{timestamp}
+      Fetch user-rated edit predictions from Snowflake after the given RFC3339 timestamp.
+      These are predictions that users explicitly rated as positive or negative via the
+      rate completions modal. Only zeta2 predictions are included.
+      - Positive ratings: output becomes expected_patches
+      - Negative ratings: output becomes rejected_patch
+
       Required environment variables to connect to Snowflake:
           EP_SNOWFLAKE_API_KEY
           EP_SNOWFLAKE_BASE_URL
@@ -136,6 +142,9 @@ Examples:
 
   # Read rejected predictions for DPO training
   ep read rejected-after:2025-01-01T00:00:00Z -o rejected.jsonl
+
+  # Read user-rated predictions
+  ep read rated-after:2025-01-01T00:00:00Z -o rated.jsonl
 
   # Mix multiple input sources
   ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
@@ -437,6 +446,7 @@ async fn load_examples(
     let mut captured_after_timestamps = Vec::new();
     let mut rejected_after_timestamps = Vec::new();
     let mut requested_after_timestamps = Vec::new();
+    let mut rated_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
@@ -451,6 +461,10 @@ async fn load_examples(
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
             requested_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) =
+            pull_examples::parse_rated_after_input(input_string.as_ref())
+        {
+            rated_after_timestamps.push(timestamp.to_string());
         } else {
             file_inputs.push(input.clone());
         }
@@ -500,13 +514,26 @@ async fn load_examples(
             requested_after_timestamps.sort();
 
             let mut requested_examples = pull_examples::fetch_requested_examples_after(
-                http_client,
+                http_client.clone(),
                 &requested_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut requested_examples);
+        }
+
+        if !rated_after_timestamps.is_empty() {
+            rated_after_timestamps.sort();
+
+            let mut rated_examples = pull_examples::fetch_rated_examples_after(
+                http_client,
+                &rated_after_timestamps,
                 max_rows_per_timestamp,
                 background_executor,
             )
             .await?;
-            examples.append(&mut requested_examples);
+            examples.append(&mut rated_examples);
         }
     }
 

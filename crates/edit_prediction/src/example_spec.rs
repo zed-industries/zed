@@ -32,6 +32,13 @@ pub struct ExampleSpec {
     pub captured_prompt_input: Option<CapturedPromptInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<TelemetrySource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub human_feedback: Vec<HumanFeedback>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct HumanFeedback {
+    pub message: String,
 }
 
 /// Metadata for examples sourced from production telemetry (rejected predictions).
@@ -252,6 +259,7 @@ impl ExampleSpec {
             rejected_patch: None,
             captured_prompt_input: None,
             telemetry: None,
+            human_feedback: Vec::new(),
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -500,6 +508,7 @@ mod tests {
             rejected_patch: None,
             captured_prompt_input: None,
             telemetry: None,
+            human_feedback: Vec::new(),
         };
 
         // Cursor before `42`
@@ -635,6 +644,7 @@ mod tests {
             rejected_patch: None,
             captured_prompt_input: None,
             telemetry: None,
+            human_feedback: Vec::new(),
         };
 
         // Cursor before `42` using inline marker
