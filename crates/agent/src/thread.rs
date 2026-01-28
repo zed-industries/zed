@@ -653,26 +653,34 @@ impl ToolPermissionContext {
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
-        let shell_supports_always_allow = if tool_name == "terminal" {
+        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
             ShellKind::system().supports_posix_chaining()
         } else {
             true
         };
 
-        let (pattern, pattern_display) = match tool_name.as_str() {
-            "terminal" => (
+        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
+            (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
-            ),
-            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+            )
+        } else if tool_name == EditFileTool::name()
+            || tool_name == DeletePathTool::name()
+            || tool_name == MovePathTool::name()
+            || tool_name == CreateDirectoryTool::name()
+            || tool_name == SaveFileTool::name()
+        {
+            (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
-            ),
-            "fetch" => (
+            )
+        } else if tool_name == FetchTool::name() {
+            (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
-            ),
-            _ => (None, None),
+            )
+        } else {
+            (None, None)
         };
 
         let mut choices = Vec::new();
