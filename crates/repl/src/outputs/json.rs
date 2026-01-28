@@ -56,7 +56,7 @@ impl JsonView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let indent = depth * 16;
+        let indent = depth * 12;
 
         match value {
             Value::Object(map) if map.is_empty() => {
