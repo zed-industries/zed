@@ -51,9 +51,11 @@ By default, Zed will use this managed version of Gemini CLI even if you have it 
 
 After you have Gemini CLI running, you'll be prompted to choose your authentication method.
 
-Most users should click the "Log in with Google". This will cause a browser window to pop-up and auth directly with Gemini CLI. Zed does not see your OAuth or access tokens in this case.
+Most users should click the "Log in with Google".
+This will cause a browser window to pop-up and auth directly with Gemini CLI. Zed does not see your OAuth or access tokens in this case.
 
-You can also use the "Gemini API Key". If you select this, and have the `GEMINI_API_KEY` set, then we will use that. Otherwise Zed will prompt you for an API key which will be stored securely in your keychain, and used to start Gemini CLI from within Zed.
+You can also use the "Gemini API Key". If you select this, and have the `GEMINI_API_KEY` set, then we will use that.
+Otherwise Zed will prompt you for an API key which will be stored securely in your keychain, and used to start Gemini CLI from within Zed.
 
 The "Vertex AI" option is for those who are using [Vertex AI](https://cloud.google.com/vertex-ai), and have already configured their environment correctly.
 
@@ -90,13 +92,16 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 ### Authentication
 
-As of version `0.202.7` (stable) and `0.203.2` (preview), authentication to Zed's Claude Code installation is decoupled entirely from Zed's agent. That is to say, an Anthropic API key added via the [Zed Agent's settings](./llm-providers.md#anthropic) will _not_ be utilized by Claude Code for authentication and billing.
+As of version `0.202.7` (stable) and `0.203.2` (preview), authentication to Zed's Claude Code installation is decoupled entirely from Zed's agent.
+That is to say, an Anthropic API key added via the [Zed Agent's settings](./llm-providers.md#anthropic) will _not_ be utilized by Claude Code for authentication and billing.
 
-To ensure you're using your billing method of choice, [open a new Claude Code thread](./agent-panel.md#new-thread). Then, run `/login`, and authenticate either via API key, or via `Log in with Claude Code` to use a Claude Pro/Max subscription.
+To ensure you're using your billing method of choice, [open a new Claude Code thread](./agent-panel.md#new-thread).
+Then, run `/login`, and authenticate either via API key, or via `Log in with Claude Code` to use a Claude Pro/Max subscription.
 
 #### Installation
 
-The first time you create a Claude Code thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
+The first time you create a Claude Code thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp).
+This installation is only available to Zed and is kept up to date as you use the agent.
 
 Zed will always use this managed version of the Claude Code adapter, which includes a vendored version of the Claude Code CLI, even if you have it installed globally.
 
@@ -142,7 +147,8 @@ Under the hood, Zed runs Codex CLI and communicates to it over ACP, through [a d
 
 ### Getting Started
 
-As of Zed Stable v0.208 you should be able to use Codex directly from Zed. Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
+As of Zed Stable v0.208 you should be able to use Codex directly from Zed.
+Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
@@ -158,9 +164,11 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 ### Authentication
 
-Authentication to Zed's Codex installation is decoupled entirely from Zed's agent. That is to say, an OpenAI API key added via the [Zed Agent's settings](./llm-providers.md#openai) will _not_ be utilized by Codex for authentication and billing.
+Authentication to Zed's Codex installation is decoupled entirely from Zed's agent.
+That is to say, an OpenAI API key added via the [Zed Agent's settings](./llm-providers.md#openai) will _not_ be utilized by Codex for authentication and billing.
 
-To ensure you're using your billing method of choice, [open a new Codex thread](./agent-panel.md#new-thread). The first time you will be prompted to authenticate with one of three methods:
+To ensure you're using your billing method of choice, [open a new Codex thread](./agent-panel.md#new-thread).
+The first time you will be prompted to authenticate with one of three methods:
 
 1. Login with ChatGPT - allows you to use your existing, paid ChatGPT subscription. _Note: This method isn't currently supported in remote projects_
 2. `CODEX_API_KEY` - uses an API key you have set in your environment under the variable `CODEX_API_KEY`.
@@ -172,7 +180,8 @@ If you want to use a third-party provider with Codex, you can configure that wit
 
 #### Installation
 
-The first time you create a Codex thread, Zed will install [codex-acp](https://github.com/zed-industries/codex-acp). This installation is only available to Zed and is kept up to date as you use the agent.
+The first time you create a Codex thread, Zed will install [codex-acp](https://github.com/zed-industries/codex-acp).
+This installation is only available to Zed and is kept up to date as you use the agent.
 
 Zed will always use this managed version of Codex even if you have it installed globally.
 
@@ -239,7 +248,8 @@ To assign a custom keybinding to start a new thread for agents that were added b
 
 ## Debugging Agents
 
-When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette. This lets you see the messages being sent and received between Zed and the agent.
+When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette.
+This lets you see the messages being sent and received between Zed and the agent.
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
 
