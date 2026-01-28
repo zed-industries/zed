@@ -1458,50 +1458,54 @@ impl App {
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
-        self.update(|cx| {
-            fn prologue(id: WindowId, cx: &mut App) -> Option<(AnyView, Box<Window>)> {
-                let mut window = cx.windows.get_mut(id)?.take()?;
+        fn prologue(cx: &mut App, id: WindowId) -> Result<(Box<Window>, AnyView)> {
+            cx.start_update();
+            let mut window = cx
+                .windows
+                .get_mut(id)
+                .context("window not found")?
+                .take()
+                .context("window not found")?;
 
-                let root_view = window.root.clone().unwrap();
+            let root_view = window.root.clone().unwrap();
 
-                cx.window_update_stack.push(window.handle.id);
-                Some((root_view, window))
-            }
-            let (root_view, mut window) = prologue(id, cx)?;
-            let result = update(root_view, &mut window, cx);
+            cx.window_update_stack.push(window.handle.id);
+            Ok((window, root_view))
+        }
+        fn epilogue(id: WindowId, window: Box<Window>, cx: &mut App) -> Result<()> {
+            cx.window_update_stack.pop();
 
-            fn epilogue(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
-                cx.window_update_stack.pop();
+            if window.removed {
+                cx.window_handles.remove(&id);
+                cx.windows.remove(id);
 
-                if window.removed {
-                    cx.window_handles.remove(&id);
-                    cx.windows.remove(id);
+                cx.window_closed_observers.clone().retain(&(), |callback| {
+                    callback(cx);
+                    true
+                });
 
-                    cx.window_closed_observers.clone().retain(&(), |callback| {
-                        callback(cx);
-                        true
-                    });
+                let quit_on_empty = match cx.quit_mode {
+                    QuitMode::Explicit => false,
+                    QuitMode::LastWindowClosed => true,
+                    QuitMode::Default => cfg!(not(target_os = "macos")),
+                };
 
-                    let quit_on_empty = match cx.quit_mode {
-                        QuitMode::Explicit => false,
-                        QuitMode::LastWindowClosed => true,
-                        QuitMode::Default => cfg!(not(target_os = "macos")),
-                    };
-
-                    if quit_on_empty && cx.windows.is_empty() {
-                        cx.quit();
-                    }
-                } else {
-                    cx.windows.get_mut(id)?.replace(window);
+                if quit_on_empty && cx.windows.is_empty() {
+                    cx.quit();
                 }
-                Some(())
+            } else {
+                cx.windows
+                    .get_mut(id)
+                    .context("window not found")?
+                    .replace(window);
             }
-
-            epilogue(id, window, cx)?;
-
-            Some(result)
-        })
-        .context("window not found")
+            cx.finish_update();
+            Ok(())
+        }
+        let (mut window, root_view) = prologue(self, id)?;
+        let result = update(root_view, &mut window, self);
+        epilogue(id, window, self)?;
+        Ok(result)
     }
 
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
