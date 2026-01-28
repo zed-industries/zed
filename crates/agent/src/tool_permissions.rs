@@ -72,29 +72,16 @@ pub fn decide_permission(
     // disabled for this command (we set allow_enabled to false to signal this).
     if tool_name == TerminalTool::name() {
         match extract_commands(input) {
-            Ok(iter) => check_commands(iter, input, rules, tool_name, true),
-            Err(_) => check_commands(
-                std::iter::once(input.to_string()),
-                input,
-                rules,
-                tool_name,
-                false,
-            ),
+            Ok(iter) => check_commands(iter, rules, tool_name, true),
+            Err(_) => check_commands(std::iter::once(input.to_string()), rules, tool_name, false),
         }
     } else {
-        check_commands(
-            std::iter::once(input.to_string()),
-            input,
-            rules,
-            tool_name,
-            true,
-        )
+        check_commands(std::iter::once(input.to_string()), rules, tool_name, true)
     }
 }
 
 fn check_commands(
     commands: impl IntoIterator<Item = String>,
-    input: &str,
     rules: &ToolRules,
     tool_name: &str,
     allow_enabled: bool,
