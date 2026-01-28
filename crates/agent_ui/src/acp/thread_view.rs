@@ -323,39 +323,35 @@ impl DiffStats {
 }
 
 pub struct AcpThreadView {
-    agent: Rc<dyn AgentServer>, // keep
-    agent_server_store: Entity<AgentServerStore>, // keep
-    workspace: WeakEntity<Workspace>, // keep
-    project: Entity<Project>, // keep
-    thread_store: Option<Entity<ThreadStore>>, // keep
-    prompt_store: Option<Entity<PromptStore>>, // keep
-    thread_state: ThreadState, // keep
+    agent: Rc<dyn AgentServer>,
+    agent_server_store: Entity<AgentServerStore>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    thread_store: Option<Entity<ThreadStore>>,
+    prompt_store: Option<Entity<PromptStore>>,
+    thread_state: ThreadState,
     /// Tracks the selected granularity index for each tool call's permission dropdown.
     /// The index corresponds to the position in the allow_options list.
     /// Default is the last option (index pointing to "Only this time").
     selected_permission_granularity: HashMap<acp::ToolCallId, usize>,
-    login: Option<task::SpawnInTerminal>, // keep
-    recent_history_entries: Vec<AgentSessionInfo>, // keep
-    history: Entity<AcpThreadHistory>, // keep
-    _history_subscription: Subscription, // keep
-    hovered_recent_history_item: Option<usize>, // keep
-    message_editor: Entity<MessageEditor>, // keep
-    focus_handle: FocusHandle, // keep
-    notifications: Vec<WindowHandle<AgentNotification>>, // keep
-    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
-    command_load_errors: Vec<CommandLoadError>, // keep
-    command_load_errors_dismissed: bool, // keep
-    slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
-    auth_task: Option<Task<()>>, // keep
-    discarded_partial_edits: HashSet<acp::ToolCallId>,
-    is_loading_contents: bool,
-    new_server_version_available: Option<SharedString>,
+    login: Option<task::SpawnInTerminal>,
+    recent_history_entries: Vec<AgentSessionInfo>,
+    history: Entity<AcpThreadHistory>,
+    _history_subscription: Subscription,
+    hovered_recent_history_item: Option<usize>,
+    message_editor: Entity<MessageEditor>,
+    focus_handle: FocusHandle,
+    notifications: Vec<WindowHandle<AgentNotification>>,
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
+    command_load_errors: Vec<CommandLoadError>,
+    command_load_errors_dismissed: bool,
+    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
+    auth_task: Option<Task<()>>,
     resume_thread_metadata: Option<AgentSessionInfo>,
-    resumed_without_history: bool,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 4], // keep
-    show_codex_windows_warning: bool, // keep
-    in_flight_prompt: Option<Vec<acp::ContentBlock>>, // keep
+    _subscriptions: [Subscription; 4],
+    show_codex_windows_warning: bool,
+    in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
     can_fast_track_queue: bool,
@@ -406,6 +402,10 @@ enum ThreadState {
         last_turn_duration: Option<Duration>,
         turn_generation: usize,
         _turn_timer_task: Option<Task<()>>,
+        discarded_partial_edits: HashSet<acp::ToolCallId>,
+        is_loading_contents: bool,
+        new_server_version_available: Option<SharedString>,
+        resumed_without_history: bool,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -576,18 +576,14 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            discarded_partial_edits: HashSet::default(),
             recent_history_entries,
             history,
             _history_subscription: history_subscription,
             hovered_recent_history_item: None,
-            is_loading_contents: false,
             _subscriptions: subscriptions,
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
-            new_server_version_available: None,
             resume_thread_metadata: resume_thread,
-            resumed_without_history: false,
             show_codex_windows_warning,
             in_flight_prompt: None,
             skip_queue_processing_count: 0,
@@ -626,9 +622,7 @@ impl AcpThreadView {
             cx,
         );
         self.refresh_cached_user_commands(cx);
-        self.new_server_version_available.take();
         self.recent_history_entries.clear();
-        self.resumed_without_history = false;
         cx.notify();
     }
 
@@ -765,7 +759,6 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
-                        this.resumed_without_history = resumed_without_history;
                         prompt_capabilities
                             .replace(thread.read(cx).prompt_capabilities());
 
@@ -949,6 +942,10 @@ impl AcpThreadView {
                             last_turn_duration: None,
                             turn_generation: 0,
                             _turn_timer_task: None,
+                            discarded_partial_edits: HashSet::default(),
+                            is_loading_contents: false,
+                            new_server_version_available: None,
+                            resumed_without_history,
                             _subscriptions: subscriptions,
                         };
 
@@ -970,7 +967,13 @@ impl AcpThreadView {
             while let Ok(new_version) = new_version_available_rx.recv().await {
                 if let Some(new_version) = new_version {
                     this.update(cx, |this, cx| {
-                        this.new_server_version_available = Some(new_version.into());
+                        if let ThreadState::Ready {
+                            new_server_version_available,
+                            ..
+                        } = &mut this.thread_state
+                        {
+                            *new_server_version_available = Some(new_version.into());
+                        }
                         cx.notify();
                     })
                     .ok();
@@ -1567,7 +1570,7 @@ impl AcpThreadView {
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread() else { return };
 
-        if self.is_loading_contents {
+        if matches!(&self.thread_state, ThreadState::Ready { is_loading_contents: true, .. }) {
             return;
         }
 
@@ -1639,7 +1642,7 @@ impl AcpThreadView {
             return;
         };
 
-        if self.is_loading_contents {
+        if matches!(&self.thread_state, ThreadState::Ready { is_loading_contents: true, .. }) {
             return;
         }
 
@@ -1821,12 +1824,24 @@ impl AcpThreadView {
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let thread = thread.downgrade();
 
-        self.is_loading_contents = true;
+        if let ThreadState::Ready {
+            is_loading_contents,
+            ..
+        } = &mut self.thread_state
+        {
+            *is_loading_contents = true;
+        }
         let model_id = self.current_model_id(cx);
         let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
-            this.is_loading_contents = false;
+            if let ThreadState::Ready {
+                is_loading_contents,
+                ..
+            } = &mut this.thread_state
+            {
+                *is_loading_contents = false;
+            }
             cx.notify();
         })
         .detach();
@@ -2066,7 +2081,7 @@ impl AcpThreadView {
         let Some(thread) = self.thread().cloned() else {
             return;
         };
-        if self.is_loading_contents {
+        if matches!(&self.thread_state, ThreadState::Ready { is_loading_contents: true, .. }) {
             return;
         }
 
@@ -2982,18 +2997,19 @@ impl AcpThreadView {
                                     .bg(cx.theme().colors().editor_background)
                                     .overflow_hidden();
 
+                                let is_loading_contents = matches!(&self.thread_state, ThreadState::Ready { is_loading_contents: true, .. });
                                 if message.id.is_some() {
                                     this.child(
                                         base_container
                                             .child(
                                                 IconButton::new("cancel", IconName::Close)
-                                                    .disabled(self.is_loading_contents)
+                                                    .disabled(is_loading_contents)
                                                     .icon_color(Color::Error)
                                                     .icon_size(IconSize::XSmall)
                                                     .on_click(cx.listener(Self::cancel_editing))
                                             )
                                             .child(
-                                                if self.is_loading_contents {
+                                                if is_loading_contents {
                                                     div()
                                                         .id("loading-edited-message-content")
                                                         .tooltip(Tooltip::text("Loading Added Context…"))
@@ -3747,7 +3763,7 @@ impl AcpThreadView {
                                         })
                                         .when_some(diff_for_discard, |this, diff| {
                                             let tool_call_id = tool_call.id.clone();
-                                            let is_discarded = self.discarded_partial_edits.contains(&tool_call_id);
+                                            let is_discarded = matches!(&self.thread_state, ThreadState::Ready { discarded_partial_edits, .. } if discarded_partial_edits.contains(&tool_call_id));
                                             this.when(!is_discarded, |this| {
                                                 this.child(
                                                     IconButton::new(
@@ -3770,7 +3786,9 @@ impl AcpThreadView {
                                                             buffer.update(cx, |buffer, cx| {
                                                                 buffer.set_text(base_text.as_ref(), cx);
                                                             });
-                                                            this.discarded_partial_edits.insert(tool_call_id.clone());
+                                                            if let ThreadState::Ready { discarded_partial_edits, .. } = &mut this.thread_state {
+                                                                discarded_partial_edits.insert(tool_call_id.clone());
+                                                            }
                                                             cx.notify();
                                                         }
                                                     })),
@@ -7192,7 +7210,7 @@ impl AcpThreadView {
             .thread()
             .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
 
-        if self.is_loading_contents {
+        if matches!(&self.thread_state, ThreadState::Ready { is_loading_contents: true, .. }) {
             div()
                 .id("loading-message-content")
                 .px_1()
@@ -9119,8 +9137,8 @@ impl Render for AcpThreadView {
                     .justify_end()
                     .child(self.render_load_error(e, window, cx))
                     .into_any(),
-                ThreadState::Ready { list_state, .. } => v_flex().flex_1().map(|this| {
-                    let this = this.when(self.resumed_without_history, |this| {
+                ThreadState::Ready { list_state, resumed_without_history, .. } => v_flex().flex_1().map(|this| {
+                    let this = this.when(*resumed_without_history, |this| {
                         this.child(self.render_resume_notice(cx))
                     });
                     if has_messages {
@@ -9164,10 +9182,13 @@ impl Render for AcpThreadView {
             .children(self.render_command_load_errors(cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
-                self.new_server_version_available.as_ref().filter(|_| {
-                    !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
-                }),
-                |this, version| this.child(self.render_new_version_callout(&version, cx)),
+                match &self.thread_state {
+                    ThreadState::Ready { new_server_version_available, .. } => {
+                        new_server_version_available.as_ref().filter(|_| !has_messages)
+                    }
+                    _ => None,
+                },
+                |this, version| this.child(self.render_new_version_callout(version, cx)),
             )
             .children(
                 self.render_token_limit_callout(cx)
@@ -9518,7 +9539,10 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, _cx| {
-            assert!(view.resumed_without_history);
+            let ThreadState::Ready { resumed_without_history, .. } = &view.thread_state else {
+                panic!("Expected Ready state");
+            };
+            assert!(*resumed_without_history);
             assert_eq!(view.list_state().map_or(0, |s| s.item_count()), 0);
         });
     }
