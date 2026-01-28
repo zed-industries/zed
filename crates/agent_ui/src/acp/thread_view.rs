@@ -361,12 +361,6 @@ pub struct AcpThreadView {
     skip_queue_processing_count: usize,
     user_interrupted_generation: bool,
     can_fast_track_queue: bool,
-    turn_tokens: Option<u64>,
-    last_turn_tokens: Option<u64>,
-    turn_started_at: Option<Instant>,
-    last_turn_duration: Option<Duration>,
-    turn_generation: usize,
-    _turn_timer_task: Option<Task<()>>,
     hovered_edited_file_buttons: Option<usize>,
 }
 
@@ -406,6 +400,12 @@ enum ThreadState {
         local_queued_messages: Vec<QueuedMessage>,
         queued_message_editors: Vec<Entity<MessageEditor>>,
         queued_message_editor_subscriptions: Vec<Subscription>,
+        turn_tokens: Option<u64>,
+        last_turn_tokens: Option<u64>,
+        turn_started_at: Option<Instant>,
+        last_turn_duration: Option<Duration>,
+        turn_generation: usize,
+        _turn_timer_task: Option<Task<()>>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -595,12 +595,6 @@ impl AcpThreadView {
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             can_fast_track_queue: false,
-            turn_tokens: None,
-            last_turn_tokens: None,
-            turn_started_at: None,
-            last_turn_duration: None,
-            turn_generation: 0,
-            _turn_timer_task: None,
             hovered_edited_file_buttons: None,
         }
     }
@@ -636,11 +630,6 @@ impl AcpThreadView {
         self.refresh_cached_user_commands(cx);
         self.new_server_version_available.take();
         self.recent_history_entries.clear();
-        self.turn_tokens = None;
-        self.last_turn_tokens = None;
-        self.turn_started_at = None;
-        self.last_turn_duration = None;
-        self._turn_timer_task = None;
         self.resumed_without_history = false;
         cx.notify();
     }
@@ -937,6 +926,12 @@ impl AcpThreadView {
                             local_queued_messages: Vec::new(),
                             queued_message_editors: Vec::new(),
                             queued_message_editor_subscriptions: Vec::new(),
+                            turn_tokens: None,
+                            last_turn_tokens: None,
+                            turn_started_at: None,
+                            last_turn_duration: None,
+                            turn_generation: 0,
+                            _turn_timer_task: None,
                             _subscriptions: subscriptions,
                         };
 
@@ -1661,13 +1656,25 @@ impl AcpThreadView {
     }
 
     fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
-        self.turn_generation += 1;
-        let generation = self.turn_generation;
-        self.turn_started_at = Some(Instant::now());
-        self.last_turn_duration = None;
-        self.last_turn_tokens = None;
-        self.turn_tokens = Some(0);
-        self._turn_timer_task = Some(cx.spawn(async move |this, cx| {
+        let ThreadState::Ready {
+            turn_generation,
+            turn_started_at,
+            last_turn_duration,
+            last_turn_tokens,
+            turn_tokens,
+            _turn_timer_task,
+            ..
+        } = &mut self.thread_state
+        else {
+            return 0;
+        };
+        *turn_generation += 1;
+        let generation = *turn_generation;
+        *turn_started_at = Some(Instant::now());
+        *last_turn_duration = None;
+        *last_turn_tokens = None;
+        *turn_tokens = Some(0);
+        *_turn_timer_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
@@ -1679,20 +1686,38 @@ impl AcpThreadView {
     }
 
     fn stop_turn(&mut self, generation: usize) {
-        if self.turn_generation != generation {
+        let ThreadState::Ready {
+            turn_generation,
+            turn_started_at,
+            last_turn_duration,
+            last_turn_tokens,
+            turn_tokens,
+            _turn_timer_task,
+            ..
+        } = &mut self.thread_state
+        else {
+            return;
+        };
+        if *turn_generation != generation {
             return;
         }
-        self.last_turn_duration = self.turn_started_at.take().map(|started| started.elapsed());
-        self.last_turn_tokens = self.turn_tokens.take();
-        self._turn_timer_task = None;
+        *last_turn_duration = turn_started_at.take().map(|started| started.elapsed());
+        *last_turn_tokens = turn_tokens.take();
+        *_turn_timer_task = None;
     }
 
     fn update_turn_tokens(&mut self, cx: &App) {
-        if let Some(thread) = self.thread() {
-            if let Some(usage) = thread.read(cx).token_usage() {
-                if let Some(ref mut tokens) = self.turn_tokens {
-                    *tokens += usage.output_tokens;
-                }
+        let ThreadState::Ready {
+            thread,
+            turn_tokens,
+            ..
+        } = &mut self.thread_state
+        else {
+            return;
+        };
+        if let Some(usage) = thread.read(cx).token_usage() {
+            if let Some(tokens) = turn_tokens {
+                *tokens += usage.output_tokens;
             }
         }
     }
@@ -7773,25 +7798,32 @@ impl AcpThreadView {
     }
 
     fn render_generating(&self, confirmation: bool, cx: &App) -> impl IntoElement {
+        let ThreadState::Ready {
+            thread,
+            turn_started_at,
+            turn_tokens,
+            ..
+        } = &self.thread_state
+        else {
+            return div().into_any_element();
+        };
+
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let elapsed_label = show_stats
             .then(|| {
-                self.turn_started_at.and_then(|started_at| {
+                turn_started_at.and_then(|started_at| {
                     let elapsed = started_at.elapsed();
                     (elapsed > STOPWATCH_THRESHOLD).then(|| duration_alt_display(elapsed))
                 })
             })
             .flatten();
 
-        let is_waiting = confirmation
-            || self
-                .thread()
-                .is_some_and(|thread| thread.read(cx).has_in_progress_tool_calls());
+        let is_waiting = confirmation || thread.read(cx).has_in_progress_tool_calls();
 
         let turn_tokens_label = elapsed_label
             .is_some()
             .then(|| {
-                self.turn_tokens
+                turn_tokens
                     .filter(|&tokens| tokens > TOKEN_THRESHOLD)
                     .map(|tokens| crate::text_thread_editor::humanize_token_count(tokens))
             })
@@ -7893,10 +7925,19 @@ impl AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
+        let ThreadState::Ready {
+            last_turn_duration,
+            last_turn_tokens,
+            ..
+        } = &self.thread_state
+        else {
+            return div().into_any_element();
+        };
+
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let last_turn_clock = show_stats
             .then(|| {
-                self.last_turn_duration
+                last_turn_duration
                     .filter(|&duration| duration > STOPWATCH_THRESHOLD)
                     .map(|duration| {
                         Label::new(duration_alt_display(duration))
@@ -7906,10 +7947,10 @@ impl AcpThreadView {
             })
             .flatten();
 
-        let last_turn_tokens = last_turn_clock
+        let last_turn_tokens_label = last_turn_clock
             .is_some()
             .then(|| {
-                self.last_turn_tokens
+                last_turn_tokens
                     .filter(|&tokens| tokens > TOKEN_THRESHOLD)
                     .map(|tokens| {
                         Label::new(format!(
@@ -7931,13 +7972,13 @@ impl AcpThreadView {
             .hover(|s| s.opacity(1.))
             .justify_end()
             .when(
-                last_turn_tokens.is_some() || last_turn_clock.is_some(),
+                last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
                 |this| {
                     this.child(
                         h_flex()
                             .gap_1()
                             .px_1()
-                            .when_some(last_turn_tokens, |this, label| this.child(label))
+                            .when_some(last_turn_tokens_label, |this, label| this.child(label))
                             .when_some(last_turn_clock, |this, label| this.child(label)),
                     )
                 },
