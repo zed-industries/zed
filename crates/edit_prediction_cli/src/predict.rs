@@ -1,13 +1,16 @@
 use crate::{
-    FormatPromptArgs, PredictArgs, PredictionProvider, TeacherBackend,
+    BatchProvider, FormatPromptArgs, PredictArgs, PredictionProvider, TeacherBackend,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction, ExamplePrompt},
     format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
+    llm_client::{LlmClient, model_for_backend},
     load_project::run_load_project,
     openai_client::OpenAiClient,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
     progress::{ExampleProgress, InfoStyle, Step},
+    qa,
+    repair::{build_repair_prompt, needs_repair, parse_repair_response},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
@@ -72,6 +75,21 @@ pub async fn run_prediction(
         return predict_teacher(example, backend, batched, repetition_count).await;
     }
 
+    if let PredictionProvider::RepairedTeacher(backend) = provider {
+        let _step_progress = example_progress.start(Step::Predict);
+
+        run_format_prompt(
+            example,
+            &FormatPromptArgs { provider },
+            app_state.clone(),
+            example_progress,
+            cx,
+        )
+        .await?;
+
+        return predict_repaired_teacher(example, backend, repetition_count).await;
+    }
+
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
 
     let step_progress = example_progress.start(Step::Predict);
@@ -110,6 +128,7 @@ pub async fn run_prediction(
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
             | PredictionProvider::TeacherNonBatching(..)
+            | PredictionProvider::RepairedTeacher(..)
             | PredictionProvider::Repair => {
                 unreachable!()
             }
@@ -404,6 +423,83 @@ async fn predict_openai(
 
         example.predictions.push(prediction);
     }
+    Ok(())
+}
+
+/// Default confidence threshold for repair
+const DEFAULT_REPAIR_CONFIDENCE_THRESHOLD: u8 = 3;
+
+/// Predict using teacher model, then run QA evaluation, and optionally repair
+/// if QA indicates issues (reverts_edits=true or low confidence).
+///
+/// This is a non-batched flow that processes each step synchronously.
+async fn predict_repaired_teacher(
+    example: &mut Example,
+    backend: TeacherBackend,
+    repetition_count: usize,
+) -> anyhow::Result<()> {
+    // Step 1: Run teacher prediction (non-batched for immediate results)
+    predict_teacher(example, backend, false, repetition_count).await?;
+
+    // Only proceed with QA/repair for the first prediction
+    let Some(prediction) = example.predictions.first() else {
+        return Ok(());
+    };
+
+    // Skip QA if no actual patch was generated
+    if prediction.actual_patch.is_none() {
+        return Ok(());
+    }
+
+    // Step 2: Run QA evaluation
+    let batch_provider = match backend {
+        TeacherBackend::Sonnet45 => BatchProvider::Anthropic,
+        TeacherBackend::Gpt52 => BatchProvider::Openai,
+    };
+    let qa_client = LlmClient::new(batch_provider, false)?;
+    let qa_model = model_for_backend(batch_provider);
+
+    let qa_result = if let Some(qa_prompt) = qa::build_prompt(example) {
+        match qa_client.generate(qa_model, 1024, &qa_prompt).await? {
+            Some(response_text) => Some(qa::parse_response(&response_text)),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // Store QA result
+    example.qa = vec![qa_result.clone()];
+
+    // Step 3: Check if repair is needed and run repair if so
+    if needs_repair(example, DEFAULT_REPAIR_CONFIDENCE_THRESHOLD) {
+        let repair_client = LlmClient::new(batch_provider, false)?;
+
+        if let Some(repair_prompt) = build_repair_prompt(example) {
+            if let Some(response_text) = repair_client
+                .generate(qa_model, 16384, &repair_prompt)
+                .await?
+            {
+                match parse_repair_response(example, &response_text) {
+                    Ok(mut repaired_prediction) => {
+                        // Mark the prediction as coming from repaired-teacher
+                        repaired_prediction.provider = PredictionProvider::RepairedTeacher(backend);
+                        example.predictions.push(repaired_prediction);
+                    }
+                    Err(e) => {
+                        // Add error prediction if parsing failed
+                        example.predictions.push(ExamplePrediction {
+                            actual_patch: None,
+                            actual_output: response_text,
+                            error: Some(format!("Failed to parse repair response: {}", e)),
+                            provider: PredictionProvider::RepairedTeacher(backend),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

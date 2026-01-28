@@ -4,11 +4,9 @@
 //! Caching is handled by the underlying client.
 
 use crate::BatchProvider;
-use crate::anthropic_client::AnthropicClient;
 use crate::example::Example;
 use crate::format_prompt::extract_cursor_excerpt_from_example;
-use crate::openai_client::OpenAiClient;
-use crate::paths::LLM_CACHE_DB;
+use crate::llm_client::{LlmClient, model_for_backend};
 use crate::word_diff::unified_to_word_diff;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -31,13 +29,6 @@ pub struct QaArgs {
     /// Which LLM provider to use (anthropic or openai)
     #[clap(long, default_value = "openai")]
     pub backend: BatchProvider,
-}
-
-fn model_for_backend(backend: BatchProvider) -> &'static str {
-    match backend {
-        BatchProvider::Anthropic => "claude-sonnet-4-5",
-        BatchProvider::Openai => "gpt-5.2",
-    }
 }
 
 /// Result of QA evaluation for a single prediction.
@@ -120,7 +111,7 @@ fn extract_codeblock(response: &str) -> Option<String> {
 }
 
 /// Parse the LLM response into a QaResult.
-fn parse_response(response_text: &str) -> QaResult {
+pub(crate) fn parse_response(response_text: &str) -> QaResult {
     let codeblock = extract_codeblock(response_text);
 
     // Try parsing codeblock first, then fall back to raw response
@@ -156,73 +147,6 @@ fn parse_response(response_text: &str) -> QaResult {
     }
 }
 
-enum QaClient {
-    Anthropic(AnthropicClient),
-    OpenAi(OpenAiClient),
-}
-
-impl QaClient {
-    async fn generate(&self, model: &str, max_tokens: u64, prompt: &str) -> Result<Option<String>> {
-        match self {
-            QaClient::Anthropic(client) => {
-                let messages = vec![anthropic::Message {
-                    role: anthropic::Role::User,
-                    content: vec![anthropic::RequestContent::Text {
-                        text: prompt.to_string(),
-                        cache_control: None,
-                    }],
-                }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
-                Ok(response.map(|r| {
-                    r.content
-                        .iter()
-                        .filter_map(|c| match c {
-                            anthropic::ResponseContent::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-            QaClient::OpenAi(client) => {
-                let messages = vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt.to_string()),
-                }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
-                Ok(response.map(|r| {
-                    r.choices
-                        .into_iter()
-                        .filter_map(|choice| match choice.message {
-                            open_ai::RequestMessage::Assistant { content, .. } => {
-                                content.map(|c| match c {
-                                    open_ai::MessageContent::Plain(text) => text,
-                                    open_ai::MessageContent::Multipart(parts) => parts
-                                        .into_iter()
-                                        .filter_map(|p| match p {
-                                            open_ai::MessagePart::Text { text } => Some(text),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(""),
-                                })
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-        }
-    }
-
-    async fn sync_batches(&self) -> Result<()> {
-        match self {
-            QaClient::Anthropic(client) => client.sync_batches().await,
-            QaClient::OpenAi(client) => client.sync_batches().await,
-        }
-    }
-}
-
 /// Run the QA evaluation on a set of examples.
 pub async fn run_qa(
     examples: &mut [Example],
@@ -230,22 +154,7 @@ pub async fn run_qa(
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
     let model = model_for_backend(args.backend);
-    let client = match args.backend {
-        BatchProvider::Anthropic => {
-            if args.no_batch {
-                QaClient::Anthropic(AnthropicClient::plain()?)
-            } else {
-                QaClient::Anthropic(AnthropicClient::batch(&LLM_CACHE_DB)?)
-            }
-        }
-        BatchProvider::Openai => {
-            if args.no_batch {
-                QaClient::OpenAi(OpenAiClient::plain()?)
-            } else {
-                QaClient::OpenAi(OpenAiClient::batch(&LLM_CACHE_DB)?)
-            }
-        }
-    };
+    let client = LlmClient::new(args.backend, !args.no_batch)?;
 
     eprintln!(
         "Using model: {}, backend: {:?}, batching: {}",

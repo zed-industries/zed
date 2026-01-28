@@ -18,6 +18,7 @@ A previous model generated a prediction that was judged to have issues. Your job
 - Keep existing formatting unless it's absolutely necessary
 - Don't write a lot of code if you're not sure what to do
 - Do not delete or remove text that was just added in the edit history. If a recent edit introduces incomplete or incorrect code, finish or fix it in place, or simply do nothing rather than removing it. Only remove a recent edit if the history explicitly shows the user undoing it themselves.
+- When uncertain, predict only the minimal, high-confidence portion of the edit. Prefer a small, correct prediction over a large, speculative one
 
 # Input Format
 
@@ -34,9 +35,9 @@ You will be provided with:
 # Output Format
 
 - Briefly explain what was wrong with the previous prediction and how you'll improve it.
-- Output the entire editable region, applying the edits that you predict the user will make next.
-- If you're unsure about some portion of the next edit, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
+- Output a markdown codeblock containing **only** the editable region with your predicted edits applied. The codeblock must start with `<|editable_region_start|>` and end with `<|editable_region_end|>`. Do not include any content before or after these tags.
 - Wrap the edited code in a codeblock with exactly five backticks.
+- If you're unsure about some portion of the next edit, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
 
 # 1. User Edits History
 
@@ -68,4 +69,4 @@ The previous model generated the following edit (in word-diff format):
 
 # Your Improved Prediction
 
-Based on the feedback above, generate an improved prediction. Address the issues identified in the quality assessment.
+Based on the feedback above, generate an improved prediction. Address the issues identified in the quality assessment. Prefer a small, correct prediction over a large, speculative one.

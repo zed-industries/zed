@@ -48,7 +48,9 @@ pub async fn run_format_prompt(
     let snapshot = cx.background_spawn(snapshot_fut).await;
 
     match args.provider {
-        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
+        PredictionProvider::Teacher(_)
+        | PredictionProvider::TeacherNonBatching(_)
+        | PredictionProvider::RepairedTeacher(_) => {
             step_progress.set_substatus("formatting teacher prompt");
 
             let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(

@@ -6,11 +6,9 @@
 
 use crate::BatchProvider;
 use crate::PredictionProvider;
-use crate::anthropic_client::AnthropicClient;
 use crate::example::{Example, ExamplePrediction};
 use crate::format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example};
-use crate::openai_client::OpenAiClient;
-use crate::paths::LLM_CACHE_DB;
+use crate::llm_client::{LlmClient, model_for_backend};
 use crate::word_diff::unified_to_word_diff;
 use anyhow::Result;
 use std::io::{BufWriter, Write};
@@ -30,19 +28,12 @@ pub struct RepairArgs {
     pub wait: bool,
 
     /// Confidence threshold: repair predictions with confidence <= this value (1-5)
-    #[clap(long, default_value = "2")]
+    #[clap(long, default_value = "3")]
     pub confidence_threshold: u8,
 
     /// Which LLM provider to use (anthropic or openai)
     #[clap(long, default_value = "anthropic")]
     pub backend: BatchProvider,
-}
-
-fn model_for_backend(backend: BatchProvider) -> &'static str {
-    match backend {
-        BatchProvider::Anthropic => "claude-sonnet-4-5",
-        BatchProvider::Openai => "gpt-5.2",
-    }
 }
 
 /// Build the repair prompt for an example that needs improvement.
@@ -125,7 +116,10 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
 }
 
 /// Parse the repair response into a prediction.
-fn parse_repair_response(example: &Example, response_text: &str) -> Result<ExamplePrediction> {
+pub(crate) fn parse_repair_response(
+    example: &Example,
+    response_text: &str,
+) -> Result<ExamplePrediction> {
     let actual_patch = TeacherPrompt::parse(example, response_text)?;
 
     Ok(ExamplePrediction {
@@ -136,73 +130,6 @@ fn parse_repair_response(example: &Example, response_text: &str) -> Result<Examp
     })
 }
 
-enum RepairClient {
-    Anthropic(AnthropicClient),
-    OpenAi(OpenAiClient),
-}
-
-impl RepairClient {
-    async fn generate(&self, model: &str, max_tokens: u64, prompt: &str) -> Result<Option<String>> {
-        match self {
-            RepairClient::Anthropic(client) => {
-                let messages = vec![anthropic::Message {
-                    role: anthropic::Role::User,
-                    content: vec![anthropic::RequestContent::Text {
-                        text: prompt.to_string(),
-                        cache_control: None,
-                    }],
-                }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
-                Ok(response.map(|r| {
-                    r.content
-                        .iter()
-                        .filter_map(|c| match c {
-                            anthropic::ResponseContent::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-            RepairClient::OpenAi(client) => {
-                let messages = vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt.to_string()),
-                }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
-                Ok(response.map(|r| {
-                    r.choices
-                        .into_iter()
-                        .filter_map(|choice| match choice.message {
-                            open_ai::RequestMessage::Assistant { content, .. } => {
-                                content.map(|c| match c {
-                                    open_ai::MessageContent::Plain(text) => text,
-                                    open_ai::MessageContent::Multipart(parts) => parts
-                                        .into_iter()
-                                        .filter_map(|p| match p {
-                                            open_ai::MessagePart::Text { text } => Some(text),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(""),
-                                })
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-        }
-    }
-
-    async fn sync_batches(&self) -> Result<()> {
-        match self {
-            RepairClient::Anthropic(client) => client.sync_batches().await,
-            RepairClient::OpenAi(client) => client.sync_batches().await,
-        }
-    }
-}
-
 /// Run the repair process on a set of examples.
 pub async fn run_repair(
     examples: &mut [Example],
@@ -210,22 +137,7 @@ pub async fn run_repair(
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
     let model = model_for_backend(args.backend);
-    let client = match args.backend {
-        BatchProvider::Anthropic => {
-            if args.no_batch {
-                RepairClient::Anthropic(AnthropicClient::plain()?)
-            } else {
-                RepairClient::Anthropic(AnthropicClient::batch(&LLM_CACHE_DB)?)
-            }
-        }
-        BatchProvider::Openai => {
-            if args.no_batch {
-                RepairClient::OpenAi(OpenAiClient::plain()?)
-            } else {
-                RepairClient::OpenAi(OpenAiClient::batch(&LLM_CACHE_DB)?)
-            }
-        }
-    };
+    let client = LlmClient::new(args.backend, !args.no_batch)?;
 
     eprintln!(
         "Using model: {}, backend: {:?}, batching: {}, confidence_threshold: {}",

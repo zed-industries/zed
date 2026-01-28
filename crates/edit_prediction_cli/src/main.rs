@@ -5,6 +5,7 @@ mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
+mod llm_client;
 mod load_project;
 mod metrics;
 mod openai_client;
@@ -291,6 +292,7 @@ enum PredictionProvider {
     Zeta2(ZetaVersion),
     Teacher(TeacherBackend),
     TeacherNonBatching(TeacherBackend),
+    RepairedTeacher(TeacherBackend),
     Repair,
 }
 
@@ -310,6 +312,9 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
             PredictionProvider::TeacherNonBatching(backend) => {
                 write!(f, "teacher-non-batching:{backend}")
+            }
+            PredictionProvider::RepairedTeacher(backend) => {
+                write!(f, "repaired-teacher:{backend}")
             }
             PredictionProvider::Repair => write!(f, "repair"),
         }
@@ -345,10 +350,17 @@ impl std::str::FromStr for PredictionProvider {
                     .unwrap_or(TeacherBackend::Sonnet45);
                 Ok(PredictionProvider::TeacherNonBatching(backend))
             }
+            "repaired-teacher" | "repaired_teacher" | "repairedteacher" => {
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::Sonnet45);
+                Ok(PredictionProvider::RepairedTeacher(backend))
+            }
             "repair" => Ok(PredictionProvider::Repair),
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repaired-teacher, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  For teacher, you can specify a backend like `teacher:sonnet45` or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
