@@ -23,7 +23,7 @@ use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
     ErrorCode, ErrorExt,
-    proto::{self, ChannelVisibility, PeerId},
+    proto::{self, ChannelVisibility},
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -250,22 +250,6 @@ enum Section {
 #[derive(Clone, Debug)]
 enum ListEntry {
     Header(Section),
-    CallParticipant {
-        user: Arc<User>,
-        peer_id: Option<PeerId>,
-        is_pending: bool,
-        role: proto::ChannelRole,
-    },
-    ParticipantProject {
-        project_id: u64,
-        worktree_root_names: Vec<String>,
-        host_user_id: u64,
-        is_last: bool,
-    },
-    ParticipantScreen {
-        peer_id: Option<PeerId>,
-        is_last: bool,
-    },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     ChannelInvite(Arc<Channel>),
@@ -511,124 +495,6 @@ impl CollabPanel {
                 {
                     self.entries.push(ListEntry::ChannelNotes { channel_id });
                 }
-
-                // Populate the active user.
-                if let Some(user) = user_store.current_user() {
-                    self.match_candidates.clear();
-                    self.match_candidates
-                        .push(StringMatchCandidate::new(0, &user.github_login));
-                    let matches = executor.block(match_strings(
-                        &self.match_candidates,
-                        &query,
-                        true,
-                        true,
-                        usize::MAX,
-                        &Default::default(),
-                        executor.clone(),
-                    ));
-                    if !matches.is_empty() {
-                        let user_id = user.id;
-                        self.entries.push(ListEntry::CallParticipant {
-                            user,
-                            peer_id: None,
-                            is_pending: false,
-                            role: room.local_participant().role,
-                        });
-                        let mut projects = room.local_participant().projects.iter().peekable();
-                        while let Some(project) = projects.next() {
-                            self.entries.push(ListEntry::ParticipantProject {
-                                project_id: project.id,
-                                worktree_root_names: project.worktree_root_names.clone(),
-                                host_user_id: user_id,
-                                is_last: projects.peek().is_none() && !room.is_sharing_screen(),
-                            });
-                        }
-                        if room.is_sharing_screen() {
-                            self.entries.push(ListEntry::ParticipantScreen {
-                                peer_id: None,
-                                is_last: true,
-                            });
-                        }
-                    }
-                }
-
-                // Populate remote participants.
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(room.remote_participants().values().map(|participant| {
-                        StringMatchCandidate::new(
-                            participant.user.id as usize,
-                            &participant.user.github_login,
-                        )
-                    }));
-                let mut matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                matches.sort_by(|a, b| {
-                    let a_is_guest = room.role_for_user(a.candidate_id as u64)
-                        == Some(proto::ChannelRole::Guest);
-                    let b_is_guest = room.role_for_user(b.candidate_id as u64)
-                        == Some(proto::ChannelRole::Guest);
-                    a_is_guest
-                        .cmp(&b_is_guest)
-                        .then_with(|| a.string.cmp(&b.string))
-                });
-                for mat in matches {
-                    let user_id = mat.candidate_id as u64;
-                    let participant = &room.remote_participants()[&user_id];
-                    self.entries.push(ListEntry::CallParticipant {
-                        user: participant.user.clone(),
-                        peer_id: Some(participant.peer_id),
-                        is_pending: false,
-                        role: participant.role,
-                    });
-                    let mut projects = participant.projects.iter().peekable();
-                    while let Some(project) = projects.next() {
-                        self.entries.push(ListEntry::ParticipantProject {
-                            project_id: project.id,
-                            worktree_root_names: project.worktree_root_names.clone(),
-                            host_user_id: participant.user.id,
-                            is_last: projects.peek().is_none() && !participant.has_video_tracks(),
-                        });
-                    }
-                    if participant.has_video_tracks() {
-                        self.entries.push(ListEntry::ParticipantScreen {
-                            peer_id: Some(participant.peer_id),
-                            is_last: true,
-                        });
-                    }
-                }
-
-                // Populate pending participants.
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(room.pending_participants().iter().enumerate().map(
-                        |(id, participant)| {
-                            StringMatchCandidate::new(id, &participant.github_login)
-                        },
-                    ));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                self.entries
-                    .extend(matches.iter().map(|mat| ListEntry::CallParticipant {
-                        user: room.pending_participants()[mat.candidate_id].clone(),
-                        peer_id: None,
-                        is_pending: true,
-                        role: proto::ChannelRole::Member,
-                    }));
             }
         }
 
@@ -951,145 +817,6 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn render_call_participant(
-        &self,
-        user: &Arc<User>,
-        peer_id: Option<PeerId>,
-        is_pending: bool,
-        role: proto::ChannelRole,
-        is_selected: bool,
-        cx: &mut Context<Self>,
-    ) -> ListItem {
-        let user_id = user.id;
-        let is_current_user =
-            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user_id);
-        let tooltip = format!("Follow {}", user.github_login);
-
-        let is_call_admin = ActiveCall::global(cx).read(cx).room().is_some_and(|room| {
-            room.read(cx).local_participant().role == proto::ChannelRole::Admin
-        });
-
-        ListItem::new(user.github_login.clone())
-            .start_slot(Avatar::new(user.avatar_uri.clone()))
-            .child(render_participant_name_and_handle(user))
-            .toggle_state(is_selected)
-            .end_slot(if is_pending {
-                Label::new("Calling").color(Color::Muted).into_any_element()
-            } else if is_current_user {
-                IconButton::new("leave-call", IconName::Exit)
-                    .style(ButtonStyle::Subtle)
-                    .on_click(move |_, window, cx| Self::leave_call(window, cx))
-                    .tooltip(Tooltip::text("Leave Call"))
-                    .into_any_element()
-            } else if role == proto::ChannelRole::Guest {
-                Label::new("Guest").color(Color::Muted).into_any_element()
-            } else if role == proto::ChannelRole::Talker {
-                Label::new("Mic only")
-                    .color(Color::Muted)
-                    .into_any_element()
-            } else {
-                div().into_any_element()
-            })
-            .when_some(peer_id, |el, peer_id| {
-                if role == proto::ChannelRole::Guest {
-                    return el;
-                }
-                el.tooltip(Tooltip::text(tooltip.clone()))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.follow(peer_id, window, cx))
-                            .ok();
-                    }))
-            })
-            .when(is_call_admin, |el| {
-                el.on_secondary_mouse_down(cx.listener(
-                    move |this, event: &MouseDownEvent, window, cx| {
-                        this.deploy_participant_context_menu(
-                            event.position,
-                            user_id,
-                            role,
-                            window,
-                            cx,
-                        )
-                    },
-                ))
-            })
-    }
-
-    fn render_participant_project(
-        &self,
-        project_id: u64,
-        worktree_root_names: &[String],
-        host_user_id: u64,
-        is_last: bool,
-        is_selected: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let project_name: SharedString = if worktree_root_names.is_empty() {
-            "untitled".to_string()
-        } else {
-            worktree_root_names.join(", ")
-        }
-        .into();
-
-        ListItem::new(project_id as usize)
-            .toggle_state(is_selected)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| {
-                        let app_state = workspace.app_state().clone();
-                        workspace::join_in_room_project(project_id, host_user_id, app_state, cx)
-                            .detach_and_prompt_err(
-                                "Failed to join project",
-                                window,
-                                cx,
-                                |_, _, _| None,
-                            );
-                    })
-                    .ok();
-            }))
-            .start_slot(
-                h_flex()
-                    .gap_1()
-                    .child(render_tree_branch(is_last, false, window, cx))
-                    .child(IconButton::new(0, IconName::Folder)),
-            )
-            .child(Label::new(project_name.clone()))
-            .tooltip(Tooltip::text(format!("Open {}", project_name)))
-    }
-
-    fn render_participant_screen(
-        &self,
-        peer_id: Option<PeerId>,
-        is_last: bool,
-        is_selected: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
-
-        ListItem::new(("screen", id))
-            .toggle_state(is_selected)
-            .start_slot(
-                h_flex()
-                    .gap_1()
-                    .child(render_tree_branch(is_last, false, window, cx))
-                    .child(IconButton::new(0, IconName::Screen)),
-            )
-            .child(Label::new("Screen"))
-            .when_some(peer_id, |this, _| {
-                this.on_click(cx.listener(move |this, _, window, cx| {
-                    this.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.open_shared_screen(peer_id.unwrap(), window, cx)
-                        })
-                        .ok();
-                }))
-                .tooltip(Tooltip::text("Open shared screen"))
-            })
-    }
-
     fn take_editing_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.channel_editing_state.take().is_some() {
             self.channel_name_editor.update(cx, |editor, cx| {
@@ -1142,130 +869,6 @@ impl CollabPanel {
                 false
             }
         })
-    }
-
-    fn deploy_participant_context_menu(
-        &mut self,
-        position: Point<Pixels>,
-        user_id: u64,
-        role: proto::ChannelRole,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let this = cx.entity();
-        if !(role == proto::ChannelRole::Guest
-            || role == proto::ChannelRole::Talker
-            || role == proto::ChannelRole::Member)
-        {
-            return;
-        }
-
-        let context_menu = ContextMenu::build(window, cx, |mut context_menu, window, _| {
-            if role == proto::ChannelRole::Guest {
-                context_menu = context_menu.entry(
-                    "Grant Mic Access",
-                    None,
-                    window.handler_for(&this, move |_, window, cx| {
-                        ActiveCall::global(cx)
-                            .update(cx, |call, cx| {
-                                let Some(room) = call.room() else {
-                                    return Task::ready(Ok(()));
-                                };
-                                room.update(cx, |room, cx| {
-                                    room.set_participant_role(
-                                        user_id,
-                                        proto::ChannelRole::Talker,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .detach_and_prompt_err(
-                                "Failed to grant mic access",
-                                window,
-                                cx,
-                                |_, _, _| None,
-                            )
-                    }),
-                );
-            }
-            if role == proto::ChannelRole::Guest || role == proto::ChannelRole::Talker {
-                context_menu = context_menu.entry(
-                    "Grant Write Access",
-                    None,
-                    window.handler_for(&this, move |_, window, cx| {
-                        ActiveCall::global(cx)
-                            .update(cx, |call, cx| {
-                                let Some(room) = call.room() else {
-                                    return Task::ready(Ok(()));
-                                };
-                                room.update(cx, |room, cx| {
-                                    room.set_participant_role(
-                                        user_id,
-                                        proto::ChannelRole::Member,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .detach_and_prompt_err("Failed to grant write access", window, cx, |e, _, _| {
-                                match e.error_code() {
-                                    ErrorCode::NeedsCla => Some("This user has not yet signed the CLA at https://zed.dev/cla.".into()),
-                                    _ => None,
-                                }
-                            })
-                    }),
-                );
-            }
-            if role == proto::ChannelRole::Member || role == proto::ChannelRole::Talker {
-                let label = if role == proto::ChannelRole::Talker {
-                    "Mute"
-                } else {
-                    "Revoke Access"
-                };
-                context_menu = context_menu.entry(
-                    label,
-                    None,
-                    window.handler_for(&this, move |_, window, cx| {
-                        ActiveCall::global(cx)
-                            .update(cx, |call, cx| {
-                                let Some(room) = call.room() else {
-                                    return Task::ready(Ok(()));
-                                };
-                                room.update(cx, |room, cx| {
-                                    room.set_participant_role(
-                                        user_id,
-                                        proto::ChannelRole::Guest,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .detach_and_prompt_err(
-                                "Failed to revoke access",
-                                window,
-                                cx,
-                                |_, _, _| None,
-                            )
-                    }),
-                );
-            }
-
-            context_menu
-        });
-
-        window.focus(&context_menu.focus_handle(cx), cx);
-        let subscription = cx.subscribe_in(
-            &context_menu,
-            window,
-            |this, _, _: &DismissEvent, window, cx| {
-                if this.context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
-                }) {
-                    cx.focus_self(window);
-                }
-                this.context_menu.take();
-                cx.notify();
-            },
-        );
-        self.context_menu = Some((context_menu, position, subscription));
     }
 
     fn deploy_channel_context_menu(
@@ -1582,32 +1185,6 @@ impl CollabPanel {
                         self.call(contact.user.id, window, cx);
                     }
                 }
-                ListEntry::ParticipantProject {
-                    project_id,
-                    host_user_id,
-                    ..
-                } => {
-                    if let Some(workspace) = self.workspace.upgrade() {
-                        let app_state = workspace.read(cx).app_state().clone();
-                        workspace::join_in_room_project(*project_id, *host_user_id, app_state, cx)
-                            .detach_and_prompt_err(
-                                "Failed to join project",
-                                window,
-                                cx,
-                                |_, _, _| None,
-                            );
-                    }
-                }
-                ListEntry::ParticipantScreen { peer_id, .. } => {
-                    let Some(peer_id) = peer_id else {
-                        return;
-                    };
-                    if let Some(workspace) = self.workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.open_shared_screen(*peer_id, window, cx)
-                        });
-                    }
-                }
                 ListEntry::Channel { channel, .. } => {
                     self.open_channel_notes(channel.id, window, cx)
                     // let is_active = maybe!({
@@ -1627,15 +1204,6 @@ impl CollabPanel {
                     // }
                 }
                 ListEntry::ContactPlaceholder => self.toggle_contact_finder(window, cx),
-                ListEntry::CallParticipant { user, peer_id, .. } => {
-                    if Some(user) == self.user_store.read(cx).current_user().as_ref() {
-                        Self::leave_call(window, cx);
-                    } else if let Some(peer_id) = peer_id {
-                        self.workspace
-                            .update(cx, |workspace, cx| workspace.follow(*peer_id, window, cx))
-                            .ok();
-                    }
-                }
                 ListEntry::IncomingRequest(user) => {
                     self.respond_to_contact_request(user.id, true, window, cx)
                 }
@@ -2384,33 +1952,6 @@ impl CollabPanel {
                 .into_any_element(),
             ListEntry::ChannelInvite(channel) => self
                 .render_channel_invite(channel, is_selected, cx)
-                .into_any_element(),
-            ListEntry::CallParticipant {
-                user,
-                peer_id,
-                is_pending,
-                role,
-            } => self
-                .render_call_participant(user, *peer_id, *is_pending, *role, is_selected, cx)
-                .into_any_element(),
-            ListEntry::ParticipantProject {
-                project_id,
-                worktree_root_names,
-                host_user_id,
-                is_last,
-            } => self
-                .render_participant_project(
-                    *project_id,
-                    worktree_root_names,
-                    *host_user_id,
-                    *is_last,
-                    is_selected,
-                    window,
-                    cx,
-                )
-                .into_any_element(),
-            ListEntry::ParticipantScreen { peer_id, is_last } => self
-                .render_participant_screen(*peer_id, *is_last, is_selected, window, cx)
                 .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
                 .render_channel_notes(*channel_id, is_selected, window, cx)
@@ -3163,33 +2704,6 @@ impl PartialEq for ListEntry {
             ListEntry::Header(section_1) => {
                 if let ListEntry::Header(section_2) = other {
                     return section_1 == section_2;
-                }
-            }
-            ListEntry::CallParticipant { user: user_1, .. } => {
-                if let ListEntry::CallParticipant { user: user_2, .. } = other {
-                    return user_1.id == user_2.id;
-                }
-            }
-            ListEntry::ParticipantProject {
-                project_id: project_id_1,
-                ..
-            } => {
-                if let ListEntry::ParticipantProject {
-                    project_id: project_id_2,
-                    ..
-                } = other
-                {
-                    return project_id_1 == project_id_2;
-                }
-            }
-            ListEntry::ParticipantScreen {
-                peer_id: peer_id_1, ..
-            } => {
-                if let ListEntry::ParticipantScreen {
-                    peer_id: peer_id_2, ..
-                } = other
-                {
-                    return peer_id_1 == peer_id_2;
                 }
             }
             ListEntry::Channel {

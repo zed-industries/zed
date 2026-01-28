@@ -1,10 +1,14 @@
 use call::ActiveCall;
-use gpui::{App, Context, Entity, EventEmitter, Render, Subscription, WeakEntity, Window};
-use title_bar::collab::toggle_mute;
-use ui::{px, Avatar, IconButton, IconName, IconSize, Tooltip, prelude::*};
+use channel::ChannelStore;
+use gpui::{
+    App, Context, Entity, EventEmitter, Render, SharedString, Subscription, WeakEntity, Window,
+};
+use std::rc::Rc;
+use title_bar::collab::{toggle_deafen, toggle_mute, toggle_screen_sharing};
+use ui::{
+    ButtonStyle, IconButton, IconName, IconSize, Label, LabelSize, TintColor, Tooltip, prelude::*,
+};
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
-
-const MAX_VISIBLE_AVATARS: usize = 3;
 
 pub struct CollabOverlayStatusItem {
     workspace: WeakEntity<Workspace>,
@@ -18,10 +22,7 @@ pub enum Event {
 impl EventEmitter<Event> for CollabOverlayStatusItem {}
 
 impl CollabOverlayStatusItem {
-    pub fn new(
-        _workspace: &Workspace,
-        cx: &mut Context<Workspace>,
-    ) -> Entity<Self> {
+    pub fn new(_workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         let workspace_weak = cx.weak_entity();
         cx.new(|cx: &mut Context<Self>| {
             let active_call = ActiveCall::global(cx);
@@ -50,9 +51,10 @@ impl CollabOverlayStatusItem {
         let active_call = ActiveCall::global(cx);
         let room = active_call.read(cx).room().cloned();
         if let Some(room) = room {
-            self._subscriptions.push(cx.subscribe(&room, |_: &mut Self, _, _, cx| {
-                cx.notify();
-            }));
+            self._subscriptions
+                .push(cx.subscribe(&room, |_: &mut Self, _, _, cx| {
+                    cx.notify();
+                }));
         }
     }
 
@@ -70,8 +72,10 @@ impl CollabOverlayStatusItem {
         for dock in workspace.all_docks() {
             let dock = dock.read(cx);
 
-            // Check if this dock contains the CollabPanel
-            if dock.panel_index_for_persistent_name("CollabPanel", cx).is_some() {
+            if dock
+                .panel_index_for_persistent_name("CollabPanel", cx)
+                .is_some()
+            {
                 return dock.is_open();
             }
         }
@@ -91,56 +95,21 @@ impl CollabOverlayStatusItem {
         }
     }
 
-    fn render_avatars(&self, cx: &App) -> Vec<impl IntoElement> {
+    fn channel_name(&self, cx: &App) -> SharedString {
         let Some(room) = ActiveCall::global(cx).read(cx).room() else {
-            return Vec::new();
+            return "Call".into();
         };
 
-        let room = room.read(cx);
-        let mut avatars: Vec<Div> = Vec::new();
-        let mut total_participants: usize = 0;
+        let channel_id = room.read(cx).channel_id();
 
-        if let Some(user) = room.local_participant_user(cx) {
-            total_participants += 1;
-            if avatars.len() < MAX_VISIBLE_AVATARS {
-                avatars.push(
-                    div().child(
-                        Avatar::new(user.avatar_uri.to_string()).size(px(16.)),
-                    ),
-                );
+        if let Some(channel_id) = channel_id {
+            let channel_store = ChannelStore::global(cx);
+            if let Some(channel) = channel_store.read(cx).channel_for_id(channel_id) {
+                return channel.name.clone();
             }
         }
 
-        for (_, participant) in room.remote_participants() {
-            total_participants += 1;
-            if avatars.len() < MAX_VISIBLE_AVATARS {
-                avatars.push(
-                    div().child(
-                        Avatar::new(participant.user.avatar_uri.to_string()).size(px(16.)),
-                    ),
-                );
-            }
-        }
-
-        let overflow = total_participants.saturating_sub(MAX_VISIBLE_AVATARS);
-        if overflow > 0 {
-            avatars.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size_4()
-                    .rounded_full()
-                    .bg(cx.theme().colors().element_background)
-                    .child(
-                        Label::new(format!("+{}", overflow))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
-            );
-        }
-
-        avatars
+        "Call".into()
     }
 }
 
@@ -156,8 +125,12 @@ impl Render for CollabOverlayStatusItem {
 
         let room_read = room.read(cx);
         let is_muted = room_read.is_muted();
+        let is_deafened = room_read.is_deafened().unwrap_or(false);
+        let is_screen_sharing = room_read.is_sharing_screen();
+        let can_use_microphone = room_read.can_use_microphone();
+        let screen_sharing_supported = cx.is_screen_capture_supported();
 
-        let avatars = self.render_avatars(cx);
+        let channel_name = self.channel_name(cx);
 
         h_flex()
             .id("collab-status-item")
@@ -165,26 +138,86 @@ impl Render for CollabOverlayStatusItem {
             .items_center()
             .child(
                 h_flex()
-                    .id("collab-status-avatars")
-                    .gap_0p5()
+                    .id("collab-status-call-info")
+                    .gap_1()
+                    .items_center()
                     .cursor_pointer()
-                    .children(avatars)
+                    .child(
+                        Icon::new(IconName::AudioOn)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(
+                        Label::new(channel_name)
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_collab_panel(window, cx);
                     }))
                     .tooltip(Tooltip::text("Open collaboration panel")),
             )
+            .when(can_use_microphone, |this| {
+                this.child(
+                    IconButton::new("status-mute", IconName::Mic)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text(if is_muted { "Unmute" } else { "Mute" }))
+                        .selected_icon(IconName::MicMute)
+                        .selected_icon_color(Color::Error)
+                        .toggle_state(is_muted)
+                        .on_click(|_, _, cx| {
+                            toggle_mute(cx);
+                        }),
+                )
+            })
             .child(
-                IconButton::new("status-mute", IconName::Mic)
+                IconButton::new("status-deafen", IconName::AudioOn)
                     .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text(if is_muted { "Unmute" } else { "Mute" }))
-                    .selected_icon(IconName::MicMute)
+                    .tooltip(Tooltip::text(if is_deafened {
+                        "Unmute Audio"
+                    } else {
+                        "Mute Audio"
+                    }))
+                    .selected_icon(IconName::AudioOff)
                     .selected_icon_color(Color::Error)
-                    .toggle_state(is_muted)
+                    .toggle_state(is_deafened)
                     .on_click(|_, _, cx| {
-                        toggle_mute(cx);
+                        toggle_deafen(cx);
                     }),
             )
+            .when(can_use_microphone && screen_sharing_supported, |this| {
+                this.child(
+                    IconButton::new("status-screen-share", IconName::Screen)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text(if is_screen_sharing {
+                            "Stop Sharing Screen"
+                        } else {
+                            "Share Screen"
+                        }))
+                        .toggle_state(is_screen_sharing)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .on_click(move |_, window, cx| {
+                            let should_share = ActiveCall::global(cx)
+                                .read(cx)
+                                .room()
+                                .is_some_and(|room| !room.read(cx).is_sharing_screen());
+
+                            window
+                                .spawn(cx, async move |cx| {
+                                    let screen = if should_share {
+                                        cx.update(|_, cx| pick_default_screen(cx))?.await
+                                    } else {
+                                        Ok(None)
+                                    };
+                                    cx.update(|window, cx| {
+                                        toggle_screen_sharing(screen, window, cx)
+                                    })?;
+                                    Result::<_, anyhow::Error>::Ok(())
+                                })
+                                .detach();
+                        }),
+                )
+            })
             .child(
                 IconButton::new("status-leave", IconName::Exit)
                     .icon_size(IconSize::Small)
@@ -198,6 +231,24 @@ impl Render for CollabOverlayStatusItem {
             )
             .into_any_element()
     }
+}
+
+fn pick_default_screen(
+    cx: &App,
+) -> gpui::Task<anyhow::Result<Option<Rc<dyn gpui::ScreenCaptureSource>>>> {
+    let source = cx.screen_capture_sources();
+    cx.spawn(async move |_| {
+        let available_sources = source.await??;
+        Ok(available_sources
+            .iter()
+            .find(|it| {
+                it.as_ref()
+                    .metadata()
+                    .is_ok_and(|meta| meta.is_main.unwrap_or_default())
+            })
+            .or_else(|| available_sources.first())
+            .cloned())
+    })
 }
 
 impl StatusItemView for CollabOverlayStatusItem {
