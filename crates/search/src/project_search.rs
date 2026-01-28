@@ -68,6 +68,26 @@ actions!(
     ]
 );
 
+fn split_glob_patterns(text: &str) -> Vec<&str> {
+    let mut patterns = Vec::new();
+    let mut pattern_start = 0;
+    let mut brace_depth: usize = 0;
+
+    for (index, char) in text.char_indices() {
+        match char {
+            '{' => brace_depth += 1,
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            ',' if brace_depth == 0 => {
+                patterns.push(&text[pattern_start..index]);
+                pattern_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    patterns.push(&text[pattern_start..]);
+    patterns
+}
+
 #[derive(Default)]
 struct ActiveSettings(HashMap<WeakEntity<Project>, ProjectSearchSettings>);
 
@@ -1371,8 +1391,8 @@ impl ProjectSearchView {
 
     fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
         let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
-        let queries = text
-            .split(',')
+        let queries = split_glob_patterns(&text)
+            .into_iter()
             .map(str::trim)
             .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
             .map(str::to_owned)
@@ -2498,6 +2518,24 @@ pub mod tests {
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
     use workspace::DeploySearch;
+
+    #[test]
+    fn test_split_glob_patterns() {
+        assert_eq!(split_glob_patterns("a,b,c"), vec!["a", "b", "c"]);
+        assert_eq!(split_glob_patterns("a, b, c"), vec!["a", " b", " c"]);
+        assert_eq!(
+            split_glob_patterns("src/{a,b}/**/*.rs"),
+            vec!["src/{a,b}/**/*.rs"]
+        );
+        assert_eq!(
+            split_glob_patterns("src/{a,b}/*.rs, tests/**/*.rs"),
+            vec!["src/{a,b}/*.rs", " tests/**/*.rs"]
+        );
+        assert_eq!(split_glob_patterns("{a,b},{c,d}"), vec!["{a,b}", "{c,d}"]);
+        assert_eq!(split_glob_patterns("{{a,b},{c,d}}"), vec!["{{a,b},{c,d}}"]);
+        assert_eq!(split_glob_patterns(""), vec![""]);
+        assert_eq!(split_glob_patterns("a"), vec!["a"]);
+    }
 
     #[perf]
     #[gpui::test]
