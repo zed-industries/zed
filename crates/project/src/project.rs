@@ -1062,8 +1062,22 @@ pub struct DisableAiSettings {
 impl settings::Settings for DisableAiSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
-            disable_ai: content.disable_ai.unwrap().0,
+            disable_ai: content.project.disable_ai.unwrap().0,
         }
+    }
+}
+
+impl DisableAiSettings {
+    /// Returns whether AI is disabled for the given file.
+    ///
+    /// This checks the project-level settings for the file's worktree,
+    /// allowing `disable_ai` to be configured per-project in `.zed/settings.json`.
+    pub fn is_ai_disabled(file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
+        let location = file.map(|f| settings::SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+        Self::get(location, cx).disable_ai
     }
 }
 
