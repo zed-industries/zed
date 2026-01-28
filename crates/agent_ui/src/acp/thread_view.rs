@@ -1061,19 +1061,8 @@ impl AcpThreadView {
     // todo! cameron here
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        if let ThreadState::Ready(ReadyThreadState {
-            thread_retry_status,
-            thread_error,
-            user_interrupted_generation,
-            _cancel_task,
-            thread,
-            ..
-        }) = &mut self.thread_state
-        {
-            thread_retry_status.take();
-            thread_error.take();
-            *user_interrupted_generation = true;
-            *_cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
+        if let Some(ready) = self.as_ready_mut() {
+            ready.cancel_generation(cx);
         }
     }
 
@@ -1349,109 +1338,40 @@ impl AcpThreadView {
         let message_editor = self.message_editor.clone();
         let agent = self.agent.clone();
         let login = self.login.clone();
-        
+
         if let Some(ready) = self.as_ready_mut() {
             ready.send(message_editor, agent, login, window, cx);
         }
     }
 
     fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ready) = self.as_ready() else {
-            return;
+        let message_editor = self.message_editor.clone();
+        if let Some(ready) = self.as_ready_mut() {
+            ready.interrupt_and_send(message_editor, window, cx);
         };
-        let thread = &ready.thread;
-
-        if ready.is_loading_contents {
-            return;
-        }
-
-        if thread.read(cx).status() == ThreadStatus::Idle {
-            self.send_impl(self.message_editor.clone(), window, cx);
-            return;
-        }
-
-        self.stop_current_and_send_new_message(window, cx);
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.as_ready().map(|r| r.thread.clone()) else {
-            return;
-        };
-
-        if let ThreadState::Ready(ReadyThreadState {
-            skip_queue_processing_count,
-            user_interrupted_generation,
-            ..
-        }) = &mut self.thread_state
-        {
-            *skip_queue_processing_count = 0;
-            *user_interrupted_generation = true;
+        if let Some(ready) = self.as_ready_mut() {
+            ready.stop_current_and_send_new_message(window, cx);
         }
-
-        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
-
-        cx.spawn_in(window, async move |this, cx| {
-            cancelled.await;
-
-            this.update_in(cx, |this, window, cx| {
-                this.send_impl(this.message_editor.clone(), window, cx);
-            })
-            .ok();
-        })
-        .detach();
     }
 
     fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
-        let ThreadState::Ready(ReadyThreadState { turn_fields, .. }) = &mut self.thread_state
-        else {
-            return 0;
-        };
-        turn_fields.turn_generation += 1;
-        let generation = turn_fields.turn_generation;
-        turn_fields.turn_started_at = Some(Instant::now());
-        turn_fields.last_turn_duration = None;
-        turn_fields.last_turn_tokens = None;
-        turn_fields.turn_tokens = Some(0);
-        turn_fields._turn_timer_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        }));
-        generation
+        self.as_ready_mut()
+            .map(|ready| ready.start_turn(cx))
+            .unwrap_or(0)
     }
 
     fn stop_turn(&mut self, generation: usize) {
-        let ThreadState::Ready(ReadyThreadState { turn_fields, .. }) = &mut self.thread_state
-        else {
-            return;
-        };
-        if turn_fields.turn_generation != generation {
-            return;
+        if let Some(ready) = self.as_ready_mut() {
+            ready.stop_turn(generation);
         }
-        turn_fields.last_turn_duration = turn_fields
-            .turn_started_at
-            .take()
-            .map(|started| started.elapsed());
-        turn_fields.last_turn_tokens = turn_fields.turn_tokens.take();
-        turn_fields._turn_timer_task = None;
     }
 
     fn update_turn_tokens(&mut self, cx: &App) {
-        let ThreadState::Ready(ReadyThreadState {
-            thread,
-            turn_fields,
-            ..
-        }) = &mut self.thread_state
-        else {
-            return;
-        };
-        if let Some(usage) = thread.read(cx).token_usage() {
-            if let Some(tokens) = &mut turn_fields.turn_tokens {
-                *tokens += usage.output_tokens;
-            }
+        if let Some(ready) = self.as_ready_mut() {
+            ready.update_turn_tokens(cx);
         }
     }
 
@@ -1535,8 +1455,6 @@ impl AcpThreadView {
         };
     }
 
-
-
     fn send_queued_message_at_index(
         &mut self,
         index: usize,
@@ -1585,53 +1503,9 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ready) = self.as_ready() else {
-            return;
-        };
-        if ready.is_loading_contents {
-            return;
+        if let Some(ready) = self.as_ready_mut() {
+            ready.regenerate(entry_ix, message_editor, window, cx);
         }
-        let thread = ready.thread.clone();
-
-        let Some(user_message_id) = thread.update(cx, |thread, _| {
-            thread.entries().get(entry_ix)?.user_message()?.id.clone()
-        }) else {
-            return;
-        };
-
-        cx.spawn_in(window, async move |this, cx| {
-            // Check if there are any edits from prompts before the one being regenerated.
-            //
-            // If there are, we keep/accept them since we're not regenerating the prompt that created them.
-            //
-            // If editing the prompt that generated the edits, they are auto-rejected
-            // through the `rewind` function in the `acp_thread`.
-            let has_earlier_edits = thread.read_with(cx, |thread, _| {
-                thread
-                    .entries()
-                    .iter()
-                    .take(entry_ix)
-                    .any(|entry| entry.diffs().next().is_some())
-            });
-
-            if has_earlier_edits {
-                thread.update(cx, |thread, cx| {
-                    thread.action_log().update(cx, |action_log, cx| {
-                        action_log.keep_all_edits(None, cx);
-                    });
-                });
-            }
-
-            thread
-                .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
-                .await?;
-            this.update_in(cx, |this, window, cx| {
-                this.send_impl(message_editor, window, cx);
-                this.focus_handle(cx).focus(window, cx);
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
     }
 
     fn open_edited_buffer(
@@ -6471,10 +6345,11 @@ impl AcpThreadView {
     }
 
     fn is_imported_thread(&self, cx: &App) -> bool {
-        let Some(thread) = self.as_native_thread(cx) else {
-            return false;
-        };
-        thread.read(cx).is_imported()
+        if let Some(ready) = self.as_ready() {
+            ready.is_imported_thread(cx)
+        } else {
+            false
+        }
     }
 
     fn supports_split_token_display(&self, cx: &App) -> bool {
@@ -8099,7 +7974,7 @@ impl AcpThreadView {
             .actions_slot(self.create_copy_button(&refusal_message))
             .dismiss_action(self.dismiss_error_button(cx))
     }
-    
+
     fn set_can_fast_track_queue(&mut self, value: bool) {
         if let Some(ready) = self.as_ready_mut() {
             ready.can_fast_track_queue = value;
@@ -8484,6 +8359,233 @@ impl ReadyThreadState {
             can_fast_track_queue: false,
             hovered_edited_file_buttons: None,
         }
+    }
+
+    pub fn cancel_generation(&mut self, cx: &mut Context<AcpThreadView>) {
+        self.thread_retry_status.take();
+        self.thread_error.take();
+        self.user_interrupted_generation = true;
+        self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
+    }
+
+    fn is_imported_thread(&self, cx: &App) -> bool {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return false;
+        };
+        thread.read(cx).is_imported()
+    }
+
+    fn sync_thread(
+        &mut self,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        if !self.is_imported_thread(cx) {
+            return;
+        }
+
+        let Some(session_list) = self
+            .as_native_connection(cx)
+            .and_then(|connection| connection.session_list(cx))
+            .and_then(|list| list.downcast::<NativeAgentSessionList>())
+        else {
+            return;
+        };
+        let thread_store = session_list.thread_store().clone();
+
+        let client = project.read(cx).client();
+        let session_id = self.thread.read(cx).session_id().clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let response = client
+                .request(proto::GetSharedAgentThread {
+                    session_id: session_id.to_string(),
+                })
+                .await?;
+
+            let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
+
+            let db_thread = shared_thread.to_db_thread();
+
+            thread_store
+                .update(&mut cx.clone(), |store, cx| {
+                    store.save_thread(session_id.clone(), db_thread, cx)
+                })
+                .await?;
+
+            let thread_metadata = AgentSessionInfo {
+                session_id,
+                cwd: None,
+                title: Some(format!("🔗 {}", response.title).into()),
+                updated_at: Some(chrono::Utc::now()),
+                meta: None,
+            };
+
+            this.update_in(cx, |this, window, cx| {
+                if let ThreadState::Ready(ReadyThreadState {
+                    resume_thread_metadata,
+                    ..
+                }) = &mut this.thread_state
+                {
+                    *resume_thread_metadata = Some(thread_metadata);
+                }
+                this.reset(window, cx);
+            })?;
+
+            this.update_in(cx, |this, _window, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadSyncedToast;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<ThreadSyncedToast>(),
+                                "Thread synced with latest version",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn interrupt_and_send(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let thread = &self.thread;
+
+        if self.is_loading_contents {
+            return;
+        }
+
+        if thread.read(cx).status() == ThreadStatus::Idle {
+            self.send_impl(message_editor, window, cx);
+            return;
+        }
+
+        self.stop_current_and_send_new_message(window, cx);
+    }
+
+    fn stop_current_and_send_new_message(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let thread = self.thread.clone();
+        self.skip_queue_processing_count = 0;
+        self.user_interrupted_generation = true;
+
+        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
+
+        cx.spawn_in(window, async move |this, cx| {
+            cancelled.await;
+
+            this.update_in(cx, |this, window, cx| {
+                this.send_impl(this.message_editor.clone(), window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn start_turn(&mut self, cx: &mut Context<AcpThreadView>) -> usize {
+        self.turn_fields.turn_generation += 1;
+        let generation = self.turn_fields.turn_generation;
+        self.turn_fields.turn_started_at = Some(Instant::now());
+        self.turn_fields.last_turn_duration = None;
+        self.turn_fields.last_turn_tokens = None;
+        self.turn_fields.turn_tokens = Some(0);
+        self.turn_fields._turn_timer_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        }));
+        generation
+    }
+
+    fn stop_turn(&mut self, generation: usize) {
+        if self.turn_fields.turn_generation != generation {
+            return;
+        }
+        self.turn_fields.last_turn_duration = self
+            .turn_fields
+            .turn_started_at
+            .take()
+            .map(|started| started.elapsed());
+        self.turn_fields.last_turn_tokens = self.turn_fields.turn_tokens.take();
+        self.turn_fields._turn_timer_task = None;
+    }
+
+    fn update_turn_tokens(&mut self, cx: &App) {
+        if let Some(usage) = self.thread.read(cx).token_usage() {
+            if let Some(tokens) = &mut self.turn_fields.turn_tokens {
+                *tokens += usage.output_tokens;
+            }
+        }
+    }
+
+    fn regenerate(
+        &mut self,
+        entry_ix: usize,
+        message_editor: Entity<MessageEditor>,
+        window: &mut Window,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        if self.is_loading_contents {
+            return;
+        }
+        let thread = self.thread.clone();
+
+        let Some(user_message_id) = thread.update(cx, |thread, _| {
+            thread.entries().get(entry_ix)?.user_message()?.id.clone()
+        }) else {
+            return;
+        };
+
+        cx.spawn_in(window, async move |this, cx| {
+            // Check if there are any edits from prompts before the one being regenerated.
+            //
+            // If there are, we keep/accept them since we're not regenerating the prompt that created them.
+            //
+            // If editing the prompt that generated the edits, they are auto-rejected
+            // through the `rewind` function in the `acp_thread`.
+            let has_earlier_edits = thread.read_with(cx, |thread, _| {
+                thread
+                    .entries()
+                    .iter()
+                    .take(entry_ix)
+                    .any(|entry| entry.diffs().next().is_some())
+            });
+
+            if has_earlier_edits {
+                thread.update(cx, |thread, cx| {
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.keep_all_edits(None, cx);
+                    });
+                });
+            }
+
+            thread
+                .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
+                .await?;
+            this.update_in(cx, |this, window, cx| {
+                this.send_impl(message_editor, window, cx);
+                this.focus_handle(cx).focus(window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn refresh_cached_user_commands_from_registry(
@@ -9142,7 +9244,6 @@ impl ReadyThreadState {
         .detach_and_log_err(cx);
     }
 }
-
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
     Icon::new(IconName::LoadCircle)
