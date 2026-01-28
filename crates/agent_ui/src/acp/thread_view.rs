@@ -347,7 +347,6 @@ pub struct AcpThreadView {
     command_load_errors: Vec<CommandLoadError>, // keep
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
-    list_state: ListState,
     auth_task: Option<Task<()>>, // keep
     /// Tracks which tool calls have their content/output expanded.
     /// Used for showing/hiding tool call results, terminal output, etc.
@@ -406,6 +405,7 @@ enum ThreadState {
         thread_error_markdown: Option<Entity<Markdown>>,
         token_limit_callout_dismissed: bool,
         thread_feedback: ThreadFeedbackState,
+        list_state: ListState,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -476,8 +476,6 @@ impl AcpThreadView {
             }
             editor
         });
-
-        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
         let subscriptions = [
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
@@ -571,7 +569,6 @@ impl AcpThreadView {
             profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            list_state,
             command_load_errors,
             command_load_errors_dismissed: false,
             slash_command_registry,
@@ -793,11 +790,13 @@ impl AcpThreadView {
                         });
 
                         let count = thread.read(cx).entries().len();
+                        let list_state =
+                            ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
                         entry_view_state.update(cx, |view_state, cx| {
                             for ix in 0..count {
                                 view_state.sync_entry(ix, &thread, window, cx);
                             }
-                            this.list_state.splice_focusable(
+                            list_state.splice_focusable(
                                 0..0,
                                 (0..count).map(|ix| view_state.entry(ix)?.focus_handle(cx)),
                             );
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             thread_error_markdown: None,
                             token_limit_callout_dismissed: false,
                             thread_feedback: Default::default(),
+                            list_state,
                             _subscriptions: subscriptions,
                         };
 
@@ -1101,6 +1101,24 @@ impl AcpThreadView {
             ThreadState::Ready {
                 entry_view_state, ..
             } => Some(entry_view_state),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn list_state(&self) -> Option<&ListState> {
+        match &self.thread_state {
+            ThreadState::Ready { list_state, .. } => Some(list_state),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn list_state_mut(&mut self) -> Option<&mut ListState> {
+        match &mut self.thread_state {
+            ThreadState::Ready { list_state, .. } => Some(list_state),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -2101,10 +2119,16 @@ impl AcpThreadView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
-                if let Some(entry_view_state) = self.entry_view_state().cloned() {
+                if let ThreadState::Ready {
+                    entry_view_state,
+                    list_state,
+                    ..
+                } = &mut self.thread_state
+                {
+                    let entry_view_state = entry_view_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(index, thread, window, cx);
-                        self.list_state.splice_focusable(
+                        list_state.splice_focusable(
                             index..index,
                             [view_state
                                 .entry(index)
@@ -2121,11 +2145,16 @@ impl AcpThreadView {
                 }
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                if let Some(entry_view_state) = self.entry_view_state().cloned() {
+                if let ThreadState::Ready {
+                    entry_view_state,
+                    list_state,
+                    ..
+                } = &mut self.thread_state
+                {
                     entry_view_state
                         .update(cx, |view_state, _cx| view_state.remove(range.clone()));
+                    list_state.splice(range.clone(), 0);
                 }
-                self.list_state.splice(range.clone(), 0);
             }
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
@@ -3061,7 +3090,10 @@ impl AcpThreadView {
                 let workspace = workspace.clone();
 
                 ContextMenu::build(window, cx, move |menu, _, cx| {
-                    let is_at_top = entity.read(cx).list_state.logical_scroll_top().item_ix == 0;
+                    let is_at_top = entity
+                        .read(cx)
+                        .list_state()
+                        .map_or(true, |state| state.logical_scroll_top().item_ix == 0);
 
                     let copy_this_agent_response =
                         ContextMenuEntry::new("Copy This Agent Response").handler({
@@ -7290,8 +7322,10 @@ impl AcpThreadView {
     }
 
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
-        self.list_state.scroll_to(ListOffset::default());
-        cx.notify();
+        if let Some(list_state) = self.list_state_mut() {
+            list_state.scroll_to(ListOffset::default());
+            cx.notify();
+        }
     }
 
     fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
@@ -7310,20 +7344,25 @@ impl AcpThreadView {
             .iter()
             .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
         {
-            self.list_state.scroll_to(ListOffset {
-                item_ix: ix,
-                offset_in_item: px(0.0),
-            });
-            cx.notify();
+            if let Some(list_state) = self.list_state_mut() {
+                list_state.scroll_to(ListOffset {
+                    item_ix: ix,
+                    offset_in_item: px(0.0),
+                });
+                cx.notify();
+            }
         } else {
             self.scroll_to_bottom(cx);
         }
     }
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
+        if let ThreadState::Ready {
+            thread, list_state, ..
+        } = &mut self.thread_state
+        {
             let entry_count = thread.read(cx).entries().len();
-            self.list_state.reset(entry_count);
+            list_state.reset(entry_count);
             cx.notify();
         }
     }
@@ -8590,7 +8629,7 @@ impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
 
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.list_state().map_or(false, |s| s.item_count() > 0);
 
         v_flex()
             .size_full()
@@ -8739,14 +8778,14 @@ impl Render for AcpThreadView {
                     .justify_end()
                     .child(self.render_load_error(e, window, cx))
                     .into_any(),
-                ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
+                ThreadState::Ready { list_state, .. } => v_flex().flex_1().map(|this| {
                     let this = this.when(self.resumed_without_history, |this| {
                         this.child(self.render_resume_notice(cx))
                     });
                     if has_messages {
                         this.child(
                             list(
-                                self.list_state.clone(),
+                                list_state.clone(),
                                 cx.processor(|this, index: usize, window, cx| {
                                     let Some((entry, len)) = this.thread().and_then(|thread| {
                                         let entries = &thread.read(cx).entries();
@@ -8761,7 +8800,7 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(&self.list_state, window, cx)
+                        .vertical_scrollbar_for(list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
@@ -9139,7 +9178,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, _cx| {
             assert!(view.resumed_without_history);
-            assert_eq!(view.list_state.item_count(), 0);
+            assert_eq!(view.list_state().map_or(0, |s| s.item_count()), 0);
         });
     }
 
@@ -9940,7 +9979,7 @@ pub(crate) mod tests {
 
         thread_view.update(cx, |view, cx| {
             view.scroll_to_most_recent_user_prompt(cx);
-            let scroll_top = view.list_state.logical_scroll_top();
+            let scroll_top = view.list_state().unwrap().logical_scroll_top();
             // Entries layout is: [User1, Assistant1, User2, Assistant2]
             assert_eq!(scroll_top.item_ix, 2);
         });
@@ -9957,7 +9996,7 @@ pub(crate) mod tests {
         // With no entries, scrolling should be a no-op and must not panic.
         thread_view.update(cx, |view, cx| {
             view.scroll_to_most_recent_user_prompt(cx);
-            let scroll_top = view.list_state.logical_scroll_top();
+            let scroll_top = view.list_state().unwrap().logical_scroll_top();
             assert_eq!(scroll_top.item_ix, 0);
         });
     }
