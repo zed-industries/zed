@@ -49,7 +49,7 @@ struct TelemetryState {
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, nightly, preview, and stable)
     session_id: Option<String>,        // Per app launch
     metrics_id: Option<Arc<str>>,      // Per logged-in user
-    release_channel: Option<&'static str>,
+    release_channel: Option<ReleaseChannel>,
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
@@ -191,13 +191,10 @@ impl Telemetry {
         client: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let release_channel =
-            ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
-
         let state = Arc::new(Mutex::new(TelemetryState {
             settings: *TelemetrySettings::get_global(cx),
             architecture: env::consts::ARCH,
-            release_channel,
+            release_channel: ReleaseChannel::try_global(cx),
             system_id: None,
             installation_id: None,
             session_id: None,
@@ -646,7 +643,9 @@ impl Telemetry {
                     os_version: state.os_version.clone(),
                     architecture: state.architecture.to_string(),
 
-                    release_channel: state.release_channel.map(Into::into),
+                    release_channel: state
+                        .release_channel
+                        .map(|channel| channel.display_name().to_owned()),
                     events,
                 },
             )
