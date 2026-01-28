@@ -352,26 +352,25 @@ async fn build_remote_server_from_source(
 
         #[cfg(target_os = "windows")]
         {
-            // On Windows, we use 7z to compress the binary
-
-            let seven_zip = which("7z.exe",cx)
-                .await?
-                .context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
-            let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
-            if smol::fs::metadata(&gz_path).await.is_ok() {
-                smol::fs::remove_file(&gz_path).await?;
+            let zip_path = format!("target/remote_server/{}/debug/remote_server.zip", triple);
+            if smol::fs::metadata(&zip_path).await.is_ok() {
+                smol::fs::remove_file(&zip_path).await?;
             }
-            run_cmd(new_smol_command(seven_zip).args([
-                "a",
-                "-tgzip",
-                &gz_path,
-                &bin_path.to_string_lossy(),
+            let compress_command = format!(
+                "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                bin_path.to_string_lossy(),
+                zip_path
+            );
+            run_cmd(new_smol_command("powershell.exe").args([
+                "-NoProfile",
+                "-Command",
+                &compress_command,
             ]))
             .await?;
         }
 
         let mut archive_path = bin_path;
-        archive_path.set_extension("gz");
+        archive_path.set_extension("zip");
         std::env::current_dir()?.join(archive_path)
     } else {
         bin_path

@@ -13624,6 +13624,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "collections",
  "fs",
  "futures 0.3.31",

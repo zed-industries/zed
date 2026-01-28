@@ -302,19 +302,36 @@ impl RemoteConnection for SshRemoteConnection {
             ..
         } = self;
         let env = socket.envs.clone();
-        build_command(
-            input_program,
-            input_args,
-            input_env,
-            working_dir,
-            port_forward,
-            env,
-            *ssh_path_style,
-            ssh_shell,
-            *ssh_shell_kind,
-            socket.ssh_args(),
-            interactive,
-        )
+
+        if self.ssh_platform.os.is_windows() {
+            build_command_windows(
+                input_program,
+                input_args,
+                input_env,
+                working_dir,
+                port_forward,
+                env,
+                *ssh_path_style,
+                ssh_shell,
+                *ssh_shell_kind,
+                socket.ssh_args(),
+                interactive,
+            )
+        } else {
+            build_command_posix(
+                input_program,
+                input_args,
+                input_env,
+                working_dir,
+                port_forward,
+                env,
+                *ssh_path_style,
+                ssh_shell,
+                *ssh_shell_kind,
+                socket.ssh_args(),
+                interactive,
+            )
+        }
     }
 
     fn build_forward_ports_command(
@@ -950,10 +967,7 @@ impl SshRemoteConnection {
                 .try_quote(&tmp_exe_path)
                 .context("shell quoting")?;
             format!(
-                "Expand-Archive -Force -Path {orig_tmp_path} -DestinationPath {tmp_path} -ErrorAction Stop;
-                 Move-Item -Force {tmp_exe_path} {dst_path};
-                 Remove-Item -Force {tmp_path} -Recurse;
-                 Remove-Item -Force {orig_tmp_path}",
+                "Expand-Archive -Force -Path {orig_tmp_path} -DestinationPath {tmp_path} -ErrorAction Stop; Move-Item -Force {tmp_exe_path} {dst_path}; Remove-Item -Force {tmp_path} -Recurse; Remove-Item -Force {orig_tmp_path}",
             )
         } else {
             let orig_tmp_path = shell_kind
@@ -1564,7 +1578,7 @@ impl SshConnectionOptions {
     }
 }
 
-fn build_command(
+fn build_command_posix(
     input_program: Option<String>,
     input_args: &[String],
     input_env: &HashMap<String, String>,
@@ -1660,6 +1674,100 @@ fn build_command(
     })
 }
 
+fn build_command_windows(
+    input_program: Option<String>,
+    input_args: &[String],
+    _input_env: &HashMap<String, String>,
+    working_dir: Option<String>,
+    port_forward: Option<(u16, String, u16)>,
+    ssh_env: HashMap<String, String>,
+    ssh_path_style: PathStyle,
+    ssh_shell: &str,
+    _ssh_shell_kind: ShellKind,
+    ssh_args: Vec<String>,
+    interactive: Interactive,
+) -> Result<CommandTemplate> {
+    use base64::Engine as _;
+    use std::fmt::Write as _;
+
+    let mut exec = String::new();
+    let shell_kind = ShellKind::PowerShell;
+
+    if let Some(working_dir) = working_dir {
+        let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
+
+        write!(
+            exec,
+            "Set-Location -Path {} {} ",
+            shell_kind
+                .try_quote(&working_dir)
+                .context("shell quoting")?,
+            shell_kind.sequential_and_commands_separator()
+        )?;
+    }
+
+    // Windows OpenSSH has an 8K character limit for command lines. Sending a lot of environment varaibles easily puts us over the limit.
+    // Until we have a better solution for this, we just won't set environment variables for now.
+    // for (k, v) in input_env.iter() {
+    //     write!(
+    //         exec,
+    //         "$env:{}={} {} ",
+    //         k,
+    //         shell_kind.try_quote(v).context("shell quoting")?,
+    //         shell_kind.sequential_and_commands_separator()
+    //     )?;
+    // }
+
+    if let Some(input_program) = input_program {
+        write!(
+            exec,
+            "{}",
+            shell_kind
+                .try_quote_prefix_aware(&shell_kind.prepend_command_prefix(&input_program))
+                .context("shell quoting")?
+        )?;
+        for arg in input_args {
+            let arg = shell_kind.try_quote(arg).context("shell quoting")?;
+            write!(exec, " {}", &arg)?;
+        }
+    } else {
+        // Launch an interactive shell session
+        write!(exec, "{ssh_shell}")?;
+    };
+
+    let mut args = Vec::new();
+    args.extend(ssh_args);
+
+    if let Some((local_port, host, remote_port)) = port_forward {
+        args.push("-L".into());
+        args.push(format!("{local_port}:{host}:{remote_port}"));
+    }
+
+    // -q suppresses the "Connection to ... closed." message that SSH prints when
+    // the connection terminates with -t (pseudo-terminal allocation)
+    args.push("-q".into());
+    match interactive {
+        // -t forces pseudo-TTY allocation (for interactive use)
+        Interactive::Yes => args.push("-t".into()),
+        // -T disables pseudo-TTY allocation (for non-interactive piped stdio)
+        Interactive::No => args.push("-T".into()),
+    }
+
+    // Windows OpenSSH server incorrectly escapes the command string when the PTY is used.
+    // The simplest way to work around this is to use a base64 encoded command, which doesn't require escaping.
+    let utf16_bytes: Vec<u16> = exec.encode_utf16().collect();
+    let byte_slice: Vec<u8> = utf16_bytes.iter().flat_map(|&u| u.to_le_bytes()).collect();
+    let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&byte_slice);
+
+    args.push(format!("powershell.exe -E {}", base64_encoded));
+
+    Ok(CommandTemplate {
+        program: "ssh".into(),
+        args,
+        env: ssh_env,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1672,7 +1780,7 @@ mod tests {
         env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
 
         // Test non-interactive command (interactive=false should use -T)
-        let command = build_command(
+        let command = build_command_posix(
             Some("remote_program".to_string()),
             &["arg1".to_string(), "arg2".to_string()],
             &input_env,
@@ -1691,7 +1799,7 @@ mod tests {
         assert!(!command.args.iter().any(|arg| arg == "-t"));
 
         // Test interactive command (interactive=true should use -t)
-        let command = build_command(
+        let command = build_command_posix(
             Some("remote_program".to_string()),
             &["arg1".to_string(), "arg2".to_string()],
             &input_env,
@@ -1723,7 +1831,7 @@ mod tests {
         let mut env = HashMap::default();
         env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
 
-        let command = build_command(
+        let command = build_command_posix(
             None,
             &[],
             &input_env,
