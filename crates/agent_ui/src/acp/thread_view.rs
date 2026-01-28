@@ -348,7 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
     subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     edits_expanded: bool,
@@ -406,6 +405,7 @@ enum ThreadState {
         /// Used for showing/hiding tool call results, terminal output, etc.
         expanded_tool_calls: HashSet<acp::ToolCallId>,
         expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
+        expanded_thinking_blocks: HashSet<(usize, usize)>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,7 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             editing_message: None,
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             list_state,
                             expanded_tool_calls: HashSet::default(),
                             expanded_tool_call_raw_inputs: HashSet::default(),
+                            expanded_thinking_blocks: HashSet::default(),
                             _subscriptions: subscriptions,
                         };
 
@@ -3192,7 +3192,7 @@ impl AcpThreadView {
 
         let key = (entry_ix, chunk_ix);
 
-        let is_open = self.expanded_thinking_blocks.contains(&key);
+        let is_open = matches!(&self.thread_state, ThreadState::Ready { expanded_thinking_blocks, .. } if expanded_thinking_blocks.contains(&key));
 
         let scroll_handle = self
             .entry_view_state()
@@ -3250,23 +3250,27 @@ impl AcpThreadView {
                             .visible_on_hover(&card_header_id)
                             .on_click(cx.listener({
                                 move |this, _event, _window, cx| {
-                                    if is_open {
-                                        this.expanded_thinking_blocks.remove(&key);
-                                    } else {
-                                        this.expanded_thinking_blocks.insert(key);
+                                    if let ThreadState::Ready { expanded_thinking_blocks, .. } = &mut this.thread_state {
+                                        if is_open {
+                                            expanded_thinking_blocks.remove(&key);
+                                        } else {
+                                            expanded_thinking_blocks.insert(key);
+                                        }
+                                        cx.notify();
                                     }
-                                    cx.notify();
                                 }
                             })),
                     )
                     .on_click(cx.listener({
                         move |this, _event, _window, cx| {
-                            if is_open {
-                                this.expanded_thinking_blocks.remove(&key);
-                            } else {
-                                this.expanded_thinking_blocks.insert(key);
+                            if let ThreadState::Ready { expanded_thinking_blocks, .. } = &mut this.thread_state {
+                                if is_open {
+                                    expanded_thinking_blocks.remove(&key);
+                                } else {
+                                    expanded_thinking_blocks.insert(key);
+                                }
+                                cx.notify();
                             }
-                            cx.notify();
                         }
                     })),
             )
