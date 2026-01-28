@@ -30,15 +30,21 @@ impl ToolPermissionDecision {
     ///
     /// # Shell Compatibility (Terminal Tool Only)
     ///
-    /// For the terminal tool, commands are parsed to extract sub-commands for security.
-    /// This parsing only works for shells with POSIX-like `&&` / `||` / `;` / `|` syntax:
+    /// For the terminal tool, commands are parsed using brush-parser to extract sub-commands
+    /// for security. This ensures that patterns like `^cargo\b` cannot be bypassed with
+    /// shell injection like `cargo && rm -rf /`.
     ///
-    /// **Compatible shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
-    /// Cmd, Xonsh, Csh, Tcsh
+    /// The parser handles `;` (sequential execution), `|` (piping), `&&` and `||`
+    /// (conditional execution), `$()` and backticks (command substitution), and process
+    /// substitution.
     ///
-    /// **Incompatible shells:** Nushell, Elvish, Rc (Plan 9)
+    /// # Shell Notes
     ///
-    /// For incompatible shells, `always_allow` patterns are disabled for safety.
+    /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are
+    ///   boolean operators on values (e.g., `$true and $false`), not command chaining.
+    /// - **Elvish**: Uses `;` to separate pipelines. The `and`/`or` special commands
+    ///   operate on expressions (e.g., `and (cmd1) (cmd2)`), requiring parentheses.
+    /// - **Rc (Plan 9)**: Uses `;` for sequential execution. Does not have `&&`/`||`.
     ///
     /// # Pattern Matching Tips
     ///
@@ -86,8 +92,8 @@ impl ToolPermissionDecision {
         // If parsing fails or the shell syntax is unsupported, always_allow is
         // disabled for this command (we set allow_enabled to false to signal this).
         if tool_name == TerminalTool::name() {
-            // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
-            // See the doc comment above for the list of compatible/incompatible shells.
+            // Check if this shell's syntax can be parsed by brush-parser.
+            // See the doc comment above for shell compatibility notes.
             if !shell_kind.supports_posix_chaining() {
                 // For shells with incompatible syntax, we can't reliably parse
                 // the command to extract sub-commands.
@@ -900,12 +906,14 @@ mod tests {
     }
 
     #[test]
-    fn nushell_denies_when_always_allow_configured() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_deny();
+    fn nushell_allows_with_allow_pattern() {
+        // Nushell uses `;` for sequential execution, which brush-parser handles.
+        // The `and`/`or` keywords are boolean operators, not command chaining.
+        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_allow();
     }
 
     #[test]
-    fn nushell_allows_deny_patterns() {
+    fn nushell_denies_with_deny_pattern() {
         t("rm -rf /")
             .deny(&["rm\\s+-rf"])
             .shell(ShellKind::Nushell)
@@ -913,7 +921,7 @@ mod tests {
     }
 
     #[test]
-    fn nushell_allows_confirm_patterns() {
+    fn nushell_confirms_with_confirm_pattern() {
         t("sudo reboot")
             .confirm(&["sudo"])
             .shell(ShellKind::Nushell)
@@ -921,7 +929,7 @@ mod tests {
     }
 
     #[test]
-    fn nushell_no_allow_patterns_uses_default() {
+    fn nushell_falls_through_to_default() {
         t("ls")
             .deny(&["rm"])
             .mode(ToolPermissionMode::Allow)
@@ -930,8 +938,17 @@ mod tests {
     }
 
     #[test]
-    fn elvish_denies_when_always_allow_configured() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_deny();
+    fn elvish_allows_with_allow_pattern() {
+        // Elvish uses `;` to separate pipelines, which brush-parser handles.
+        // The `and`/`or` special commands require parentheses around expressions.
+        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_allow();
+    }
+
+    #[test]
+    fn rc_allows_with_allow_pattern() {
+        // Rc (Plan 9) uses `;` for sequential execution, which brush-parser handles.
+        // Rc does not have `&&`/`||` operators.
+        t("ls").allow(&["^ls"]).shell(ShellKind::Rc).is_allow();
     }
 
     #[test]
