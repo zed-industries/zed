@@ -12,13 +12,14 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
+use buffer_diff::DiffHunkStatus;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::RewrapOptions;
 use editor::{
-    Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
-    actions::ExpandAllDiffHunks,
+    Anchor, Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
+    actions::ExpandAllDiffHunks, multibuffer_context_lines,
 };
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
@@ -35,18 +36,18 @@ use git::{
     StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
-    PromptLevel, ScrollStrategy, Subscription, Task, UniformListScrollHandle, WeakEntity, actions,
-    anchored, deferred, point, size, uniform_list,
+    Action, AnyElement, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Pixels,
+    Point, PromptLevel, ScrollStrategy, Subscription, Task, UniformListScrollHandle, WeakEntity,
+    actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
-use language::{Buffer, File};
+use language::{Buffer, Capability, File, OffsetRangeExt};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu;
-use multi_buffer::ExcerptInfo;
+use multi_buffer::{ExcerptInfo, PathKey};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
@@ -67,7 +68,7 @@ use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
+    ButtonLike, Checkbox, Chip, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
     PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar,
     prelude::*,
 };
@@ -78,6 +79,7 @@ use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
+    pane::SaveIntent,
 };
 actions!(
     git_panel,
@@ -110,6 +112,10 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+        /// View unstaged changes
+        ViewUnstagedChanges,
+        /// View staged changes
+        ViewStagedChanges,
     ]
 );
 
@@ -615,6 +621,8 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    unstaged_changes_editor: Option<WeakEntity<Editor>>,
+    staged_changes_editor: Option<WeakEntity<Editor>>,
     _settings_subscription: Subscription,
 }
 
@@ -781,6 +789,8 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                unstaged_changes_editor: None,
+                staged_changes_editor: None,
                 _settings_subscription,
             };
 
@@ -3290,6 +3300,333 @@ impl GitPanel {
         }
     }
 
+    fn view_staged_changes(
+        &mut self,
+        _: &ViewStagedChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing_editor) = self
+            .staged_changes_editor
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+        {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.activate_item(&existing_editor, true, true, window, cx);
+                });
+            }
+            existing_editor.focus_handle(cx).focus(window, cx);
+            return;
+        }
+
+        let Some(active_repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        let partially_staged_paths: Vec<RepoPath> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let entry = e.status_entry()?;
+                if entry.staging == StageStatus::PartiallyStaged {
+                    Some(entry.repo_path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if partially_staged_paths.is_empty() {
+            return;
+        }
+
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+        let this = cx.weak_entity();
+
+        window
+            .spawn(cx, async move |cx| {
+                let multibuffer: Entity<MultiBuffer> = cx.new(|cx| {
+                    let mut mb = MultiBuffer::new(Capability::ReadOnly);
+                    mb.set_all_diff_hunks_expanded(cx);
+                    mb.set_title("Staged Changes".into(), cx);
+                    mb
+                });
+
+                for repo_path in partially_staged_paths {
+                    let project_path = active_repo.update(cx, |repo, cx| {
+                        repo.repo_path_to_project_path(&repo_path, cx)
+                    });
+
+                    let Some(project_path) = project_path else {
+                        continue;
+                    };
+
+                    let working_copy_buffer = project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await?;
+
+                    // Get unstaged diff (Index vs Working Copy) - to get Index content
+                    let unstaged_diff = project
+                        .update(cx, |project, cx| {
+                            project.git_store().update(cx, |git_store, cx| {
+                                git_store.open_unstaged_diff(working_copy_buffer.clone(), cx)
+                            })
+                        })
+                        .await?;
+
+                    // Get uncommitted diff (HEAD vs Working Copy) - to get HEAD content
+                    let uncommitted_diff = project
+                        .update(cx, |project, cx| {
+                            project.open_uncommitted_diff(working_copy_buffer.clone(), cx)
+                        })
+                        .await?;
+
+                    let (index_text, head_text, language): (
+                        String,
+                        Option<String>,
+                        Option<Arc<language::Language>>,
+                    ) = unstaged_diff.update(cx, |unstaged, cx| {
+                        let index = unstaged.base_text_string(cx).unwrap_or_default();
+                        let head = uncommitted_diff.read(cx).base_text_string(cx);
+                        let lang = working_copy_buffer.read(cx).language().cloned();
+                        (index, head, lang)
+                    });
+
+                    // For untracked files, HEAD content is empty (file is new)
+                    let head_content = head_text.unwrap_or_default();
+
+                    let index_buffer = project
+                        .update(cx, |project, cx| project.create_buffer(false, cx))
+                        .await?;
+
+                    // Copy file info from working copy buffer for proper filename display
+                    let file =
+                        working_copy_buffer.read_with(cx, |buffer, _| buffer.file().cloned());
+
+                    let language_clone = language.clone();
+                    index_buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(index_text.as_str(), cx);
+                        if let Some(lang) = language_clone {
+                            buffer.set_language(Some(lang), cx);
+                        }
+                        if let Some(file) = file {
+                            buffer.file_updated(file, cx);
+                        }
+                        // Make buffer read-only since staged changes shouldn't be edited
+                        buffer.set_capability(Capability::ReadOnly, cx);
+                    });
+
+                    let index_snapshot = index_buffer.update(cx, |buffer, _| buffer.snapshot());
+                    let staged_diff =
+                        cx.new(|cx| buffer_diff::BufferDiff::new(&index_snapshot.text, cx));
+
+                    let update = staged_diff
+                        .update(cx, |diff, cx| {
+                            diff.update_diff(
+                                index_snapshot.text.clone(),
+                                Some(head_content.into()),
+                                true,
+                                language,
+                                cx,
+                            )
+                        })
+                        .await;
+
+                    staged_diff
+                        .update(cx, |diff, cx| {
+                            diff.set_snapshot(update, &index_snapshot.text, cx)
+                        })
+                        .await;
+
+                    let excerpt_ranges: Vec<std::ops::Range<language::Point>> = staged_diff
+                        .read_with(cx, |diff, cx| {
+                            diff.snapshot(cx)
+                                .hunks_intersecting_range(
+                                    language::Anchor::min_max_range_for_buffer(
+                                        index_snapshot.remote_id(),
+                                    ),
+                                    &index_snapshot,
+                                )
+                                .map(|hunk| hunk.buffer_range.to_point(&index_snapshot))
+                                .collect()
+                        });
+
+                    if !excerpt_ranges.is_empty() {
+                        multibuffer.update(cx, |mb, cx| {
+                            let path_key = PathKey::for_buffer(&index_buffer, cx);
+                            mb.set_excerpts_for_path(
+                                path_key,
+                                index_buffer.clone(),
+                                excerpt_ranges,
+                                multibuffer_context_lines(cx),
+                                cx,
+                            );
+                            mb.add_diff(staged_diff, cx);
+                        });
+                    }
+                }
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let editor = cx.new(|cx| {
+                        let mut editor =
+                            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+                        editor.start_temporary_diff_override();
+                        editor.disable_diagnostics(cx);
+                        editor.set_expand_all_diff_hunks(cx);
+                        editor.set_render_diff_hunk_controls(
+                            Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                            cx,
+                        );
+                        editor
+                    });
+
+                    this.update(cx, |this, _| {
+                        this.staged_changes_editor = Some(editor.downgrade());
+                    })
+                    .ok();
+
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
+    fn view_unstaged_changes(
+        &mut self,
+        _: &ViewUnstagedChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing_editor) = self
+            .unstaged_changes_editor
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+        {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.activate_item(&existing_editor, true, true, window, cx);
+                });
+            }
+            existing_editor.focus_handle(cx).focus(window, cx);
+            return;
+        }
+
+        let Some(active_repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        let partially_staged_paths: Vec<RepoPath> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let entry = e.status_entry()?;
+                if entry.staging == StageStatus::PartiallyStaged {
+                    Some(entry.repo_path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if partially_staged_paths.is_empty() {
+            return;
+        }
+
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+        let this = cx.weak_entity();
+
+        window
+            .spawn(cx, async move |cx| {
+                let multibuffer: Entity<MultiBuffer> = cx.new(|cx| {
+                    let mut mb = MultiBuffer::new(Capability::ReadWrite);
+                    mb.set_all_diff_hunks_expanded(cx);
+                    mb.set_title("Unstaged Changes".into(), cx);
+                    mb
+                });
+
+                for repo_path in partially_staged_paths {
+                    let project_path = active_repo.update(cx, |repo, cx| {
+                        repo.repo_path_to_project_path(&repo_path, cx)
+                    });
+
+                    let Some(project_path) = project_path else {
+                        continue;
+                    };
+
+                    let working_copy_buffer = project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await?;
+
+                    let unstaged_diff = project
+                        .update(cx, |project, cx| {
+                            project.git_store().update(cx, |git_store, cx| {
+                                git_store.open_unstaged_diff(working_copy_buffer.clone(), cx)
+                            })
+                        })
+                        .await?;
+
+                    let buffer_snapshot =
+                        working_copy_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                    let excerpt_ranges: Vec<std::ops::Range<language::Point>> = unstaged_diff
+                        .read_with(cx, |diff, cx| {
+                            diff.snapshot(cx)
+                                .hunks_intersecting_range(
+                                    language::Anchor::min_max_range_for_buffer(
+                                        buffer_snapshot.remote_id(),
+                                    ),
+                                    &buffer_snapshot,
+                                )
+                                .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
+                                .collect()
+                        });
+
+                    if !excerpt_ranges.is_empty() {
+                        multibuffer.update(cx, |mb, cx| {
+                            let path_key = PathKey::for_buffer(&working_copy_buffer, cx);
+                            mb.set_excerpts_for_path(
+                                path_key,
+                                working_copy_buffer.clone(),
+                                excerpt_ranges,
+                                multibuffer_context_lines(cx),
+                                cx,
+                            );
+                            mb.add_diff(unstaged_diff, cx);
+                        });
+                    }
+                }
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let editor = cx.new(|cx| {
+                        let mut editor =
+                            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+                        editor.start_temporary_diff_override();
+                        editor.disable_diagnostics(cx);
+                        editor.set_expand_all_diff_hunks(cx);
+                        editor.set_render_diff_hunk_controls(
+                            Arc::new(render_unstaged_hunk_controls),
+                            cx,
+                        );
+                        editor
+                    });
+
+                    this.update(cx, |this, _| {
+                        this.unstaged_changes_editor = Some(editor.downgrade());
+                    })
+                    .ok();
+
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
     fn toggle_tree_view(&mut self, _: &ToggleTreeView, _: &mut Window, cx: &mut Context<Self>) {
         let current_setting = GitPanelSettings::get_global(cx).tree_view;
         if let Some(workspace) = self.workspace.upgrade() {
@@ -3364,6 +3701,9 @@ impl GitPanel {
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = cx.entity().downgrade();
         self.reopen_commit_buffer(window, cx);
+        // Update the unstaged/staged changes editors to reflect the current
+        // list of partially staged files (remove old, add new)
+        self.update_changes_editors(window, cx);
         self.update_visible_entries_task = cx.spawn_in(window, async move |_, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
@@ -3374,6 +3714,231 @@ impl GitPanel {
                     .ok();
             }
         });
+    }
+
+    fn update_changes_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        let partially_staged_paths: HashSet<RepoPath> = active_repo
+            .read(cx)
+            .cached_status()
+            .filter(|entry| entry.status.staging() == StageStatus::PartiallyStaged)
+            .map(|entry| entry.repo_path.clone())
+            .collect();
+
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+
+        if let Some(editor) = self
+            .unstaged_changes_editor
+            .as_ref()
+            .and_then(|e| e.upgrade())
+        {
+            let multibuffer = editor.read(cx).buffer().clone();
+
+            let current_paths: HashSet<RepoPath> = multibuffer
+                .read(cx)
+                .all_buffers_iter()
+                .filter_map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let file = buffer.file()?;
+                    let project_path = ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    };
+                    active_repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)
+                })
+                .collect();
+
+            let paths_to_remove: Vec<RepoPath> = current_paths
+                .difference(&partially_staged_paths)
+                .cloned()
+                .collect();
+
+            let paths_to_add: Vec<RepoPath> = partially_staged_paths
+                .difference(&current_paths)
+                .cloned()
+                .collect();
+            let has_paths_to_add = !paths_to_add.is_empty();
+
+            for repo_path in &paths_to_remove {
+                let buffer_id = multibuffer.read(cx).all_buffers_iter().find_map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let file = buffer.file()?;
+                    let project_path = ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    };
+                    let path = active_repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)?;
+                    if &path == repo_path {
+                        Some(buffer.remote_id())
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(buffer_id) = buffer_id {
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+                    });
+                }
+            }
+
+            if has_paths_to_add {
+                let active_repo = active_repo.clone();
+                let project = project.clone();
+                let multibuffer = multibuffer.clone();
+
+                window
+                    .spawn(cx, async move |cx| {
+                        for repo_path in paths_to_add {
+                            let project_path = active_repo.update(cx, |repo, cx| {
+                                repo.repo_path_to_project_path(&repo_path, cx)
+                            });
+
+                            let Some(project_path) = project_path else {
+                                continue;
+                            };
+
+                            let working_copy_buffer = project
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                .await?;
+
+                            let unstaged_diff = project
+                                .update(cx, |project, cx| {
+                                    project.git_store().update(cx, |git_store, cx| {
+                                        git_store
+                                            .open_unstaged_diff(working_copy_buffer.clone(), cx)
+                                    })
+                                })
+                                .await?;
+
+                            let buffer_snapshot =
+                                working_copy_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                            let excerpt_ranges: Vec<std::ops::Range<language::Point>> =
+                                unstaged_diff.read_with(cx, |diff, cx| {
+                                    diff.snapshot(cx)
+                                        .hunks_intersecting_range(
+                                            language::Anchor::min_max_range_for_buffer(
+                                                buffer_snapshot.remote_id(),
+                                            ),
+                                            &buffer_snapshot,
+                                        )
+                                        .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
+                                        .collect()
+                                });
+
+                            if !excerpt_ranges.is_empty() {
+                                multibuffer.update(cx, |mb, cx| {
+                                    let path_key = PathKey::for_buffer(&working_copy_buffer, cx);
+                                    mb.set_excerpts_for_path(
+                                        path_key,
+                                        working_copy_buffer.clone(),
+                                        excerpt_ranges,
+                                        multibuffer_context_lines(cx),
+                                        cx,
+                                    );
+                                    mb.add_diff(unstaged_diff, cx);
+                                });
+                            }
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+            }
+
+            let is_empty = multibuffer.read(cx).all_buffers_iter().next().is_none();
+            if is_empty && !has_paths_to_add {
+                self.unstaged_changes_editor = None;
+                if let Some(workspace) = workspace.upgrade() {
+                    let entity_id = editor.entity_id();
+                    workspace.update(cx, |workspace, cx| {
+                        for pane in workspace.panes().iter().cloned() {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(entity_id, SaveIntent::Close, window, cx)
+                                    .detach();
+                            });
+                        }
+                    });
+                }
+            }
+        }
+
+        if let Some(editor) = self
+            .staged_changes_editor
+            .as_ref()
+            .and_then(|e| e.upgrade())
+        {
+            let multibuffer = editor.read(cx).buffer().clone();
+
+            let current_paths: HashSet<RepoPath> = multibuffer
+                .read(cx)
+                .all_buffers_iter()
+                .filter_map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let file = buffer.file()?;
+                    let project_path = ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    };
+                    active_repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)
+                })
+                .collect();
+
+            let paths_to_remove: Vec<RepoPath> = current_paths
+                .difference(&partially_staged_paths)
+                .cloned()
+                .collect();
+
+            for repo_path in &paths_to_remove {
+                let buffer_id = multibuffer.read(cx).all_buffers_iter().find_map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let file = buffer.file()?;
+                    let project_path = ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    };
+                    let path = active_repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)?;
+                    if &path == repo_path {
+                        Some(buffer.remote_id())
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(buffer_id) = buffer_id {
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+                    });
+                }
+            }
+
+            let is_empty = multibuffer.read(cx).all_buffers_iter().next().is_none();
+            if is_empty {
+                self.staged_changes_editor = None;
+                if let Some(workspace) = workspace.upgrade() {
+                    let entity_id = editor.entity_id();
+                    workspace.update(cx, |workspace, cx| {
+                        for pane in workspace.panes().iter().cloned() {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(entity_id, SaveIntent::Close, window, cx)
+                                    .detach();
+                            });
+                        }
+                    });
+                }
+            }
+        }
     }
 
     fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4819,6 +5384,10 @@ impl GitPanel {
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .separator()
+                .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
+                .action("Staged Changes", ViewStagedChanges.boxed_clone())
+                .separator()
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
@@ -5013,6 +5582,22 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
+            .when(stage_status == StageStatus::PartiallyStaged, |el| {
+                let unstaged_indicator_id: ElementId =
+                    ElementId::Name(format!("partial_unstaged_indicator_{}", ix).into());
+                el.child(
+                    h_flex().gap_0p5().child(
+                        div()
+                            .id(unstaged_indicator_id)
+                            .cursor_pointer()
+                            .child(Chip::new("U").label_color(Color::Warning))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.view_unstaged_changes(&ViewUnstagedChanges, window, cx);
+                                cx.stop_propagation();
+                            })),
+                    ),
+                )
+            })
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -5458,6 +6043,8 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::file_history))
+            .on_action(cx.listener(Self::view_unstaged_changes))
+            .on_action(cx.listener(Self::view_staged_changes))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
@@ -6127,6 +6714,96 @@ fn open_output(
     });
 
     workspace.add_item_to_center(Box::new(editor), window, cx);
+}
+
+fn render_unstaged_hunk_controls(
+    row: u32,
+    _status: &DiffHunkStatus,
+    hunk_range: Range<Anchor>,
+    _is_created_file: bool,
+    line_height: Pixels,
+    editor: &Entity<Editor>,
+    _window: &mut Window,
+    cx: &mut gpui::App,
+) -> AnyElement {
+    h_flex()
+        .h(line_height)
+        .mr_1()
+        .gap_1()
+        .px_0p5()
+        .pb_1()
+        .border_x_1()
+        .border_b_1()
+        .border_color(cx.theme().colors().border_variant)
+        .rounded_b_lg()
+        .bg(cx.theme().colors().editor_background)
+        .block_mouse_except_scroll()
+        .shadow_md()
+        .child(
+            Button::new(("stage", row as u64), "Stage")
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |_window, cx| {
+                        Tooltip::for_action_in("Stage Hunk", &ToggleStaged, &focus_handle, cx)
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    let hunk_range = hunk_range.clone();
+                    move |_event, _window, cx| {
+                        stage_unstaged_hunk(editor.clone(), hunk_range.clone(), cx);
+                    }
+                }),
+        )
+        .into_any_element()
+}
+
+fn stage_unstaged_hunk(editor: Entity<Editor>, hunk_range: Range<Anchor>, cx: &mut App) {
+    let Some((project, buffer_id, buffer_range)) = editor.update(cx, |editor, cx| {
+        let project = editor.project().cloned()?;
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let hunks: Vec<_> = editor
+            .diff_hunks_in_ranges(&[hunk_range], &snapshot)
+            .collect();
+
+        let hunk = hunks.first()?;
+        Some((project, hunk.buffer_id, hunk.buffer_range.clone()))
+    }) else {
+        return;
+    };
+
+    let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+        return;
+    };
+
+    cx.spawn(async move |cx| {
+        let uncommitted_diff = project
+            .update(cx, |project, cx| {
+                project.git_store().update(cx, |git_store, cx| {
+                    git_store.open_uncommitted_diff(buffer.clone(), cx)
+                })
+            })
+            .await?;
+
+        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            let snapshot = diff.snapshot(cx);
+            let hunks: Vec<_> = snapshot
+                .hunks_intersecting_range(buffer_range, &buffer_snapshot)
+                .collect();
+
+            if !hunks.is_empty() {
+                diff.stage_or_unstage_hunks(true, &hunks, &buffer_snapshot, file_exists, cx);
+            }
+        });
+
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 pub(crate) fn show_error_toast(
