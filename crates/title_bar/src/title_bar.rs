@@ -21,7 +21,7 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
@@ -962,13 +962,9 @@ impl TitleBar {
                     let user_login = user_login.clone();
 
                     let (plan_name, label_color, bg_color) = match plan {
-                        None | Some(Plan::V2(PlanV2::ZedFree)) => {
-                            ("Free", Color::Default, free_chip_bg)
-                        }
-                        Some(Plan::V2(PlanV2::ZedProTrial)) => {
-                            ("Pro Trial", Color::Accent, pro_chip_bg)
-                        }
-                        Some(Plan::V2(PlanV2::ZedPro)) => ("Pro", Color::Accent, pro_chip_bg),
+                        None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                        Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
+                        Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
                     };
 
                     menu.when(is_signed_in, |this| {

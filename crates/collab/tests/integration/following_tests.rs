@@ -1,5 +1,5 @@
 #![allow(clippy::reversed_empty_ranges)]
-use crate::tests::TestServer;
+use crate::TestServer;
 use call::{ActiveCall, ParticipantLocation};
 use client::ChannelId;
 use collab_ui::{
@@ -462,7 +462,7 @@ async fn test_basic_following(
 
     // #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
-        use crate::rpc::RECONNECT_TIMEOUT;
+        use collab::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
         use workspace::{
             dock::{DockPosition, test::TestPanel},

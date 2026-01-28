@@ -37,6 +37,7 @@ languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
 node_runtime.workspace = true
+open_ai.workspace = true
 
 paths.workspace = true
 project.workspace = true

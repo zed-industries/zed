@@ -4314,14 +4314,12 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Long running task".to_string(),
-                    task_prompt: "Do a very long task that takes forever".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Long running task".to_string(),
+                task_prompt: "Do a very long task that takes forever".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream.clone(),
             cx,
@@ -4608,15 +4606,8 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         parent_tools,
     ));
 
-    let subagent_configs = vec![crate::SubagentConfig {
-        label: "Test".to_string(),
-        task_prompt: "Do something".to_string(),
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-        timeout_ms: None,
-        allowed_tools: Some(vec!["nonexistent_tool".to_string()]),
-    }];
-    let result = tool.validate_subagents(&subagent_configs);
+    let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
+    let result = tool.validate_allowed_tools(&allowed_tools);
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4938,14 +4929,12 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     let result = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Test".to_string(),
-                    task_prompt: "Do something".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Test".to_string(),
+                task_prompt: "Do something".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -5016,14 +5005,12 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Research task".to_string(),
-                    task_prompt: "Find all TODOs in the codebase".to_string(),
-                    summary_prompt: "Summarize what you found".to_string(),
-                    context_low_prompt: "Context low, wrap up".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Research task".to_string(),
+                task_prompt: "Find all TODOs in the codebase".to_string(),
+                summary_prompt: "Summarize what you found".to_string(),
+                context_low_prompt: "Context low, wrap up".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,

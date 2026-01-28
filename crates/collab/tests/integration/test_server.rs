@@ -1,9 +1,3 @@
-use crate::{
-    AppState, Config,
-    db::{NewUserParams, UserId, tests::TestDb},
-    executor::Executor,
-    rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
-};
 use anyhow::anyhow;
 use call::ActiveCall;
 use channel::{ChannelBuffer, ChannelStore};
@@ -13,6 +7,12 @@ use client::{
     proto::PeerId,
 };
 use clock::FakeSystemClock;
+use collab::{
+    AppState, Config,
+    db::{NewUserParams, UserId},
+    executor::Executor,
+    rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
+};
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 
@@ -48,6 +48,8 @@ use util::path;
 use workspace::{Workspace, WorkspaceStore};
 
 use livekit_client::test::TestServer as LivekitTestServer;
+
+use crate::db_tests::TestDb;
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,

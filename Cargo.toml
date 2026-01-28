@@ -278,6 +278,7 @@ clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
+collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
@@ -527,8 +528,8 @@ fancy-regex = "0.16.0"
 fork = "0.4.0"
 futures = "0.3"
 futures-lite = "1.13"
-gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "09acfdf2bd5c1d6254abefd609c808ff73547b2c" }
-git2 = { version = "0.20.1", default-features = false }
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "c9eac0ed361583e1072860d96776fa52775b82ac" }
+git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
 globset = "0.4"
 handlebars = "4.3"
 heck = "0.5"
@@ -793,8 +794,8 @@ features = [
 
 [patch.crates-io]
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 

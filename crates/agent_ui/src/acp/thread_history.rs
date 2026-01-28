@@ -170,39 +170,47 @@ impl AcpThreadHistory {
         self.sessions.clear();
         self.visible_items.clear();
         self.selected_index = 0;
-        self.refresh_sessions(false, cx);
 
-        self._watch_task = self.session_list.as_ref().and_then(|session_list| {
-            let rx = session_list.watch(cx)?;
-            Some(cx.spawn(async move |this, cx| {
-                while let Ok(first_update) = rx.recv().await {
-                    let mut updates = vec![first_update];
-                    while let Ok(update) = rx.try_recv() {
-                        updates.push(update);
-                    }
+        let Some(session_list) = self.session_list.as_ref() else {
+            self._watch_task = None;
+            cx.notify();
+            return;
+        };
+        let Some(rx) = session_list.watch(cx) else {
+            // No watch support - do a one-time refresh
+            self._watch_task = None;
+            self.refresh_sessions(false, cx);
+            return;
+        };
+        session_list.notify_refresh();
 
-                    let needs_refresh = updates
-                        .iter()
-                        .any(|u| matches!(u, SessionListUpdate::Refresh));
+        self._watch_task = Some(cx.spawn(async move |this, cx| {
+            while let Ok(first_update) = rx.recv().await {
+                let mut updates = vec![first_update];
+                // Collect any additional updates that are already in the channel
+                while let Ok(update) = rx.try_recv() {
+                    updates.push(update);
+                }
 
-                    this.update(cx, |this, cx| {
-                        // We will refresh the whole list anyway, so no need to apply incremental updates or do several refreshes
-                        if needs_refresh {
-                            this.refresh_sessions(true, cx);
-                        } else {
-                            for update in updates {
-                                if let SessionListUpdate::SessionInfo { session_id, update } =
-                                    update
-                                {
-                                    this.apply_info_update(session_id, update, cx);
-                                }
+                let needs_refresh = updates
+                    .iter()
+                    .any(|u| matches!(u, SessionListUpdate::Refresh));
+
+                this.update(cx, |this, cx| {
+                    // We will refresh the whole list anyway, so no need to apply incremental updates or do several refreshes
+                    if needs_refresh {
+                        this.refresh_sessions(true, cx);
+                    } else {
+                        for update in updates {
+                            if let SessionListUpdate::SessionInfo { session_id, update } = update {
+                                this.apply_info_update(session_id, update, cx);
                             }
                         }
-                    })
-                    .ok();
-                }
-            }))
-        });
+                    }
+                })
+                .ok();
+            }
+        }));
     }
 
     fn apply_info_update(
@@ -311,8 +319,10 @@ impl AcpThreadHistory {
         self.session_list.is_some()
     }
 
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.refresh_sessions(true, cx);
+    pub fn refresh(&mut self, _cx: &mut Context<Self>) {
+        if let Some(session_list) = &self.session_list {
+            session_list.notify_refresh();
+        }
     }
 
     pub fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
@@ -1083,6 +1093,10 @@ mod tests {
 
         fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
             Some(self.updates_rx.clone())
+        }
+
+        fn notify_refresh(&self) {
+            self.send_update(SessionListUpdate::Refresh);
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

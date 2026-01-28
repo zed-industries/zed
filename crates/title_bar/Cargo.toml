@@ -36,7 +36,7 @@ call.workspace = true
 channel.workspace = true
 chrono.workspace = true
 client.workspace = true
-cloud_llm_client.workspace = true
+cloud_api_types.workspace = true
 db.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }

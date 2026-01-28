@@ -943,7 +943,6 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
-    focus_before_deactivation: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
@@ -1255,14 +1254,6 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, window, cx| {
-                        if active {
-                            if let Some(focus_id) = window.focus_before_deactivation.take() {
-                                window.focus = Some(focus_id);
-                            }
-                        } else {
-                            window.focus_before_deactivation = window.focus.take();
-                        }
-
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
@@ -1420,7 +1411,6 @@ impl Window {
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
-            focus_before_deactivation: None,
             focus_enabled: true,
             pending_input: None,
             pending_modifier: ModifierState::default(),
@@ -2052,10 +2042,22 @@ impl Window {
         element_id: ElementId,
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
-        self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+        self.with_id(element_id, |this| {
+            let global_id = GlobalElementId(Arc::from(&*this.element_id_stack));
 
-        let result = f(&global_id, self);
+            f(&global_id, this)
+        })
+    }
+
+    /// Calls the provided closure with the element ID pushed on the stack.
+    #[inline]
+    pub fn with_id<R>(
+        &mut self,
+        element_id: impl Into<ElementId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id.into());
+        let result = f(self);
         self.element_id_stack.pop();
         result
     }
@@ -2848,11 +2850,6 @@ impl Window {
                 }
             })
         })
-    }
-
-    /// Immediately push an element ID onto the stack. Useful for simplifying IDs in lists
-    pub fn with_id<R>(&mut self, id: impl Into<ElementId>, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.with_global_id(id.into(), |_, window| f(window))
     }
 
     /// Use a piece of state that exists as long this element is being rendered in consecutive frames, without needing to specify a key
@@ -3648,6 +3645,7 @@ impl Window {
         self.rendered_entity_stack.last().copied().unwrap()
     }
 
+    #[inline]
     pub(crate) fn with_rendered_view<R>(
         &mut self,
         id: EntityId,

@@ -121,6 +121,8 @@ actions!(
         ResetTrialUpsell,
         /// Resets the trial end upsell notification.
         ResetTrialEndUpsell,
+        /// Opens the "Add Context" menu in the message editor.
+        OpenAddContextMenu,
         /// Continues the current thread.
         ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
@@ -276,7 +278,7 @@ pub fn init(
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
             move |workspace: &mut Workspace,
-                  _: &zed_actions::AgentRegistry,
+                  _: &zed_actions::AcpRegistry,
                   window: &mut Window,
                   cx: &mut Context<Workspace>| {
                 let existing = workspace

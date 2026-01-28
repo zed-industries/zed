@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
 use std::time::Duration;
 
+use collections::HashSet;
 use gpui::BackgroundExecutor;
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -16,7 +17,7 @@ use sqlx::migrate::MigrateDatabase;
 
 use self::migrations::run_database_migrations;
 
-use super::*;
+use collab::db::*;
 
 pub struct TestDb {
     pub db: Option<Arc<Database>>,
@@ -121,16 +122,20 @@ impl TestDb {
 #[macro_export]
 macro_rules! test_both_dbs {
     ($test_name:ident, $postgres_test_name:ident, $sqlite_test_name:ident) => {
-        #[cfg(target_os = "macos")]
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
-            let test_db = $crate::db::TestDb::postgres(cx.executor().clone());
+            // In CI, only run postgres tests on Linux (where we have the postgres service).
+            // Locally, always run them (assuming postgres is available).
+            if std::env::var("CI").is_ok() && !cfg!(target_os = "linux") {
+                return;
+            }
+            let test_db = $crate::db_tests::TestDb::postgres(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
 
         #[gpui::test]
         async fn $sqlite_test_name(cx: &mut gpui::TestAppContext) {
-            let test_db = $crate::db::TestDb::sqlite(cx.executor().clone());
+            let test_db = $crate::db_tests::TestDb::sqlite(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
     };

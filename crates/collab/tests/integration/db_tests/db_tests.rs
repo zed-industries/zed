@@ -1,7 +1,11 @@
-use super::*;
 use crate::test_both_dbs;
+
+use super::*;
 use chrono::Utc;
+use collab::db::RoomId;
+use collab::db::*;
 use pretty_assertions::assert_eq;
+use rpc::ConnectionId;
 use std::sync::Arc;
 
 test_both_dbs!(
@@ -538,10 +542,14 @@ fn test_fuzzy_like_string() {
     assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
 }
 
-#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_fuzzy_search_users(cx: &mut gpui::TestAppContext) {
-    let test_db = tests::TestDb::postgres(cx.executor());
+    // In CI, only run postgres tests on Linux (where we have the postgres service).
+    // Locally, always run them (assuming postgres is available).
+    if std::env::var("CI").is_ok() && !cfg!(target_os = "linux") {
+        return;
+    }
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
     for (i, github_login) in [
         "California",
@@ -594,7 +602,7 @@ test_both_dbs!(
 );
 
 async fn test_upsert_shared_thread(db: &Arc<Database>) {
-    use crate::db::SharedThreadId;
+    use collab::db::SharedThreadId;
     use uuid::Uuid;
 
     let user_id = new_test_user(db, "user1@example.com").await;
@@ -624,7 +632,7 @@ test_both_dbs!(
 );
 
 async fn test_upsert_shared_thread_updates_existing(db: &Arc<Database>) {
-    use crate::db::SharedThreadId;
+    use collab::db::SharedThreadId;
     use uuid::Uuid;
 
     let user_id = new_test_user(db, "user1@example.com").await;
@@ -665,7 +673,7 @@ test_both_dbs!(
 );
 
 async fn test_cannot_update_another_users_shared_thread(db: &Arc<Database>) {
-    use crate::db::SharedThreadId;
+    use collab::db::SharedThreadId;
     use uuid::Uuid;
 
     let user1_id = new_test_user(db, "user1@example.com").await;
@@ -694,7 +702,7 @@ test_both_dbs!(
 );
 
 async fn test_get_nonexistent_shared_thread(db: &Arc<Database>) {
-    use crate::db::SharedThreadId;
+    use collab::db::SharedThreadId;
     use uuid::Uuid;
 
     let result = db

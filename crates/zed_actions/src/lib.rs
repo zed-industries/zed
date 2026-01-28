@@ -104,11 +104,11 @@ pub struct Extensions {
     pub id: Option<String>,
 }
 
-/// Opens the external agent registry.
+/// Opens the ACP registry.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
-pub struct AgentRegistry;
+pub struct AcpRegistry;
 
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
@@ -649,5 +649,35 @@ pub mod wsl_actions {
     pub struct OpenWsl {
         #[serde(default)]
         pub create_new_window: bool,
+    }
+}
+
+pub mod preview {
+    pub mod markdown {
+        use gpui::actions;
+
+        actions!(
+            markdown,
+            [
+                /// Opens a markdown preview for the current file.
+                OpenPreview,
+                /// Opens a markdown preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+
+    pub mod svg {
+        use gpui::actions;
+
+        actions!(
+            svg,
+            [
+                /// Opens an SVG preview for the current file.
+                OpenPreview,
+                /// Opens an SVG preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
     }
 }

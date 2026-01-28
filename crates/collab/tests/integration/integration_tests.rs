@@ -1,9 +1,6 @@
 use crate::{
-    rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{
-        RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
-        room_participants,
-    },
+    RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
+    room_participants,
 };
 use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -11,6 +8,7 @@ use assistant_text_thread::TextThreadStore;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
+use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{StreamExt as _, channel::mpsc};

@@ -1,4 +1,4 @@
-use crate::db::ChannelRole;
+use collab::db::*;
 
 use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan, run_randomized_test};
 use anyhow::Result;
@@ -13,10 +13,7 @@ use std::{
 };
 use text::Bias;
 
-#[gpui::test(
-    iterations = 100,
-    on_failure = "crate::tests::save_randomized_test_plan"
-)]
+#[gpui::test(iterations = 100, on_failure = "crate::save_randomized_test_plan")]
 async fn test_random_channel_buffers(
     cx: &mut TestAppContext,
     executor: BackgroundExecutor,

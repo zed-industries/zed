@@ -27,6 +27,7 @@ language.workspace = true
 linkify.workspace = true
 log.workspace = true
 pulldown-cmark.workspace = true
+settings.workspace = true
 sum_tree.workspace = true
 theme.workspace = true
 ui.workspace = true
@@ -37,6 +38,7 @@ assets.workspace = true
 env_logger.workspace = true
 fs = {workspace = true, features = ["test-support"]}
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 settings = { workspace = true, features = ["test-support"] }
