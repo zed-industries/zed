@@ -2268,6 +2268,7 @@ impl CollabPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+
         let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };

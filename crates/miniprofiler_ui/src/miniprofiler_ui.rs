@@ -8,12 +8,12 @@ use std::{
 use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, Render, SerializedTaskTiming, SharedString, StatefulInteractiveElement,
-    Styled, Task, TaskTiming, TitlebarOptions, UniformListScrollHandle, WindowBounds, WindowHandle,
+    Styled, Task, TaskTiming, TitlebarOptions, UniformListScrollHandle, WeakEntity, WindowBounds,
     WindowOptions, div, prelude::FluentBuilder, px, relative, size, uniform_list,
 };
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace,
+    Workspace,
     ui::{
         ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, Divider,
         ScrollableHandle as _, ToggleState, Tooltip, WithScrollbar, h_flex, v_flex,
@@ -22,13 +22,10 @@ use workspace::{
 use zed_actions::OpenPerformanceProfiler;
 
 pub fn init(startup_time: Instant, cx: &mut App) {
-    cx.observe_new(move |workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action(move |workspace, _: &OpenPerformanceProfiler, window, cx| {
-            let window_handle = window
-                .window_handle()
-                .downcast::<MultiWorkspace>()
-                .expect("MultiWorkspace is root Window");
-            open_performance_profiler(startup_time, workspace, window_handle, cx);
+    cx.observe_new(move |workspace: &mut workspace::Workspace, _, cx| {
+        let workspace_handle = cx.entity().downgrade();
+        workspace.register_action(move |_workspace, _: &OpenPerformanceProfiler, window, cx| {
+            open_performance_profiler(startup_time, workspace_handle.clone(), window, cx);
         });
     })
     .detach();
@@ -36,8 +33,8 @@ pub fn init(startup_time: Instant, cx: &mut App) {
 
 fn open_performance_profiler(
     startup_time: Instant,
-    _workspace: &mut workspace::Workspace,
-    workspace_handle: WindowHandle<MultiWorkspace>,
+    workspace_handle: WeakEntity<Workspace>,
+    _window: &mut gpui::Window,
     cx: &mut App,
 ) {
     let existing_window = cx
@@ -48,7 +45,7 @@ fn open_performance_profiler(
     if let Some(existing_window) = existing_window {
         existing_window
             .update(cx, |profiler_window, window, _cx| {
-                profiler_window.workspace = Some(workspace_handle);
+                profiler_window.workspace = Some(workspace_handle.clone());
                 window.activate_window();
             })
             .log_err();
@@ -97,14 +94,14 @@ pub struct ProfilerWindow {
     include_self_timings: ToggleState,
     autoscroll: bool,
     scroll_handle: UniformListScrollHandle,
-    workspace: Option<WindowHandle<MultiWorkspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     _refresh: Option<Task<()>>,
 }
 
 impl ProfilerWindow {
     pub fn new(
         startup_time: Instant,
-        workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+        workspace_handle: Option<WeakEntity<Workspace>>,
         cx: &mut App,
     ) -> Entity<Self> {
         let entity = cx.new(|cx| ProfilerWindow {
@@ -280,7 +277,7 @@ impl Render for ProfilerWindow {
                                 Button::new("export-data", "Save")
                                     .style(ButtonStyle::Filled)
                                     .on_click(cx.listener(|this, _, _window, cx| {
-                                        let Some(multi_workspace) = this.workspace else {
+                                        let Some(workspace) = this.workspace.as_ref() else {
                                             return;
                                         };
 
@@ -290,17 +287,14 @@ impl Render for ProfilerWindow {
                                         let timings =
                                             SerializedTaskTiming::convert(this.startup_time, &data);
 
-                                        let active_path = multi_workspace
-                                            .read_with(cx, |multi_workspace, cx| {
-                                                multi_workspace
-                                                    .workspace()
-                                                    .read(cx)
-                                                    .most_recent_active_path(cx)
+                                        let active_path = workspace
+                                            .read_with(cx, |workspace, cx| {
+                                                workspace.most_recent_active_path(cx)
                                             })
                                             .log_err()
                                             .flatten()
                                             .and_then(|p| p.parent().map(|p| p.to_owned()))
-                                            .unwrap_or_else(|| PathBuf::default());
+                                            .unwrap_or_else(PathBuf::default);
 
                                         let path = cx.prompt_for_new_path(
                                             &active_path,

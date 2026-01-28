@@ -126,7 +126,6 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             )
         })
     })?;
-
     cx.run_until_parked();
     let session = workspace.read_with(cx, |workspace, cx| {
         workspace

@@ -449,8 +449,12 @@ async fn open_remote_worktree(
         .downcast::<MultiWorkspace>()
         .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
 
-    let connect_task = workspace_window.update(cx, |multi_workspace, window, cx| {
-        let workspace = multi_workspace.workspace().clone();
+    // Capture the workspace at call time - this is where the modal will be shown/dismissed
+    let workspace: WeakEntity<Workspace> =
+        workspace_window.update(cx, |mw, _, _| mw.workspace().downgrade())?;
+
+    let connect_task = workspace_window.update(cx, |_, window, cx| {
+        let workspace = workspace.upgrade().context("workspace released")?;
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
@@ -463,21 +467,25 @@ async fn open_remote_worktree(
                 .prompt
                 .clone();
 
-            connect(
-                ConnectionIdentifier::setup(),
-                connection_options.clone(),
-                prompt,
-                window,
-                cx,
+            anyhow::Ok(
+                connect(
+                    ConnectionIdentifier::setup(),
+                    connection_options.clone(),
+                    prompt,
+                    window,
+                    cx,
+                )
+                .prompt_err("Failed to connect", window, cx, |_, _, _| None),
             )
-            .prompt_err("Failed to connect", window, cx, |_, _, _| None)
         })
-    })?;
+    })??;
 
     let session = connect_task.await;
 
-    workspace_window.update(cx, |multi_workspace, _window, cx| {
-        let workspace = multi_workspace.workspace().clone();
+    workspace_window.update(cx, |_, _window, cx| {
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
         workspace.update(cx, |workspace, cx| {
             if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                 prompt.update(cx, |prompt, cx| prompt.finished(cx))

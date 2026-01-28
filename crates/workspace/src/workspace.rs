@@ -8189,6 +8189,9 @@ async fn join_channel_internal(
     active_call: &Entity<ActiveCall>,
     cx: &mut AsyncApp,
 ) -> Result<bool> {
+    let requesting_workspace =
+        requesting_window.and_then(|w| w.update(cx, |mw, _, _| mw.workspace().clone()).ok());
+
     let (should_prompt, open_room) = active_call.update(cx, |active_call, cx| {
         let Some(room) = active_call.room().map(|room| room.read(cx)) else {
             return (false, None);
@@ -8291,10 +8294,9 @@ async fn join_channel_internal(
         // If you are the first to join a channel, see if you should share your project.
         if room.remote_participants().is_empty()
             && !room.local_participant_is_guest()
-            && let Some(multi_workspace_window) = requesting_window
+            && let Some(workspace) = requesting_workspace
         {
-            let project = multi_workspace_window.update(cx, |multi_workspace, _, cx| {
-                let workspace = multi_workspace.workspace().read(cx);
+            let project = workspace.update(cx, |workspace, cx| {
                 let project = workspace.project.read(cx);
 
                 if !CallSettings::get_global(cx).share_on_join {
@@ -8308,12 +8310,12 @@ async fn join_channel_internal(
                             .is_some_and(|entry| entry.is_dir())
                     })
                 {
-                    Some(multi_workspace.workspace().read(cx).project.clone())
+                    Some(workspace.project.clone())
                 } else {
                     None
                 }
             });
-            if let Ok(Some(project)) = project {
+            if let Some(project) = project {
                 return Some(cx.spawn(async move |room, cx| {
                     room.update(cx, |room, cx| room.share_project(project, cx))?
                         .await?;

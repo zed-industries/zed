@@ -628,6 +628,8 @@ pub fn connect(
     })
 }
 
+// TODO! All the changes to this function need a rethink. They're interacting with the window
+// but we want them to interact with the multiworkspace instead, so they don't trash running agents
 pub async fn open_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,

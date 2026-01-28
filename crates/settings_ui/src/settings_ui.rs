@@ -40,7 +40,9 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldMode, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations};
+use workspace::{
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+};
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
@@ -1487,14 +1489,11 @@ impl SettingsWindow {
                 .workspaces()
                 .iter()
                 .filter_map(|space| {
-                    space
-                        .downcast::<MultiWorkspace>()
-                        .and_then(|handle| {
-                            handle
-                                .read(cx)
-                                .ok()
-                                .map(|multi_workspace| multi_workspace.workspace().read(cx).project().clone())
+                    space.downcast::<MultiWorkspace>().and_then(|handle| {
+                        handle.read(cx).ok().map(|multi_workspace| {
+                            multi_workspace.workspace().read(cx).project().clone()
                         })
+                    })
                 })
                 .collect::<Vec<_>>()
             {
@@ -3261,57 +3260,68 @@ impl SettingsWindow {
                 };
                 original_window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.workspace().clone().update(cx, |workspace, cx| {
-                            workspace
-                                .with_local_or_wsl_workspace(window, cx, |workspace, window, cx| {
-                                    let project = workspace.project().clone();
+                        multi_workspace
+                            .workspace()
+                            .clone()
+                            .update(cx, |workspace, cx| {
+                                workspace
+                                    .with_local_or_wsl_workspace(
+                                        window,
+                                        cx,
+                                        |workspace, window, cx| {
+                                            let project = workspace.project().clone();
 
-                                    cx.spawn_in(window, async move |workspace, cx| {
-                                        let (config_dir, settings_file) =
-                                            project.update(cx, |project, cx| {
-                                                (
-                                                    project.try_windows_path_to_wsl(
-                                                        paths::config_dir().as_path(),
-                                                        cx,
-                                                    ),
-                                                    project.try_windows_path_to_wsl(
-                                                        paths::settings_file().as_path(),
-                                                        cx,
-                                                    ),
-                                                )
-                                            });
-                                        let config_dir = config_dir.await?;
-                                        let settings_file = settings_file.await?;
-                                        project
-                                            .update(cx, |project, cx| {
-                                                project.find_or_create_worktree(&config_dir, false, cx)
+                                            cx.spawn_in(window, async move |workspace, cx| {
+                                                let (config_dir, settings_file) =
+                                                    project.update(cx, |project, cx| {
+                                                        (
+                                                            project.try_windows_path_to_wsl(
+                                                                paths::config_dir().as_path(),
+                                                                cx,
+                                                            ),
+                                                            project.try_windows_path_to_wsl(
+                                                                paths::settings_file().as_path(),
+                                                                cx,
+                                                            ),
+                                                        )
+                                                    });
+                                                let config_dir = config_dir.await?;
+                                                let settings_file = settings_file.await?;
+                                                project
+                                                    .update(cx, |project, cx| {
+                                                        project.find_or_create_worktree(
+                                                            &config_dir,
+                                                            false,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .await
+                                                    .ok();
+                                                workspace
+                                                    .update_in(cx, |workspace, window, cx| {
+                                                        workspace.open_paths(
+                                                            vec![settings_file],
+                                                            OpenOptions {
+                                                                visible: Some(OpenVisible::None),
+                                                                ..Default::default()
+                                                            },
+                                                            None,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })?
+                                                    .await;
+
+                                                workspace.update_in(cx, |_, window, cx| {
+                                                    window.activate_window();
+                                                    cx.notify();
+                                                })
                                             })
-                                            .await
-                                            .ok();
-                                        workspace
-                                            .update_in(cx, |workspace, window, cx| {
-                                                workspace.open_paths(
-                                                    vec![settings_file],
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    None,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })?
-                                            .await;
-
-                                        workspace.update_in(cx, |_, window, cx| {
-                                            window.activate_window();
-                                            cx.notify();
-                                        })
-                                    })
+                                            .detach();
+                                        },
+                                    )
                                     .detach();
-                                })
-                                .detach();
-                        });
+                            });
                     })
                     .ok();
 
@@ -3378,15 +3388,18 @@ impl SettingsWindow {
 
                             multi_workspace
                                 .update_in(cx, |multi_workspace, window, cx| {
-                                    multi_workspace.workspace().clone().update(cx, |workspace, cx| {
-                                        workspace.open_path(
-                                            (worktree_id, settings_path.clone()),
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        )
-                                    })
+                                    multi_workspace.workspace().clone().update(
+                                        cx,
+                                        |workspace, cx| {
+                                            workspace.open_path(
+                                                (worktree_id, settings_path.clone()),
+                                                None,
+                                                true,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )
                                 })
                                 .ok()?
                                 .await
@@ -3611,18 +3624,31 @@ fn all_projects(
                 .read(cx)
                 .workspaces()
                 .iter()
-                .filter_map(|handle| {
+                .flat_map(|handle| {
                     handle
                         .downcast::<MultiWorkspace>()
                         .and_then(|h| h.read(cx).ok())
-                        .map(|multi_workspace| multi_workspace.workspace().read(cx).project().clone())
+                        .map(|multi_workspace| {
+                            multi_workspace
+                                .workspaces()
+                                .iter()
+                                .map(|workspace| workspace.read(cx).project().clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
                 })
-                .chain(window.and_then(|handle| {
-                    handle
-                        .read(cx)
-                        .ok()
-                        .map(|multi_workspace| multi_workspace.workspace().read(cx).project().clone())
-                }))
+                .chain(
+                    window
+                        .and_then(|handle| handle.read(cx).ok())
+                        .into_iter()
+                        .flat_map(|multi_workspace| {
+                            multi_workspace
+                                .workspaces()
+                                .iter()
+                                .map(|workspace| workspace.read(cx).project().clone())
+                                .collect::<Vec<_>>()
+                        }),
+                )
         })
         .into_iter()
         .flatten()
