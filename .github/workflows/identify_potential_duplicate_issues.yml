@@ -129,7 +129,7 @@ jobs:
             Fetch issue #${{ steps.check-type.outputs.issue_number }} from zed-industries/zed using mcp__github__get_issue and tell me its title.
 
           claude_args: |
-            --max-turns 1
+            --max-turns 2
             --allowedTools mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues
 
       - name: Log analysis results
