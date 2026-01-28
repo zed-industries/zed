@@ -15134,6 +15134,7 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more 0.99.20",
+ "gpui",
  "log",
  "schemars",
  "serde",
