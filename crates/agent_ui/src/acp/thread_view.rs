@@ -349,23 +349,16 @@ pub struct AcpThreadView {
 }
 
 impl AcpThreadView {
-    fn as_ready(&self) -> Option<&ReadyThreadState> {
+    pub fn as_ready(&self) -> Option<&ReadyThreadState> {
         match &self.thread_state {
-            ThreadState::Ready(ready) => Some(ready),
-            _ => None,
-        }
-    }
-    
-    fn as_ready_mut(&mut self) -> Option<&mut ReadyThreadState> {
-        match &mut self.thread_state {
             ThreadState::Ready(ready) => Some(ready),
             _ => None,
         }
     }
 }
 
-struct ReadyThreadState {
-    thread: Entity<AcpThread>,
+pub struct ReadyThreadState {
+    pub thread: Entity<AcpThread>,
     entry_view_state: Entity<EntryViewState>,
     title_editor: Option<Entity<Editor>>,
     config_options_view: Option<Entity<ConfigOptionsView>>,
@@ -421,6 +414,80 @@ struct ReadyThreadState {
     can_fast_track_queue: bool,
     hovered_edited_file_buttons: Option<usize>,
     _subscriptions: Vec<Subscription>,
+}
+
+impl ReadyThreadState {
+    fn new(
+        thread: Entity<AcpThread>,
+        entry_view_state: Entity<EntryViewState>,
+        title_editor: Option<Entity<Editor>>,
+        config_options_view: Option<Entity<ConfigOptionsView>>,
+        mode_selector: Option<Entity<ModeSelector>>,
+        model_selector: Option<Entity<AcpModelSelectorPopover>>,
+        profile_selector: Option<Entity<ProfileSelector>>,
+        list_state: ListState,
+        prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<agent_client_protocol::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
+        resumed_without_history: bool,
+        resume_thread_metadata: Option<AgentSessionInfo>,
+        subscriptions: Vec<Subscription>
+    ) -> Self {
+        Self {
+            thread,
+            entry_view_state,
+            title_editor,
+            config_options_view,
+            mode_selector,
+            model_selector,
+            profile_selector,
+            list_state,
+            prompt_capabilities,
+            available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
+            resumed_without_history,
+            resume_thread_metadata,
+            _subscriptions: subscriptions,
+            permission_dropdown_handle: PopoverMenuHandle::default(),
+            thread_retry_status: None,
+            thread_error: None,
+            thread_error_markdown: None,
+            token_limit_callout_dismissed: false,
+            thread_feedback: Default::default(),
+            expanded_tool_calls: HashSet::default(),
+            expanded_tool_call_raw_inputs: HashSet::default(),
+            expanded_thinking_blocks: HashSet::default(),
+            expanded_subagents: HashSet::default(),
+            subagent_scroll_handles: RefCell::new(HashMap::default()),
+            edits_expanded: false,
+            plan_expanded: false,
+            queue_expanded: true,
+            editor_expanded: false,
+            should_be_following: false,
+            editing_message: None,
+            local_queued_messages: Vec::new(),
+            queued_message_editors: Vec::new(),
+            queued_message_editor_subscriptions: Vec::new(),
+            last_synced_queue_length: 0,
+            turn_tokens: None,
+            last_turn_tokens: None,
+            turn_started_at: None,
+            last_turn_duration: None,
+            turn_generation: 0,
+            _turn_timer_task: None,
+            discarded_partial_edits: HashSet::default(),
+            is_loading_contents: false,
+            new_server_version_available: None,
+            selected_permission_granularity: HashMap::default(),
+            _cancel_task: None,
+            skip_queue_processing_count: 0,
+            user_interrupted_generation: false,
+            can_fast_track_queue: false,
+            hovered_edited_file_buttons: None,
+        }
+    }
 }
 
 enum ThreadState {
@@ -780,8 +847,7 @@ impl AcpThreadView {
                     Ok(thread) => {
                         let action_log = thread.read(cx).action_log().clone();
 
-                        prompt_capabilities
-                            .replace(thread.read(cx).prompt_capabilities());
+                        prompt_capabilities.replace(thread.read(cx).prompt_capabilities());
 
                         let entry_view_state = cx.new(|_| {
                             EntryViewState::new(
@@ -799,8 +865,7 @@ impl AcpThreadView {
                         });
 
                         let count = thread.read(cx).entries().len();
-                        let list_state =
-                            ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
+                        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
                         entry_view_state.update(cx, |view_state, cx| {
                             for ix in 0..count {
                                 view_state.sync_entry(ix, &thread, window, cx);
@@ -909,9 +974,7 @@ impl AcpThreadView {
                         let profile_selector: Option<Rc<agent::NativeAgentConnection>> =
                             connection.clone().downcast();
                         let profile_selector = profile_selector
-                            .and_then(|native_connection| {
-                                native_connection.thread(&session_id, cx)
-                            })
+                            .and_then(|native_connection| native_connection.thread(&session_id, cx))
                             .map(|native_thread| {
                                 cx.new(|cx| {
                                     ProfileSelector::new(
@@ -923,7 +986,7 @@ impl AcpThreadView {
                                 })
                             });
 
-                        this.thread_state = ThreadState::Ready(ReadyThreadState {
+                        this.thread_state = ThreadState::Ready(ReadyThreadState::new(
                             thread,
                             entry_view_state,
                             title_editor,
@@ -931,51 +994,15 @@ impl AcpThreadView {
                             mode_selector,
                             model_selector,
                             profile_selector,
-                            permission_dropdown_handle: PopoverMenuHandle::default(),
-                            thread_retry_status: None,
-                            thread_error: None,
-                            thread_error_markdown: None,
-                            token_limit_callout_dismissed: false,
-                            thread_feedback: Default::default(),
                             list_state,
                             prompt_capabilities,
                             available_commands,
                             cached_user_commands,
                             cached_user_command_errors,
-                            expanded_tool_calls: HashSet::default(),
-                            expanded_tool_call_raw_inputs: HashSet::default(),
-                            expanded_thinking_blocks: HashSet::default(),
-                            expanded_subagents: HashSet::default(),
-                            subagent_scroll_handles: RefCell::new(HashMap::default()),
-                            edits_expanded: false,
-                            plan_expanded: false,
-                            queue_expanded: true,
-                            editor_expanded: false,
-                            should_be_following: false,
-                            editing_message: None,
-                            local_queued_messages: Vec::new(),
-                            queued_message_editors: Vec::new(),
-                            queued_message_editor_subscriptions: Vec::new(),
-                            last_synced_queue_length: 0,
-                            turn_tokens: None,
-                            last_turn_tokens: None,
-                            turn_started_at: None,
-                            last_turn_duration: None,
-                            turn_generation: 0,
-                            _turn_timer_task: None,
-                            discarded_partial_edits: HashSet::default(),
-                            is_loading_contents: false,
-                            new_server_version_available: None,
                             resumed_without_history,
-                            selected_permission_granularity: HashMap::default(),
-                            resume_thread_metadata: resume_thread.clone(),
-                            _cancel_task: None,
-                            skip_queue_processing_count: 0,
-                            user_interrupted_generation: false,
-                            can_fast_track_queue: false,
-                            hovered_edited_file_buttons: None,
-                            _subscriptions: subscriptions,
-                        });
+                            resume_thread.clone(),
+                            subscriptions,
+                        ));
 
                         if this.focus_handle.contains_focused(window, cx) {
                             this.message_editor.focus_handle(cx).focus(window, cx);
@@ -1145,15 +1172,6 @@ impl AcpThreadView {
         &self.workspace
     }
 
-    pub fn thread(&self) -> Option<&Entity<AcpThread>> {
-        match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState { thread, .. }) => Some(thread),
-            ThreadState::Unauthenticated { .. }
-            | ThreadState::Loading { .. }
-            | ThreadState::LoadError { .. } => None,
-        }
-    }
-
     fn entry_view_state(&self) -> Option<&Entity<EntryViewState>> {
         match &self.thread_state {
             ThreadState::Ready(ReadyThreadState {
@@ -1248,7 +1266,9 @@ impl AcpThreadView {
 
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.thread_state {
-            ThreadState::Ready(ReadyThreadState { .. }) | ThreadState::Unauthenticated { .. } => "New Thread".into(),
+            ThreadState::Ready(ReadyThreadState { .. }) | ThreadState::Unauthenticated { .. } => {
+                "New Thread".into()
+            }
             ThreadState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ThreadState::LoadError(error) => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
@@ -1347,7 +1367,7 @@ impl AcpThreadView {
             return;
         }
 
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
 
@@ -1361,7 +1381,7 @@ impl AcpThreadView {
         let thread_store = session_list.thread_store().clone();
 
         let client = self.project.read(cx).client();
-        let session_id = thread.read(cx).session_id().clone();
+        let session_id = ready.thread.read(cx).session_id().clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let response = client
@@ -1426,7 +1446,10 @@ impl AcpThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ThreadState::Ready(ReadyThreadState { editor_expanded, .. }) = &self.thread_state else {
+        let ThreadState::Ready(ReadyThreadState {
+            editor_expanded, ..
+        }) = &self.thread_state
+        else {
             return;
         };
         self.set_editor_is_expanded(!*editor_expanded, cx);
@@ -1435,7 +1458,10 @@ impl AcpThreadView {
     }
 
     fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
-        let ThreadState::Ready(ReadyThreadState { editor_expanded, .. }) = &mut self.thread_state else {
+        let ThreadState::Ready(ReadyThreadState {
+            editor_expanded, ..
+        }) = &mut self.thread_state
+        else {
             return;
         };
         *editor_expanded = is_expanded;
@@ -1470,7 +1496,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.thread() else { return };
+        let Some(ready) = self.as_ready() else { return };
+        let thread = &ready.thread;
 
         match event {
             EditorEvent::BufferEdited => {
@@ -1520,27 +1547,39 @@ impl AcpThreadView {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_edit_card {
-                    if let ThreadState::Ready(ReadyThreadState { expanded_tool_calls, .. }) = &mut self.thread_state {
+                    if let ThreadState::Ready(ReadyThreadState {
+                        expanded_tool_calls,
+                        ..
+                    }) = &mut self.thread_state
+                    {
                         expanded_tool_calls.insert(tool_call_id.clone());
                     }
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
-                    if let ThreadState::Ready(ReadyThreadState { expanded_tool_calls, .. }) = &mut self.thread_state {
+                    if let ThreadState::Ready(ReadyThreadState {
+                        expanded_tool_calls,
+                        ..
+                    }) = &mut self.thread_state
+                    {
                         expanded_tool_calls.insert(tool_call_id.clone());
                     }
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                if let ThreadState::Ready(ReadyThreadState { expanded_tool_calls, .. }) = &mut self.thread_state {
+                if let ThreadState::Ready(ReadyThreadState {
+                    expanded_tool_calls,
+                    ..
+                }) = &mut self.thread_state
+                {
                     expanded_tool_calls.remove(tool_call_id);
                 }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
-                if let Some(thread) = self.thread()
+                if let Some(ready) = self.as_ready()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
-                        thread.read(cx).entries().get(event.entry_index)
+                        ready.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
                 {
                     if let Some(editing_message) = self.editing_message_mut() {
@@ -1550,9 +1589,9 @@ impl AcpThreadView {
                 }
             }
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::LostFocus) => {
-                if let Some(thread) = self.thread()
+                if let Some(ready) = self.as_ready()
                     && let Some(AgentThreadEntry::UserMessage(user_message)) =
-                        thread.read(cx).entries().get(event.entry_index)
+                        ready.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
@@ -1581,9 +1620,10 @@ impl AcpThreadView {
         if let ThreadState::Ready(ReadyThreadState { thread_error, .. }) = &mut self.thread_state {
             thread_error.take();
         }
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
+        let thread = &ready.thread;
         if !thread.read(cx).can_retry(cx) {
             return;
         }
@@ -1602,9 +1642,10 @@ impl AcpThreadView {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else { return };
+        let Some(ready) = self.as_ready() else { return };
+        let thread = &ready.thread;
 
-        if matches!(&self.thread_state, ThreadState::Ready(ReadyThreadState { is_loading_contents: true, .. })) {
+        if ready.is_loading_contents {
             return;
         }
 
@@ -1687,11 +1728,12 @@ impl AcpThreadView {
     }
 
     fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
+        let thread = &ready.thread;
 
-        if matches!(&self.thread_state, ThreadState::Ready(ReadyThreadState { is_loading_contents: true, .. })) {
+        if ready.is_loading_contents {
             return;
         }
 
@@ -1704,7 +1746,7 @@ impl AcpThreadView {
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread().cloned() else {
+        let Some(thread) = self.as_ready().map(|r| r.thread.clone()) else {
             return;
         };
 
@@ -1873,12 +1915,12 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
-        let session_id = thread.read(cx).session_id().clone();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let thread = thread.downgrade();
+        let session_id = ready.thread.read(cx).session_id().clone();
+        let agent_telemetry_id = ready.thread.read(cx).connection().telemetry_id();
+        let thread = ready.thread.downgrade();
 
         if let ThreadState::Ready(ReadyThreadState {
             is_loading_contents,
@@ -1995,8 +2037,8 @@ impl AcpThreadView {
 
     fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let is_idle = self
-            .thread()
-            .map(|t| t.read(cx).status() == acp_thread::ThreadStatus::Idle)
+            .as_ready()
+            .map(|r| r.thread.read(cx).status() == acp_thread::ThreadStatus::Idle)
             .unwrap_or(true);
 
         if is_idle {
@@ -2065,7 +2107,7 @@ impl AcpThreadView {
         let content = queued.content;
         let tracked_buffers = queued.tracked_buffers;
 
-        let Some(thread) = self.thread().cloned() else {
+        let Some(thread) = self.as_ready().map(|r| r.thread.clone()) else {
             return;
         };
 
@@ -2112,7 +2154,7 @@ impl AcpThreadView {
     }
 
     fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread().cloned() else {
+        let Some(thread) = self.as_ready().map(|r| r.thread.clone()) else {
             return;
         };
 
@@ -2146,12 +2188,13 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.thread().cloned() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
-        if matches!(&self.thread_state, ThreadState::Ready(ReadyThreadState { is_loading_contents: true, .. })) {
+        if ready.is_loading_contents {
             return;
         }
+        let thread = ready.thread.clone();
 
         let Some(user_message_id) = thread.update(cx, |thread, _| {
             thread.entries().get(entry_ix)?.user_message()?.id.clone()
@@ -2200,9 +2243,10 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
+        let thread = &ready.thread;
 
         let Some(diff) =
             AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
@@ -2283,9 +2327,9 @@ impl AcpThreadView {
             };
 
         let (agent_telemetry_id, session_id) = self
-            .thread()
-            .map(|t| {
-                let thread = t.read(cx);
+            .as_ready()
+            .map(|r| {
+                let thread = r.thread.read(cx);
                 (
                     thread.connection().telemetry_id(),
                     thread.session_id().clone(),
@@ -2361,8 +2405,7 @@ impl AcpThreadView {
                     ..
                 }) = &mut self.thread_state
                 {
-                    entry_view_state
-                        .update(cx, |view_state, _cx| view_state.remove(range.clone()));
+                    entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
                 }
             }
@@ -2885,8 +2928,8 @@ impl AcpThreadView {
     }
 
     pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
-        self.thread().is_some_and(|thread| {
-            thread.read(cx).entries().iter().any(|entry| {
+        self.as_ready().is_some_and(|ready| {
+            ready.thread.read(cx).entries().iter().any(|entry| {
                 matches!(
                     entry,
                     AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
@@ -2903,9 +2946,10 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
+        let thread = &ready.thread;
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
 
         telemetry::event!(
@@ -2933,11 +2977,11 @@ impl AcpThreadView {
     }
 
     fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
 
-        thread
+        ready.thread
             .update(cx, |thread, cx| {
                 thread.restore_checkpoint(message_id.clone(), cx)
             })
@@ -2954,8 +2998,9 @@ impl AcpThreadView {
     ) -> AnyElement {
         let is_indented = entry.is_indented();
         let is_first_indented = is_indented
-            && self.thread().is_some_and(|thread| {
-                thread
+            && self.as_ready().is_some_and(|ready| {
+                ready
+                    .thread
                     .read(cx)
                     .entries()
                     .get(entry_ix.saturating_sub(1))
@@ -3339,8 +3384,8 @@ impl AcpThreadView {
                             let entity = entity.clone();
                             move |_, cx| {
                                 entity.update(cx, |this, cx| {
-                                    if let Some(thread) = this.thread() {
-                                        let entries = thread.read(cx).entries();
+                                    if let Some(ready) = this.as_ready() {
+                                        let entries = ready.thread.read(cx).entries();
                                         if let Some(text) =
                                             Self::get_agent_message_content(entries, entry_ix, cx)
                                         {
@@ -3427,14 +3472,12 @@ impl AcpThreadView {
 
         let is_open = matches!(&self.thread_state, ThreadState::Ready(ReadyThreadState { expanded_thinking_blocks, .. }) if expanded_thinking_blocks.contains(&key));
 
-        let scroll_handle = self
-            .entry_view_state()
-            .and_then(|entry_view_state| {
-                entry_view_state
-                    .read(cx)
-                    .entry(entry_ix)
-                    .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix))
-            });
+        let scroll_handle = self.entry_view_state().and_then(|entry_view_state| {
+            entry_view_state
+                .read(cx)
+                .entry(entry_ix)
+                .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix))
+        });
 
         let thinking_content = {
             div()
@@ -3483,7 +3526,11 @@ impl AcpThreadView {
                             .visible_on_hover(&card_header_id)
                             .on_click(cx.listener({
                                 move |this, _event, _window, cx| {
-                                    if let ThreadState::Ready(ReadyThreadState { expanded_thinking_blocks, .. }) = &mut this.thread_state {
+                                    if let ThreadState::Ready(ReadyThreadState {
+                                        expanded_thinking_blocks,
+                                        ..
+                                    }) = &mut this.thread_state
+                                    {
                                         if is_open {
                                             expanded_thinking_blocks.remove(&key);
                                         } else {
@@ -3496,7 +3543,11 @@ impl AcpThreadView {
                     )
                     .on_click(cx.listener({
                         move |this, _event, _window, cx| {
-                            if let ThreadState::Ready(ReadyThreadState { expanded_thinking_blocks, .. }) = &mut this.thread_state {
+                            if let ThreadState::Ready(ReadyThreadState {
+                                expanded_thinking_blocks,
+                                ..
+                            }) = &mut this.thread_state
+                            {
                                 if is_open {
                                     expanded_thinking_blocks.remove(&key);
                                 } else {
@@ -4127,7 +4178,10 @@ impl AcpThreadView {
         let action_log = thread_read.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let is_expanded = if let ThreadState::Ready(ReadyThreadState { expanded_subagents, .. }) = &self.thread_state {
+        let is_expanded = if let ThreadState::Ready(ReadyThreadState {
+            expanded_subagents, ..
+        }) = &self.thread_state
+        {
             expanded_subagents.contains(&session_id)
         } else {
             false
@@ -4222,7 +4276,11 @@ impl AcpThreadView {
                             .visible_on_hover(card_header_id)
                             .on_click(cx.listener({
                                 move |this, _, _, cx| {
-                                    if let ThreadState::Ready(ReadyThreadState { expanded_subagents, .. }) = &mut this.thread_state {
+                                    if let ThreadState::Ready(ReadyThreadState {
+                                        expanded_subagents,
+                                        ..
+                                    }) = &mut this.thread_state
+                                    {
                                         if expanded_subagents.contains(&session_id) {
                                             expanded_subagents.remove(&session_id);
                                         } else {
@@ -4355,7 +4413,11 @@ impl AcpThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                if let ThreadState::Ready(ReadyThreadState { expanded_tool_calls, .. }) = &mut this.thread_state {
+                                if let ThreadState::Ready(ReadyThreadState {
+                                    expanded_tool_calls,
+                                    ..
+                                }) = &mut this.thread_state
+                                {
                                     expanded_tool_calls.remove(&tool_call_id);
                                     cx.notify();
                                 }
@@ -4522,8 +4584,9 @@ impl AcpThreadView {
         tool_call_id: acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let is_first = self.thread().is_some_and(|thread| {
-            thread
+        let is_first = self.as_ready().is_some_and(|ready| {
+            ready
+                .thread
                 .read(cx)
                 .first_tool_awaiting_confirmation()
                 .is_some_and(|call| call.id == tool_call_id)
@@ -4737,8 +4800,9 @@ impl AcpThreadView {
         tool_call_id: acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let is_first = self.thread().is_some_and(|thread| {
-            thread
+        let is_first = self.as_ready().is_some_and(|ready| {
+            ready
+                .thread
                 .read(cx)
                 .first_tool_awaiting_confirmation()
                 .is_some_and(|call| call.id == tool_call_id)
@@ -4863,16 +4927,15 @@ impl AcpThreadView {
             ToolCallStatus::InProgress | ToolCallStatus::Pending
         );
 
-        let revealed_diff_editor =
-            if let Some(entry_view_state) = self.entry_view_state()
-                && let Some(entry) = entry_view_state.read(cx).entry(entry_ix)
-                && let Some(editor) = entry.editor_for_diff(diff)
-                && diff.read(cx).has_revealed_range(cx)
-            {
-                Some(editor)
-            } else {
-                None
-            };
+        let revealed_diff_editor = if let Some(entry_view_state) = self.entry_view_state()
+            && let Some(entry) = entry_view_state.read(cx).entry(entry_ix)
+            && let Some(editor) = entry.editor_for_diff(diff)
+            && diff.read(cx).has_revealed_range(cx)
+        {
+            Some(editor)
+        } else {
+            None
+        };
 
         let show_top_border = !has_failed || revealed_diff_editor.is_some();
 
@@ -5831,7 +5894,9 @@ impl AcpThreadView {
             .child(Disclosure::new("plan_disclosure", plan_expanded))
             .child(title)
             .on_click(cx.listener(|this, _, _, cx| {
-                let ThreadState::Ready(ReadyThreadState { plan_expanded, .. }) = &mut this.thread_state else {
+                let ThreadState::Ready(ReadyThreadState { plan_expanded, .. }) =
+                    &mut this.thread_state
+                else {
                     return;
                 };
                 *plan_expanded = !*plan_expanded;
@@ -5983,7 +6048,8 @@ impl AcpThreadView {
                         }
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let ThreadState::Ready(ReadyThreadState { edits_expanded, .. }) = &mut this.thread_state
+                        let ThreadState::Ready(ReadyThreadState { edits_expanded, .. }) =
+                            &mut this.thread_state
                         else {
                             return;
                         };
@@ -6392,7 +6458,8 @@ impl AcpThreadView {
                     .child(Disclosure::new("queue_disclosure", queue_expanded))
                     .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let ThreadState::Ready(ReadyThreadState { queue_expanded, .. }) = &mut this.thread_state
+                        let ThreadState::Ready(ReadyThreadState { queue_expanded, .. }) =
+                            &mut this.thread_state
                         else {
                             return;
                         };
@@ -6647,7 +6714,10 @@ impl AcpThreadView {
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = matches!(
             &self.thread_state,
-            ThreadState::Ready(ReadyThreadState { editor_expanded: true, .. })
+            ThreadState::Ready(ReadyThreadState {
+                editor_expanded: true,
+                ..
+            })
         );
         let (expand_icon, expand_tooltip) = if editor_expanded {
             (IconName::Minimize, "Minimize Message Editor")
@@ -6752,12 +6822,12 @@ impl AcpThreadView {
         &self,
         cx: &App,
     ) -> Option<Rc<agent::NativeAgentConnection>> {
-        let acp_thread = self.thread()?.read(cx);
+        let acp_thread = self.as_ready()?.thread.read(cx);
         acp_thread.connection().clone().downcast()
     }
 
     pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
-        let acp_thread = self.thread()?.read(cx);
+        let acp_thread = self.as_ready()?.thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
     }
@@ -6864,7 +6934,10 @@ impl AcpThreadView {
             ThreadState::Ready(ReadyThreadState {
                 local_queued_messages,
                 ..
-            }) => local_queued_messages.iter().map(|q| q.content.clone()).collect(),
+            }) => local_queued_messages
+                .iter()
+                .map(|q| q.content.clone())
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -7010,7 +7083,8 @@ impl AcpThreadView {
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let thread = self.thread()?.read(cx);
+        let ready = self.as_ready()?;
+        let thread = ready.thread.read(cx);
         let usage = thread.token_usage()?;
         let is_generating = thread.status() != ThreadStatus::Idle;
         let show_split = self.supports_split_token_display(cx);
@@ -7154,9 +7228,10 @@ impl AcpThreadView {
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
+        let thread = &ready.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
         action_log.update(cx, |action_log, cx| {
@@ -7165,9 +7240,10 @@ impl AcpThreadView {
     }
 
     fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
+        let thread = &ready.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
         action_log
@@ -7195,7 +7271,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let thread = self.thread()?.read(cx);
+        let ready = self.as_ready()?;
+        let thread = ready.thread.read(cx);
         let tool_call = thread.first_tool_awaiting_confirmation()?;
         let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
             return None;
@@ -7301,7 +7378,8 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let thread = self.thread()?.read(cx);
+        let ready = self.as_ready()?;
+        let thread = ready.thread.read(cx);
         let tool_call = thread.first_tool_awaiting_confirmation()?;
         let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
             return None;
@@ -7325,10 +7403,16 @@ impl AcpThreadView {
         let focus_handle = message_editor.focus_handle(cx);
 
         let is_generating = self
-            .thread()
-            .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
+            .as_ready()
+            .is_some_and(|ready| ready.thread.read(cx).status() != ThreadStatus::Idle);
 
-        if matches!(&self.thread_state, ThreadState::Ready(ReadyThreadState { is_loading_contents: true, .. })) {
+        if matches!(
+            &self.thread_state,
+            ThreadState::Ready(ReadyThreadState {
+                is_loading_contents: true,
+                ..
+            })
+        ) {
             div()
                 .id("loading-message-content")
                 .px_1()
@@ -7398,7 +7482,7 @@ impl AcpThreadView {
     }
 
     fn is_following(&self, cx: &App) -> bool {
-        match self.thread().map(|thread| thread.read(cx).status()) {
+        match self.as_ready().map(|ready| ready.thread.read(cx).status()) {
             Some(ThreadStatus::Generating) => self
                 .workspace
                 .read_with(cx, |workspace, _| {
@@ -7425,7 +7509,9 @@ impl AcpThreadView {
         {
             *should_be_following = !following;
         }
-        if self.thread().map(|thread| thread.read(cx).status()) == Some(ThreadStatus::Generating) {
+        if self.as_ready().map(|ready| ready.thread.read(cx).status())
+            == Some(ThreadStatus::Generating)
+        {
             self.workspace
                 .update(cx, |workspace, cx| {
                     if following {
@@ -7643,7 +7729,8 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let (tool_call_location, agent_location) = self
-            .thread()?
+            .as_ready()?
+            .thread
             .read(cx)
             .entries()
             .get(entry_ix)?
@@ -7705,8 +7792,8 @@ impl AcpThreadView {
             .languages
             .language_for_name("Markdown");
 
-        let (thread_title, markdown) = if let Some(thread) = self.thread() {
-            let thread = thread.read(cx);
+        let (thread_title, markdown) = if let Some(ready) = self.as_ready() {
+            let thread = ready.thread.read(cx);
             (thread.title().to_string(), thread.to_markdown(cx))
         } else {
             return Task::ready(Ok(()));
@@ -7756,11 +7843,11 @@ impl AcpThreadView {
     }
 
     fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread() else {
+        let Some(ready) = self.as_ready() else {
             return;
         };
 
-        let entries = thread.read(cx).entries();
+        let entries = ready.thread.read(cx).entries();
         if entries.is_empty() {
             return;
         }
@@ -8287,7 +8374,8 @@ impl AcpThreadView {
                             .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 if let ThreadState::Ready(ReadyThreadState {
-                                    thread_feedback, ..
+                                    thread_feedback,
+                                    ..
                                 }) = &mut this.thread_state
                                 {
                                     thread_feedback.dismiss_comments();
@@ -8383,10 +8471,10 @@ impl AcpThreadView {
                         Button::new("start-new-thread", "Start New Thread")
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                let Some(thread) = this.thread() else {
+                                let Some(ready) = this.as_ready() else {
                                     return;
                                 };
-                                let session_id = thread.read(cx).session_id().clone();
+                                let session_id = ready.thread.read(cx).session_id().clone();
                                 window.dispatch_action(
                                     crate::NewNativeAgentThreadFromSummary {
                                         from_session_id: session_id,
@@ -8802,8 +8890,8 @@ impl AcpThreadView {
         cx: &mut Context<'_, Self>,
     ) -> Callout {
         let can_resume = self
-            .thread()
-            .map_or(false, |thread| thread.read(cx).can_retry(cx));
+            .as_ready()
+            .map_or(false, |ready| ready.thread.read(cx).can_retry(cx));
 
         let markdown = if let ThreadState::Ready(ReadyThreadState {
             thread_error_markdown: Some(markdown),
@@ -8913,7 +9001,8 @@ impl AcpThreadView {
             .on_click(cx.listener({
                 move |this, _, window, cx| {
                     let agent = this.agent.clone();
-                    let ThreadState::Ready(ReadyThreadState { thread, .. }) = &this.thread_state else {
+                    let ThreadState::Ready(ReadyThreadState { thread, .. }) = &this.thread_state
+                    else {
                         return;
                     };
 
@@ -9080,7 +9169,11 @@ impl AcpThreadView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
-        if let ThreadState::Ready(ReadyThreadState { expanded_tool_calls, .. }) = &mut self.thread_state {
+        if let ThreadState::Ready(ReadyThreadState {
+            expanded_tool_calls,
+            ..
+        }) = &mut self.thread_state
+        {
             expanded_tool_calls.insert(tool_call_id);
             cx.notify();
         }
@@ -9089,7 +9182,10 @@ impl AcpThreadView {
     /// Expands a subagent card so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_subagent(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        if let ThreadState::Ready(ReadyThreadState { expanded_subagents, .. }) = &mut self.thread_state {
+        if let ThreadState::Ready(ReadyThreadState {
+            expanded_subagents, ..
+        }) = &mut self.thread_state
+        {
             expanded_subagents.insert(session_id);
             cx.notify();
         }
@@ -9261,7 +9357,11 @@ impl Render for AcpThreadView {
                     .justify_end()
                     .child(self.render_load_error(e, window, cx))
                     .into_any(),
-                ThreadState::Ready(ReadyThreadState { list_state, resumed_without_history, .. }) => v_flex().flex_1().map(|this| {
+                ThreadState::Ready(ReadyThreadState {
+                    list_state,
+                    resumed_without_history,
+                    ..
+                }) => v_flex().flex_1().map(|this| {
                     let this = this.when(*resumed_without_history, |this| {
                         this.child(self.render_resume_notice(cx))
                     });
@@ -9270,8 +9370,8 @@ impl Render for AcpThreadView {
                             list(
                                 list_state.clone(),
                                 cx.processor(|this, index: usize, window, cx| {
-                                    let Some((entry, len)) = this.thread().and_then(|thread| {
-                                        let entries = &thread.read(cx).entries();
+                                    let Some((entry, len)) = this.as_ready().and_then(|ready| {
+                                        let entries = &ready.thread.read(cx).entries();
                                         Some((entries.get(index)?, entries.len()))
                                     }) else {
                                         return Empty.into_any();
@@ -9307,9 +9407,12 @@ impl Render for AcpThreadView {
             .children(self.render_thread_error(window, cx))
             .when_some(
                 match &self.thread_state {
-                    ThreadState::Ready(ReadyThreadState { new_server_version_available, .. }) => {
-                        new_server_version_available.as_ref().filter(|_| !has_messages)
-                    }
+                    ThreadState::Ready(ReadyThreadState {
+                        new_server_version_available,
+                        ..
+                    }) => new_server_version_available
+                        .as_ref()
+                        .filter(|_| !has_messages),
                     _ => None,
                 },
                 |this, version| this.child(self.render_new_version_callout(version, cx)),
@@ -9663,7 +9766,11 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, _cx| {
-            let ThreadState::Ready(ReadyThreadState { resumed_without_history, .. }) = &view.thread_state else {
+            let ThreadState::Ready(ReadyThreadState {
+                resumed_without_history,
+                ..
+            }) = &view.thread_state
+            else {
                 panic!("Expected Ready state");
             };
             assert!(*resumed_without_history);
@@ -9691,7 +9798,9 @@ pub(crate) mod tests {
 
         // Check that the refusal error is set
         thread_view.read_with(cx, |thread_view, _cx| {
-            let ThreadState::Ready(ReadyThreadState { thread_error, .. }) = &thread_view.thread_state else {
+            let ThreadState::Ready(ReadyThreadState { thread_error, .. }) =
+                &thread_view.thread_state
+            else {
                 panic!("Expected Ready state");
             };
             assert!(
@@ -10312,7 +10421,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let thread = thread_view
-            .read_with(cx, |view, _| view.thread().cloned())
+            .read_with(cx, |view, _| view.as_ready().map(|r| r.thread.clone()))
             .unwrap();
 
         // First user message
@@ -10441,7 +10550,7 @@ pub(crate) mod tests {
             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
 
         let thread = thread_view
-            .read_with(cx, |view, _| view.thread().cloned())
+            .read_with(cx, |view, _| view.as_ready().map(|r| r.thread.clone()))
             .unwrap();
 
         thread
@@ -10565,7 +10674,7 @@ pub(crate) mod tests {
             editor.set_text("", window, cx);
         });
 
-        let thread = cx.read(|cx| thread_view.read(cx).thread().cloned().unwrap());
+        let thread = cx.read(|cx| thread_view.read(cx).as_ready().unwrap().thread.clone());
         let entries_before = cx.read(|cx| thread.read(cx).entries().len());
 
         thread_view.update_in(cx, |view, window, cx| {
@@ -10606,7 +10715,7 @@ pub(crate) mod tests {
 
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             assert_eq!(view.editing_message(), None);
-            assert_eq!(view.thread().unwrap().read(cx).entries().len(), 2);
+            assert_eq!(view.as_ready().unwrap().thread.read(cx).entries().len(), 2);
 
             view.entry_view_state()
                 .unwrap()
@@ -10640,7 +10749,7 @@ pub(crate) mod tests {
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(view.editing_message(), None);
 
-            let entries = view.thread().unwrap().read(cx).entries();
+            let entries = view.as_ready().unwrap().thread.read(cx).entries();
             assert_eq!(entries.len(), 2);
             assert_eq!(
                 entries[0].to_markdown(cx),
@@ -10682,7 +10791,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.thread().unwrap().read(cx);
+            let thread = view.as_ready().unwrap().thread.read(cx);
             assert_eq!(thread.entries().len(), 1);
 
             let editor = view
@@ -10765,7 +10874,7 @@ pub(crate) mod tests {
         });
 
         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.thread().unwrap();
+            let thread = view.as_ready().as_ref().unwrap().thread.clone();
             (thread.clone(), thread.read(cx).session_id().clone())
         });
 
@@ -10853,7 +10962,7 @@ pub(crate) mod tests {
             setup_thread_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
         add_to_workspace(thread_view.clone(), cx);
 
-        let thread = thread_view.read_with(cx, |view, _cx| view.thread().unwrap().clone());
+        let thread = thread_view.read_with(cx, |view, _cx| view.as_ready().unwrap().thread.clone());
 
         thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.status(), ThreadStatus::Idle);
@@ -10894,7 +11003,7 @@ pub(crate) mod tests {
         });
 
         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.thread().unwrap();
+            let thread = view.as_ready().unwrap().thread.clone();
 
             (thread.clone(), thread.read(cx).session_id().clone())
         });
@@ -11186,7 +11295,7 @@ pub(crate) mod tests {
 
         // Verify the tool call is in WaitingForConfirmation state with the expected options
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
 
             let tool_call = thread.entries().iter().find_map(|entry| {
@@ -11290,7 +11399,7 @@ pub(crate) mod tests {
 
         // Verify the options
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
 
             let tool_call = thread.entries().iter().find_map(|entry| {
@@ -11374,7 +11483,7 @@ pub(crate) mod tests {
 
         // Verify the options
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
 
             let tool_call = thread.entries().iter().find_map(|entry| {
@@ -11459,7 +11568,7 @@ pub(crate) mod tests {
 
         // Verify only 2 options (no pattern button when command doesn't match pattern)
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
 
             let tool_call = thread.entries().iter().find_map(|entry| {
@@ -11554,7 +11663,7 @@ pub(crate) mod tests {
 
         // Verify tool call is waiting for confirmation
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
             let tool_call = thread.first_tool_awaiting_confirmation();
             assert!(
@@ -11580,7 +11689,7 @@ pub(crate) mod tests {
 
         // Verify tool call is no longer waiting for confirmation (was authorized)
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
             let tool_call = thread.first_tool_awaiting_confirmation();
             assert!(
@@ -11666,7 +11775,7 @@ pub(crate) mod tests {
 
         // Verify tool call was authorized
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
             let tool_call = thread.first_tool_awaiting_confirmation();
             assert!(
@@ -11854,7 +11963,7 @@ pub(crate) mod tests {
 
         // Verify tool call was authorized
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
             let tool_call = thread.first_tool_awaiting_confirmation();
             assert!(
@@ -11917,7 +12026,7 @@ pub(crate) mod tests {
 
         // Verify tool call was rejected (no longer waiting for confirmation)
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.thread().expect("Thread should exist");
+            let thread = thread_view.as_ready().expect("Thread should exist").thread.clone();
             let thread = thread.read(cx);
             let tool_call = thread.first_tool_awaiting_confirmation();
             assert!(

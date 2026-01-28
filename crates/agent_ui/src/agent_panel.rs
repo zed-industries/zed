@@ -149,7 +149,7 @@ pub fn init(cx: &mut App) {
                     let thread = workspace
                         .panel::<AgentPanel>(cx)
                         .and_then(|panel| panel.read(cx).active_thread_view().cloned())
-                        .and_then(|thread_view| thread_view.read(cx).thread().cloned());
+                        .and_then(|thread_view| thread_view.read(cx).as_ready().map(|r| r.thread.clone()));
 
                     if let Some(thread) = thread {
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
@@ -1222,7 +1222,7 @@ impl AgentPanel {
     pub(crate) fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.read(cx).thread().cloned()
+                thread_view.read(cx).as_ready().map(|r| r.thread.clone())
             }
             _ => None,
         }
