@@ -808,7 +808,7 @@ fn main() {
                 };
 
                 let output_sender: Option<mpsc::UnboundedSender<String>> = if !args.markdown
-                    && (args.output.is_some() || !matches!(command, Command::Eval(_)))
+                    && (output.is_some() || !matches!(command, Command::Eval(_)))
                 {
                     let write_path = in_place_temp_path.as_ref().or(output.as_ref());
                     write_path.map(|path| {
