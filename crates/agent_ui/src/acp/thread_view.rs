@@ -341,7 +341,6 @@ pub struct AcpThreadView {
     hovered_recent_history_item: Option<usize>, // keep
     message_editor: Entity<MessageEditor>, // keep
     focus_handle: FocusHandle, // keep
-    profile_selector: Option<Entity<ProfileSelector>>,
     notifications: Vec<WindowHandle<AgentNotification>>, // keep
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>, // keep
     command_load_errors: Vec<CommandLoadError>, // keep
@@ -373,6 +372,7 @@ enum ThreadState {
         config_options_view: Option<Entity<ConfigOptionsView>>,
         mode_selector: Option<Entity<ModeSelector>>,
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
+        profile_selector: Option<Entity<ProfileSelector>>,
         permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
         thread_retry_status: Option<RetryStatus>,
         thread_error: Option<ThreadError>,
@@ -570,7 +570,6 @@ impl AcpThreadView {
             ),
             login: None,
             message_editor,
-            profile_selector: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             command_load_errors,
@@ -894,6 +893,23 @@ impl AcpThreadView {
                                 None
                             };
 
+                        let profile_selector: Option<Rc<agent::NativeAgentConnection>> =
+                            connection.clone().downcast();
+                        let profile_selector = profile_selector
+                            .and_then(|native_connection| {
+                                native_connection.thread(&session_id, cx)
+                            })
+                            .map(|native_thread| {
+                                cx.new(|cx| {
+                                    ProfileSelector::new(
+                                        <dyn Fs>::global(cx),
+                                        Arc::new(native_thread),
+                                        this.focus_handle(cx),
+                                        cx,
+                                    )
+                                })
+                            });
+
                         this.thread_state = ThreadState::Ready {
                             thread,
                             entry_view_state,
@@ -901,6 +917,7 @@ impl AcpThreadView {
                             config_options_view,
                             mode_selector,
                             model_selector,
+                            profile_selector,
                             permission_dropdown_handle: PopoverMenuHandle::default(),
                             thread_retry_status: None,
                             thread_error: None,
@@ -934,17 +951,6 @@ impl AcpThreadView {
                             _turn_timer_task: None,
                             _subscriptions: subscriptions,
                         };
-
-                        this.profile_selector = this.as_native_thread(cx).map(|thread| {
-                            cx.new(|cx| {
-                                ProfileSelector::new(
-                                    <dyn Fs>::global(cx),
-                                    Arc::new(thread.clone()),
-                                    this.focus_handle(cx),
-                                    cx,
-                                )
-                            })
-                        });
 
                         if this.focus_handle.contains_focused(window, cx) {
                             this.message_editor.focus_handle(cx).focus(window, cx);
@@ -1180,6 +1186,17 @@ impl AcpThreadView {
     pub fn model_selector(&self) -> Option<&Entity<AcpModelSelectorPopover>> {
         match &self.thread_state {
             ThreadState::Ready { model_selector, .. } => model_selector.as_ref(),
+            ThreadState::Unauthenticated { .. }
+            | ThreadState::Loading { .. }
+            | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn profile_selector(&self) -> Option<&Entity<ProfileSelector>> {
+        match &self.thread_state {
+            ThreadState::Ready {
+                profile_selector, ..
+            } => profile_selector.as_ref(),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
@@ -6593,7 +6610,7 @@ impl AcpThreadView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.render_thinking_toggle(cx))
-                            .children(self.profile_selector.clone())
+                            .children(self.profile_selector().cloned())
                             // Either config_options_view OR (mode_selector + model_selector)
                             .children(self.config_options_view().cloned())
                             .when(self.config_options_view().is_none(), |this| {
@@ -8993,7 +9010,7 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                if let Some(profile_selector) = this.profile_selector() {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
                 } else if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.read(cx).menu_handle().toggle(window, cx);
@@ -9013,7 +9030,7 @@ impl Render for AcpThreadView {
                     }
                 }
 
-                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                if let Some(profile_selector) = this.profile_selector() {
                     profile_selector.update(cx, |profile_selector, cx| {
                         profile_selector.cycle_profile(cx);
                     });
