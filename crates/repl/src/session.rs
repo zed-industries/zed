@@ -1,9 +1,11 @@
 use crate::components::KernelListItem;
-use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
+    kernels::{
+        Kernel, KernelSession, KernelSpecification, NativeRunningKernel, RemoteRunningKernel,
+        SshRunningKernel, WslRunningKernel,
+    },
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
     },
@@ -244,11 +246,34 @@ impl Session {
     fn start_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
-        let working_directory = self
-            .editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).working_directory(cx))
-            .unwrap_or_else(temp_dir);
+
+        // For WSL Remote kernels, use project root instead of potentially temporary working directory
+        // which causes .venv/bin/python checks to fail
+        let is_wsl_remote = matches!(
+            self.kernel_specification,
+            crate::KernelSpecification::WslRemote(_)
+        );
+
+        let working_directory = if is_wsl_remote {
+            // For WSL Remote kernels, use project root instead of potentially temporary working directory
+            // which causes .venv/bin/python checks to fail
+            self.editor
+                .upgrade()
+                .and_then(|editor| editor.read(cx).project().cloned())
+                .and_then(|project| {
+                    project
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                })
+                .unwrap_or_else(temp_dir)
+        } else {
+            self.editor
+                .upgrade()
+                .and_then(|editor| editor.read(cx).working_directory(cx))
+                .unwrap_or_else(temp_dir)
+        };
 
         telemetry::event!(
             "Kernel Status Changed",
@@ -277,11 +302,38 @@ impl Session {
                 window,
                 cx,
             ),
+            KernelSpecification::SshRemote(spec) => {
+                let project = self
+                    .editor
+                    .upgrade()
+                    .and_then(|editor| editor.read(cx).project().cloned());
+                if let Some(project) = project {
+                    SshRunningKernel::new(
+                        spec,
+                        working_directory,
+                        gpui::Entity::from(project),
+                        session_view,
+                        window,
+                        cx,
+                    )
+                } else {
+                    Task::ready(Err(anyhow::anyhow!("No project associated with editor")))
+                }
+            }
+            KernelSpecification::WslRemote(spec) => WslRunningKernel::new(
+                spec,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                session_view,
+                window,
+                cx,
+            ),
         };
 
         let pending_kernel = cx
             .spawn(async move |this, cx| {
-                let kernel = kernel.await;
+                let kernel: anyhow::Result<Box<dyn crate::kernels::RunningKernel>> = kernel.await;
 
                 match kernel {
                     Ok(kernel) => {

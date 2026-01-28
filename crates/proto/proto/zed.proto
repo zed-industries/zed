@@ -455,7 +455,11 @@ message Envelope {
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
         FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
         GetContextServerCommand get_context_server_command = 411;
-        ContextServerCommand context_server_command = 412; // current max
+        ContextServerCommand context_server_command = 412;
+
+        SpawnKernel spawn_kernel = 413;
+        SpawnKernelResponse spawn_kernel_response = 414;
+        KillKernel kill_kernel = 415;
     }
 
     reserved 87 to 88;
@@ -529,3 +533,19 @@ message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
 
 message RemoteStarted {}
+
+message SpawnKernel {
+    string kernel_name = 1;
+    string working_directory = 2;
+    uint64 project_id = 3;
+}
+
+message SpawnKernelResponse {
+    string kernel_id = 1;
+    string connection_file = 2;
+}
+
+message KillKernel {
+    string kernel_id = 1;
+    uint64 project_id = 2;
+}

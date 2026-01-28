@@ -14,6 +14,7 @@ use gpui::{
 };
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
+use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, Tooltip, prelude::*};
@@ -31,7 +32,7 @@ use uuid::Uuid;
 use crate::components::{KernelPickerDelegate, KernelSelector};
 use crate::kernels::{
     Kernel, KernelSession, KernelSpecification, KernelStatus, LocalKernelSpecification,
-    NativeRunningKernel, RemoteRunningKernel,
+    NativeRunningKernel, RemoteRunningKernel, SshRunningKernel, WslRunningKernel,
 };
 use crate::repl_store::ReplStore;
 use picker::Picker;
@@ -381,6 +382,14 @@ impl NotebookEditor {
             KernelSpecification::Remote(remote_spec) => {
                 RemoteRunningKernel::new(remote_spec, working_directory, view, window, cx)
             }
+
+            KernelSpecification::SshRemote(spec) => {
+                let project = self.project.clone();
+                SshRunningKernel::new(spec, working_directory, project, view, window, cx)
+            }
+            KernelSpecification::WslRemote(spec) => {
+                WslRunningKernel::new(spec, entity_id, working_directory, fs, view, window, cx)
+            }
         };
 
         let pending_kernel = cx
@@ -396,6 +405,7 @@ impl NotebookEditor {
                         .ok();
                     }
                     Err(err) => {
+                        log::error!("Kernel failed to start: {:?}", err);
                         this.update(cx, |editor, cx| {
                             editor.kernel = Kernel::ErroredLaunch(err.to_string());
                             cx.notify();
@@ -1218,7 +1228,10 @@ impl project::ProjectItem for NotebookItem {
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
-                let file_content = fs.load(abs_path.as_path()).await?;
+                let buffer = project
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
+                    .await?;
+                let file_content = buffer.read_with(cx, |buffer, _| buffer.text().to_string());
 
                 // Pre-process to ensure IDs exist
                 let mut json: serde_json::Value = serde_json::from_str(&file_content)?;
@@ -1490,13 +1503,19 @@ impl Item for NotebookEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let path = self.notebook_item.read(cx).path.clone();
-        let fs = project.read(cx).fs().clone();
+        let project_path = self.notebook_item.read(cx).project_path.clone();
         let languages = self.languages.clone();
         let notebook_language = self.notebook_language.clone();
 
         cx.spawn_in(window, async move |this, cx| {
-            let file_content = fs.load(&path).await?;
+            let buffer = this
+                .update(cx, |this, cx| {
+                    this.project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                })?
+                .await?;
+
+            let file_content = buffer.read_with(cx, |buffer, _| buffer.text().to_string());
 
             let mut json: serde_json::Value = serde_json::from_str(&file_content)?;
             if let Some(cells) = json.get_mut("cells").and_then(|c| c.as_array_mut()) {

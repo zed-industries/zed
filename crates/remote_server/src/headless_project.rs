@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
+use collections::HashMap;
 use collections::HashSet;
 use language::File;
 use lsp::LanguageServerId;
@@ -31,6 +32,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
+use smol::process::Child;
 
 use settings::initial_server_settings_content;
 use std::{
@@ -65,6 +67,7 @@ pub struct HeadlessProject {
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
+    pub kernels: HashMap<String, Child>,
 }
 
 pub struct HeadlessAppState {
@@ -311,6 +314,9 @@ impl HeadlessProject {
             HeadlessExtensionStore::handle_install_extension,
         );
 
+        session.add_request_handler(cx.weak_entity(), Self::handle_spawn_kernel);
+        session.add_request_handler(cx.weak_entity(), Self::handle_kill_kernel);
+
         BufferStore::init(&session);
         WorktreeStore::init(&session);
         SettingsObserver::init(&session);
@@ -342,6 +348,7 @@ impl HeadlessProject {
             git_store,
             environment,
             _toolchain_store: toolchain_store,
+            kernels: Default::default(),
         }
     }
 
@@ -786,6 +793,94 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    async fn handle_spawn_kernel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SpawnKernel>,
+        cx: AsyncApp,
+    ) -> Result<proto::SpawnKernelResponse> {
+        let (fs, worktree_store) = this.update(&mut cx.clone(), |this, _| {
+            (this.fs.clone(), this.worktree_store.clone())
+        });
+
+        let mut ports = Vec::new();
+        for _ in 0..5 {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let port = listener.local_addr()?.port();
+            ports.push(port);
+        }
+
+        let connection_info = serde_json::json!({
+            "shell_port": ports[0],
+            "iopub_port": ports[1],
+            "stdin_port": ports[2],
+            "control_port": ports[3],
+            "hb_port": ports[4],
+            "ip": "127.0.0.1",
+            "key": uuid::Uuid::new_v4().to_string(),
+            "transport": "tcp",
+            "signature_scheme": "hmac-sha256",
+            "kernel_name": envelope.payload.kernel_name,
+        });
+
+        let connection_file_content = serde_json::to_string_pretty(&connection_info)?;
+        let kernel_id = uuid::Uuid::new_v4().to_string();
+
+        let connection_file_path = std::env::temp_dir().join(format!("kernel-{}.json", kernel_id));
+        fs.save(
+            &connection_file_path,
+            &connection_file_content.as_str().into(),
+            language::LineEnding::Unix,
+        )
+        .await?;
+
+        let working_directory = if envelope.payload.working_directory.is_empty() {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        } else {
+            Some(envelope.payload.working_directory)
+        };
+
+        // Spawn kernel (Assuming python for now, or we'd need to parse kernelspec logic here or pass the command)
+
+        let mut command = smol::process::Command::new("python3");
+        command
+            .arg("-m")
+            .arg("ipykernel_launcher")
+            .arg("-f")
+            .arg(&connection_file_path);
+
+        if let Some(wd) = working_directory {
+            command.current_dir(wd);
+        }
+
+        // We need to manage the child process lifecycle
+        let child = command.spawn().context("failed to spawn kernel process")?;
+
+        this.update(&mut cx.clone(), |this, _cx| {
+            this.kernels.insert(kernel_id.clone(), child);
+        });
+
+        Ok(proto::SpawnKernelResponse {
+            kernel_id,
+            connection_file: connection_file_content,
+        })
+    }
+
+    async fn handle_kill_kernel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::KillKernel>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let kernel_id = envelope.payload.kernel_id;
+        let child = this.update(&mut cx, |this, _| this.kernels.remove(&kernel_id));
+        if let Some(mut child) = child {
+            child.kill().log_err();
+            let _ = child.status().await; // Perhaps kill should be enough, should we wait?
+        }
+        Ok(proto::Ack {})
     }
 
     async fn handle_find_search_candidates(
