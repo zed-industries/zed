@@ -37,6 +37,7 @@ use ui::{
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem};
+use zed_actions::editor::{MoveDown, MoveUp};
 pub use zed_actions::quick_search::Toggle;
 
 actions!(
@@ -1379,6 +1380,16 @@ impl Render for QuickSearch {
                     .on_action(cx.listener(Self::go_to_file_split_right))
                     .on_action(cx.listener(Self::go_to_file_split_up))
                     .on_action(cx.listener(Self::go_to_file_split_down))
+                    .on_action(cx.listener(|this, action: &MoveUp, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.editor_move_up(action, window, cx);
+                        });
+                    }))
+                    .on_action(cx.listener(|this, action: &MoveDown, window, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.editor_move_down(action, window, cx);
+                        });
+                    }))
                     .w(modal_width)
                     .bg(cx.theme().colors().elevated_surface_background)
                     .border_1()
