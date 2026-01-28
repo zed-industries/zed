@@ -57,7 +57,8 @@ impl ShellBuilder {
                 | ShellKind::Tcsh
                 | ShellKind::Rc
                 | ShellKind::Xonsh
-                | ShellKind::Elvish => {
+                | ShellKind::Elvish
+                | ShellKind::Unknown => {
                     let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
                     format!(
                         "{PROGRAM} {interactivity}-c '{command_to_use_in_label}'",
@@ -109,7 +110,8 @@ impl ShellBuilder {
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
-                    | ShellKind::Elvish => {
+                    | ShellKind::Elvish
+                    | ShellKind::Unknown => {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }
@@ -155,7 +157,8 @@ impl ShellBuilder {
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
-                    | ShellKind::Elvish => {
+                    | ShellKind::Elvish
+                    | ShellKind::Unknown => {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }

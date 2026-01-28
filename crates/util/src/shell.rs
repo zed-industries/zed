@@ -50,7 +50,6 @@ impl Shell {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShellKind {
-    #[default]
     Posix,
     Csh,
     Tcsh,
@@ -64,6 +63,10 @@ pub enum ShellKind {
     Cmd,
     Xonsh,
     Elvish,
+    /// An unrecognized shell. We cannot safely parse its command syntax,
+    /// so `always_allow` patterns are disabled for security.
+    #[default]
+    Unknown,
 }
 
 pub fn get_system_shell() -> String {
@@ -247,6 +250,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Rc => write!(f, "rc"),
             ShellKind::Xonsh => write!(f, "xonsh"),
             ShellKind::Elvish => write!(f, "elvish"),
+            ShellKind::Unknown => write!(f, "unknown"),
         }
     }
 }
@@ -265,6 +269,12 @@ impl ShellKind {
     /// supported by all common shells. It also handles `&&` and `||` for conditional
     /// execution, `$()` and backticks for command substitution, and process substitution.
     ///
+    /// # Security Note
+    ///
+    /// Only explicitly recognized shells return `true`. Unknown shells return `false` to
+    /// prevent security bypasses - if we don't know a shell's syntax, we can't safely
+    /// parse it for `always_allow` patterns.
+    ///
     /// # Shell Notes
     ///
     /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are boolean
@@ -274,23 +284,21 @@ impl ShellKind {
     ///   parentheses around commands.
     /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
     ///   have `&&`/`||` operators for conditional chaining.
-    ///
-    /// All shells listed below support `;` and `|`, which brush-parser handles correctly.
     pub fn supports_posix_chaining(&self) -> bool {
-        matches!(
-            self,
+        match self {
             ShellKind::Posix
-                | ShellKind::Fish
-                | ShellKind::PowerShell
-                | ShellKind::Pwsh
-                | ShellKind::Cmd
-                | ShellKind::Xonsh
-                | ShellKind::Csh
-                | ShellKind::Tcsh
-                | ShellKind::Nushell
-                | ShellKind::Elvish
-                | ShellKind::Rc
-        )
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Pwsh
+            | ShellKind::Cmd
+            | ShellKind::Xonsh
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Nushell
+            | ShellKind::Elvish
+            | ShellKind::Rc => true,
+            ShellKind::Unknown => false,
+        }
     }
 
     pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
@@ -311,11 +319,10 @@ impl ShellKind {
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
             "elvish" => ShellKind::Elvish,
-            "sh" | "bash" | "zsh" => ShellKind::Posix,
-            _ if is_windows => ShellKind::PowerShell,
-            // Some other shell detected, the user might install and use a
-            // unix-like shell.
-            _ => ShellKind::Posix,
+            "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash" => ShellKind::Posix,
+            // Unrecognized shell - we cannot safely parse its syntax for
+            // `always_allow` patterns, so they will be disabled.
+            _ => ShellKind::Unknown,
         }
     }
 
@@ -331,6 +338,7 @@ impl ShellKind {
             Self::Nushell => Self::to_nushell_variable(input),
             Self::Xonsh => input.to_owned(),
             Self::Elvish => input.to_owned(),
+            Self::Unknown => input.to_owned(),
         }
     }
 
@@ -462,7 +470,8 @@ impl ShellKind {
             | ShellKind::Tcsh
             | ShellKind::Rc
             | ShellKind::Xonsh
-            | ShellKind::Elvish => interactive
+            | ShellKind::Elvish
+            | ShellKind::Unknown => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -481,7 +490,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Cmd
             | ShellKind::Xonsh
-            | ShellKind::Elvish => None,
+            | ShellKind::Elvish
+            | ShellKind::Unknown => None,
         }
     }
 
@@ -506,7 +516,8 @@ impl ShellKind {
             | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish => ';',
+            | ShellKind::Elvish
+            | ShellKind::Unknown => ';',
         }
     }
 
@@ -521,7 +532,7 @@ impl ShellKind {
             | ShellKind::Pwsh
             | ShellKind::PowerShell
             | ShellKind::Xonsh => "&&",
-            ShellKind::Nushell | ShellKind::Elvish => ";",
+            ShellKind::Nushell | ShellKind::Elvish | ShellKind::Unknown => ";",
         }
     }
 
@@ -537,7 +548,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish => shlex::try_quote(arg).ok(),
+            | ShellKind::Elvish
+            | ShellKind::Unknown => shlex::try_quote(arg).ok(),
         }
     }
 
@@ -760,7 +772,8 @@ impl ShellKind {
             | ShellKind::Posix
             | ShellKind::Rc
             | ShellKind::Xonsh
-            | ShellKind::Elvish => "source",
+            | ShellKind::Elvish
+            | ShellKind::Unknown => "source",
         }
     }
 
@@ -776,7 +789,8 @@ impl ShellKind {
             | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish => "clear",
+            | ShellKind::Elvish
+            | ShellKind::Unknown => "clear",
         }
     }
 

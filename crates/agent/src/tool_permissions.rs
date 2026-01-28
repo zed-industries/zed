@@ -952,6 +952,42 @@ mod tests {
     }
 
     #[test]
+    fn unknown_shell_denies_when_always_allow_configured() {
+        // Unknown shells have unrecognized syntax, so we cannot safely parse them.
+        // For security, always_allow patterns are disabled.
+        t("ls").allow(&["^ls"]).shell(ShellKind::Unknown).is_deny();
+    }
+
+    #[test]
+    fn unknown_shell_allows_deny_patterns() {
+        // Deny patterns still work for unknown shells since they're checked
+        // against the raw input string.
+        t("rm -rf /")
+            .deny(&["rm\\s+-rf"])
+            .shell(ShellKind::Unknown)
+            .is_deny();
+    }
+
+    #[test]
+    fn unknown_shell_allows_confirm_patterns() {
+        // Confirm patterns still work for unknown shells.
+        t("sudo reboot")
+            .confirm(&["sudo"])
+            .shell(ShellKind::Unknown)
+            .is_confirm();
+    }
+
+    #[test]
+    fn unknown_shell_falls_through_to_default() {
+        // With no always_allow patterns, unknown shells use the default mode.
+        t("ls")
+            .deny(&["rm"])
+            .mode(ToolPermissionMode::Allow)
+            .shell(ShellKind::Unknown)
+            .is_allow();
+    }
+
+    #[test]
     fn multiple_invalid_patterns_pluralizes_message() {
         let mut tools = collections::HashMap::default();
         tools.insert(
