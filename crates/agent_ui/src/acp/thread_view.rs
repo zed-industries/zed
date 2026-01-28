@@ -1346,89 +1346,13 @@ impl AcpThreadView {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ready) = self.as_ready() else { return };
-        let thread = &ready.thread;
-
-        if ready.is_loading_contents {
-            return;
+        let message_editor = self.message_editor.clone();
+        let agent = self.agent.clone();
+        let login = self.login.clone();
+        
+        if let Some(ready) = self.as_ready_mut() {
+            ready.send(message_editor, agent, login, window, cx);
         }
-
-        let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
-        let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
-
-        let has_queued = self.has_queued_messages();
-        let can_fast_track_queue = if let ThreadState::Ready(ReadyThreadState {
-            can_fast_track_queue,
-            ..
-        }) = &self.thread_state
-        {
-            *can_fast_track_queue
-        } else {
-            false
-        };
-        if is_editor_empty && can_fast_track_queue && has_queued {
-            if let ThreadState::Ready(ReadyThreadState {
-                can_fast_track_queue,
-                ..
-            }) = &mut self.thread_state
-            {
-                *can_fast_track_queue = false;
-            }
-            self.send_queued_message_at_index(0, true, window, cx);
-            return;
-        }
-
-        if is_editor_empty {
-            return;
-        }
-
-        if is_generating {
-            self.queue_message(window, cx);
-            return;
-        }
-
-        let text = self.message_editor.read(cx).text(cx);
-        let text = text.trim();
-        if text == "/login" || text == "/logout" {
-            let ThreadState::Ready(ReadyThreadState {
-                thread,
-                available_commands,
-                ..
-            }) = &self.thread_state
-            else {
-                return;
-            };
-
-            let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
-            // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
-            let logout_supported = text == "/logout"
-                && available_commands
-                    .borrow()
-                    .iter()
-                    .any(|command| command.name == "logout");
-            if can_login && !logout_supported {
-                self.message_editor
-                    .update(cx, |editor, cx| editor.clear(window, cx));
-
-                let this = cx.weak_entity();
-                let agent = self.agent.clone();
-                window.defer(cx, |window, cx| {
-                    Self::handle_auth_required(
-                        this,
-                        AuthRequired::new(),
-                        agent,
-                        connection,
-                        window,
-                        cx,
-                    );
-                });
-                cx.notify();
-                return;
-            }
-        }
-
-        self.send_impl(self.message_editor.clone(), window, cx)
     }
 
     fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1606,184 +1530,12 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ready) = self.as_ready() else {
-            return;
+        if let Some(ready) = self.as_ready_mut() {
+            ready.send_content(contents_task, window, cx);
         };
-        let session_id = ready.thread.read(cx).session_id().clone();
-        let agent_telemetry_id = ready.thread.read(cx).connection().telemetry_id();
-        let thread = ready.thread.downgrade();
-
-        if let ThreadState::Ready(ReadyThreadState {
-            is_loading_contents,
-            ..
-        }) = &mut self.thread_state
-        {
-            *is_loading_contents = true;
-        }
-        let model_id = self.current_model_id(cx);
-        let mode_id = self.current_mode_id(cx);
-        let guard = cx.new(|_| ());
-        cx.observe_release(&guard, |this, _guard, cx| {
-            if let ThreadState::Ready(ReadyThreadState {
-                is_loading_contents,
-                ..
-            }) = &mut this.thread_state
-            {
-                *is_loading_contents = false;
-            }
-            cx.notify();
-        })
-        .detach();
-
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let Some((contents, tracked_buffers)) = contents_task.await? else {
-                return Ok(());
-            };
-
-            let generation = this.update_in(cx, |this, _window, cx| {
-                this.in_flight_prompt = Some(contents.clone());
-                let generation = this.start_turn(cx);
-                this.set_editor_is_expanded(false, cx);
-                this.scroll_to_bottom(cx);
-                generation
-            })?;
-
-            let _stop_turn = defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
-                move || {
-                    this.update(&mut cx, |this, cx| {
-                        this.stop_turn(generation);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            });
-            let turn_start_time = Instant::now();
-            let send = thread.update(cx, |thread, cx| {
-                thread.action_log().update(cx, |action_log, cx| {
-                    for buffer in tracked_buffers {
-                        action_log.buffer_read(buffer, cx)
-                    }
-                });
-                drop(guard);
-
-                telemetry::event!(
-                    "Agent Message Sent",
-                    agent = agent_telemetry_id,
-                    session = session_id,
-                    model = model_id,
-                    mode = mode_id
-                );
-
-                thread.send(contents, cx)
-            })?;
-            let res = send.await;
-            let turn_time_ms = turn_start_time.elapsed().as_millis();
-            drop(_stop_turn);
-            let status = if res.is_ok() {
-                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
-                "success"
-            } else {
-                "failure"
-            };
-            telemetry::event!(
-                "Agent Turn Completed",
-                agent = agent_telemetry_id,
-                session = session_id,
-                model = model_id,
-                mode = mode_id,
-                status,
-                turn_time_ms,
-            );
-            res
-        });
-
-        cx.spawn(async move |this, cx| {
-            if let Err(err) = task.await {
-                this.update(cx, |this, cx| {
-                    this.handle_thread_error(err, cx);
-                })
-                .ok();
-            } else {
-                this.update(cx, |this, cx| {
-                    if let ThreadState::Ready(ReadyThreadState {
-                        should_be_following,
-                        ..
-                    }) = &mut this.thread_state
-                    {
-                        *should_be_following = this
-                            .workspace
-                            .update(cx, |workspace, _| {
-                                workspace.is_being_followed(CollaboratorId::Agent)
-                            })
-                            .unwrap_or_default();
-                    }
-                })
-                .ok();
-            }
-        })
-        .detach();
     }
 
-    fn queue_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ready) = self.as_ready() else {
-            return;
-        };
-        let is_idle = ready.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
 
-        if is_idle {
-            self.send_impl(self.message_editor.clone(), window, cx);
-            return;
-        }
-
-        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
-            let thread = thread.read(cx);
-            AgentSettings::get_global(cx)
-                .profiles
-                .get(thread.profile())
-                .is_some_and(|profile| profile.tools.is_empty())
-        });
-
-        let cached_commands = self.cached_slash_commands(cx);
-        let cached_errors = self.cached_slash_command_errors(cx);
-        let contents = self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents_with_cache(
-                full_mention_content,
-                Some(cached_commands),
-                Some(cached_errors),
-                cx,
-            )
-        });
-
-        let message_editor = self.message_editor.clone();
-
-        cx.spawn_in(window, async move |this, cx| {
-            let (content, tracked_buffers) = contents.await?;
-
-            if content.is_empty() {
-                return Ok::<(), anyhow::Error>(());
-            }
-
-            this.update_in(cx, |this, window, cx| {
-                this.add_to_queue(content, tracked_buffers, cx);
-                // Enable fast-track: user can press Enter again to send this queued message immediately
-                if let ThreadState::Ready(ReadyThreadState {
-                    can_fast_track_queue,
-                    ..
-                }) = &mut this.thread_state
-                {
-                    *can_fast_track_queue = true;
-                }
-                message_editor.update(cx, |message_editor, cx| {
-                    message_editor.clear(window, cx);
-                });
-                cx.notify();
-            })?;
-            Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
 
     fn send_queued_message_at_index(
         &mut self,
@@ -1792,56 +1544,9 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<AcpThreadView>,
     ) {
-        let Some(queued) = self.remove_from_queue(index, cx) else {
-            return;
-        };
-        let content = queued.content;
-        let tracked_buffers = queued.tracked_buffers;
-
-        let Some(thread) = self.as_ready().map(|r| r.thread.clone()) else {
-            return;
-        };
-
-        // Only increment skip count for "Send Now" operations (out-of-order sends)
-        // Normal auto-processing from the Stopped handler doesn't need to skip.
-        // We only skip the Stopped event from the cancelled generation, NOT the
-        // Stopped event from the newly sent message (which should trigger queue processing).
-        if is_send_now {
-            let is_generating = thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
-            if let ThreadState::Ready(ReadyThreadState {
-                skip_queue_processing_count,
-                ..
-            }) = &mut self.thread_state
-            {
-                *skip_queue_processing_count += if is_generating { 1 } else { 0 };
-            }
+        if let Some(ready) = self.as_ready_mut() {
+            ready.send_queued_message_at_index(index, is_send_now, window, cx);
         }
-
-        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
-
-        let should_be_following = matches!(
-            &self.thread_state,
-            ThreadState::Ready(ReadyThreadState {
-                should_be_following: true,
-                ..
-            })
-        );
-        let workspace = self.workspace.clone();
-
-        let contents_task = cx.spawn_in(window, async move |_this, cx| {
-            cancelled.await;
-            if should_be_following {
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.follow(CollaboratorId::Agent, window, cx);
-                    })
-                    .ok();
-            }
-
-            Ok(Some((content, tracked_buffers)))
-        });
-
-        self.send_content(contents_task, window, cx);
     }
 
     fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
