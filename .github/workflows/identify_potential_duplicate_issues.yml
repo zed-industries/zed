@@ -116,13 +116,15 @@ jobs:
           steps.check-staff.outputs.is_staff == 'false'
         id: analyze
         # let's not overspend tokens on checks that went too deep into the rabbit hole
-        timeout-minutes: 20
+        timeout-minutes: 40
         uses: anthropics/claude-code-action@231bd75b7196d48291c1498f1c6d277c2810d9a3 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
           github_token: ${{ steps.get-app-token.outputs.token }}
           # this is automatic analysis, not user-invoked, and Claude only has read-only tools, so should be safe
           allowed_non_write_users: "*"
+          # enable full output to debug the hang
+          show_full_output: true
 
           prompt: |
             You are analyzing issue #${{ steps.check-type.outputs.issue_number }} in the zed-industries/zed repository to determine if it might be a duplicate of an existing issue.
