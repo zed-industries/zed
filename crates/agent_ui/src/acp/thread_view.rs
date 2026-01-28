@@ -28,16 +28,15 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
+    ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
+    PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle, WeakEntity, Window,
     WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
     pulsating_between,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
-use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
@@ -49,7 +48,7 @@ use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{Anchor, ToPoint as _};
-use theme::{AgentFontSize, ThemeSettings};
+use theme::AgentFontSize;
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
     DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
@@ -2785,7 +2784,8 @@ impl AcpThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let style = default_markdown_style(false, false, window, cx);
+                let style =
+                    MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_3()
@@ -3070,9 +3070,10 @@ impl AcpThreadView {
                 })
                 .text_ui_sm(cx)
                 .overflow_hidden()
-                .child(
-                    self.render_markdown(chunk, default_markdown_style(false, false, window, cx)),
-                )
+                .child(self.render_markdown(
+                    chunk,
+                    MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx),
+                ))
         };
 
         v_flex()
@@ -3197,16 +3198,13 @@ impl AcpThreadView {
                 .buffer_font(cx)
         };
 
-        let tool_output_display = if is_open {
-            match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
-                    .w_full()
-                    .children(
-                        tool_call
-                            .content
-                            .iter()
-                            .enumerate()
-                            .map(|(content_ix, content)| {
+        let tool_output_display =
+            if is_open {
+                match &tool_call.status {
+                    ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+                        .w_full()
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
                                 div()
                                     .child(self.render_tool_call_content(
                                         entry_ix,
@@ -3220,88 +3218,95 @@ impl AcpThreadView {
                                         cx,
                                     ))
                                     .into_any_element()
-                            }),
-                    )
-                    .when(should_show_raw_input, |this| {
-                        let is_raw_input_expanded =
-                            self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
+                            },
+                        ))
+                        .when(should_show_raw_input, |this| {
+                            let is_raw_input_expanded =
+                                self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
 
-                        let input_header = if is_raw_input_expanded {
-                            "Raw Input:"
-                        } else {
-                            "View Raw Input"
-                        };
+                            let input_header = if is_raw_input_expanded {
+                                "Raw Input:"
+                            } else {
+                                "View Raw Input"
+                            };
 
-                        this.child(
-                            v_flex()
-                                .p_2()
-                                .gap_1()
-                                .border_t_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    h_flex()
-                                        .id("disclosure_container")
-                                        .pl_0p5()
-                                        .gap_1()
-                                        .justify_between()
-                                        .rounded_xs()
-                                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                        .child(input_output_header(input_header.into()))
-                                        .child(
-                                            Disclosure::new(
-                                                ("raw-input-disclosure", entry_ix),
-                                                is_raw_input_expanded,
+                            this.child(
+                                v_flex()
+                                    .p_2()
+                                    .gap_1()
+                                    .border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(
+                                        h_flex()
+                                            .id("disclosure_container")
+                                            .pl_0p5()
+                                            .gap_1()
+                                            .justify_between()
+                                            .rounded_xs()
+                                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                            .child(input_output_header(input_header.into()))
+                                            .child(
+                                                Disclosure::new(
+                                                    ("raw-input-disclosure", entry_ix),
+                                                    is_raw_input_expanded,
+                                                )
+                                                .opened_icon(IconName::ChevronUp)
+                                                .closed_icon(IconName::ChevronDown),
                                             )
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronDown),
-                                        )
-                                        .on_click(cx.listener({
-                                            let id = tool_call.id.clone();
+                                            .on_click(cx.listener({
+                                                let id = tool_call.id.clone();
 
-                                            move |this: &mut Self, _, _, cx| {
-                                                if this.expanded_tool_call_raw_inputs.contains(&id)
-                                                {
-                                                    this.expanded_tool_call_raw_inputs.remove(&id);
-                                                } else {
-                                                    this.expanded_tool_call_raw_inputs
-                                                        .insert(id.clone());
+                                                move |this: &mut Self, _, _, cx| {
+                                                    if this
+                                                        .expanded_tool_call_raw_inputs
+                                                        .contains(&id)
+                                                    {
+                                                        this.expanded_tool_call_raw_inputs
+                                                            .remove(&id);
+                                                    } else {
+                                                        this.expanded_tool_call_raw_inputs
+                                                            .insert(id.clone());
+                                                    }
+                                                    cx.notify();
                                                 }
-                                                cx.notify();
-                                            }
-                                        })),
-                                )
-                                .when(is_raw_input_expanded, |this| {
-                                    this.children(tool_call.raw_input_markdown.clone().map(
-                                        |input| {
-                                            self.render_markdown(
-                                                input,
-                                                default_markdown_style(false, false, window, cx),
-                                            )
-                                        },
-                                    ))
-                                }),
-                        )
-                    })
-                    .child(self.render_permission_buttons(
-                        options,
-                        entry_ix,
-                        tool_call.id.clone(),
-                        cx,
-                    ))
-                    .into_any(),
-                ToolCallStatus::Pending | ToolCallStatus::InProgress
-                    if is_edit
-                        && tool_call.content.is_empty()
-                        && self.as_native_connection(cx).is_some() =>
-                {
-                    self.render_diff_loading(cx).into_any()
-                }
-                ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                | ToolCallStatus::Completed
-                | ToolCallStatus::Failed
-                | ToolCallStatus::Canceled => {
-                    v_flex()
+                                            })),
+                                    )
+                                    .when(is_raw_input_expanded, |this| {
+                                        this.children(tool_call.raw_input_markdown.clone().map(
+                                            |input| {
+                                                self.render_markdown(
+                                                    input,
+                                                    MarkdownStyle::themed_markdown_style(
+                                                        MarkdownFont::Agent,
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    ),
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            )
+                        })
+                        .child(self.render_permission_buttons(
+                            options,
+                            entry_ix,
+                            tool_call.id.clone(),
+                            cx,
+                        ))
+                        .into_any(),
+                    ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        if is_edit
+                            && tool_call.content.is_empty()
+                            && self.as_native_connection(cx).is_some() =>
+                    {
+                        self.render_diff_loading(cx).into_any()
+                    }
+                    ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Canceled => v_flex()
                         .when(should_show_raw_input, |this| {
                             this.mt_1p5().w_full().child(
                                 v_flex()
@@ -3316,7 +3321,12 @@ impl AcpThreadView {
                                         div().id(("tool-call-raw-input-markdown", entry_ix)).child(
                                             self.render_markdown(
                                                 input,
-                                                default_markdown_style(false, false, window, cx),
+                                                MarkdownStyle::themed_markdown_style(
+                                                    MarkdownFont::Agent,
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                ),
                                             ),
                                         )
                                     }))
@@ -3340,14 +3350,13 @@ impl AcpThreadView {
                                 )
                             },
                         ))
-                        .into_any()
+                        .into_any(),
+                    ToolCallStatus::Rejected => Empty.into_any(),
                 }
-                ToolCallStatus::Rejected => Empty.into_any(),
-            }
-            .into()
-        } else {
-            None
-        };
+                .into()
+            } else {
+                None
+            };
 
         v_flex()
             .map(|this| {
@@ -3615,7 +3624,12 @@ impl AcpThreadView {
                         tool_call.label.clone(),
                         MarkdownStyle {
                             prevent_mouse_interaction: true,
-                            ..default_markdown_style(false, true, window, cx)
+                            ..MarkdownStyle::themed_markdown_style(
+                                MarkdownFont::Agent,
+                                true,
+                                window,
+                                cx,
+                            )
                         },
                     ))
                     .tooltip(Tooltip::text("Go to File"))
@@ -3628,7 +3642,7 @@ impl AcpThreadView {
                     .w_full()
                     .child(self.render_markdown(
                         tool_call.label.clone(),
-                        default_markdown_style(false, true, window, cx),
+                        MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, true, window, cx),
                     ))
                     .into_any()
             })
@@ -3960,7 +3974,12 @@ impl AcpThreadView {
                     .when_some(last_assistant_markdown, |this, markdown| {
                         this.child(self.render_markdown(
                             markdown,
-                            default_markdown_style(false, false, window, cx),
+                            MarkdownStyle::themed_markdown_style(
+                                MarkdownFont::Agent,
+                                false,
+                                window,
+                                cx,
+                            ),
                         ))
                     }),
             )
@@ -3996,7 +4015,10 @@ impl AcpThreadView {
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
-            .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
+            .child(self.render_markdown(
+                markdown,
+                MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx),
+            ))
             .when(!card_layout, |this| {
                 this.child(
                     IconButton::new(button_id, IconName::ChevronUp)
@@ -5171,7 +5193,12 @@ impl AcpThreadView {
                             .children(description.map(|desc| {
                                 self.render_markdown(
                                     desc.clone(),
-                                    default_markdown_style(false, false, window, cx),
+                                    MarkdownStyle::themed_markdown_style(
+                                        MarkdownFont::Agent,
+                                        false,
+                                        window,
+                                        cx,
+                                    ),
                                 )
                             }))
                         }
@@ -8097,7 +8124,8 @@ impl AcpThreadView {
             markdown
         };
 
-        let markdown_style = default_markdown_style(false, true, window, cx);
+        let markdown_style =
+            MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, true, window, cx);
         let description = self
             .render_markdown(markdown, markdown_style)
             .into_any_element();
@@ -8577,138 +8605,13 @@ impl Render for AcpThreadView {
     }
 }
 
-fn default_markdown_style(
-    buffer_font: bool,
-    muted_text: bool,
-    window: &Window,
-    cx: &App,
-) -> MarkdownStyle {
-    let theme_settings = ThemeSettings::get_global(cx);
-    let colors = cx.theme().colors();
-
-    let buffer_font_size = theme_settings.agent_buffer_font_size(cx);
-
-    let mut text_style = window.text_style();
-    let line_height = buffer_font_size * 1.75;
-
-    let font_family = if buffer_font {
-        theme_settings.buffer_font.family.clone()
-    } else {
-        theme_settings.ui_font.family.clone()
-    };
-
-    let font_size = if buffer_font {
-        theme_settings.agent_buffer_font_size(cx)
-    } else {
-        theme_settings.agent_ui_font_size(cx)
-    };
-
-    let text_color = if muted_text {
-        colors.text_muted
-    } else {
-        colors.text
-    };
-
-    text_style.refine(&TextStyleRefinement {
-        font_family: Some(font_family),
-        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
-        font_features: Some(theme_settings.ui_font.features.clone()),
-        font_size: Some(font_size.into()),
-        line_height: Some(line_height.into()),
-        color: Some(text_color),
-        ..Default::default()
-    });
-
-    MarkdownStyle {
-        base_text_style: text_style.clone(),
-        syntax: cx.theme().syntax().clone(),
-        selection_background_color: colors.element_selection_background,
-        code_block_overflow_x_scroll: true,
-        heading_level_styles: Some(HeadingLevelStyles {
-            h1: Some(TextStyleRefinement {
-                font_size: Some(rems(1.15).into()),
-                ..Default::default()
-            }),
-            h2: Some(TextStyleRefinement {
-                font_size: Some(rems(1.1).into()),
-                ..Default::default()
-            }),
-            h3: Some(TextStyleRefinement {
-                font_size: Some(rems(1.05).into()),
-                ..Default::default()
-            }),
-            h4: Some(TextStyleRefinement {
-                font_size: Some(rems(1.).into()),
-                ..Default::default()
-            }),
-            h5: Some(TextStyleRefinement {
-                font_size: Some(rems(0.95).into()),
-                ..Default::default()
-            }),
-            h6: Some(TextStyleRefinement {
-                font_size: Some(rems(0.875).into()),
-                ..Default::default()
-            }),
-        }),
-        code_block: StyleRefinement {
-            padding: EdgesRefinement {
-                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-            },
-            margin: EdgesRefinement {
-                top: Some(Length::Definite(px(8.).into())),
-                left: Some(Length::Definite(px(0.).into())),
-                right: Some(Length::Definite(px(0.).into())),
-                bottom: Some(Length::Definite(px(12.).into())),
-            },
-            border_style: Some(BorderStyle::Solid),
-            border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(px(1.))),
-                left: Some(AbsoluteLength::Pixels(px(1.))),
-                right: Some(AbsoluteLength::Pixels(px(1.))),
-                bottom: Some(AbsoluteLength::Pixels(px(1.))),
-            },
-            border_color: Some(colors.border_variant),
-            background: Some(colors.editor_background.into()),
-            text: TextStyleRefinement {
-                font_family: Some(theme_settings.buffer_font.family.clone()),
-                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-                font_features: Some(theme_settings.buffer_font.features.clone()),
-                font_size: Some(buffer_font_size.into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        inline_code: TextStyleRefinement {
-            font_family: Some(theme_settings.buffer_font.family.clone()),
-            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-            font_features: Some(theme_settings.buffer_font.features.clone()),
-            font_size: Some(buffer_font_size.into()),
-            background_color: Some(colors.editor_foreground.opacity(0.08)),
-            ..Default::default()
-        },
-        link: TextStyleRefinement {
-            background_color: Some(colors.editor_foreground.opacity(0.025)),
-            color: Some(colors.text_accent),
-            underline: Some(UnderlineStyle {
-                color: Some(colors.text_accent.opacity(0.5)),
-                thickness: px(1.),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 fn plan_label_markdown_style(
     status: &acp::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(false, false, window, cx);
+    let default_md_style =
+        MarkdownStyle::themed_markdown_style(MarkdownFont::Agent, false, window, cx);
 
     MarkdownStyle {
         base_text_style: TextStyle {

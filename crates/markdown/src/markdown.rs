@@ -108,11 +108,31 @@ pub enum MarkdownFont {
 }
 
 impl MarkdownStyle {
-    pub fn themed_markdown_style(window: &Window, cx: &App) -> Self {
+    pub fn themed_markdown_style(
+        font: MarkdownFont,
+        muted_text: bool,
+        window: &Window,
+        cx: &App,
+    ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
-        let buffer_font_size = theme_settings.buffer_font_size(cx);
+        let (buffer_font_size, ui_font_size) = match font {
+            MarkdownFont::Agent => (
+                theme_settings.agent_buffer_font_size(cx),
+                theme_settings.agent_ui_font_size(cx),
+            ),
+            MarkdownFont::Editor => (
+                theme_settings.buffer_font_size(cx),
+                theme_settings.ui_font_size(cx),
+            ),
+        };
+
+        let text_color = if muted_text {
+            colors.text_muted
+        } else {
+            colors.text
+        };
 
         let mut text_style = window.text_style();
         let line_height = buffer_font_size * 1.75;
@@ -121,9 +141,9 @@ impl MarkdownStyle {
             font_family: Some(theme_settings.ui_font.family.clone()),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
-            font_size: Some(theme_settings.ui_font_size(cx).into()),
+            font_size: Some(ui_font_size.into()),
             line_height: Some(line_height.into()),
-            color: Some(colors.text),
+            color: Some(text_color),
             ..Default::default()
         });
 
