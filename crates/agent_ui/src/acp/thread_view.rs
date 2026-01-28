@@ -347,7 +347,6 @@ pub struct AcpThreadView {
     command_load_errors: Vec<CommandLoadError>, // keep
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
-    token_limit_callout_dismissed: bool,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>, // keep
@@ -406,6 +405,7 @@ enum ThreadState {
         thread_retry_status: Option<RetryStatus>,
         thread_error: Option<ThreadError>,
         thread_error_markdown: Option<Entity<Markdown>>,
+        token_limit_callout_dismissed: bool,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -575,7 +575,6 @@ impl AcpThreadView {
             command_load_errors,
             command_load_errors_dismissed: false,
             slash_command_registry,
-            token_limit_callout_dismissed: false,
             thread_feedback: Default::default(),
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             thread_retry_status: None,
                             thread_error: None,
                             thread_error_markdown: None,
+                            token_limit_callout_dismissed: false,
                             _subscriptions: subscriptions,
                         };
 
@@ -2074,13 +2074,14 @@ impl AcpThreadView {
         if let ThreadState::Ready {
             thread_error,
             thread_error_markdown,
+            token_limit_callout_dismissed,
             ..
         } = &mut self.thread_state
         {
             *thread_error = None;
             *thread_error_markdown = None;
+            *token_limit_callout_dismissed = true;
         }
-        self.token_limit_callout_dismissed = true;
         cx.notify();
     }
 
@@ -7816,11 +7817,20 @@ impl AcpThreadView {
     }
 
     fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        if self.token_limit_callout_dismissed {
+        let ThreadState::Ready {
+            thread,
+            token_limit_callout_dismissed,
+            ..
+        } = &self.thread_state
+        else {
+            return None;
+        };
+
+        if *token_limit_callout_dismissed {
             return None;
         }
 
-        let token_usage = self.thread()?.read(cx).token_usage()?;
+        let token_usage = thread.read(cx).token_usage()?;
         let ratio = token_usage.ratio();
 
         let (severity, icon, title) = match ratio {
