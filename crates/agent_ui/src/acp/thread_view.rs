@@ -348,7 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     expanded_subagents: HashSet<acp::SessionId>,
     subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
@@ -406,6 +405,7 @@ enum ThreadState {
         /// Tracks which tool calls have their content/output expanded.
         /// Used for showing/hiding tool call results, terminal output, etc.
         expanded_tool_calls: HashSet<acp::ToolCallId>,
+        expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -573,7 +573,6 @@ impl AcpThreadView {
             command_load_errors_dismissed: false,
             slash_command_registry,
             auth_task: None,
-            expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             expanded_subagents: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
@@ -911,6 +910,7 @@ impl AcpThreadView {
                             thread_feedback: Default::default(),
                             list_state,
                             expanded_tool_calls: HashSet::default(),
+                            expanded_tool_call_raw_inputs: HashSet::default(),
                             _subscriptions: subscriptions,
                         };
 
@@ -3369,7 +3369,7 @@ impl AcpThreadView {
                     )
                     .when(should_show_raw_input, |this| {
                         let is_raw_input_expanded =
-                            self.expanded_tool_call_raw_inputs.contains(&tool_call.id);
+                            matches!(&self.thread_state, ThreadState::Ready { expanded_tool_call_raw_inputs, .. } if expanded_tool_call_raw_inputs.contains(&tool_call.id));
 
                         let input_header = if is_raw_input_expanded {
                             "Raw Input:"
@@ -3404,14 +3404,14 @@ impl AcpThreadView {
                                             let id = tool_call.id.clone();
 
                                             move |this: &mut Self, _, _, cx| {
-                                                if this.expanded_tool_call_raw_inputs.contains(&id)
-                                                {
-                                                    this.expanded_tool_call_raw_inputs.remove(&id);
-                                                } else {
-                                                    this.expanded_tool_call_raw_inputs
-                                                        .insert(id.clone());
+                                                if let ThreadState::Ready { expanded_tool_call_raw_inputs, .. } = &mut this.thread_state {
+                                                    if expanded_tool_call_raw_inputs.contains(&id) {
+                                                        expanded_tool_call_raw_inputs.remove(&id);
+                                                    } else {
+                                                        expanded_tool_call_raw_inputs.insert(id.clone());
+                                                    }
+                                                    cx.notify();
                                                 }
-                                                cx.notify();
                                             }
                                         })),
                                 )
