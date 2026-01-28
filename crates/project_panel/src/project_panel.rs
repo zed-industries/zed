@@ -21,12 +21,12 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnchoredForceSnap, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context,
     CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
+    anchored, deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size,
+    transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -1302,9 +1302,7 @@ impl ProjectPanel {
             let total_menu_height =
                 total_actions_height + total_separators_height + dynamic_spacing;
 
-            let (_, entry_ix, _) = self
-                .index_for_selection(*selection)
-                .unwrap_or_default();
+            let (_, entry_ix, _) = self.index_for_selection(*selection).unwrap_or_default();
 
             let offset_y = self.scroll_handle.offset().y.to_f64();
             let viewport_height = window.viewport_size().height;
