@@ -2059,3 +2059,104 @@ impl From<String> for ClipboardString {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_window_button_layout_parse_standard() {
+        let layout = WindowButtonLayout::parse("close,minimize:maximize");
+        assert_eq!(
+            layout.left,
+            vec![WindowButton::Close, WindowButton::Minimize]
+        );
+        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_right_only() {
+        let layout = WindowButtonLayout::parse("minimize,maximize,close");
+        assert_eq!(layout.left, vec![]);
+        assert_eq!(
+            layout.right,
+            vec![
+                WindowButton::Minimize,
+                WindowButton::Maximize,
+                WindowButton::Close
+            ]
+        );
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_left_only() {
+        let layout = WindowButtonLayout::parse("close,minimize,maximize:");
+        assert_eq!(
+            layout.left,
+            vec![
+                WindowButton::Close,
+                WindowButton::Minimize,
+                WindowButton::Maximize
+            ]
+        );
+        assert_eq!(layout.right, vec![]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_with_whitespace() {
+        let layout = WindowButtonLayout::parse(" close , minimize : maximize ");
+        assert_eq!(
+            layout.left,
+            vec![WindowButton::Close, WindowButton::Minimize]
+        );
+        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_empty() {
+        let layout = WindowButtonLayout::parse("");
+        assert_eq!(layout.left, vec![]);
+        assert_eq!(layout.right, vec![]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_invalid_buttons() {
+        let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo");
+        assert_eq!(
+            layout.left,
+            vec![WindowButton::Close, WindowButton::Minimize]
+        );
+        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_gnome_style() {
+        // GNOME default: close only on right
+        let layout = WindowButtonLayout::parse("close");
+        assert_eq!(layout.left, vec![]);
+        assert_eq!(layout.right, vec![WindowButton::Close]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_elementary_style() {
+        // Elementary default: close on left, maximize on right
+        let layout = WindowButtonLayout::parse("close:maximize");
+        assert_eq!(layout.left, vec![WindowButton::Close]);
+        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+    }
+
+    #[test]
+    fn test_window_button_layout_default() {
+        // KDE default: minimize, maximize, close on right
+        let layout = WindowButtonLayout::default();
+        assert_eq!(layout.left, vec![]);
+        assert_eq!(
+            layout.right,
+            vec![
+                WindowButton::Minimize,
+                WindowButton::Maximize,
+                WindowButton::Close
+            ]
+        );
+    }
+}
