@@ -138,6 +138,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(extension_release::extension_release),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
+        WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
         WorkflowFile::zed(run_agent_evals::run_agent_evals),
@@ -145,7 +146,6 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(run_agent_evals::run_unit_evals),
         WorkflowFile::zed(run_bundling::run_bundling),
         WorkflowFile::zed(run_tests::run_tests),
-        WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension_shared(extensions::bump_version::bump_version),
