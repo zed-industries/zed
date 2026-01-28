@@ -9,6 +9,7 @@ use crate::PredictionProvider;
 use crate::example::{Example, ExamplePrediction};
 use crate::format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example};
 use crate::llm_client::{LlmClient, model_for_backend};
+use crate::qa::QaResult;
 use crate::word_diff::unified_to_word_diff;
 use anyhow::Result;
 use std::io::{BufWriter, Write};
@@ -42,6 +43,17 @@ pub struct RepairArgs {
 pub fn build_repair_prompt(example: &Example) -> Option<String> {
     let prediction = example.predictions.first()?;
     let qa = example.qa.first()?.as_ref()?;
+    build_repair_prompt_for_prediction(example, prediction, qa)
+}
+
+/// Build the repair prompt for a specific prediction and QA result.
+///
+/// Returns None if the example doesn't have the required data.
+pub fn build_repair_prompt_for_prediction(
+    example: &Example,
+    prediction: &ExamplePrediction,
+    qa: &QaResult,
+) -> Option<String> {
     let prompt_inputs = example.prompt_inputs.as_ref()?;
     let actual_patch = prediction.actual_patch.as_ref()?;
 
@@ -100,6 +112,11 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
         return false;
     };
 
+    needs_repair_qa(qa, confidence_threshold)
+}
+
+/// Check if a QA result indicates repair is needed.
+pub fn needs_repair_qa(qa: &QaResult, confidence_threshold: u8) -> bool {
     // Repair if reverts_edits is true
     if qa.reverts_edits == Some(true) {
         return true;

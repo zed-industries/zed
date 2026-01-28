@@ -4,7 +4,7 @@
 //! Caching is handled by the underlying client.
 
 use crate::BatchProvider;
-use crate::example::Example;
+use crate::example::{Example, ExamplePrediction};
 use crate::format_prompt::extract_cursor_excerpt_from_example;
 use crate::llm_client::{LlmClient, model_for_backend};
 use crate::word_diff::unified_to_word_diff;
@@ -55,9 +55,17 @@ pub struct QaResult {
     pub error: Option<String>,
 }
 
-/// Build the assessment prompt for an example.
+/// Build the assessment prompt for an example (uses first prediction).
 pub fn build_prompt(example: &Example) -> Option<String> {
     let prediction = example.predictions.first()?;
+    build_prompt_for_prediction(example, prediction)
+}
+
+/// Build the assessment prompt for a specific prediction.
+pub fn build_prompt_for_prediction(
+    example: &Example,
+    prediction: &ExamplePrediction,
+) -> Option<String> {
     let actual_patch = prediction.actual_patch.as_ref()?;
     let prompt_inputs = example.prompt_inputs.as_ref()?;
 

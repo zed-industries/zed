@@ -10,7 +10,7 @@ use crate::{
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
     progress::{ExampleProgress, InfoStyle, Step},
     qa,
-    repair::{build_repair_prompt, needs_repair, parse_repair_response},
+    repair::{build_repair_prompt_for_prediction, needs_repair_qa, parse_repair_response},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
@@ -429,10 +429,13 @@ async fn predict_openai(
 /// Default confidence threshold for repair
 const DEFAULT_REPAIR_CONFIDENCE_THRESHOLD: u8 = 3;
 
-/// Predict using teacher model, then run QA evaluation, and optionally repair
-/// if QA indicates issues (reverts_edits=true or low confidence).
+/// Predict using teacher model, then run QA evaluation on all predictions,
+/// and replace predictions that need repair.
 ///
 /// This is a non-batched flow that processes each step synchronously.
+/// - Predictions that pass QA keep their original Teacher provider
+/// - Predictions that fail QA are replaced with repaired versions (RepairedTeacher provider)
+/// - QA results are not stored because they would be outdated after replacement
 async fn predict_repaired_teacher(
     example: &mut Example,
     backend: TeacherBackend,
@@ -441,64 +444,92 @@ async fn predict_repaired_teacher(
     // Step 1: Run teacher prediction (non-batched for immediate results)
     predict_teacher(example, backend, false, repetition_count).await?;
 
-    // Only proceed with QA/repair for the first prediction
-    let Some(prediction) = example.predictions.first() else {
-        return Ok(());
-    };
-
-    // Skip QA if no actual patch was generated
-    if prediction.actual_patch.is_none() {
+    if example.predictions.is_empty() {
         return Ok(());
     }
 
-    // Step 2: Run QA evaluation
     let batch_provider = match backend {
         TeacherBackend::Sonnet45 => BatchProvider::Anthropic,
         TeacherBackend::Gpt52 => BatchProvider::Openai,
     };
-    let qa_client = LlmClient::new(batch_provider, false)?;
-    let qa_model = model_for_backend(batch_provider);
+    let llm_client = LlmClient::new(batch_provider, false)?;
+    let model = model_for_backend(batch_provider);
 
-    let qa_result = if let Some(qa_prompt) = qa::build_prompt(example) {
-        match qa_client.generate(qa_model, 1024, &qa_prompt).await? {
-            Some(response_text) => Some(qa::parse_response(&response_text)),
-            None => None,
+    // Step 2: Run QA for all predictions and repair those that need it
+    let mut final_predictions = Vec::with_capacity(example.predictions.len());
+    let mut final_qa = Vec::with_capacity(example.predictions.len());
+
+    for prediction in &example.predictions {
+        // Skip QA if no actual patch was generated
+        if prediction.actual_patch.is_none() {
+            final_predictions.push(prediction.clone());
+            final_qa.push(None);
+            continue;
         }
-    } else {
-        None
-    };
 
-    // Store QA result
-    example.qa = vec![qa_result.clone()];
-
-    // Step 3: Check if repair is needed and run repair if so
-    if needs_repair(example, DEFAULT_REPAIR_CONFIDENCE_THRESHOLD) {
-        let repair_client = LlmClient::new(batch_provider, false)?;
-
-        if let Some(repair_prompt) = build_repair_prompt(example) {
-            if let Some(response_text) = repair_client
-                .generate(qa_model, 16384, &repair_prompt)
-                .await?
-            {
-                match parse_repair_response(example, &response_text) {
-                    Ok(mut repaired_prediction) => {
-                        // Mark the prediction as coming from repaired-teacher
-                        repaired_prediction.provider = PredictionProvider::RepairedTeacher(backend);
-                        example.predictions.push(repaired_prediction);
-                    }
-                    Err(e) => {
-                        // Add error prediction if parsing failed
-                        example.predictions.push(ExamplePrediction {
-                            actual_patch: None,
-                            actual_output: response_text,
-                            error: Some(format!("Failed to parse repair response: {}", e)),
-                            provider: PredictionProvider::RepairedTeacher(backend),
-                        });
-                    }
+        // Run QA evaluation for this prediction
+        let qa_result =
+            if let Some(qa_prompt) = qa::build_prompt_for_prediction(example, prediction) {
+                match llm_client.generate(model, 1024, &qa_prompt).await? {
+                    Some(response_text) => Some(qa::parse_response(&response_text)),
+                    None => None,
                 }
+            } else {
+                None
+            };
+
+        // Check if repair is needed
+        let needs_repair = qa_result
+            .as_ref()
+            .map(|qa| needs_repair_qa(qa, DEFAULT_REPAIR_CONFIDENCE_THRESHOLD))
+            .unwrap_or(false);
+
+        if needs_repair {
+            let qa = qa_result
+                .as_ref()
+                .expect("qa_result must be Some if needs_repair is true");
+            // Step 3: Run repair for this prediction
+            if let Some(repair_prompt) = build_repair_prompt_for_prediction(example, prediction, qa)
+            {
+                if let Some(response_text) =
+                    llm_client.generate(model, 16384, &repair_prompt).await?
+                {
+                    match parse_repair_response(example, &response_text) {
+                        Ok(mut repaired_prediction) => {
+                            repaired_prediction.provider =
+                                PredictionProvider::RepairedTeacher(backend);
+                            final_predictions.push(repaired_prediction);
+                            final_qa.push(qa_result);
+                        }
+                        Err(e) => {
+                            final_predictions.push(ExamplePrediction {
+                                actual_patch: None,
+                                actual_output: response_text,
+                                error: Some(format!("Failed to parse repair response: {}", e)),
+                                provider: PredictionProvider::RepairedTeacher(backend),
+                            });
+                            final_qa.push(qa_result);
+                        }
+                    }
+                } else {
+                    // Repair generation returned None, keep original
+                    final_predictions.push(prediction.clone());
+                    final_qa.push(qa_result);
+                }
+            } else {
+                // Couldn't build repair prompt, keep original
+                final_predictions.push(prediction.clone());
+                final_qa.push(qa_result);
             }
+        } else {
+            // No repair needed, keep original (with Teacher provider)
+            final_predictions.push(prediction.clone());
+            final_qa.push(qa_result);
         }
     }
+
+    example.predictions = final_predictions;
+    example.qa = final_qa;
 
     Ok(())
 }
