@@ -1015,6 +1015,8 @@
       "alt-up": "git_panel::FocusChanges",
       "shift-escape": "git::ExpandCommitEditor",
       "alt-tab": "git::GenerateCommitMessage",
+      "up": "git_panel::PrevCommitEditorHistoryItem",
+      "down": "git_panel::NextCommitEditorHistoryItem",
     },
   },
   {
