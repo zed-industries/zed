@@ -1,13 +1,11 @@
 use crate::git_status_icon;
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
-use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
-};
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::Repository};
 use std::sync::Arc;
-use ui::{ListHeader, ListItem, ListItemSpacing, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 
 pub fn register(workspace: &mut Workspace) {
@@ -236,18 +234,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
             .ok();
     }
 
-    fn render_header(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        Some(
-            ListHeader::new("Repositories")
-                .inset(true)
-                .into_any_element(),
-        )
-    }
-
     fn render_match(
         &self,
         ix: usize,
@@ -264,25 +250,22 @@ impl PickerDelegate for RepositorySelectorDelegate {
             .as_ref()
             .is_some_and(|active| active == repo_info);
 
-        let branch_name = repo.branch.as_ref().map(|b| b.name().to_string());
-
         let mut item = ListItem::new(ix)
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
-            .when(is_active, |item| {
-                item.start_slot(Icon::new(IconName::Check).color(Color::Accent))
-            })
-            .child(v_flex().child(Label::new(display_name)).when_some(
-                branch_name,
-                |el, branch| {
-                    el.child(
-                        Label::new(branch)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                },
-            ));
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(Label::new(display_name))
+                    .when(is_active, |this| {
+                        this.child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Accent),
+                        )
+                    }),
+            );
 
         if summary.count > 0 {
             let status = if summary.conflict > 0 {
@@ -301,13 +284,12 @@ impl PickerDelegate for RepositorySelectorDelegate {
                     worktree_status: StatusCode::Unmodified,
                 })
             } else {
-                // Added or untracked files
                 FileStatus::Tracked(TrackedStatus {
                     index_status: StatusCode::Added,
                     worktree_status: StatusCode::Unmodified,
                 })
             };
-            item = item.end_slot(git_status_icon(status));
+            item = item.end_slot(div().pr_2().child(git_status_icon(status)));
         }
 
         Some(item)
