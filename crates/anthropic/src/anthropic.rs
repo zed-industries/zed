@@ -703,8 +703,6 @@ pub async fn stream_completion_with_rate_limit_info(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        // Some Anthropic-compatible endpoints omit the space after `data:`.
-                        // Accept both `data: {json}` and `data:{json}`.
                         let line = match line.strip_prefix("data:") {
                             Some(rest) => rest.trim_start(),
                             None => return None,
