@@ -348,10 +348,6 @@ pub struct AcpThreadView {
     command_load_errors_dismissed: bool, // keep
     slash_command_registry: Option<Entity<SlashCommandRegistry>>, // keep
     auth_task: Option<Task<()>>, // keep
-    edits_expanded: bool,
-    plan_expanded: bool,
-    queue_expanded: bool,
-    editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
     local_queued_messages: Vec<QueuedMessage>,
@@ -406,6 +402,10 @@ enum ThreadState {
         expanded_thinking_blocks: HashSet<(usize, usize)>,
         expanded_subagents: HashSet<acp::SessionId>,
         subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
+        edits_expanded: bool,
+        plan_expanded: bool,
+        queue_expanded: bool,
+        editor_expanded: bool,
         _subscriptions: Vec<Subscription>,
     },
     LoadError(LoadError),
@@ -578,15 +578,11 @@ impl AcpThreadView {
             queued_message_editors: Vec::new(),
             queued_message_editor_subscriptions: Vec::new(),
             last_synced_queue_length: 0,
-            edits_expanded: false,
-            plan_expanded: false,
-            queue_expanded: true,
             discarded_partial_edits: HashSet::default(),
             prompt_capabilities,
             available_commands,
             cached_user_commands,
             cached_user_command_errors,
-            editor_expanded: false,
             should_be_following: false,
             recent_history_entries,
             history,
@@ -911,6 +907,10 @@ impl AcpThreadView {
                             expanded_thinking_blocks: HashSet::default(),
                             expanded_subagents: HashSet::default(),
                             subagent_scroll_handles: RefCell::new(HashMap::default()),
+                            edits_expanded: false,
+                            plan_expanded: false,
+                            queue_expanded: true,
+                            editor_expanded: false,
                             _subscriptions: subscriptions,
                         };
 
@@ -1329,13 +1329,19 @@ impl AcpThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_editor_is_expanded(!self.editor_expanded, cx);
+        let ThreadState::Ready { editor_expanded, .. } = &self.thread_state else {
+            return;
+        };
+        self.set_editor_is_expanded(!*editor_expanded, cx);
         cx.stop_propagation();
         cx.notify();
     }
 
     fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
-        self.editor_expanded = is_expanded;
+        let ThreadState::Ready { editor_expanded, .. } = &mut self.thread_state else {
+            return;
+        };
+        *editor_expanded = is_expanded;
         self.message_editor.update(cx, |editor, cx| {
             if is_expanded {
                 editor.set_mode(
@@ -5427,6 +5433,19 @@ impl AcpThreadView {
 
         let use_keep_reject_buttons = !cx.has_flag::<AgentV2FeatureFlag>();
 
+        let ThreadState::Ready {
+            plan_expanded,
+            edits_expanded,
+            queue_expanded,
+            ..
+        } = &self.thread_state
+        else {
+            return None.into();
+        };
+        let plan_expanded = *plan_expanded;
+        let edits_expanded = *edits_expanded;
+        let queue_expanded = *queue_expanded;
+
         v_flex()
             .mt_1()
             .mx_2()
@@ -5443,7 +5462,7 @@ impl AcpThreadView {
             }])
             .when(!plan.is_empty(), |this| {
                 this.child(self.render_plan_summary(plan, window, cx))
-                    .when(self.plan_expanded, |parent| {
+                    .when(plan_expanded, |parent| {
                         parent.child(self.render_plan_entries(plan, window, cx))
                     })
             })
@@ -5453,12 +5472,12 @@ impl AcpThreadView {
             .when(!changed_buffers.is_empty(), |this| {
                 this.child(self.render_edits_summary(
                     &changed_buffers,
-                    self.edits_expanded,
+                    edits_expanded,
                     pending_edits,
                     use_keep_reject_buttons,
                     cx,
                 ))
-                .when(self.edits_expanded, |parent| {
+                .when(edits_expanded, |parent| {
                     parent.child(self.render_edited_files(
                         action_log,
                         telemetry.clone(),
@@ -5474,7 +5493,7 @@ impl AcpThreadView {
                     this.child(Divider::horizontal().color(DividerColor::Border))
                 })
                 .child(self.render_message_queue_summary(window, cx))
-                .when(self.queue_expanded, |parent| {
+                .when(queue_expanded, |parent| {
                     parent.child(self.render_message_queue_entries(window, cx))
                 })
             })
@@ -5488,10 +5507,14 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let ThreadState::Ready { plan_expanded, .. } = &self.thread_state else {
+            return Empty.into_any_element();
+        };
+        let plan_expanded = *plan_expanded;
         let stats = plan.stats();
 
         let title = if let Some(entry) = stats.in_progress_entry
-            && !self.plan_expanded
+            && !plan_expanded
         {
             h_flex()
                 .cursor_default()
@@ -5566,15 +5589,19 @@ impl AcpThreadView {
             .p_1()
             .w_full()
             .gap_1()
-            .when(self.plan_expanded, |this| {
+            .when(plan_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
-            .child(Disclosure::new("plan_disclosure", self.plan_expanded))
+            .child(Disclosure::new("plan_disclosure", plan_expanded))
             .child(title)
             .on_click(cx.listener(|this, _, _, cx| {
-                this.plan_expanded = !this.plan_expanded;
+                let ThreadState::Ready { plan_expanded, .. } = &mut this.thread_state else {
+                    return;
+                };
+                *plan_expanded = !*plan_expanded;
                 cx.notify();
             }))
+            .into_any_element()
     }
 
     fn render_plan_entries(
@@ -5720,7 +5747,11 @@ impl AcpThreadView {
                         }
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.edits_expanded = !this.edits_expanded;
+                        let ThreadState::Ready { edits_expanded, .. } = &mut this.thread_state
+                        else {
+                            return;
+                        };
+                        *edits_expanded = !*edits_expanded;
                         cx.notify();
                     })),
             )
@@ -6096,22 +6127,31 @@ impl AcpThreadView {
             format!("{} Queued Messages", queue_count).into()
         };
 
+        let ThreadState::Ready { queue_expanded, .. } = &self.thread_state else {
+            return Empty.into_any_element();
+        };
+        let queue_expanded = *queue_expanded;
+
         h_flex()
             .p_1()
             .w_full()
             .gap_1()
             .justify_between()
-            .when(self.queue_expanded, |this| {
+            .when(queue_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
             .child(
                 h_flex()
                     .id("queue_summary")
                     .gap_1()
-                    .child(Disclosure::new("queue_disclosure", self.queue_expanded))
+                    .child(Disclosure::new("queue_disclosure", queue_expanded))
                     .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.queue_expanded = !this.queue_expanded;
+                        let ThreadState::Ready { queue_expanded, .. } = &mut this.thread_state
+                        else {
+                            return;
+                        };
+                        *queue_expanded = !*queue_expanded;
                         cx.notify();
                     })),
             )
@@ -6125,6 +6165,7 @@ impl AcpThreadView {
                         cx.notify();
                     })),
             )
+            .into_any_element()
     }
 
     fn render_message_queue_entries(
@@ -6337,7 +6378,11 @@ impl AcpThreadView {
     fn render_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
-        let (expand_icon, expand_tooltip) = if self.editor_expanded {
+        let editor_expanded = matches!(
+            &self.thread_state,
+            ThreadState::Ready { editor_expanded: true, .. }
+        );
+        let (expand_icon, expand_tooltip) = if editor_expanded {
             (IconName::Minimize, "Minimize Message Editor")
         } else {
             (IconName::Maximize, "Expand Message Editor")
@@ -6365,7 +6410,7 @@ impl AcpThreadView {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .bg(editor_bg_color)
-            .when(self.editor_expanded, |this| {
+            .when(editor_expanded, |this| {
                 this.h(vh(0.8, window)).size_full().justify_between()
             })
             .child(
