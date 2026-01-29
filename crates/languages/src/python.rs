@@ -1409,7 +1409,11 @@ impl ToolchainLister for PythonToolchainProvider {
                 ) => {
                     if let Some(activation_scripts) = &toolchain.activation_scripts {
                         if let Some(ref shell_kind) = shell {
-                            if let Some(activate_script_path) = activation_scripts.get(shell_kind) {
+                            // Use activation_script_key() to normalize POSIX shells (e.g., Bash, Zsh)
+                            // to Posix(Sh) for lookup, since activation scripts are stored with Posix(Sh) key
+                            let lookup_key = shell_kind.activation_script_key();
+                            if let Some(activate_script_path) = activation_scripts.get(&lookup_key)
+                            {
                                 let activate_keyword = shell_kind.activate_keyword();
                                 if let Some(quoted) =
                                     shell_kind.try_quote(&activate_script_path.to_string_lossy())

@@ -562,7 +562,6 @@ impl TerminalPanel {
         }
 
         let remote_client = project.remote_client();
-        let _is_windows = project.path_style(cx).is_windows();
         let remote_shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());

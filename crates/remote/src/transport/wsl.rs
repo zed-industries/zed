@@ -23,10 +23,7 @@ use std::{
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::{
-        PosixShell, Shell, ShellKind, prepend_command_prefix_option, try_quote_option,
-        try_quote_prefix_aware_option,
-    },
+    shell::{PosixShell, Shell, ShellKind},
     shell_builder::ShellBuilder,
 };
 
@@ -50,7 +47,7 @@ pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
     platform: RemotePlatform,
     shell: String,
-    shell_kind: Option<ShellKind>,
+    shell_kind: ShellKind,
     default_system_shell: String,
     has_wsl_interop: bool,
     connection_options: WslConnectionOptions,
@@ -78,8 +75,7 @@ impl WslRemoteConnection {
                 arch: RemoteArch::X86_64,
             },
             shell: String::new(),
-            // TODO: Consider using the remote's actual shell instead of hardcoding "sh"
-            shell_kind: Some(ShellKind::Posix(PosixShell::Sh)),
+            shell_kind: ShellKind::Posix(PosixShell::Sh),
             default_system_shell: String::from("/bin/sh"),
             has_wsl_interop: false,
         };
@@ -89,7 +85,8 @@ impl WslRemoteConnection {
             .await
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
-        this.shell_kind = ShellKind::new(&this.shell);
+        // WSL is always Linux, so is_windows = false
+        this.shell_kind = ShellKind::new_with_fallback(&this.shell, false);
         this.has_wsl_interop = this.detect_has_wsl_interop().await.unwrap_or_default();
         log::info!(
             "Remote has wsl interop {}",
@@ -115,7 +112,7 @@ impl WslRemoteConnection {
     }
 
     async fn detect_platform(&self) -> Result<RemotePlatform> {
-        let program = prepend_command_prefix_option(self.shell_kind, "uname");
+        let program = self.shell_kind.prepend_command_prefix("uname");
         let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
         parse_platform(&output)
     }
@@ -184,7 +181,7 @@ impl WslRemoteConnection {
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
-            let mkdir = prepend_command_prefix_option(self.shell_kind, "mkdir");
+            let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
@@ -257,7 +254,7 @@ impl WslRemoteConnection {
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
-            let mkdir = prepend_command_prefix_option(self.shell_kind, "mkdir");
+            let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
                 .context("Failed to create directory when uploading file")?;
@@ -275,7 +272,7 @@ impl WslRemoteConnection {
         );
 
         let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
-        let cp = prepend_command_prefix_option(self.shell_kind, "cp");
+        let cp = self.shell_kind.prepend_command_prefix("cp");
         self.run_wsl_command(
             &cp,
             &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Posix)],
@@ -452,7 +449,7 @@ impl RemoteConnection for WslRemoteConnection {
                 exec,
                 "{}={} ",
                 k,
-                try_quote_option(shell_kind, v).context("shell quoting")?
+                shell_kind.try_quote(v).context("shell quoting")?
             )?;
         }
 
@@ -460,10 +457,12 @@ impl RemoteConnection for WslRemoteConnection {
             write!(
                 exec,
                 "{}",
-                try_quote_prefix_aware_option(shell_kind, &program).context("shell quoting")?
+                shell_kind
+                    .try_quote_prefix_aware(&program)
+                    .context("shell quoting")?
             )?;
             for arg in args {
-                let arg = try_quote_option(shell_kind, &arg).context("shell quoting")?;
+                let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
                 write!(exec, " {}", &arg)?;
             }
         } else {

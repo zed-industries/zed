@@ -260,6 +260,34 @@ pub fn get_windows_system_shell() -> String {
 }
 
 impl ShellKind {
+    /// Returns the canonical shell kind for activation script lookups.
+    ///
+    /// This normalizes all POSIX shell variants to `Posix(Sh)` so that
+    /// activation scripts stored with a single POSIX key can be found
+    /// regardless of which specific POSIX shell the user has.
+    pub fn activation_script_key(&self) -> ShellKind {
+        match self {
+            ShellKind::Posix(_) => ShellKind::Posix(PosixShell::Sh),
+            other => *other,
+        }
+    }
+
+    /// Creates a ShellKind from a program path, with a platform-aware fallback for unknown shells.
+    ///
+    /// Unlike `new()` which returns `None` for unrecognized shells, this method
+    /// falls back to `PowerShell` when `is_windows` is true, or `Posix(Sh)` otherwise.
+    /// This is useful for remote connections where we know the target platform but
+    /// may not recognize the specific shell.
+    pub fn new_with_fallback(program: impl AsRef<Path>, is_windows: bool) -> Self {
+        Self::new(program).unwrap_or_else(|| {
+            if is_windows {
+                ShellKind::PowerShell
+            } else {
+                ShellKind::Posix(PosixShell::Sh)
+            }
+        })
+    }
+
     /// Returns the name of the shell.
     pub fn name(&self) -> &'static str {
         match self {
@@ -825,9 +853,9 @@ impl ShellKind {
     }
 }
 
-/// Helper functions for `Option<ShellKind>` that provide platform-specific defaults for unknown shells.
-/// These should be used when you have an `Option<ShellKind>` and need to handle the `None` case
-/// with appropriate fallback behavior (POSIX-like on Unix, PowerShell-like on Windows).
+// Helper functions for `Option<ShellKind>` that provide platform-specific defaults for unknown shells.
+// These should be used when you have an `Option<ShellKind>` and need to handle the `None` case
+// with appropriate fallback behavior (POSIX-like on Unix, PowerShell-like on Windows).
 
 /// Quote an argument for the shell, with platform-specific fallback for unknown shells.
 pub fn try_quote_option(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
