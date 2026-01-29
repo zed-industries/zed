@@ -2376,8 +2376,7 @@ impl GitPanel {
 
                 match result {
                     Ok(()) => {
-                        this.commit_editor_history
-                            .add_new_entry(this.commit_editor.read(cx).text(cx));
+                        this.add_commit_history_entry(cx);
 
                         if options.amend {
                             this.set_amend_pending(false, cx);
@@ -2394,6 +2393,14 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
+    }
+
+    fn add_commit_history_entry(&mut self, cx: &mut Context<Self>) {
+        // FIXME: if there is no text, add placeholder text to the commit history
+        self.commit_editor_history
+            .add_new_entry(self.commit_editor.read(cx).text(cx));
+        self.serialize(cx);
+        cx.notify();
     }
 
     pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
