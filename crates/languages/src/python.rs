@@ -1429,23 +1429,36 @@ impl ToolchainLister for PythonToolchainProvider {
                         Some(ShellKind::Fish) => {
                             Some(format!("\"{pyenv}\" shell - fish {version}"))
                         }
+                        #[cfg(unix)]
+                        Some(ShellKind::Posix(_)) | None => {
+                            Some(format!("\"{pyenv}\" shell - sh {version}"))
+                        }
+                        #[cfg(windows)]
                         Some(ShellKind::Posix(_)) => {
                             Some(format!("\"{pyenv}\" shell - sh {version}"))
                         }
-                        #[cfg(unix)]
-                        None => Some(format!("\"{pyenv}\" shell - sh {version}")),
                         Some(ShellKind::Nushell) => {
                             Some(format!("^\"{pyenv}\" shell - nu {version}"))
                         }
-                        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => None,
                         #[cfg(windows)]
-                        None => None,
-                        Some(ShellKind::Csh) => None,
-                        Some(ShellKind::Tcsh) => None,
-                        Some(ShellKind::Cmd) => None,
-                        Some(ShellKind::Rc) => None,
-                        Some(ShellKind::Xonsh) => None,
-                        Some(ShellKind::Elvish) => None,
+                        Some(ShellKind::PowerShell)
+                        | Some(ShellKind::Pwsh)
+                        | Some(ShellKind::Csh)
+                        | Some(ShellKind::Tcsh)
+                        | Some(ShellKind::Cmd)
+                        | Some(ShellKind::Rc)
+                        | Some(ShellKind::Xonsh)
+                        | Some(ShellKind::Elvish)
+                        | None => None,
+                        #[cfg(unix)]
+                        Some(ShellKind::PowerShell)
+                        | Some(ShellKind::Pwsh)
+                        | Some(ShellKind::Csh)
+                        | Some(ShellKind::Tcsh)
+                        | Some(ShellKind::Cmd)
+                        | Some(ShellKind::Rc)
+                        | Some(ShellKind::Xonsh)
+                        | Some(ShellKind::Elvish) => None,
                     })
                 }
                 _ => {}
