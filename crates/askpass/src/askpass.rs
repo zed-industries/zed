@@ -20,7 +20,11 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use util::{ResultExt as _, debug_panic, maybe, paths::PathExt, shell::{PosixShell, ShellKind}};
+use util::{
+    ResultExt as _, debug_panic, maybe,
+    paths::PathExt,
+    shell::{PosixShell, ShellKind},
+};
 
 /// Path to the program used for askpass
 ///

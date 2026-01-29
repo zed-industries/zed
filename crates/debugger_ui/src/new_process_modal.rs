@@ -28,7 +28,11 @@ use ui::{
     prelude::*,
 };
 use ui_input::InputField;
-use util::{ResultExt, debug_panic, rel_path::RelPath, shell::{PosixShell, ShellKind}};
+use util::{
+    ResultExt, debug_panic,
+    rel_path::RelPath,
+    shell::{PosixShell, ShellKind},
+};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{
