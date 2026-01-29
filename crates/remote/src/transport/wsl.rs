@@ -75,6 +75,7 @@ impl WslRemoteConnection {
                 arch: RemoteArch::X86_64,
             },
             shell: String::new(),
+            // TODO: Consider using the user's actual shell instead of hardcoding "sh"
             shell_kind: ShellKind::Posix(PosixShell::Sh),
             default_system_shell: String::from("/bin/sh"),
             has_wsl_interop: false,

@@ -1290,6 +1290,7 @@ impl SshSocket {
 
     async fn shell_posix(&self) -> String {
         const DEFAULT_SHELL: &str = "sh";
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
         match self
             .run_command(
                 ShellKind::Posix(PosixShell::Sh),
@@ -1390,6 +1391,7 @@ impl SshConnectionOptions {
             "-w",
         ];
 
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
         let mut tokens = ShellKind::Posix(PosixShell::Sh)
             .split(input)
             .context("invalid input")?
