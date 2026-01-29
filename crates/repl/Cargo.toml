@@ -41,6 +41,7 @@ menu.workspace = true
 multi_buffer.workspace = true
 nbformat.workspace = true
 project.workspace = true
+remote.workspace = true
 runtimelib.workspace = true
 serde.workspace = true
 serde_json.workspace = true
