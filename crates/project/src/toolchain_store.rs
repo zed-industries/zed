@@ -684,14 +684,7 @@ impl RemoteToolchainStore {
                     path: Some(path.path.to_proto()),
                 })
                 .await
-                .inspect_err(|e| {
-                    log::warn!(
-                        "RemoteToolchainStore::list_toolchains: RPC failed for language {}: {:?}",
-                        language_name,
-                        e
-                    );
-                })
-                .ok()?;
+                .log_err()?;
             if !response.has_values {
                 return None;
             }
