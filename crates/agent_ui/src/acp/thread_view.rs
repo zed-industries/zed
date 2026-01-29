@@ -797,12 +797,13 @@ impl AcpServerView {
             }
             _ => {}
         }
-        if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            self.server_state = ServerState::LoadError(load_err.clone());
+        let load_error = if let Some(load_err) = err.downcast_ref::<LoadError>() {
+            load_err.clone()
         } else {
-            self.server_state =
-                ServerState::LoadError(LoadError::Other(format!("{:#}", err).into()))
-        }
+            LoadError::Other(format!("{:#}", err).into())
+        };
+        self.emit_load_error_telemetry(&load_error);
+        self.server_state = ServerState::LoadError(load_error);
         cx.notify();
     }
 
@@ -1626,6 +1627,41 @@ impl AcpServerView {
                     }),
             )
             .into_any_element()
+    }
+
+    fn emit_load_error_telemetry(&self, error: &LoadError) {
+        let (error_kind, message): (&str, SharedString) = match error {
+            LoadError::Unsupported {
+                command,
+                current_version,
+                minimum_version,
+            } => (
+                "unsupported",
+                format!(
+                    "Upgrade {} to work with Zed. Currently using {}, which is version {} (need at least {})",
+                    self.agent.name(),
+                    command,
+                    current_version,
+                    minimum_version
+                )
+                .into(),
+            ),
+            LoadError::FailedToInstall(msg) => ("failed_to_install", msg.clone()),
+            LoadError::Exited { status } => (
+                "exited",
+                format!("Server exited with status {}", status).into(),
+            ),
+            LoadError::Other(msg) => ("other", msg.clone()),
+        };
+
+        let agent_name = self.agent.name();
+
+        telemetry::event!(
+            "Agent Panel Error Shown",
+            agent = agent_name,
+            kind = error_kind,
+            message = message,
+        );
     }
 
     fn render_load_error(
