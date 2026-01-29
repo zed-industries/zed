@@ -71,7 +71,7 @@ pub enum ShellKind {
     /// An unrecognized shell on Unix. We cannot safely parse its command syntax,
     /// so `always_allow` patterns are disabled for security. For non-security
     /// purposes, this falls back to POSIX-like behavior.
-    #[cfg_attr(not(windows), default)]
+    #[cfg_attr(unix, default)]
     UnknownUnix,
 }
 
