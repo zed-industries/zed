@@ -61,18 +61,10 @@ pub async fn run_format_prompt(
             let context_range = context_range.to_offset(&snapshot);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
-            let expected_output = example
-                .spec
-                .expected_patches
-                .first()
-                .cloned()
-                .unwrap_or_default();
-            let rejected_output = example.spec.rejected_patch.clone();
-
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output,
-                rejected_output,
+                expected_output: String::new(),
+                rejected_output: None,
                 provider: args.provider,
             });
         }
@@ -213,7 +205,8 @@ impl TeacherPrompt {
                 .as_ref()
                 .context("example prompt missing")?
                 .input,
-        );
+        )
+        .replace(Self::USER_CURSOR_MARKER, "");
         let prompt_inputs = example
             .prompt_inputs
             .as_ref()
@@ -230,7 +223,7 @@ impl TeacherPrompt {
             .content
             .match_indices(&old_editable_region)
             .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset))
-            .unwrap();
+            .context("old editable region not found in file content")?;
         let editable_region_start_line = prompt_inputs.content[..editable_region_offset]
             .matches('\n')
             .count();
@@ -336,7 +329,7 @@ impl TeacherPrompt {
         result
     }
 
-    fn extract_editable_region(text: &str) -> &str {
+    pub fn extract_editable_region(text: &str) -> &str {
         let start = text
             .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());

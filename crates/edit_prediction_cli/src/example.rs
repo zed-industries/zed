@@ -110,6 +110,10 @@ pub struct ExampleScore {
     pub exact_lines_fn: usize,
     #[serde(default)]
     pub reversal_ratio: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_exact_match: Option<bool>,
 }
 
 impl Example {
