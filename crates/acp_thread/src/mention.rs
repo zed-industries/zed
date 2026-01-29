@@ -54,7 +54,7 @@ pub enum MentionUri {
     Fetch {
         url: Url,
     },
-    Terminal,
+    TerminalSelection,
 }
 
 impl MentionUri {
@@ -201,7 +201,7 @@ impl MentionUri {
                         line_range,
                     })
                 } else if path.starts_with("/agent/terminal-selection") {
-                    Ok(Self::Terminal)
+                    Ok(Self::TerminalSelection)
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -224,7 +224,7 @@ impl MentionUri {
             MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
-            MentionUri::Terminal => "Terminal".to_string(),
+            MentionUri::TerminalSelection => "Terminal".to_string(),
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
@@ -247,7 +247,7 @@ impl MentionUri {
             MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
-            MentionUri::Terminal => IconName::Terminal.path().into(),
+            MentionUri::TerminalSelection => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
         }
@@ -342,7 +342,7 @@ impl MentionUri {
                 url
             }
             MentionUri::Fetch { url } => url.clone(),
-            MentionUri::Terminal => Url::parse("zed:///agent/terminal-selection").unwrap(),
+            MentionUri::TerminalSelection => Url::parse("zed:///agent/terminal-selection").unwrap(),
         }
     }
 }
@@ -653,7 +653,7 @@ mod tests {
         let terminal_uri = "zed:///agent/terminal-selection";
         let parsed = MentionUri::parse(terminal_uri, PathStyle::local()).unwrap();
         match &parsed {
-            MentionUri::Terminal => {}
+            MentionUri::TerminalSelection => {}
             _ => panic!("Expected Terminal variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), terminal_uri);

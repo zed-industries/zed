@@ -6866,7 +6866,7 @@ impl AcpThreadView {
                     cx.open_url(url.as_str());
                 }
                 MentionUri::Diagnostics { .. } => {}
-                MentionUri::Terminal => {}
+                MentionUri::TerminalSelection => {}
             })
         } else {
             cx.open_url(&url);

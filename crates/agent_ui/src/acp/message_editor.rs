@@ -1017,7 +1017,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mention_uri = MentionUri::Terminal;
+        let mention_uri = MentionUri::TerminalSelection;
         let mention_text = mention_uri.as_link().to_string();
 
         let (excerpt_id, text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
@@ -1257,33 +1257,11 @@ impl MessageEditor {
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
-        let mut terminal_blocks: Vec<std::ops::Range<usize>> = Vec::new();
 
         for chunk in message {
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
-                    // Track terminal code blocks for folding
-                    let chunk_text = &text_content.text;
-                    let chunk_start = text.len();
-
-                    // Find all ```terminal blocks in this chunk
-                    let mut search_start = 0;
-                    while let Some(block_start) = chunk_text[search_start..].find("```terminal") {
-                        let absolute_block_start = chunk_start + search_start + block_start;
-                        // Find the closing ```
-                        if let Some(block_end_relative) =
-                            chunk_text[search_start + block_start + 11..].find("\n```")
-                        {
-                            let absolute_block_end =
-                                absolute_block_start + 11 + block_end_relative + 4;
-                            terminal_blocks.push(absolute_block_start..absolute_block_end);
-                            search_start = search_start + block_start + 11 + block_end_relative + 4;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    text.push_str(chunk_text);
+                    text.push_str(&text_content.text);
                 }
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
                     resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
@@ -1379,23 +1357,6 @@ impl MessageEditor {
                 )
             });
         }
-
-        // Fold terminal code blocks
-        for range in terminal_blocks {
-            let anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
-            let _ = insert_crease_for_mention(
-                anchor.excerpt_id,
-                anchor.text_anchor,
-                range.end - range.start,
-                "Terminal".into(),
-                ui::IconName::Terminal.path().into(),
-                None,
-                self.editor.clone(),
-                window,
-                cx,
-            );
-        }
-
         cx.notify();
     }
 
