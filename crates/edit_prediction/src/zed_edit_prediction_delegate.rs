@@ -71,6 +71,10 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             EditPredictionModel::Mercury => EditPredictionIconSet::new(IconName::Inception),
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 EditPredictionIconSet::new(IconName::ZedPredict)
+                    .with_disabled(IconName::ZedPredictDisabled)
+                    .with_up(IconName::ZedPredictUp)
+                    .with_down(IconName::ZedPredictDown)
+                    .with_error(IconName::ZedPredictError)
             }
         }
     }
