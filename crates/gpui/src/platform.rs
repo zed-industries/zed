@@ -222,6 +222,11 @@ pub(crate) trait Platform: 'static {
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
 
+    /// Returns the window button layout configuration.
+    fn button_layout(&self) -> WindowButtonLayout {
+        WindowButtonLayout::default()
+    }
+
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
@@ -650,9 +655,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn window_controls(&self) -> WindowControls {
         WindowControls::default()
-    }
-    fn button_layout(&self) -> WindowButtonLayout {
-        WindowButtonLayout::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;

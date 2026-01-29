@@ -94,7 +94,7 @@ impl Render for PlatformTitleBar {
         let button_layout = if self.platform_style == PlatformStyle::Linux
             && matches!(decorations, Decorations::Client { .. })
         {
-            self.button_layout.unwrap_or_else(|| window.button_layout())
+            self.button_layout.unwrap_or_else(|| cx.button_layout())
         } else {
             gpui::WindowButtonLayout::default()
         };

@@ -615,6 +615,10 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.appearance)
     }
 
+    fn button_layout(&self) -> WindowButtonLayout {
+        self.with_common(|common| common.button_layout)
+    }
+
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
