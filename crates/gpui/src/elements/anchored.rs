@@ -163,52 +163,41 @@ impl Element for Anchored {
         };
 
         if self.fit_mode == AnchoredFitMode::SwitchAnchor {
-            let mut anchor_corner = self.anchor_corner;
+            let anchor_corner = self.anchor_corner;
+
+            let horizontal_switched = Bounds::from_corner_and_size(
+                anchor_corner.other_side_corner_along(Axis::Horizontal),
+                origin,
+                size,
+            );
+
+            let vertical_switched = Bounds::from_corner_and_size(
+                anchor_corner.other_side_corner_along(Axis::Vertical),
+                origin,
+                size,
+            );
 
             match self.force_snap {
-                Some(force_snap) => {
-                    let horizontal_switched = Bounds::from_corner_and_size(
-                        anchor_corner.other_side_corner_along(Axis::Horizontal),
-                        origin,
-                        size,
-                    );
-
-                    let vertical_switched = Bounds::from_corner_and_size(
-                        anchor_corner.other_side_corner_along(Axis::Vertical),
-                        origin,
-                        size,
-                    );
-
-                    match force_snap {
-                        AnchoredForceSnap::Left | AnchoredForceSnap::Right => {
-                            desired = horizontal_switched
-                        }
-                        AnchoredForceSnap::Above | AnchoredForceSnap::Below => {
-                            desired = vertical_switched
-                        }
-                    }
+                Some(AnchoredForceSnap::Left | AnchoredForceSnap::Right) => {
+                    desired = horizontal_switched;
+                }
+                Some(AnchoredForceSnap::Above | AnchoredForceSnap::Below) => {
+                    desired = vertical_switched;
                 }
                 None => {
                     if desired.left() < limits.left() || desired.right() > limits.right() {
-                        let switched = Bounds::from_corner_and_size(
-                            anchor_corner.other_side_corner_along(Axis::Horizontal),
-                            origin,
-                            size,
-                        );
-                        if !(switched.left() < limits.left() || switched.right() > limits.right()) {
-                            anchor_corner = anchor_corner.other_side_corner_along(Axis::Horizontal);
-                            desired = switched
+                        if !(horizontal_switched.left() < limits.left()
+                            || horizontal_switched.right() > limits.right())
+                        {
+                            desired = horizontal_switched
                         }
                     }
 
                     if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
-                        let switched = Bounds::from_corner_and_size(
-                            anchor_corner.other_side_corner_along(Axis::Vertical),
-                            origin,
-                            size,
-                        );
-                        if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
-                            desired = switched;
+                        if !(vertical_switched.top() < limits.top()
+                            || vertical_switched.bottom() > limits.bottom())
+                        {
+                            desired = vertical_switched;
                         }
                     }
                 }
