@@ -55,6 +55,7 @@ terminal_view.workspace = true
 util.workspace = true
 watch.workspace = true
 edit_prediction = { workspace = true, features = ["cli-support"] }
+telemetry_events.workspace = true
 wasmtime.workspace = true
 zeta_prompt.workspace = true
 rand.workspace = true

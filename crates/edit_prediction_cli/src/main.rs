@@ -118,6 +118,19 @@ Inputs can be file paths or special specifiers:
       Fetch rejected edit predictions from Snowflake after the given RFC3339 timestamp.
       These are predictions that were shown to users but rejected (useful for DPO training).
 
+  rated-after:{timestamp}
+      Fetch user-rated edit predictions from Snowflake after the given RFC3339 timestamp.
+      These are predictions that users explicitly rated as positive or negative via the
+      rate completions modal. Only zeta2 predictions are included.
+      - Positive ratings: output becomes expected_patches
+      - Negative ratings: output becomes rejected_patch
+
+  rated-positive-after:{timestamp}
+      Same as rated-after, but only fetches positively rated predictions.
+
+  rated-negative-after:{timestamp}
+      Same as rated-after, but only fetches negatively rated predictions.
+
       Required environment variables to connect to Snowflake:
           EP_SNOWFLAKE_API_KEY
           EP_SNOWFLAKE_BASE_URL
@@ -135,6 +148,15 @@ Examples:
 
   # Read rejected predictions for DPO training
   ep read rejected-after:2025-01-01T00:00:00Z -o rejected.jsonl
+
+  # Read user-rated predictions
+  ep read rated-after:2025-01-01T00:00:00Z -o rated.jsonl
+
+  # Read only positively rated predictions
+  ep read rated-positive-after:2025-01-01T00:00:00Z -o positive.jsonl
+
+  # Read only negatively rated predictions
+  ep read rated-negative-after:2025-01-01T00:00:00Z -o negative.jsonl
 
   # Mix multiple input sources
   ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
@@ -436,6 +458,8 @@ async fn load_examples(
     let mut captured_after_timestamps = Vec::new();
     let mut rejected_after_timestamps = Vec::new();
     let mut requested_after_timestamps = Vec::new();
+    let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
+        Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
@@ -450,6 +474,10 @@ async fn load_examples(
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
             requested_after_timestamps.push(timestamp.to_string());
+        } else if let Some((timestamp, rating_filter)) =
+            pull_examples::parse_rated_after_input(input_string.as_ref())
+        {
+            rated_after_inputs.push((timestamp.to_string(), rating_filter));
         } else {
             file_inputs.push(input.clone());
         }
@@ -499,13 +527,26 @@ async fn load_examples(
             requested_after_timestamps.sort();
 
             let mut requested_examples = pull_examples::fetch_requested_examples_after(
-                http_client,
+                http_client.clone(),
                 &requested_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut requested_examples);
+        }
+
+        if !rated_after_inputs.is_empty() {
+            rated_after_inputs.sort();
+
+            let mut rated_examples = pull_examples::fetch_rated_examples_after(
+                http_client,
+                &rated_after_inputs,
                 max_rows_per_timestamp,
                 background_executor,
             )
             .await?;
-            examples.append(&mut requested_examples);
+            examples.append(&mut rated_examples);
         }
     }
 
@@ -785,63 +826,47 @@ fn main() {
                 let failfast_on_single_example = examples.len() == 1;
 
                 // For --markdown mode, create the output directory if it doesn't exist
-                let markdown_output_dir = if args.markdown {
+                if args.markdown {
                     let dir = output.as_ref().expect("--markdown requires -o");
                     if !dir.exists() {
                         std::fs::create_dir_all(dir)
                             .expect("Failed to create markdown output directory");
                     }
-                    Some(dir.clone())
-                } else {
-                    None
-                };
+                }
 
-                // For --in-place, write to a temp file and rename at the end to avoid data loss on interruption
-                let in_place_temp_path = if args.in_place {
-                    output.as_ref().map(|path| {
-                        let mut temp_path = path.clone();
-                        temp_path.set_extension("jsonl.tmp");
-                        temp_path
-                    })
-                } else {
-                    None
-                };
-
-                let output_sender: Option<mpsc::UnboundedSender<String>> = if !args.markdown
-                    && (args.output.is_some() || !matches!(command, Command::Eval(_)))
+                // Set up JSONL output writer (not used in markdown mode)
+                let mut output_sender: Option<mpsc::UnboundedSender<String>> = None;
+                let mut in_place_temp_path: Option<PathBuf> = None;
+                if !args.markdown
+                    && let Some(output_path) = output.as_ref()
                 {
-                    let write_path = in_place_temp_path.as_ref().or(output.as_ref());
-                    write_path.map(|path| {
-                        let file = if args.in_place {
-                            // For --in-place, write to temp file (truncate if exists)
-                            OpenOptions::new()
-                                .create(true)
-                                .write(true)
-                                .truncate(true)
-                                .open(path)
-                                .expect("Failed to open temp output file")
-                        } else {
-                            // For regular output, append to support resuming
-                            OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(path)
-                                .expect("Failed to open output file")
-                        };
-                        let mut writer = BufWriter::new(file);
-                        let (sender, mut receiver) = mpsc::unbounded::<String>();
-                        cx.background_spawn(async move {
-                            while let Some(line) = receiver.next().await {
-                                writeln!(writer, "{}", line).expect("Failed to write example");
-                                writer.flush().expect("Failed to flush output");
-                            }
-                        })
-                        .detach();
-                        sender
+                    let write_path = if args.in_place {
+                        let temp = output_path.with_extension("jsonl.tmp");
+                        in_place_temp_path = Some(temp.clone());
+                        temp
+                    } else {
+                        output_path.clone()
+                    };
+
+                    let file = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(args.in_place)
+                        .append(!args.in_place)
+                        .open(&write_path)
+                        .expect("Failed to open output file");
+
+                    let mut writer = BufWriter::new(file);
+                    let (sender, mut receiver) = mpsc::unbounded::<String>();
+                    cx.background_spawn(async move {
+                        while let Some(line) = receiver.next().await {
+                            writeln!(writer, "{}", line).expect("Failed to write example");
+                            writer.flush().expect("Failed to flush output");
+                        }
                     })
-                } else {
-                    None
-                };
+                    .detach();
+                    output_sender = Some(sender);
+                }
 
                 let grouped_examples = Mutex::new(group_examples_by_repo(examples));
                 let finished_examples = Mutex::new(Vec::new());
@@ -958,7 +983,9 @@ fn main() {
 
                                 let should_write = !failed || args.failed == FailedHandling::Keep;
                                 if should_write {
-                                    if let Some(ref markdown_dir) = markdown_output_dir {
+                                    if args.markdown {
+                                        let markdown_dir =
+                                            output.as_ref().expect("--markdown requires -o");
                                         let filename = format!("{}.md", example.spec.filename());
                                         let path = markdown_dir.join(&filename);
                                         let markdown = example.spec.to_markdown();
@@ -1044,7 +1071,8 @@ fn main() {
                 };
 
                 // For --in-place, atomically rename temp file to original
-                if let (Some(temp_path), Some(final_path)) = (&in_place_temp_path, &output) {
+                if let Some(temp_path) = &in_place_temp_path {
+                    let final_path = output.as_ref().expect("in_place_temp_path requires output");
                     std::fs::rename(temp_path, final_path)
                         .expect("Failed to rename temp file to final output");
                 }
