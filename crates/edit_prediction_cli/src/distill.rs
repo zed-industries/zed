@@ -15,10 +15,12 @@ pub async fn run_distill(example: &mut Example) -> Result<()> {
 
     let expected_patches = predictions
         .into_iter()
-        .filter_map(|p| p.actual_patch.clone())
+        .filter_map(|p| Some((p.actual_patch.clone()?, p.actual_cursor_offset)))
         .collect();
 
-    example.spec.expected_patches = expected_patches;
+    example
+        .spec
+        .set_expected_patches_with_cursor_positions(expected_patches);
     example.prompt = None;
     example.predictions = Vec::new();
     example.score = Vec::new();

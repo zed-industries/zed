@@ -190,38 +190,6 @@ pub async fn refresh_worktree_entries(
     Ok(())
 }
 
-/// Extract the diff for a specific file from a multi-file diff.
-/// Returns an error if the file is not found in the diff.
-pub fn extract_file_diff(full_diff: &str, file_path: &str) -> Result<String> {
-    let mut result = String::new();
-    let mut in_target_file = false;
-    let mut found_file = false;
-
-    for line in full_diff.lines() {
-        if line.starts_with("diff --git") {
-            if in_target_file {
-                break;
-            }
-            in_target_file = line.contains(&format!("a/{}", file_path))
-                || line.contains(&format!("b/{}", file_path));
-            if in_target_file {
-                found_file = true;
-            }
-        }
-
-        if in_target_file {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    if !found_file {
-        anyhow::bail!("File '{}' not found in diff", file_path);
-    }
-
-    Ok(result)
-}
-
 pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
     if prefix.is_empty() {
         return Cow::Borrowed(diff);
@@ -319,9 +287,20 @@ fn disambiguate_by_line_number(
 }
 
 pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
+    apply_diff_to_string_with_hunk_offset(diff_str, text).map(|(text, _)| text)
+}
+
+/// Applies a diff to a string and returns the result along with the offset where
+/// the first hunk's context matched in the original text. This offset can be used
+/// to adjust cursor positions that are relative to the hunk's content.
+pub fn apply_diff_to_string_with_hunk_offset(
+    diff_str: &str,
+    text: &str,
+) -> Result<(String, Option<usize>)> {
     let mut diff = DiffParser::new(diff_str);
 
     let mut text = text.to_string();
+    let mut first_hunk_offset = None;
 
     while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
@@ -342,6 +321,10 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
                     })
                     .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
 
+                if first_hunk_offset.is_none() {
+                    first_hunk_offset = Some(hunk_offset);
+                }
+
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
                     text.replace_range(range, &edit.text);
@@ -351,7 +334,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
         }
     }
 
-    Ok(text)
+    Ok((text, first_hunk_offset))
 }
 
 /// Returns the individual edits that would be applied by a diff to the given content.
@@ -1455,63 +1438,6 @@ mod tests {
         });
 
         FakeFs::new(cx.background_executor.clone())
-    }
-
-    #[test]
-    fn test_extract_file_diff() {
-        let multi_file_diff = indoc! {r#"
-            diff --git a/file1.txt b/file1.txt
-            index 1234567..abcdefg 100644
-            --- a/file1.txt
-            +++ b/file1.txt
-            @@ -1,3 +1,4 @@
-             line1
-            +added line
-             line2
-             line3
-            diff --git a/file2.txt b/file2.txt
-            index 2345678..bcdefgh 100644
-            --- a/file2.txt
-            +++ b/file2.txt
-            @@ -1,2 +1,2 @@
-            -old line
-            +new line
-             unchanged
-        "#};
-
-        let file1_diff = extract_file_diff(multi_file_diff, "file1.txt").unwrap();
-        assert_eq!(
-            file1_diff,
-            indoc! {r#"
-                diff --git a/file1.txt b/file1.txt
-                index 1234567..abcdefg 100644
-                --- a/file1.txt
-                +++ b/file1.txt
-                @@ -1,3 +1,4 @@
-                 line1
-                +added line
-                 line2
-                 line3
-            "#}
-        );
-
-        let file2_diff = extract_file_diff(multi_file_diff, "file2.txt").unwrap();
-        assert_eq!(
-            file2_diff,
-            indoc! {r#"
-                diff --git a/file2.txt b/file2.txt
-                index 2345678..bcdefgh 100644
-                --- a/file2.txt
-                +++ b/file2.txt
-                @@ -1,2 +1,2 @@
-                -old line
-                +new line
-                 unchanged
-            "#}
-        );
-
-        let result = extract_file_diff(multi_file_diff, "nonexistent.txt");
-        assert!(result.is_err());
     }
 
     #[test]
