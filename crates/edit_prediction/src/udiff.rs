@@ -287,9 +287,20 @@ fn disambiguate_by_line_number(
 }
 
 pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
+    apply_diff_to_string_with_hunk_offset(diff_str, text).map(|(text, _)| text)
+}
+
+/// Applies a diff to a string and returns the result along with the offset where
+/// the first hunk's context matched in the original text. This offset can be used
+/// to adjust cursor positions that are relative to the hunk's content.
+pub fn apply_diff_to_string_with_hunk_offset(
+    diff_str: &str,
+    text: &str,
+) -> Result<(String, Option<usize>)> {
     let mut diff = DiffParser::new(diff_str);
 
     let mut text = text.to_string();
+    let mut first_hunk_offset = None;
 
     while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
@@ -310,6 +321,10 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
                     })
                     .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
 
+                if first_hunk_offset.is_none() {
+                    first_hunk_offset = Some(hunk_offset);
+                }
+
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
                     text.replace_range(range, &edit.text);
@@ -319,7 +334,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
         }
     }
 
-    Ok(text)
+    Ok((text, first_hunk_offset))
 }
 
 /// Returns the individual edits that would be applied by a diff to the given content.

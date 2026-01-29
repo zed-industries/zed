@@ -6,7 +6,7 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::cursor_excerpt::editable_and_context_ranges_for_cursor_position;
+use edit_prediction::{cursor_excerpt::editable_and_context_ranges_for_cursor_position, udiff};
 use gpui::{AppContext, AsyncApp};
 use language::{Buffer, OffsetRangeExt, Point};
 use similar::DiffableStr;
@@ -101,21 +101,19 @@ pub async fn run_format_prompt(
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
             };
             let prompt = format_zeta_prompt(&input, version);
-            let expected_output = zeta2_output_for_patch(
-                &input,
-                &example
-                    .spec
-                    .expected_patches
-                    .first()
-                    .context("expected patches is empty")?
-                    .clone(),
-                version,
-            )?;
+            let (expected_patch, expected_cursor_offset) = example
+                .spec
+                .expected_patches_with_cursor_positions()
+                .into_iter()
+                .next()
+                .context("expected patches is empty")?;
+            let expected_output =
+                zeta2_output_for_patch(&input, &expected_patch, expected_cursor_offset, version)?;
             let rejected_output = example
                 .spec
                 .rejected_patch
                 .as_ref()
-                .and_then(|patch| zeta2_output_for_patch(&input, &patch, version).ok());
+                .and_then(|patch| zeta2_output_for_patch(&input, patch, None, version).ok());
 
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
@@ -134,6 +132,7 @@ pub async fn run_format_prompt(
 pub fn zeta2_output_for_patch(
     input: &zeta_prompt::ZetaPromptInput,
     patch: &str,
+    cursor_offset: Option<usize>,
     version: ZetaVersion,
 ) -> Result<String> {
     let mut old_editable_region =
@@ -143,13 +142,24 @@ pub fn zeta2_output_for_patch(
         old_editable_region.push('\n');
     }
 
-    let mut result = edit_prediction::udiff::apply_diff_to_string(patch, &old_editable_region)
-        .with_context(|| {
-            format!(
-                "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
-                patch, old_editable_region
-            )
-        })?;
+    let (mut result, first_hunk_offset) =
+        udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable_region).with_context(
+            || {
+                format!(
+                    "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
+                    patch, old_editable_region
+                )
+            },
+        )?;
+
+    if let Some(cursor_offset) = cursor_offset {
+        // The cursor_offset is relative to the start of the hunk's new text (context + additions).
+        // We need to add where the hunk context matched in the editable region to compute
+        // the actual cursor position in the result.
+        let hunk_start = first_hunk_offset.unwrap_or(0);
+        let offset = (hunk_start + cursor_offset).min(result.len());
+        result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
+    }
 
     if version == ZetaVersion::V0120GitMergeMarkers {
         if !result.ends_with('\n') {
