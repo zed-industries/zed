@@ -4963,10 +4963,12 @@ impl EditorElement {
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             if !snapshot.is_singleton() {
-                let excerpt_range = snapshot
+                let Some(excerpt_range) = snapshot
                     .buffer_snapshot()
                     .range_for_excerpt(item.range.start.excerpt_id)
-                    .expect("TODO");
+                else {
+                    continue;
+                };
                 let excerpt_scroll_offset = snapshot
                     .display_snapshot
                     .point_to_display_point(excerpt_range.start, Bias::Left)
