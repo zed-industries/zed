@@ -297,7 +297,7 @@ pub(crate) fn push_release_update_notification(
                 {failure_checks}
                 FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
                 if [ -n "$FAILED_JOBS" ]; then
-                    echo "❌ Tests `$FAILED_JOBS` for $TAG failed: $RUN_URL"
+                    echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
                 else
                     echo "❌ Tests for $TAG failed: $RUN_URL"
                 fi
