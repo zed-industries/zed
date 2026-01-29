@@ -269,7 +269,7 @@ mod tests {
                 deny: vec![],
                 confirm: vec![],
                 global: false,
-                shell: ShellKind::Posix,
+                shell: ShellKind::Posix("sh"),
             }
         }
 
@@ -380,7 +380,7 @@ mod tests {
                 tools: collections::HashMap::default(),
             },
             global,
-            ShellKind::Posix,
+            ShellKind::Posix("sh"),
         )
     }
 
@@ -615,16 +615,16 @@ mod tests {
         let p = ToolPermissions { tools };
         // With always_allow_tool_actions=true, even default_mode: Deny is overridden
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix),
+            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix("sh")),
             ToolPermissionDecision::Allow
         );
         // With always_allow_tool_actions=false, default_mode: Deny is respected
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix("sh")),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix("sh")),
             ToolPermissionDecision::Allow
         );
     }
@@ -645,7 +645,7 @@ mod tests {
         let p = ToolPermissions { tools };
         // "terminal" should not match "term" rules, so falls back to Confirm (no rules)
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix("sh")),
             ToolPermissionDecision::Confirm
         );
     }
@@ -673,12 +673,24 @@ mod tests {
         };
         // With global=true, all checks are bypassed including invalid pattern check
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, true, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                "terminal",
+                "echo hi",
+                &p,
+                true,
+                ShellKind::Posix("sh")
+            ),
             ToolPermissionDecision::Allow
         ));
         // With global=false, invalid patterns block the tool
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                "terminal",
+                "echo hi",
+                &p,
+                false,
+                ShellKind::Posix("sh")
+            ),
             ToolPermissionDecision::Deny(_)
         ));
     }
@@ -867,7 +879,7 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix("sh")),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
@@ -876,7 +888,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                ShellKind::Posix
+                ShellKind::Posix("sh")
             ),
             ToolPermissionDecision::Allow
         );
@@ -1025,7 +1037,7 @@ mod tests {
         let p = ToolPermissions { tools };
 
         let result =
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix);
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix("sh"));
         match result {
             ToolPermissionDecision::Deny(msg) => {
                 assert!(msg.contains("2 regex patterns"), "Expected plural: {}", msg);

@@ -50,7 +50,7 @@ impl Shell {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShellKind {
-    Posix,
+    Posix(&'static str),
     Csh,
     Tcsh,
     Rc,
@@ -246,7 +246,7 @@ impl ShellKind {
     /// Returns the name of the shell, or `None` for unknown shells.
     pub fn name(&self) -> Option<&'static str> {
         match self {
-            ShellKind::Posix => Some("sh"),
+            ShellKind::Posix(name) => Some(name),
             ShellKind::Csh => Some("csh"),
             ShellKind::Tcsh => Some("tcsh"),
             ShellKind::Fish => Some("fish"),
@@ -291,7 +291,7 @@ impl ShellKind {
     ///   have `&&`/`||` operators for conditional chaining.
     pub fn supports_posix_chaining(&self) -> bool {
         match self {
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Fish
             | ShellKind::PowerShell
             | ShellKind::Pwsh
@@ -324,7 +324,13 @@ impl ShellKind {
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
             "elvish" => ShellKind::Elvish,
-            "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash" => ShellKind::Posix,
+            "sh" => ShellKind::Posix("sh"),
+            "bash" => ShellKind::Posix("bash"),
+            "zsh" => ShellKind::Posix("zsh"),
+            "dash" => ShellKind::Posix("dash"),
+            "ksh" => ShellKind::Posix("ksh"),
+            "mksh" => ShellKind::Posix("mksh"),
+            "ash" => ShellKind::Posix("ash"),
             // Unrecognized shell - we cannot safely parse its syntax for
             // `always_allow` patterns, so they will be disabled.
             // Fall back to platform-specific behavior for non-security purposes.
@@ -337,7 +343,7 @@ impl ShellKind {
         match self {
             Self::PowerShell | Self::Pwsh => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
-            Self::Posix => input.to_owned(),
+            Self::Posix(_) => input.to_owned(),
             Self::Fish => input.to_owned(),
             Self::Csh => input.to_owned(),
             Self::Tcsh => input.to_owned(),
@@ -473,7 +479,7 @@ impl ShellKind {
                 "/C".to_owned(),
                 format!("\"{combined_command}\""),
             ],
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Nushell
             | ShellKind::Fish
             | ShellKind::Csh
@@ -493,7 +499,7 @@ impl ShellKind {
         match self {
             ShellKind::PowerShell | ShellKind::Pwsh => Some('&'),
             ShellKind::Nushell => Some('^'),
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
@@ -518,7 +524,7 @@ impl ShellKind {
     pub const fn sequential_commands_separator(&self) -> char {
         match self {
             ShellKind::Cmd => '&',
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
@@ -536,7 +542,7 @@ impl ShellKind {
     pub const fn sequential_and_commands_separator(&self) -> &'static str {
         match self {
             ShellKind::Cmd
-            | ShellKind::Posix
+            | ShellKind::Posix(_)
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
@@ -556,7 +562,7 @@ impl ShellKind {
             ShellKind::PowerShell => Some(Self::quote_powershell(arg)),
             ShellKind::Pwsh => Some(Self::quote_pwsh(arg)),
             ShellKind::Cmd => Some(Self::quote_cmd(arg)),
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
@@ -781,7 +787,7 @@ impl ShellKind {
             ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
-            | ShellKind::Posix
+            | ShellKind::Posix(_)
             | ShellKind::Rc
             | ShellKind::Xonsh
             | ShellKind::Elvish
@@ -792,7 +798,7 @@ impl ShellKind {
     pub const fn clear_screen_command(&self) -> &'static str {
         match self {
             ShellKind::Cmd => "cls",
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc

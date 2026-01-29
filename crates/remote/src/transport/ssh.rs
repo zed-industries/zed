@@ -918,7 +918,7 @@ impl SshRemoteConnection {
         dst_path: &RelPath,
         tmp_path: &RelPath,
     ) -> Result<()> {
-        let shell_kind = ShellKind::Posix;
+        let shell_kind = ShellKind::Posix("sh");
         let server_mode = 0o755;
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
@@ -1292,7 +1292,7 @@ impl SshSocket {
     async fn shell_posix(&self) -> String {
         const DEFAULT_SHELL: &str = "sh";
         match self
-            .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
+            .run_command(ShellKind::Posix("sh"), "sh", &["-c", "echo $SHELL"], false)
             .await
         {
             Ok(output) => parse_shell(&output, DEFAULT_SHELL),
@@ -1386,7 +1386,7 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = ShellKind::Posix
+        let mut tokens = ShellKind::Posix("sh")
             .split(input)
             .context("invalid input")?
             .into_iter();

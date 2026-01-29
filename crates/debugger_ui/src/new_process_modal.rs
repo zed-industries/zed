@@ -870,7 +870,7 @@ impl ConfigureMode {
             };
         }
         let command = self.program.read(cx).text(cx);
-        let mut args = ShellKind::Posix
+        let mut args = ShellKind::Posix("sh")
             .split(&command)
             .into_iter()
             .flatten()
@@ -1298,7 +1298,7 @@ impl PickerDelegate for DebugDelegate {
             })
             .unwrap_or_default();
 
-        let mut args = ShellKind::Posix
+        let mut args = ShellKind::Posix("sh")
             .split(&text)
             .into_iter()
             .flatten()

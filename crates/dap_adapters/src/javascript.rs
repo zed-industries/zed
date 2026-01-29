@@ -67,7 +67,7 @@ impl JsDebugAdapter {
                     .get("type")
                     .filter(|value| value == &"node-terminal")?;
                 let command = configuration.get("command")?.as_str()?.to_owned();
-                let mut args = ShellKind::Posix.split(&command)?.into_iter();
+                let mut args = ShellKind::Posix("sh").split(&command)?.into_iter();
                 let program = args.next()?;
                 configuration.insert("runtimeExecutable".to_owned(), program.into());
                 configuration.insert(

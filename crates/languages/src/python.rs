@@ -1425,7 +1425,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     let pyenv = pyenv.display();
                     activation_script.extend(match shell {
                         ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                        ShellKind::Posix | ShellKind::UnknownUnix => {
+                        ShellKind::Posix(_) | ShellKind::UnknownUnix => {
                             Some(format!("\"{pyenv}\" shell - sh {version}"))
                         }
                         ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
@@ -1500,7 +1500,7 @@ async fn resolve_venv_activation_scripts(
     log::debug!("(Python) Resolving activation scripts for venv toolchain {venv:?}");
     if let Some(prefix) = &venv.prefix {
         for (shell_kind, script_name) in &[
-            (ShellKind::Posix, "activate"),
+            (ShellKind::Posix("sh"), "activate"),
             (ShellKind::Rc, "activate"),
             (ShellKind::Csh, "activate.csh"),
             (ShellKind::Tcsh, "activate.csh"),

@@ -301,7 +301,7 @@ impl DockerExecConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let shell_kind = ShellKind::Posix;
+        let shell_kind = ShellKind::Posix("sh");
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
         let server_mode = shell_kind

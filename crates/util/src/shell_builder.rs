@@ -50,7 +50,7 @@ impl ShellBuilder {
                 ShellKind::Cmd => {
                     format!("{} /C \"{}\"", self.program, command_to_use_in_label)
                 }
-                ShellKind::Posix
+                ShellKind::Posix(_)
                 | ShellKind::Nushell
                 | ShellKind::Fish
                 | ShellKind::Csh
@@ -104,7 +104,7 @@ impl ShellBuilder {
                         combined_command.insert_str(0, "begin; ");
                         combined_command.push_str("; end </dev/null");
                     }
-                    ShellKind::Posix
+                    ShellKind::Posix(_)
                     | ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
@@ -151,7 +151,7 @@ impl ShellBuilder {
                         combined_command.insert_str(0, "begin; ");
                         combined_command.push_str("; end </dev/null");
                     }
-                    ShellKind::Posix
+                    ShellKind::Posix(_)
                     | ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh

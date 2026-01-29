@@ -208,7 +208,7 @@ impl PasswordProxy {
         let shell_kind = if cfg!(windows) {
             ShellKind::PowerShell
         } else {
-            ShellKind::Posix
+            ShellKind::Posix("sh")
         };
         let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
         // Create an askpass script that communicates back to this process.
