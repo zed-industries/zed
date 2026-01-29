@@ -118,11 +118,7 @@ impl ShellBuilder {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }
-                    ShellKind::UnknownWindows => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    ShellKind::PowerShell | ShellKind::Pwsh => {
+                    ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => {
                         combined_command.insert_str(0, "$null | & {");
                         combined_command.push_str("}");
                     }
@@ -169,11 +165,7 @@ impl ShellBuilder {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }
-                    ShellKind::UnknownWindows => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    ShellKind::PowerShell | ShellKind::Pwsh => {
+                    ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => {
                         combined_command.insert_str(0, "$null | & {");
                         combined_command.push_str("}");
                     }
