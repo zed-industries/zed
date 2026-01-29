@@ -168,7 +168,9 @@ use project::{
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
+use scroll::{
+    Autoscroll, AutoscrollStrategy, OngoingScroll, ScrollAnchor, ScrollManager, ScrollOffset,
+};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -222,7 +224,7 @@ use crate::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
     },
-    scroll::{ScrollOffset, ScrollPixelOffset},
+    scroll::ScrollPixelOffset,
     selections_collection::resolve_selections_wrapping_blocks,
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
@@ -1132,6 +1134,13 @@ pub struct Editor {
     placeholder_display_map: Option<Entity<DisplayMap>>,
     pub selections: SelectionsCollection,
     pub scroll_manager: Entity<ScrollManager>,
+    autoscroll_request: Option<(Autoscroll, bool)>,
+    last_autoscroll: Option<(
+        gpui::Point<ScrollOffset>,
+        ScrollOffset,
+        ScrollOffset,
+        AutoscrollStrategy,
+    )>,
     /// When inline assist editors are linked, they all render cursors because
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
@@ -2341,6 +2350,8 @@ impl Editor {
             placeholder_display_map: None,
             selections,
             scroll_manager: cx.new(|cx| ScrollManager::new(display_map.entity_id(), cx)),
+            autoscroll_request: None,
+            last_autoscroll: None,
             columnar_selection_state: None,
             add_selections_state: None,
             select_next_state: None,

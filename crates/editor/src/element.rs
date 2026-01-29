@@ -9675,10 +9675,7 @@ impl Element for EditorElement {
                         autoscroll_containing_element,
                         needs_horizontal_autoscroll,
                     ) = self.editor.update(cx, |editor, cx| {
-                        let autoscroll_request =
-                            editor.scroll_manager.update(cx, |scroll_manager, _| {
-                                scroll_manager.take_autoscroll_request()
-                            });
+                        let autoscroll_request = editor.autoscroll_request.take();
 
                         let autoscroll_containing_element =
                             autoscroll_request.is_some() || editor.has_pending_selection();

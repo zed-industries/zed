@@ -197,12 +197,11 @@ impl Editor {
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy, _) => strategy,
             Autoscroll::Next => {
-                let scroll_manager = self.scroll_manager.read(cx);
-                scroll_manager
-                    .last_autoscroll
+                let anchor_offset = self.scroll_manager.read(cx).anchor.offset;
+                self.last_autoscroll
                     .as_ref()
                     .filter(|(offset, last_target_top, last_target_bottom, _)| {
-                        scroll_manager.anchor.offset == *offset
+                        anchor_offset == *offset
                             && target_top == *last_target_top
                             && target_bottom == *last_target_bottom
                     })
@@ -266,14 +265,7 @@ impl Editor {
         };
 
         let anchor_offset = self.scroll_manager.read(cx).anchor.offset;
-        self.scroll_manager.update(cx, |scroll_manager, _| {
-            scroll_manager.last_autoscroll = Some((
-                anchor_offset,
-                target_top,
-                target_bottom,
-                strategy,
-            ));
-        });
+        self.last_autoscroll = Some((anchor_offset, target_top, target_bottom, strategy));
 
         let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
         (NeedsHorizontalAutoscroll(true), was_scrolled)
@@ -360,9 +352,7 @@ impl Editor {
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut Context<Self>) {
-        self.scroll_manager.update(cx, |scroll_manager, _| {
-            scroll_manager.autoscroll_request = Some((autoscroll, true));
-        });
+        self.autoscroll_request = Some((autoscroll, true));
         cx.notify();
     }
 
@@ -371,9 +361,7 @@ impl Editor {
         autoscroll: Autoscroll,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.update(cx, |scroll_manager, _| {
-            scroll_manager.autoscroll_request = Some((autoscroll, false));
-        });
+        self.autoscroll_request = Some((autoscroll, false));
         cx.notify();
     }
 }

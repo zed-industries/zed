@@ -220,16 +220,6 @@ pub struct ScrollManager {
     pub(crate) ongoing: OngoingScroll,
     /// Number of sticky header lines currently being rendered for the current scroll position.
     pub(crate) sticky_header_line_count: usize,
-    /// The second element indicates whether the autoscroll request is local
-    /// (true) or remote (false). Local requests are initiated by user actions,
-    /// while remote requests come from external sources.
-    autoscroll_request: Option<(Autoscroll, bool)>,
-    last_autoscroll: Option<(
-        gpui::Point<ScrollOffset>,
-        ScrollOffset,
-        ScrollOffset,
-        AutoscrollStrategy,
-    )>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
     active_scrollbar: Option<ActiveScrollbarState>,
@@ -246,11 +236,9 @@ impl ScrollManager {
             anchor: ScrollAnchor::new(display_map_id),
             ongoing: OngoingScroll::new(),
             sticky_header_line_count: 0,
-            autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
             active_scrollbar: None,
-            last_autoscroll: None,
             visible_line_count: None,
             visible_column_count: None,
             forbid_vertical_scroll: false,
@@ -365,7 +353,6 @@ impl ScrollManager {
             anchor
         };
 
-        self.autoscroll_request.take();
         if self.anchor == adjusted_anchor {
             return false;
         }
@@ -388,14 +375,6 @@ impl ScrollManager {
 
     pub fn scrollbars_visible(&self) -> bool {
         self.show_scrollbars
-    }
-
-    pub fn has_autoscroll_request(&self) -> bool {
-        self.autoscroll_request.is_some()
-    }
-
-    pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
-        self.autoscroll_request.take()
     }
 
     pub fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {
