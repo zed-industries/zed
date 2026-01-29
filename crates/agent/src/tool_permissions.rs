@@ -359,7 +359,7 @@ mod tests {
                 self.input,
                 &ToolPermissions { tools },
                 self.global,
-                self.shell.clone(),
+                self.shell,
             )
         }
     }

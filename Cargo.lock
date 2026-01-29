@@ -5341,6 +5341,7 @@ dependencies = [
  "thiserror 2.0.17",
  "time",
  "toml 0.8.23",
+ "tree-sitter-rust",
  "ui",
  "util",
  "uuid",
@@ -5398,6 +5399,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sqlez_macros",
+ "telemetry_events",
  "tempfile",
  "terminal_view",
  "toml 0.8.23",
@@ -7237,6 +7239,7 @@ dependencies = [
  "anyhow",
  "collections",
  "db",
+ "feature_flags",
  "fs",
  "git",
  "git_ui",
@@ -7291,6 +7294,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
+ "feature_flags",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -9904,6 +9908,7 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -13701,6 +13706,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "collections",
  "fs",
  "futures 0.3.31",
@@ -13834,7 +13840,7 @@ dependencies = [
  "language",
  "languages",
  "log",
- "markdown_preview",
+ "markdown",
  "menu",
  "multi_buffer",
  "nbformat",
@@ -16228,6 +16234,7 @@ dependencies = [
  "multi_buffer",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -20966,7 +20973,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.222.0"
+version = "0.223.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -21448,6 +21455,7 @@ name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indoc",
  "serde",
  "strum 0.27.2",
 ]

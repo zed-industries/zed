@@ -8,11 +8,13 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor, ToggleSplitDiff,
+    Addon, Editor, EditorEvent, SelectionEffects, SplitDiffFeatureFlag, SplittableEditor,
+    ToggleSplitDiff,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use feature_flags::FeatureFlagAppExt as _;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -1435,24 +1437,31 @@ impl Render for ProjectDiffToolbar {
                             )
                         },
                     )
-                    .child(
-                        Button::new(
-                            "toggle-split",
-                            if button_states.is_split {
-                                "Stacked View"
-                            } else {
-                                "Split View"
-                            },
+                    .map(|this| {
+                        if !cx.has_flag::<SplitDiffFeatureFlag>() {
+                            return this;
+                        }
+                        this.child(
+                            Button::new(
+                                "toggle-split",
+                                if button_states.is_split {
+                                    "Stacked View"
+                                } else {
+                                    "Split View"
+                                },
+                            )
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Toggle Split View",
+                                &ToggleSplitDiff,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.dispatch_action(&ToggleSplitDiff, window, cx);
+                                },
+                            )),
                         )
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Toggle Split View",
-                            &ToggleSplitDiff,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&ToggleSplitDiff, window, cx);
-                        })),
-                    )
+                    })
                     .child(
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(

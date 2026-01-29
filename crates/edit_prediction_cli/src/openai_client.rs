@@ -138,8 +138,9 @@ impl BatchingOpenAiClient {
         model: &str,
         max_tokens: u64,
         messages: &[RequestMessage],
+        seed: Option<usize>,
     ) -> Result<Option<OpenAiResponse>> {
-        let request_hash_str = Self::request_hash(model, max_tokens, messages);
+        let request_hash_str = Self::request_hash(model, max_tokens, messages, seed);
         let connection = self.connection.lock().unwrap();
         let response: Vec<String> = connection.select_bound(
             &sql!(SELECT response FROM openai_cache WHERE request_hash = ?1 AND response IS NOT NULL;),
@@ -155,8 +156,9 @@ impl BatchingOpenAiClient {
         model: &str,
         max_tokens: u64,
         messages: &[RequestMessage],
+        seed: Option<usize>,
     ) -> Result<()> {
-        let request_hash = Self::request_hash(model, max_tokens, messages);
+        let request_hash = Self::request_hash(model, max_tokens, messages, seed);
 
         let serializable_messages: Vec<SerializableMessage> = messages
             .iter()
@@ -191,13 +193,14 @@ impl BatchingOpenAiClient {
         model: &str,
         max_tokens: u64,
         messages: Vec<RequestMessage>,
+        seed: Option<usize>,
     ) -> Result<Option<OpenAiResponse>> {
-        let response = self.lookup(model, max_tokens, &messages)?;
+        let response = self.lookup(model, max_tokens, &messages, seed)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(model, max_tokens, &messages)?;
+        self.mark_for_batch(model, max_tokens, &messages, seed)?;
 
         Ok(None)
     }
@@ -558,13 +561,21 @@ impl BatchingOpenAiClient {
         Ok(all_batch_ids)
     }
 
-    fn request_hash(model: &str, max_tokens: u64, messages: &[RequestMessage]) -> String {
+    fn request_hash(
+        model: &str,
+        max_tokens: u64,
+        messages: &[RequestMessage],
+        seed: Option<usize>,
+    ) -> String {
         let mut hasher = std::hash::DefaultHasher::new();
         "openai".hash(&mut hasher);
         model.hash(&mut hasher);
         max_tokens.hash(&mut hasher);
         for msg in messages {
             message_content_to_string(msg).hash(&mut hasher);
+        }
+        if let Some(seed) = seed {
+            seed.hash(&mut hasher);
         }
         let request_hash = hasher.finish();
         format!("{request_hash:016x}")
@@ -631,6 +642,7 @@ impl OpenAiClient {
         model: &str,
         max_tokens: u64,
         messages: Vec<RequestMessage>,
+        seed: Option<usize>,
     ) -> Result<Option<OpenAiResponse>> {
         match self {
             OpenAiClient::Plain(plain_client) => plain_client
@@ -638,7 +650,9 @@ impl OpenAiClient {
                 .await
                 .map(Some),
             OpenAiClient::Batch(batching_client) => {
-                batching_client.generate(model, max_tokens, messages).await
+                batching_client
+                    .generate(model, max_tokens, messages, seed)
+                    .await
             }
             OpenAiClient::Dummy => panic!("Dummy OpenAI client is not expected to be used"),
         }

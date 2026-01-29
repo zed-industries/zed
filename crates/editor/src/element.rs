@@ -416,6 +416,12 @@ impl EditorElement {
         register_action(editor, window, Editor::select_smaller_syntax_node);
         register_action(editor, window, Editor::select_next_syntax_node);
         register_action(editor, window, Editor::select_prev_syntax_node);
+        register_action(
+            editor,
+            window,
+            Editor::select_to_start_of_larger_syntax_node,
+        );
+        register_action(editor, window, Editor::select_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::unwrap_syntax_node);
         register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
         register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);

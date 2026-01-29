@@ -530,9 +530,10 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Pwsh
-            | ShellKind::PowerShell
             | ShellKind::Xonsh => "&&",
-            ShellKind::Nushell | ShellKind::Elvish | ShellKind::Unknown => ";",
+            ShellKind::PowerShell | ShellKind::Nushell | ShellKind::Elvish | ShellKind::Unknown => {
+                ";"
+            }
         }
     }
 
@@ -692,11 +693,7 @@ impl ShellKind {
     pub fn quote_cmd(arg: &str) -> Cow<'_, str> {
         let crt_quoted = Self::quote_windows(arg, true);
 
-        let needs_cmd_escaping = crt_quoted.contains('"')
-            || crt_quoted.contains('%')
-            || crt_quoted
-                .chars()
-                .any(|c| matches!(c, '^' | '<' | '>' | '&' | '|' | '(' | ')'));
+        let needs_cmd_escaping = crt_quoted.contains(['"', '%', '^', '<', '>', '&', '|', '(', ')']);
 
         if !needs_cmd_escaping {
             return crt_quoted;

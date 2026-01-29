@@ -256,6 +256,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
+    agent::ThreadStore::init_global(cx);
     assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {

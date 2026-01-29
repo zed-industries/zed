@@ -1664,7 +1664,7 @@ impl EditPredictionStore {
 
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
-        let stored_events = project_state.events(cx);
+        let stored_events = project_state.events_split_by_pause(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.into_iter().map(|e| e.event).collect();

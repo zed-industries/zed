@@ -80,4 +80,5 @@ parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+tree-sitter-rust.workspace = true
 zlog.workspace = true
