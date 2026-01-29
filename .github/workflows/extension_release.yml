@@ -33,7 +33,6 @@ jobs:
         EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
 
         echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
     - name: extension_release::release_action
       uses: huacnlee/zed-extension-action@v2
       with:
@@ -41,3 +40,6 @@ jobs:
         push-to: zed-industries/extensions
       env:
         COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

@@ -40,7 +40,7 @@ use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
-    ToggleMarksView, ToggleRegistersView, Vim,
+    ToggleMarksView, ToggleRegistersView, Vim, VimSettings,
     motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
         JoinLines,
@@ -88,6 +88,7 @@ pub enum VimOption {
     Number(bool),
     RelativeNumber(bool),
     IgnoreCase(bool),
+    GDefault(bool),
 }
 
 impl VimOption {
@@ -134,6 +135,10 @@ impl VimOption {
             (None, VimOption::IgnoreCase(false)),
             (Some("ic"), VimOption::IgnoreCase(true)),
             (Some("noic"), VimOption::IgnoreCase(false)),
+            (None, VimOption::GDefault(true)),
+            (Some("gd"), VimOption::GDefault(true)),
+            (None, VimOption::GDefault(false)),
+            (Some("nogd"), VimOption::GDefault(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -160,6 +165,11 @@ impl VimOption {
             "noignorecase" => Some(Self::IgnoreCase(false)),
             "noic" => Some(Self::IgnoreCase(false)),
 
+            "gdefault" => Some(Self::GDefault(true)),
+            "gd" => Some(Self::GDefault(true)),
+            "nogdefault" => Some(Self::GDefault(false)),
+            "nogd" => Some(Self::GDefault(false)),
+
             _ => None,
         }
     }
@@ -174,6 +184,8 @@ impl VimOption {
             VimOption::RelativeNumber(false) => "norelativenumber",
             VimOption::IgnoreCase(true) => "ignorecase",
             VimOption::IgnoreCase(false) => "noignorecase",
+            VimOption::GDefault(true) => "gdefault",
+            VimOption::GDefault(false) => "nogdefault",
         }
     }
 }
@@ -271,7 +283,6 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
     Vim::action(editor, cx, |vim, action: &VimSet, _, cx| {
         for option in action.options.iter() {
             vim.update_editor(cx, |_, editor, cx| match option {
@@ -294,6 +305,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     SettingsStore::update(cx, |store, _| {
                         store.override_global(settings);
                     });
+                }
+                VimOption::GDefault(enabled) => {
+                    let mut settings = VimSettings::get_global(cx).clone();
+                    settings.gdefault = *enabled;
+
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    })
                 }
             });
         }

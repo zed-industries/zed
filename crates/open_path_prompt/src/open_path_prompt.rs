@@ -196,7 +196,7 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, false, tx, window, cx);
+            Self::prompt_for_open_path(workspace, lister, false, None, tx, window, cx);
             rx
         }));
     }
@@ -206,17 +206,20 @@ impl OpenPathPrompt {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.set_prompt_for_new_path(Box::new(|workspace, lister, window, cx| {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, true, tx, window, cx);
-            rx
-        }));
+        workspace.set_prompt_for_new_path(Box::new(
+            |workspace, lister, suggested_name, window, cx| {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                Self::prompt_for_new_path(workspace, lister, suggested_name, tx, window, cx);
+                rx
+            },
+        ));
     }
 
     fn prompt_for_open_path(
         workspace: &mut Workspace,
         lister: DirectoryLister,
         creating_path: bool,
+        suggested_name: Option<String>,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -224,10 +227,24 @@ impl OpenPathPrompt {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
-            let query = lister.default_query(cx);
+            let mut query = lister.default_query(cx);
+            if let Some(suggested_name) = suggested_name {
+                query.push_str(&suggested_name);
+            }
             picker.set_query(&query, window, cx);
             picker
         });
+    }
+
+    fn prompt_for_new_path(
+        workspace: &mut Workspace,
+        lister: DirectoryLister,
+        suggested_name: Option<String>,
+        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::prompt_for_open_path(workspace, lister, true, suggested_name, tx, window, cx);
     }
 }
 

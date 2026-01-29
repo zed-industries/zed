@@ -4141,6 +4141,14 @@ impl MultiBufferSnapshot {
             && region.range.start > MBD::default()
         {
             cursor.prev()
+        } else if let Some(region) = cursor.region()
+            && region.is_main_buffer
+            && region.diff_hunk_status.is_some()
+        {
+            cursor.prev();
+            if cursor.region().is_none_or(|region| region.is_main_buffer) {
+                cursor.next();
+            }
         }
 
         iter::from_fn(move || {
@@ -4193,9 +4201,11 @@ impl MultiBufferSnapshot {
                     // the metadata item's range.
                     if metadata_buffer_range.start > <MBD::TextDimension>::default() {
                         while let Some(region) = cursor.region() {
-                            if region.is_main_buffer
+                            if (region.is_main_buffer
                                 && (region.buffer_range.end >= metadata_buffer_range.start
-                                    || cursor.is_at_end_of_excerpt())
+                                    || cursor.is_at_end_of_excerpt()))
+                                || (!region.is_main_buffer
+                                    && region.buffer_range.start == metadata_buffer_range.start)
                             {
                                 break;
                             }
