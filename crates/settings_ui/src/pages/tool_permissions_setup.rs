@@ -282,7 +282,10 @@ fn render_rule_section(
     patterns: &[String],
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    let section_id = format!("{}-{:?}-section", tool_id, rule_type);
+
     v_flex()
+        .id(section_id)
         .mt_6()
         .gap_2()
         .child(
