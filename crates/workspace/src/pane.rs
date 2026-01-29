@@ -423,6 +423,7 @@ pub struct Pane {
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
     welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
 
+    pub in_satellite: bool,
     pub in_center_group: bool,
     pub is_upper_left: bool,
     pub is_upper_right: bool,
@@ -591,6 +592,7 @@ impl Pane {
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
+            in_satellite: false,
             in_center_group: false,
             is_upper_left: false,
             is_upper_right: false,
