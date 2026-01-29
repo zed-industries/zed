@@ -2964,20 +2964,22 @@ fn method_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot().as_singleton() else {
+    if map.buffer_snapshot().as_singleton().is_none() {
         return display_point;
-    };
+    }
 
     for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot()).0;
+        let offset = map
+            .display_point_to_point(display_point, Bias::Left)
+            .to_offset(&map.buffer_snapshot());
         let range = if direction == Direction::Prev {
-            0..offset
+            MultiBufferOffset(0)..offset
         } else {
-            offset..buffer.len()
+            offset..map.buffer_snapshot().len()
         };
 
-        let possibilities = buffer
+        let possibilities = map
+            .buffer_snapshot()
             .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(4))
             .filter_map(|(range, object)| {
                 if !matches!(object, language::TextObject::AroundFunction) {
@@ -2987,7 +2989,7 @@ fn method_motion(
                 let relevant = if is_start { range.start } else { range.end };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset + 1 {
+                } else if direction == Direction::Next && relevant > offset + 1usize {
                     Some(relevant)
                 } else {
                     None
@@ -2999,7 +3001,7 @@ fn method_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(MultiBufferOffset(dest).to_display_point(map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -3014,20 +3016,22 @@ fn comment_motion(
     times: usize,
     direction: Direction,
 ) -> DisplayPoint {
-    let Some((_, _, buffer)) = map.buffer_snapshot().as_singleton() else {
+    if map.buffer_snapshot().as_singleton().is_none() {
         return display_point;
-    };
+    }
 
     for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let offset = point.to_offset(&map.buffer_snapshot()).0;
+        let offset = map
+            .display_point_to_point(display_point, Bias::Left)
+            .to_offset(&map.buffer_snapshot());
         let range = if direction == Direction::Prev {
-            0..offset
+            MultiBufferOffset(0)..offset
         } else {
-            offset..buffer.len()
+            offset..map.buffer_snapshot().len()
         };
 
-        let possibilities = buffer
+        let possibilities = map
+            .buffer_snapshot()
             .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(6))
             .filter_map(|(range, object)| {
                 if !matches!(object, language::TextObject::AroundComment) {
@@ -3041,7 +3045,7 @@ fn comment_motion(
                 };
                 if direction == Direction::Prev && relevant < offset {
                     Some(relevant)
-                } else if direction == Direction::Next && relevant > offset + 1 {
+                } else if direction == Direction::Next && relevant > offset + 1usize {
                     Some(relevant)
                 } else {
                     None
@@ -3053,7 +3057,7 @@ fn comment_motion(
         } else {
             possibilities.min().unwrap_or(offset)
         };
-        let new_point = map.clip_point(MultiBufferOffset(dest).to_display_point(map), Bias::Left);
+        let new_point = map.clip_point(dest.to_display_point(map), Bias::Left);
         if new_point == display_point {
             break;
         }
@@ -4993,5 +4997,115 @@ mod test {
         cx.assert_state("fooˇ;bar", Mode::Normal);
         cx.simulate_keystrokes("g e");
         cx.assert_state("foˇo;bar", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_method_motion_with_expanded_diff_hunks(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let diff_base = indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#};
+
+        let current_text = indoc! {r#"
+            fn first() {
+                println!("first");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#};
+
+        cx.set_state(&format!("ˇ{}", current_text), Mode::Normal);
+        cx.set_head_text(diff_base);
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+        cx.run_until_parked();
+
+        // When diff hunks are expanded, the deleted line from the diff base
+        // appears in the MultiBuffer. The method motion should correctly
+        // navigate to the second function even with this extra content.
+        cx.simulate_keystrokes("] m");
+        cx.assert_editor_state(indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            ˇfn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#});
+
+        cx.simulate_keystrokes("] m");
+        cx.assert_editor_state(indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            ˇfn third() {
+                println!("third");
+            }
+        "#});
+
+        cx.simulate_keystrokes("[ m");
+        cx.assert_editor_state(indoc! {r#"
+            fn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            ˇfn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#});
+
+        cx.simulate_keystrokes("[ m");
+        cx.assert_editor_state(indoc! {r#"
+            ˇfn first() {
+                println!("first");
+                println!("removed line");
+            }
+
+            fn second() {
+                println!("second");
+            }
+
+            fn third() {
+                println!("third");
+            }
+        "#});
     }
 }
