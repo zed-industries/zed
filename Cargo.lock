@@ -9166,6 +9166,7 @@ name = "language_selector"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "command_palette_hooks",
  "editor",
  "file_icons",
  "fuzzy",
@@ -9174,6 +9175,7 @@ dependencies = [
  "open_path_prompt",
  "picker",
  "project",
+ "serde_json",
  "settings",
  "ui",
  "util",

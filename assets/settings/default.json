@@ -2290,6 +2290,11 @@
       "insert": "inherit",
     },
   },
+  // Language selector settings
+  "language_selector": {
+    // Whether to show "language: {language}" commands in the command palette.
+    "show_in_command_palette": false
+  },
   // Which-key popup settings
   "which_key": {
     // Whether to show the which-key popup when holding down key combinations.

@@ -2,17 +2,18 @@ mod active_buffer_language;
 
 pub use active_buffer_language::ActiveBufferLanguage;
 use anyhow::Context as _;
+use command_palette_hooks::{AdditionalCommand, CommandPaletteCommandProvider};
 use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, WeakEntity, Window, actions,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    ParentElement, Render, Styled, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;
 use picker::{Picker, PickerDelegate};
 use project::Project;
-use settings::Settings;
+use settings::{RegisterSetting, Settings, SettingsContent};
 use std::{ops::Not as _, path::Path, sync::Arc};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
@@ -26,8 +27,87 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut App) {
+/// Sets the language of the active buffer to the specified language.
+#[derive(Clone, PartialEq)]
+pub struct SelectLanguage {
+    language: SharedString,
+}
+
+impl Action for SelectLanguage {
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn partial_eq(&self, action: &dyn Action) -> bool {
+        action
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
+    fn name(&self) -> &'static str {
+        Self::name_for_type()
+    }
+
+    fn name_for_type() -> &'static str
+    where
+        Self: Sized,
+    {
+        "language_selector::SelectLanguage"
+    }
+
+    fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
+    where
+        Self: Sized,
+    {
+        anyhow::bail!("SelectLanguage cannot be built from JSON")
+    }
+}
+
+#[derive(Debug, Clone, Copy, RegisterSetting)]
+pub struct LanguageSelectorSettings {
+    pub show_in_command_palette: bool,
+}
+
+impl Settings for LanguageSelectorSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        Self {
+            show_in_command_palette: content
+                .language_selector
+                .as_ref()
+                .unwrap()
+                .show_in_command_palette
+                .unwrap(),
+        }
+    }
+}
+
+pub fn init(languages: Arc<LanguageRegistry>, cx: &mut App) {
+    LanguageSelectorSettings::register(cx);
     cx.observe_new(LanguageSelector::register).detach();
+
+    CommandPaletteCommandProvider::register(cx, move |cx| {
+        if !LanguageSelectorSettings::get_global(cx).show_in_command_palette {
+            return Vec::new();
+        }
+
+        languages
+            .language_names()
+            .into_iter()
+            .filter_map(|name| {
+                languages
+                    .available_language_for_name(name.as_ref())?
+                    .hidden()
+                    .not()
+                    .then(|| AdditionalCommand {
+                        name: format!("language: {name}"),
+                        action: Box::new(SelectLanguage {
+                            language: name.0.clone(),
+                        }),
+                    })
+            })
+            .collect()
+    });
 }
 
 pub struct LanguageSelector {
@@ -42,6 +122,31 @@ impl LanguageSelector {
     ) {
         workspace.register_action(move |workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, window, cx);
+        });
+        workspace.register_action(|workspace, action: &SelectLanguage, window, cx| {
+            let Some((_, buffer, _)) = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .and_then(|editor| editor.read(cx).active_excerpt(cx))
+            else {
+                return;
+            };
+            let language = workspace
+                .app_state()
+                .languages
+                .language_for_name(&action.language);
+            let project = workspace.project().downgrade();
+            let buffer = buffer.downgrade();
+            cx.spawn_in(window, async move |_, cx| {
+                let language = language.await?;
+                let project = project.upgrade().context("project was dropped")?;
+                let buffer = buffer.upgrade().context("buffer was dropped")?;
+                project.update(cx, |project, cx| {
+                    project.set_language_for_buffer(&buffer, language, cx);
+                });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         });
     }
 
