@@ -353,6 +353,41 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Adds a cursor at the current mouse position.
+/// This action is designed for mouse bindings (e.g., `alt-mouse1`).
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct AddCursorAtMouse;
+
+/// Extends the selection from the current cursor to the mouse position.
+/// This action is designed for mouse bindings (e.g., `shift-mouse1`).
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ExtendSelectionToMouse;
+
+/// Goes to the definition of the symbol at the mouse position.
+/// This action is designed for mouse bindings (e.g., `cmd-mouse1` on macOS).
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDefinitionAtMouse;
+
+/// Goes to the type definition of the symbol at the mouse position.
+/// This action is designed for mouse bindings.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToTypeDefinitionAtMouse;
+
+/// Starts a columnar (block) selection from the mouse position.
+/// This action is designed for mouse bindings (e.g., `mouse3` middle-click).
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct StartColumnarSelectionAtMouse;
+
 /// Inserts a snippet at the cursor.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
