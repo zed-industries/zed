@@ -287,6 +287,7 @@ impl ActiveThreadState {
 
         self.send_impl(message_editor, window, cx)
     }
+
     pub fn send_impl(
         &mut self,
         message_editor: Entity<MessageEditor>,
@@ -332,7 +333,6 @@ impl ActiveThreadState {
                 return Ok(None);
             }
 
-            // todo! check
             let _ = cx.update(|window, cx| {
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
