@@ -843,19 +843,24 @@ impl HeadlessProject {
 
         // Spawn kernel (Assuming python for now, or we'd need to parse kernelspec logic here or pass the command)
 
-        let mut command = smol::process::Command::new("python3");
-        command
-            .arg("-m")
-            .arg("ipykernel_launcher")
-            .arg("-f")
-            .arg(&connection_file_path);
+        let spawn_kernel = |binary: &str| {
+            let mut command = smol::process::Command::new(binary);
+            command
+                .arg("-m")
+                .arg("ipykernel_launcher")
+                .arg("-f")
+                .arg(&connection_file_path);
 
-        if let Some(wd) = working_directory {
-            command.current_dir(wd);
-        }
+            if let Some(wd) = &working_directory {
+                command.current_dir(wd);
+            }
+            command.spawn()
+        };
 
         // We need to manage the child process lifecycle
-        let child = command.spawn().context("failed to spawn kernel process")?;
+        let child = spawn_kernel("python3")
+            .or_else(|_| spawn_kernel("python"))
+            .context("failed to spawn kernel process (tried python3 and python)")?;
 
         this.update(&mut cx.clone(), |this, _cx| {
             this.kernels.insert(kernel_id.clone(), child);
