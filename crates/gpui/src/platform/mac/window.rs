@@ -1,10 +1,10 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, DisplayLink, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, DisplayLink, DragType, DropItem,
+    ExternalDrop, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
     dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
     px, size,
@@ -435,6 +435,8 @@ struct MacWindowState {
     activated_least_once: bool,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
+    // Types of external content to accept via drag-drop
+    drag_types: SmallVec<[DragType; 2]>,
 }
 
 impl MacWindowState {
@@ -690,11 +692,20 @@ impl MacWindow {
                 target_screen,
             );
             assert!(!native_window.is_null());
-            let () = msg_send![
-                native_window,
-                registerForDraggedTypes:
-                    NSArray::arrayWithObject(nil, NSFilenamesPboardType)
-            ];
+
+            // Register for drag types based on configuration
+            let mut pasteboard_types: Vec<id> = Vec::new();
+            if drag_types.contains(&DragType::Files) {
+                pasteboard_types.push(NSFilenamesPboardType);
+            }
+            if drag_types.contains(&DragType::Urls) {
+                pasteboard_types.push(NSString::alloc(nil).init_str("public.url"));
+            }
+            if !pasteboard_types.is_empty() {
+                let types_array = NSArray::arrayWithObjects(nil, &pasteboard_types);
+                let () = msg_send![native_window, registerForDraggedTypes: types_array];
+            }
+
             let () = msg_send![
                 native_window,
                 setReleasedWhenClosed: NO
@@ -751,6 +762,7 @@ impl MacWindow {
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
                 sheet_parent: None,
+                drag_types,
             })));
 
             (*native_window).set_ivar(
@@ -2451,16 +2463,20 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     point(px(window_x as f32), px(window_y as f32))
 }
 
+#[allow(deprecated)]
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    let paths = external_paths_from_event(dragging_info);
-    if let Some(event) =
-        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
-        && send_new_event(&window_state, event)
-    {
-        window_state.lock().external_files_dragged = true;
-        return NSDragOperationCopy;
+    let drag_types = window_state.lock().drag_types.clone();
+    let drop = external_drop_from_event(dragging_info, &drag_types);
+    if let Some(drop) = drop {
+        // Convert to legacy ExternalPaths for backwards compatibility
+        let paths = drop.to_external_paths();
+        let event = PlatformInput::FileDrop(FileDropEvent::Entered { position, paths });
+        if send_new_event(&window_state, event) {
+            window_state.lock().external_files_dragged = true;
+            return NSDragOperationCopy;
+        }
     }
     NSDragOperationNone
 }
@@ -2497,22 +2513,68 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     .to_objc()
 }
 
-fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
-    let mut paths = SmallVec::new();
+fn external_drop_from_event(
+    dragging_info: *mut Object,
+    drag_types: &[DragType],
+) -> Option<ExternalDrop> {
+    let mut items = SmallVec::new();
     let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
-    let filenames = unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
-    if filenames == nil {
-        return None;
+
+    // Handle file paths
+    if drag_types.contains(&DragType::Files) {
+        let filenames =
+            unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
+        if filenames != nil {
+            for file in unsafe { filenames.iter() } {
+                let path = unsafe {
+                    let f = NSString::UTF8String(file);
+                    CStr::from_ptr(f).to_string_lossy().into_owned()
+                };
+                items.push(DropItem::Path(PathBuf::from(path)));
+            }
+        }
     }
-    for file in unsafe { filenames.iter() } {
-        let path = unsafe {
-            let f = NSString::UTF8String(file);
-            CStr::from_ptr(f).to_string_lossy().into_owned()
-        };
-        paths.push(PathBuf::from(path))
+
+    // Handle URLs
+    if drag_types.contains(&DragType::Urls) {
+        unsafe {
+            let url_type = NSString::alloc(nil).init_str("public.url");
+            let url_string_type = NSString::alloc(nil).init_str("public.url-name");
+
+            // Try to get URL from pasteboard
+            let pasteboard_string: id = msg_send![pasteboard, stringForType: url_type];
+            if pasteboard_string != nil {
+                let url_cstr = NSString::UTF8String(pasteboard_string);
+                let url_string = CStr::from_ptr(url_cstr).to_string_lossy().into_owned();
+                if let Ok(url) = url::Url::parse(&url_string) {
+                    // Only accept http/https URLs
+                    if url.scheme() == "http" || url.scheme() == "https" {
+                        items.push(DropItem::Url(url));
+                    }
+                }
+            }
+
+            // Also check for URLs in the URL name type (some apps use this)
+            let url_name: id = msg_send![pasteboard, stringForType: url_string_type];
+            if url_name != nil && pasteboard_string == nil {
+                let name_cstr = NSString::UTF8String(url_name);
+                let name_string = CStr::from_ptr(name_cstr).to_string_lossy().into_owned();
+                if let Ok(url) = url::Url::parse(&name_string) {
+                    if url.scheme() == "http" || url.scheme() == "https" {
+                        items.push(DropItem::Url(url));
+                    }
+                }
+            }
+        }
     }
-    Some(ExternalPaths(paths))
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(ExternalDrop(items))
+    }
 }
+
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
