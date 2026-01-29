@@ -914,16 +914,18 @@ impl TitleBar {
 
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
+        let workspace = self.workspace.clone();
         Button::new("sign_in", "Sign In")
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
+                let workspace = workspace.clone();
                 window
-                    .spawn(cx, async move |cx| {
+                    .spawn(cx, async move |mut cx| {
                         client
                             .sign_in_with_optional_connect(true, cx)
                             .await
-                            .notify_async_err(cx);
+                            .notify_workspace_async_err(workspace, &mut cx);
                     })
                     .detach();
             })

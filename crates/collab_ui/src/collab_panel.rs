@@ -121,6 +121,7 @@ pub fn init(cx: &mut App) {
 
             if let Some(room) = ActiveCall::global(cx).read(cx).room() {
                 let romo_id_fut = room.read(cx).room_id();
+                let workspace_handle = cx.weak_entity();
                 cx.spawn(async move |workspace, cx| {
                     let room_id = romo_id_fut.await.context("Failed to get livekit room")?;
                     workspace.update(cx, |workspace, cx| {
@@ -135,7 +136,7 @@ pub fn init(cx: &mut App) {
                         );
                     })
                 })
-                .detach_and_notify_err(window, cx);
+                .detach_and_notify_err(workspace_handle, window, cx);
             } else {
                 workspace.show_error(&"There’s no active call; join one first.", cx);
             }
@@ -2178,12 +2179,13 @@ impl CollabPanel {
                 &["Remove", "Cancel"],
                 cx,
             );
-            cx.spawn_in(window, async move |this, cx| {
+            let workspace = self.workspace.clone();
+            cx.spawn_in(window, async move |this, mut cx| {
                 if answer.await? == 0 {
                     channel_store
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
-                        .notify_async_err(cx);
+                        .notify_workspace_async_err(workspace, &mut cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
@@ -2212,12 +2214,13 @@ impl CollabPanel {
             &["Remove", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, async move |_, cx| {
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, mut cx| {
             if answer.await? == 0 {
                 user_store
                     .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
-                    .notify_async_err(cx);
+                    .notify_workspace_async_err(workspace, &mut cx);
             }
             anyhow::Ok(())
         })
@@ -2318,12 +2321,13 @@ impl CollabPanel {
                             .full_width()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
-                                cx.spawn_in(window, async move |_, cx| {
+                                let workspace = this.workspace.clone();
+                                cx.spawn_in(window, async move |_, mut cx| {
                                     client
-                                        .connect(true, cx)
+                                        .connect(true, &mut cx)
                                         .await
                                         .into_response()
-                                        .notify_async_err(cx);
+                                        .notify_workspace_async_err(workspace, &mut cx);
                                 })
                                 .detach()
                             })),

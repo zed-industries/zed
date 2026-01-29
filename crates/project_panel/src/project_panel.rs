@@ -753,7 +753,11 @@ impl ProjectPanel {
                         {
                             match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
-                                    task.detach_and_notify_err(window, cx);
+                                    task.detach_and_notify_err(
+                                        project_panel.workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 None => {
                                     project_panel.state.edit_state = None;
@@ -1561,7 +1565,7 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(task) = self.confirm_edit(true, window, cx) {
-            task.detach_and_notify_err(window, cx);
+            task.detach_and_notify_err(self.workspace.clone(), window, cx);
         }
     }
 
@@ -2942,20 +2946,25 @@ impl ProjectPanel {
             }
 
             let item_count = paste_tasks.len();
+            let workspace = self.workspace.clone();
 
-            cx.spawn_in(window, async move |project_panel, cx| {
+            cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) =
-                                task.await.notify_async_err(cx)
+                            if let Some(CreatedEntry::Included(entry)) = task
+                                .await
+                                .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
+                            if let Some(Some(entry)) = task
+                                .await
+                                .notify_workspace_async_err(workspace.clone(), &mut cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }

@@ -719,8 +719,13 @@ impl MessageEditor {
         }
 
         if self.prompt_capabilities.borrow().image
-            && let Some(task) =
-                paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
+            && let Some(task) = paste_images_as_context(
+                self.editor.clone(),
+                self.mention_set.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
         {
             task.detach();
         }

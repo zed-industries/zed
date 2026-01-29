@@ -256,8 +256,9 @@ impl MentionSet {
         self.mentions.insert(crease_id, (mention_uri, task.clone()));
 
         // Notify the user if we failed to load the mentioned context
-        cx.spawn_in(window, async move |this, cx| {
-            let result = task.await.notify_async_err(cx);
+        let workspace = workspace.downgrade();
+        cx.spawn(async move |this, mut cx| {
+            let result = task.await.notify_workspace_async_err(workspace, &mut cx);
             drop(tx);
             if result.is_none() {
                 this.update(cx, |this, cx| {
@@ -600,11 +601,12 @@ mod tests {
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
-    Some(window.spawn(cx, async move |cx| {
+    Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let (mut images, paths) = clipboard
             .into_entries()
@@ -726,7 +728,11 @@ pub(crate) fn paste_images_as_context(
                 mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
             });
 
-            if task.await.notify_async_err(cx).is_none() {
+            if task
+                .await
+                .notify_workspace_async_err(workspace.clone(), &mut cx)
+                .is_none()
+            {
                 editor.update(cx, |editor, cx| {
                     editor.edit([(start_anchor..end_anchor, "")], cx);
                 });
