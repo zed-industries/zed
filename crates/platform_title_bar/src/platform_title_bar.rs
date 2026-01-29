@@ -2,8 +2,9 @@ mod platforms;
 mod system_window_tabs;
 
 use gpui::{
-    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
+    Action, AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
+    WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
@@ -24,6 +25,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    button_layout: Option<String>,
 }
 
 impl PlatformTitleBar {
@@ -37,6 +39,7 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            button_layout: None,
         }
     }
 
@@ -70,6 +73,10 @@ impl PlatformTitleBar {
         self.children = children.into_iter().collect();
     }
 
+    pub fn set_button_layout(&mut self, button_layout: Option<String>) {
+        self.button_layout = button_layout;
+    }
+
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
     }
@@ -83,6 +90,19 @@ impl Render for PlatformTitleBar {
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
+
+        let button_layout = if self.platform_style == PlatformStyle::Linux
+            && matches!(decorations, Decorations::Client { .. })
+        {
+            Some(
+                self.button_layout
+                    .as_ref()
+                    .map(|layout| gpui::WindowButtonLayout::parse(layout))
+                    .unwrap_or_else(|| window.button_layout()),
+            )
+        } else {
+            None
+        };
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -134,6 +154,16 @@ impl Render for PlatformTitleBar {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                } else if let Some(ref layout) = button_layout {
+                    if !layout.left.is_empty() {
+                        this.child(platform_linux::LinuxWindowControls::new(
+                            "left",
+                            layout.left.clone(),
+                            close_action.as_ref().boxed_clone(),
+                        ))
+                    } else {
+                        this.pl_2()
+                    }
                 } else {
                     this.pl_2()
                 }
@@ -171,14 +201,26 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Mac => title_bar,
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
-                            title_bar
-                                .child(platform_linux::LinuxWindowControls::new(close_action))
-                                .when(supported_controls.window_menu, |titlebar| {
-                                    titlebar
-                                        .on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                                            window.show_window_menu(ev.position)
-                                        })
+                            let button_layout = self
+                                .button_layout
+                                .as_ref()
+                                .map(|layout| gpui::WindowButtonLayout::parse(layout))
+                                .unwrap_or_else(|| window.button_layout());
+
+                            let mut result = title_bar;
+                            if !button_layout.right.is_empty() {
+                                result = result.child(platform_linux::LinuxWindowControls::new(
+                                    "right",
+                                    button_layout.right,
+                                    close_action.as_ref().boxed_clone(),
+                                ));
+                            }
+
+                            result.when(supported_controls.window_menu, |titlebar| {
+                                titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                    window.show_window_menu(ev.position)
                                 })
+                            })
                         } else {
                             title_bar
                         }

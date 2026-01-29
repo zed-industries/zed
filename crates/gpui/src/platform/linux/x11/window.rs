@@ -2,6 +2,7 @@ use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
+use crate::platform::linux::platform::LinuxClient;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
@@ -1759,5 +1760,14 @@ impl PlatformWindow for X11Window {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    fn button_layout(&self) -> crate::WindowButtonLayout {
+        let state = self.0.state.borrow();
+        let Some(client) = state.client.get_client() else {
+            return crate::WindowButtonLayout::default();
+        };
+        drop(state);
+        client.with_common(|common| common.button_layout.clone())
     }
 }
