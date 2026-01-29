@@ -242,26 +242,25 @@ pub fn get_windows_system_shell() -> String {
     (*SYSTEM_SHELL).clone()
 }
 
-impl fmt::Display for ShellKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl ShellKind {
+    /// Returns the name of the shell, or `None` for unknown shells.
+    pub fn name(&self) -> Option<&'static str> {
         match self {
-            ShellKind::Posix => write!(f, "sh"),
-            ShellKind::Csh => write!(f, "csh"),
-            ShellKind::Tcsh => write!(f, "tcsh"),
-            ShellKind::Fish => write!(f, "fish"),
-            ShellKind::PowerShell => write!(f, "powershell"),
-            ShellKind::Pwsh => write!(f, "pwsh"),
-            ShellKind::Nushell => write!(f, "nu"),
-            ShellKind::Cmd => write!(f, "cmd"),
-            ShellKind::Rc => write!(f, "rc"),
-            ShellKind::Xonsh => write!(f, "xonsh"),
-            ShellKind::Elvish => write!(f, "elvish"),
-            ShellKind::UnknownWindows | ShellKind::UnknownUnix => write!(f, "(unknown)"),
+            ShellKind::Posix => Some("sh"),
+            ShellKind::Csh => Some("csh"),
+            ShellKind::Tcsh => Some("tcsh"),
+            ShellKind::Fish => Some("fish"),
+            ShellKind::PowerShell => Some("powershell"),
+            ShellKind::Pwsh => Some("pwsh"),
+            ShellKind::Nushell => Some("nu"),
+            ShellKind::Cmd => Some("cmd"),
+            ShellKind::Rc => Some("rc"),
+            ShellKind::Xonsh => Some("xonsh"),
+            ShellKind::Elvish => Some("elvish"),
+            ShellKind::UnknownWindows | ShellKind::UnknownUnix => None,
         }
     }
-}
 
-impl ShellKind {
     pub fn system() -> Self {
         Self::new(&get_system_shell(), cfg!(windows))
     }

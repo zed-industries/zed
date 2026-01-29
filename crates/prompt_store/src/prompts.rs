@@ -58,6 +58,8 @@ impl ProjectContext {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
+                .name()
+                .unwrap_or("unknown")
                 .to_string(),
         }
     }
