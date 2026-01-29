@@ -1780,7 +1780,7 @@ mod tests {
             env.clone(),
             PathStyle::Posix,
             "/bin/bash",
-            ShellKind::Posix,
+            ShellKind::Posix(PosixShell::Bash),
             vec!["-o".to_string(), "ControlMaster=auto".to_string()],
             Interactive::No,
         )?;

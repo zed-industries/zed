@@ -3,7 +3,7 @@ use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
-use util::shell::{PosixShell, ShellKind};
+use util::shell::ShellKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPermissionDecision {
@@ -239,6 +239,7 @@ mod tests {
     use crate::pattern_extraction::extract_terminal_pattern;
     use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
     use std::sync::Arc;
+    use util::shell::PosixShell;
 
     fn pattern(command: &str) -> &'static str {
         Box::leak(
@@ -615,16 +616,34 @@ mod tests {
         let p = ToolPermissions { tools };
         // With always_allow_tool_actions=true, even default_mode: Deny is overridden
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix(PosixShell::Sh)),
+            ToolPermissionDecision::from_input(
+                "terminal",
+                "x",
+                &p,
+                true,
+                ShellKind::Posix(PosixShell::Sh)
+            ),
             ToolPermissionDecision::Allow
         );
         // With always_allow_tool_actions=false, default_mode: Deny is respected
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix(PosixShell::Sh)),
+            ToolPermissionDecision::from_input(
+                "terminal",
+                "x",
+                &p,
+                false,
+                ShellKind::Posix(PosixShell::Sh)
+            ),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix(PosixShell::Sh)),
+            ToolPermissionDecision::from_input(
+                "edit_file",
+                "x",
+                &p,
+                false,
+                ShellKind::Posix(PosixShell::Sh)
+            ),
             ToolPermissionDecision::Allow
         );
     }
@@ -645,7 +664,13 @@ mod tests {
         let p = ToolPermissions { tools };
         // "terminal" should not match "term" rules, so falls back to Confirm (no rules)
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix(PosixShell::Sh)),
+            ToolPermissionDecision::from_input(
+                "terminal",
+                "x",
+                &p,
+                false,
+                ShellKind::Posix(PosixShell::Sh)
+            ),
             ToolPermissionDecision::Confirm
         );
     }
@@ -879,7 +904,13 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix(PosixShell::Sh)),
+            ToolPermissionDecision::from_input(
+                "terminal",
+                "x",
+                &p,
+                false,
+                ShellKind::Posix(PosixShell::Sh)
+            ),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
@@ -1036,8 +1067,13 @@ mod tests {
         );
         let p = ToolPermissions { tools };
 
-        let result =
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix(PosixShell::Sh));
+        let result = ToolPermissionDecision::from_input(
+            "terminal",
+            "x",
+            &p,
+            false,
+            ShellKind::Posix(PosixShell::Sh),
+        );
         match result {
             ToolPermissionDecision::Deny(msg) => {
                 assert!(msg.contains("2 regex patterns"), "Expected plural: {}", msg);
