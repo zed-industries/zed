@@ -2,6 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
+use crate::git_panel::commit_editor_history::SerializedCommitEditorHistory;
 use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
@@ -14,12 +15,13 @@ use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
+use commit_editor_history::CommitEditorHistory;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
     actions::ExpandAllDiffHunks,
 };
-use editor::{EditorStyle, RewrapOptions};
+use editor::{EditorEvent, EditorStyle, RewrapOptions};
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -41,7 +43,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
-use language::{Buffer, BufferEvent, File};
+use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -77,6 +79,9 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+
+mod commit_editor_history;
+
 actions!(
     git_panel,
     [
@@ -236,6 +241,8 @@ struct SerializedGitPanel {
     amend_pending: bool,
     #[serde(default)]
     signoff_enabled: bool,
+    #[serde(default)]
+    commit_editor_history: SerializedCommitEditorHistory,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -580,6 +587,7 @@ impl TruncatedPatch {
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
+    pub(crate) commit_editor_history: CommitEditorHistory,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     add_coauthors: bool,
@@ -618,7 +626,7 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
-    _commit_message_buffer_subscription: Subscription,
+    _commit_editor_subscription: Subscription,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -696,7 +704,7 @@ impl GitPanel {
             // just to let us render a placeholder editor.
             // Once the active git repo is set, this buffer will be replaced.
             let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
-            let commit_editor = cx.new(|cx| {
+            let mut commit_editor = cx.new(|cx| {
                 commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
             });
 
@@ -704,9 +712,8 @@ impl GitPanel {
                 editor.clear(window, cx);
             });
 
-            let mut commit_message_buffer = Self::commit_message_buffer_impl(&commit_editor, cx);
-            let _commit_message_buffer_subscription =
-                Self::subscribe_to_commit_message_buffer(&mut commit_message_buffer, window, cx);
+            let _commit_editor_subscription =
+                Self::subscribe_to_commit_editor(&mut commit_editor, window, cx);
 
             let scroll_handle = UniformListScrollHandle::new();
 
@@ -751,6 +758,7 @@ impl GitPanel {
             let mut this = Self {
                 active_repository,
                 commit_editor,
+                commit_editor_history: CommitEditorHistory::default(),
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
                 add_coauthors: true,
@@ -789,7 +797,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
-                _commit_message_buffer_subscription,
+                _commit_editor_subscription,
             };
 
             this.schedule_update(window, cx);
@@ -875,6 +883,7 @@ impl GitPanel {
         let width = self.width;
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
+        let commit_editor_history = self.commit_editor_history.to_serialized();
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
             cx.background_executor()
@@ -902,6 +911,7 @@ impl GitPanel {
                                 width,
                                 amend_pending,
                                 signoff_enabled,
+                                commit_editor_history,
                             })?,
                         )
                         .await?;
@@ -2005,11 +2015,7 @@ impl GitPanel {
     }
 
     pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
-        Self::commit_message_buffer_impl(&self.commit_editor, cx)
-    }
-
-    fn commit_message_buffer_impl(commit_editor: &Entity<Editor>, cx: &App) -> Entity<Buffer> {
-        commit_editor
+        self.commit_editor
             .read(cx)
             .buffer()
             .read(cx)
@@ -2017,19 +2023,18 @@ impl GitPanel {
             .unwrap()
     }
 
-    fn subscribe_to_commit_message_buffer(
-        commit_message_buffer: &mut Entity<Buffer>,
+    fn subscribe_to_commit_editor(
+        commit_editor: &mut Entity<Editor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Subscription {
         cx.subscribe_in(
-            &commit_message_buffer,
+            &commit_editor,
             window,
-            |this, _commit_message_buffer, event, _window, cx| match event {
-                BufferEvent::Edited { .. } => {
+            |this, _commit_editor, event, _window, cx| match event {
+                EditorEvent::Edited { .. } => {
                     let text = this.commit_editor.read(cx).text(cx);
-                    log::info!("Typed into commit editor: {}", text);
-                    // TODO: set this string as "pending edit" in commit history object
+                    this.commit_editor_history.set_pending_edit(text);
                 }
                 _ => {}
             },
@@ -2095,7 +2100,24 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::info!("Next editor history item");
+        let buffer = self.commit_message_buffer(cx);
+
+        match self.commit_editor_history.next() {
+            Some(entry) => buffer.update(cx, |buffer, cx| buffer.set_text(entry, cx)),
+            None => {
+                if self.commit_editor_history.get_pending_edit().is_some() {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(
+                            self.commit_editor_history
+                                .get_pending_edit()
+                                .expect("Pending edit should be present"),
+                            cx,
+                        )
+                    });
+                }
+                None
+            }
+        };
     }
 
     fn prev_commit_editor_history_entry(
@@ -2104,7 +2126,12 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::info!("Previous editor history item");
+        let buffer = self.commit_message_buffer(cx);
+
+        match self.commit_editor_history.prev() {
+            Some(entry) => buffer.update(cx, |buffer, cx| buffer.set_text(entry, cx)),
+            None => None,
+        };
     }
 
     /// Commits staged changes with the current commit message.
@@ -2338,6 +2365,9 @@ impl GitPanel {
 
                 match result {
                     Ok(()) => {
+                        this.commit_editor_history
+                            .add_new_entry(this.commit_editor.read(cx).text(cx));
+
                         if options.amend {
                             this.set_amend_pending(false, cx);
                         } else {
@@ -3467,12 +3497,8 @@ impl GitPanel {
                         )
                     });
 
-                    git_panel._commit_message_buffer_subscription =
-                        Self::subscribe_to_commit_message_buffer(
-                            &mut git_panel.commit_message_buffer(cx),
-                            window,
-                            cx,
-                        );
+                    git_panel._commit_editor_subscription =
+                        Self::subscribe_to_commit_editor(&mut git_panel.commit_editor, window, cx);
                 }
             })
         })
@@ -5414,6 +5440,9 @@ impl GitPanel {
                     panel.width = serialized_panel.width;
                     panel.amend_pending = serialized_panel.amend_pending;
                     panel.signoff_enabled = serialized_panel.signoff_enabled;
+                    panel.commit_editor_history = CommitEditorHistory::from_serialized(
+                        serialized_panel.commit_editor_history,
+                    );
                     cx.notify();
                 })
             }
