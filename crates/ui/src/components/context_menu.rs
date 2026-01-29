@@ -1917,11 +1917,8 @@ impl ContextMenu {
                             .child(label_element)
                             .debug_selector(|| format!("MENU_ITEM-{}", label))
                             .children(action.as_ref().map(|action| {
-                                let binding = self
-                                    .action_context
-                                    .as_ref()
-                                    .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
-                                    .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+                                let binding =
+                                    KeyBinding::for_action_in(&**action, &self.focus_handle, cx);
 
                                 div()
                                     .ml_4()
