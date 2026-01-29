@@ -542,7 +542,75 @@ impl Deref for MouseExitEvent {
     }
 }
 
+/// Types of external content that can be dragged into a window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum DragType {
+    /// File paths from the filesystem
+    #[default]
+    Files,
+    /// HTTP/HTTPS URLs (e.g., from browser)
+    Urls,
+}
+
+/// A single item from an external drag-drop operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DropItem {
+    /// A file path from the filesystem
+    Path(PathBuf),
+    /// An HTTP or HTTPS URL
+    Url(url::Url),
+}
+
+/// A collection of items from an external drag-drop operation.
+/// This is the modern replacement for `ExternalPaths`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExternalDrop(pub SmallVec<[DropItem; 2]>);
+
+impl ExternalDrop {
+    /// Create a new empty ExternalDrop.
+    pub fn new() -> Self {
+        Self(SmallVec::new())
+    }
+
+    /// Get the items as a slice.
+    pub fn items(&self) -> &[DropItem] {
+        &self.0
+    }
+
+    /// Get only the file paths, ignoring URLs.
+    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.0.iter().filter_map(|item| match item {
+            DropItem::Path(p) => Some(p),
+            DropItem::Url(_) => None,
+        })
+    }
+
+    /// Get only the URLs, ignoring file paths.
+    pub fn urls(&self) -> impl Iterator<Item = &url::Url> {
+        self.0.iter().filter_map(|item| match item {
+            DropItem::Url(u) => Some(u),
+            DropItem::Path(_) => None,
+        })
+    }
+
+    /// Convert to legacy ExternalPaths (paths only).
+    #[allow(deprecated)]
+    pub fn to_external_paths(&self) -> ExternalPaths {
+        ExternalPaths(self.paths().cloned().collect())
+    }
+}
+
+impl Render for ExternalDrop {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// A collection of paths from the platform, such as from a file drop.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use ExternalDrop instead, which supports both files and URLs"
+)]
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
