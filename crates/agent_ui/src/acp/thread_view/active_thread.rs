@@ -1069,41 +1069,20 @@ impl ActiveThreadState {
         };
 
         Some(
-            v_flex()
-                .w_full()
-                .p_2()
-                .gap_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().surface_background)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    Label::new(title)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Warning),
-                                ),
-                        )
-                        .child(
-                            IconButton::new("dismiss-command-errors", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.clear_command_load_errors(cx);
-                                })),
-                        ),
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .title(title)
+                .actions_slot(
+                    IconButton::new("dismiss-command-errors", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Dismiss Error"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.clear_command_load_errors(cx);
+                        })),
                 )
-                .children(errors.iter().enumerate().map({
+                .description_slot(v_flex().children(errors.iter().enumerate().map({
                     move |(i, error)| {
                         let path = error.path.clone();
                         let workspace = workspace.clone();
@@ -1112,20 +1091,19 @@ impl ActiveThreadState {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| error.path.display().to_string());
+                        let id = ElementId::Name(format!("command-error-{i}").into());
+                        let label = format!("— {}: {}", file_name, error.message);
 
-                        h_flex()
-                            .id(ElementId::Name(format!("command-error-{i}").into()))
-                            .gap_1()
-                            .px_1()
-                            .py_0p5()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                            .tooltip(Tooltip::text(format!(
-                                "Click to open {}\n\n{}",
-                                error.path.display(),
-                                error.message
-                            )))
+                        Button::new(id, label)
+                            .label_size(LabelSize::Small)
+                            .truncate(true)
+                            .tooltip({
+                                let message: SharedString = error.message.clone().into();
+                                let path: SharedString = error.path.display().to_string().into();
+                                move |_, cx| {
+                                    Tooltip::with_meta(message.clone(), None, path.clone(), cx)
+                                }
+                            })
                             .on_click({
                                 move |_, window, cx| {
                                     if let Some(workspace) = workspace.upgrade() {
@@ -1142,13 +1120,8 @@ impl ActiveThreadState {
                                     }
                                 }
                             })
-                            .child(
-                                Label::new(format!("• {}: {}", file_name, error.message))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
                     }
-                })),
+                }))),
         )
     }
 
@@ -1184,6 +1157,7 @@ impl ActiveThreadState {
 
         Some(
             Callout::new()
+                .icon(IconName::Warning)
                 .severity(Severity::Warning)
                 .title(state.last_error.clone())
                 .description(retry_message),
