@@ -66,11 +66,12 @@ pub enum ShellKind {
     /// An unrecognized shell on Windows. We cannot safely parse its command syntax,
     /// so `always_allow` patterns are disabled for security. For non-security
     /// purposes, this falls back to PowerShell-like behavior.
+    #[cfg_attr(windows, default)]
     UnknownWindows,
     /// An unrecognized shell on Unix. We cannot safely parse its command syntax,
     /// so `always_allow` patterns are disabled for security. For non-security
     /// purposes, this falls back to POSIX-like behavior.
-    #[default]
+    #[cfg_attr(not(windows), default)]
     UnknownUnix,
 }
 
