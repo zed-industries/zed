@@ -1301,9 +1301,9 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, overlay: Option<&Scene>) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, overlay);
     }
 
     fn completed_frame(&self) {

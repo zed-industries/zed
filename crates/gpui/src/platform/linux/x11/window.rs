@@ -1563,9 +1563,9 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, overlay: Option<&Scene>) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        inner.renderer.draw(scene, overlay);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
