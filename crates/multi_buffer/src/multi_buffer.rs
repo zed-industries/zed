@@ -4146,10 +4146,7 @@ impl MultiBufferSnapshot {
             && region.diff_hunk_status.is_some()
         {
             cursor.prev();
-            if cursor
-                .region()
-                .is_none_or(|region| dbg!(region.is_main_buffer))
-            {
+            if cursor.region().is_none_or(|region| region.is_main_buffer) {
                 cursor.next();
             }
         }
