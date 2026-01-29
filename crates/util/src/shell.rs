@@ -256,8 +256,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Rc => write!(f, "rc"),
             ShellKind::Xonsh => write!(f, "xonsh"),
             ShellKind::Elvish => write!(f, "elvish"),
-            ShellKind::UnknownWindows => write!(f, "unknown (Windows)"),
-            ShellKind::UnknownUnix => write!(f, "unknown (Unix)"),
+            ShellKind::UnknownWindows | ShellKind::UnknownUnix => write!(f, "(unknown)"),
         }
     }
 }
