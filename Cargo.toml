@@ -76,7 +76,6 @@ members = [
     "crates/file_icons",
     "crates/fs",
     "crates/fs_benchmarks",
-    "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
     "crates/git_graph",
@@ -313,7 +312,6 @@ feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
-fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
@@ -835,7 +833,6 @@ command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
-fsevent = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
 edit_prediction_ui = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
