@@ -1498,17 +1498,8 @@ impl TextThreadEditor {
             return;
         };
 
-        // Try terminal selection first (requires focus, so more specific)
         if let Some(terminal_text) = maybe!({
             let terminal_panel = workspace.panel::<TerminalPanel>(cx)?;
-
-            if !terminal_panel
-                .read(cx)
-                .focus_handle(cx)
-                .contains_focused(window, cx)
-            {
-                return None;
-            }
 
             let terminal_view = terminal_panel.read(cx).pane().and_then(|pane| {
                 pane.read(cx)
