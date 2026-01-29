@@ -989,114 +989,26 @@ impl SettingsStore {
             .map(|((_, path), content)| (path.clone(), &content.project))
     }
 
-    pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
-        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
-            .with_transform(DefaultDenyUnknownFields)
-            .with_transform(AllowTrailingCommas)
-            .into_generator();
-
-        UserSettingsContent::json_schema(&mut generator);
-
+    /// Configures common schema replacements shared between user and project
+    /// settings schemas.
+    ///
+    /// This sets up language-specific settings and LSP adapter settings that
+    /// are valid in both user and project settings.
+    fn configure_schema_generator(
+        generator: &mut schemars::SchemaGenerator,
+        params: &SettingsJsonSchemaParams,
+    ) {
         let language_settings_content_ref = generator
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
 
-        generator.subschema_for::<LspSettings>();
-
-        let lsp_settings_def = generator
-            .definitions()
-            .get("LspSettings")
-            .expect("LspSettings should be defined")
-            .clone();
-
-        replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
+        replace_subschema::<LanguageToSettingsMap>(generator, || {
             json_schema!({
                 "type": "object",
-                "properties": params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            language_settings_content_ref.clone(),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>(),
-                "errorMessage": "No language with this name is installed."
+                "errorMessage": "No language with this name is installed.",
+                "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
             })
         });
-
-        replace_subschema::<FontFamilyName>(&mut generator, || {
-            json_schema!({
-                "type": "string",
-                "enum": params.font_names,
-            })
-        });
-
-        replace_subschema::<ThemeName>(&mut generator, || {
-            json_schema!({
-                "type": "string",
-                "enum": params.theme_names,
-            })
-        });
-
-        replace_subschema::<IconThemeName>(&mut generator, || {
-            json_schema!({
-                "type": "string",
-                "enum": params.icon_theme_names,
-            })
-        });
-
-        replace_subschema::<LspSettingsMap>(&mut generator, || {
-            let mut lsp_properties = serde_json::Map::new();
-
-            for adapter_name in params.lsp_adapter_names {
-                let mut base_lsp_settings = lsp_settings_def
-                    .as_object()
-                    .expect("LspSettings should be an object")
-                    .clone();
-
-                if let Some(properties) = base_lsp_settings.get_mut("properties") {
-                    if let Some(props_obj) = properties.as_object_mut() {
-                        props_obj.insert(
-                            "initialization_options".to_string(),
-                            serde_json::json!({
-                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}")
-                            }),
-                        );
-                    }
-                }
-
-                lsp_properties.insert(
-                    adapter_name.clone(),
-                    serde_json::Value::Object(base_lsp_settings),
-                );
-            }
-
-            json_schema!({
-                "type": "object",
-                "properties": lsp_properties,
-            })
-        });
-
-        generator
-            .root_schema_for::<UserSettingsContent>()
-            .to_value()
-    }
-
-    /// Generate JSON schema for project settings, including only settings valid
-    /// for project-level configurations.
-    pub fn project_json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
-        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
-            .with_transform(DefaultDenyUnknownFields)
-            .with_transform(AllowTrailingCommas)
-            .into_generator();
-
-        ProjectSettingsContent::json_schema(&mut generator);
-
-        let language_settings_content_ref = generator
-            .subschema_for::<LanguageSettingsContent>()
-            .to_value();
 
         generator.subschema_for::<LspSettings>();
 
@@ -1106,15 +1018,7 @@ impl SettingsStore {
             .expect("LspSettings should be defined")
             .clone();
 
-        replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
-            json_schema!({
-                "type": "object",
-                "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>(),
-                "errorMessage": "No language with this name is installed."
-            })
-        });
-
-        replace_subschema::<LspSettingsMap>(&mut generator, || {
+        replace_subschema::<LspSettingsMap>(generator, || {
             let mut lsp_properties = serde_json::Map::new();
 
             for adapter_name in params.lsp_adapter_names {
@@ -1145,6 +1049,53 @@ impl SettingsStore {
                 "properties": lsp_properties
             })
         });
+    }
+
+    pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
+            .into_generator();
+
+        UserSettingsContent::json_schema(&mut generator);
+        Self::configure_schema_generator(&mut generator, params);
+
+        replace_subschema::<FontFamilyName>(&mut generator, || {
+            json_schema!({
+                "type": "string",
+                "enum": params.font_names,
+            })
+        });
+
+        replace_subschema::<ThemeName>(&mut generator, || {
+            json_schema!({
+                "type": "string",
+                "enum": params.theme_names,
+            })
+        });
+
+        replace_subschema::<IconThemeName>(&mut generator, || {
+            json_schema!({
+                "type": "string",
+                "enum": params.icon_theme_names,
+            })
+        });
+
+        generator
+            .root_schema_for::<UserSettingsContent>()
+            .to_value()
+    }
+
+    /// Generate JSON schema for project settings, including only settings valid
+    /// for project-level configurations.
+    pub fn project_json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
+            .into_generator();
+
+        ProjectSettingsContent::json_schema(&mut generator);
+        Self::configure_schema_generator(&mut generator, params);
 
         generator
             .root_schema_for::<ProjectSettingsContent>()
