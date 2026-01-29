@@ -403,6 +403,16 @@
             "color": "#73ade9ff",
             "font_style": null,
             "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#98c379ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#e06c75ff",
+            "font_style": null,
+            "font_weight": null
           }
         }
       }
@@ -803,6 +813,16 @@
           },
           "variant": {
             "color": "#5b79e3ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#50a14fff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#e45649ff",
             "font_style": null,
             "font_weight": null
           }

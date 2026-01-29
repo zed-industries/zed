@@ -406,6 +406,16 @@
             "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#b8bb26ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#fb4934ff",
+            "font_style": null,
+            "font_weight": null
           }
         }
       }
@@ -811,6 +821,16 @@
           },
           "variant": {
             "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#b8bb26ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#fb4934ff",
             "font_style": null,
             "font_weight": null
           }
@@ -1220,6 +1240,16 @@
             "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#b8bb26ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#fb4934ff",
+            "font_style": null,
+            "font_weight": null
           }
         }
       }
@@ -1625,6 +1655,16 @@
           },
           "variant": {
             "color": "#0b6678ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#79740eff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#9d0006ff",
             "font_style": null,
             "font_weight": null
           }
@@ -2034,6 +2074,16 @@
             "color": "#0b6678ff",
             "font_style": null,
             "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#79740eff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#9d0006ff",
+            "font_style": null,
+            "font_weight": null
           }
         }
       }
@@ -2439,6 +2489,16 @@
           },
           "variant": {
             "color": "#0b6678ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#79740eff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#9d0006ff",
             "font_style": null,
             "font_weight": null
           }
