@@ -1,10 +1,10 @@
 use edit_prediction_types::{EditPredictionDelegate, EditPredictionIconSet};
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
-use icons::IconName;
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
+use ui::prelude::*;
 
 use crate::{
     AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,

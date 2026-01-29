@@ -6,9 +6,9 @@ use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionIconSet, SuggestionDisplayType,
 };
 use gpui::{App, Entity, prelude::*};
-use icons::IconName;
 use language::{Buffer, ToPoint as _};
 use project::Project;
+use ui::prelude::*;
 
 use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
 

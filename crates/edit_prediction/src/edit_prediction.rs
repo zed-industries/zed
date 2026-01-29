@@ -107,10 +107,6 @@ pub struct SweepFeatureFlag;
 
 impl FeatureFlag for SweepFeatureFlag {
     const NAME: &str = "sweep-ai";
-
-    fn enabled_for_all() -> bool {
-        true
-    }
 }
 
 pub struct MercuryFeatureFlag;
@@ -660,7 +656,7 @@ impl EditPredictionStore {
     }
 
     pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
-        use icons::IconName;
+        use ui::IconName;
         match self.edit_prediction_model {
             EditPredictionModel::Sweep => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::SweepAi)

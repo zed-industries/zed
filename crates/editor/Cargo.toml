@@ -103,7 +103,6 @@ zlog.workspace = true
 criterion.workspace = true
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-icons.workspace = true
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }

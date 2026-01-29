@@ -3,7 +3,6 @@ use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate, EditPredictionIconSet};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
-use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
@@ -12,6 +11,7 @@ use std::{
     time::Duration,
 };
 use text::{ToOffset, ToPoint};
+use ui::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
