@@ -21223,6 +21223,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_lite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "assets",
+ "call",
+ "clap",
+ "client",
+ "collections",
+ "editor",
+ "env_logger 0.11.8",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "language",
+ "log",
+ "menu",
+ "node_runtime",
+ "parking_lot",
+ "paths",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "session",
+ "settings",
+ "theme",
+ "title_bar",
+ "ui",
+ "util",
+ "uuid",
+ "watch",
+ "windows 0.61.3",
+ "winresource",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "zed_proto"
 version = "0.3.1"
 dependencies = [

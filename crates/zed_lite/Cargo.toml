@@ -1,0 +1,85 @@
+[package]
+description = "A lightweight window framework based on Zed's UI components."
+edition.workspace = true
+name = "zed_lite"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+authors = ["Zed Team <hi@zed.dev>"]
+default-run = "zed_lite"
+
+[lints]
+workspace = true
+
+[features]
+test-support = [
+    "gpui/test-support",
+]
+
+[[bin]]
+name = "zed_lite"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+assets.workspace = true
+call.workspace = true
+clap.workspace = true
+client.workspace = true
+collections.workspace = true
+editor.workspace = true
+env_logger.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui = { workspace = true, features = [
+    "wayland",
+    "x11",
+    "font-kit",
+    "windows-manifest",
+] }
+gpui_tokio.workspace = true
+language.workspace = true
+log.workspace = true
+menu.workspace = true
+node_runtime.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+project.workspace = true
+release_channel.workspace = true
+reqwest_client.workspace = true
+session.workspace = true
+settings.workspace = true
+theme.workspace = true
+title_bar.workspace = true
+ui.workspace = true
+util.workspace = true
+uuid.workspace = true
+watch.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+ashpd.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[package.metadata.bundle-dev]
+icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
+identifier = "dev.zed.ZedLite-Dev"
+name = "Zed Lite Dev"
+osx_minimum_system_version = "10.15.7"
+osx_url_schemes = ["zed-lite"]
+
+[package.metadata.bundle-stable]
+icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
+identifier = "dev.zed.ZedLite"
+name = "Zed Lite"
+osx_minimum_system_version = "10.15.7"
+osx_url_schemes = ["zed-lite"]

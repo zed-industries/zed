@@ -209,6 +209,7 @@ members = [
     "crates/worktree_benchmarks",
     "crates/x_ai",
     "crates/zed",
+    "crates/zed_lite",
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/edit_prediction_cli",
@@ -445,6 +446,7 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
+zed_lite = { path = "crates/zed_lite" }
 zed_actions = { path = "crates/zed_actions" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }

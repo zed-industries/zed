@@ -1,0 +1,262 @@
+# AGENTS.md - Zed Codebase Guide
+
+This document provides essential information for AI agents working effectively in the Zed codebase.
+
+## Project Overview
+
+**Zed** is a high-performance, multiplayer code editor built in Rust. It's a workspace project with hundreds of crates that form a complex, interconnected system.
+
+### Key Architecture Components
+
+- **GPUI**: GPU-accelerated UI framework that provides all building blocks for Zed
+- **Editor**: Core `Editor` type driving both code editor and input fields
+- **Project**: File management and LSP communication
+- **Workspace**: Local state serialization and project grouping
+- **Vim**: Vim workflow implementation over the editor
+- **LSP**: External LSP server communication
+- **Language**: Language understanding and syntax handling
+- **Collab**: Collaboration features and project sharing
+- **Theme**: Theme system and default themes
+- **UI**: Collection of UI components and common patterns
+
+## Development Environment
+
+### Prerequisites
+
+- Rust 2024 edition
+- Platform-specific build tools (see platform docs)
+- Node.js (for some tooling)
+- SQLite (for database operations)
+
+### Setup Commands
+
+```bash
+# Bootstrap development environment
+./script/bootstrap
+
+# Build and run Zed
+cargo run --release
+
+# Run in development mode
+cargo run
+```
+
+### Essential Build Commands
+
+```bash
+# Lint the entire codebase
+./script/clippy
+
+# Run tests with nextest
+cargo nextest run
+
+# Run specific package tests
+cargo test -p <crate_name>
+
+# Build documentation
+cargo doc --workspace --no-deps --open
+
+# Format code
+cargo fmt --all
+
+# Check for unused dependencies
+cargo machete  # (run locally after clippy)
+```
+
+## Code Organization
+
+### Workspace Structure
+
+- **`crates/`**: Individual crates as separate packages
+- **`extensions/`**: Language and feature extensions
+- **`tooling/`**: Development tooling and xtask
+- **`docs/`**: Documentation source
+- **`script/`**: Build and utility scripts
+- **`.github/`**: GitHub Actions workflows
+
+### Crate Conventions
+
+- Each crate has its own `Cargo.toml` with explicit path dependencies
+- Crates are organized by functionality (editor, language, ui, etc.)
+- Library files use descriptive names: `gpui.rs`, `main.rs`, `vim.rs`, etc.
+- Avoid `mod.rs` files - use direct file paths instead
+
+## Coding Guidelines
+
+### Rust Conventions
+
+- **Prioritize correctness and clarity** over speed/efficiency unless specified
+- **No organizational comments** - only explain tricky/non-obvious code
+- **Prevent panics** - use `?` for error propagation, avoid `unwrap()`
+- **Handle errors properly**:
+  - Propagate with `?` when calling function should handle
+  - Use `.log_err()` for visibility when ignoring
+  - Use explicit `match` or `if let Err(...)` for custom logic
+- **Use full words** for variable names (no abbreviations)
+- **Variable shadowing** is encouraged for clarity in async contexts
+
+### GPUI-Specific Patterns
+
+#### Context Usage
+
+- **`App`**: Root context for global state access
+- **`Context<T>`**: Context for updating `Entity<T>`, dereferences to `App`
+- **`Window`**: Window state and input handling
+- **Entity methods**:
+  - `read(cx)` - read state
+  - `update(cx, |mut this, cx| ...)` - mutate state with context
+  - `update_in(window, cx, |mut this, window, cx| ...)` - with window access
+
+#### Concurrency Model
+
+- **Single foreground thread** for all UI rendering and entity updates
+- **`cx.spawn(async move |cx| ...)`** - async work on foreground thread
+- **`cx.background_spawn(...)`** - work on background threads
+- **Tasks** must be awaited, detached, or stored to prevent cancellation
+
+#### UI Development
+
+```rust
+impl Render for MyComponent {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .border_1()
+            .child(self.text.clone())
+            .on_click(cx.listener(|this, event, window, cx| {
+                // Handle click
+            }))
+    }
+}
+```
+
+## Testing Approach
+
+### Test Organization
+
+- **Unit tests**: In individual files with `#[cfg(test)]`
+- **Integration tests**: In `tests/` directories
+- **Visual tests**: For UI changes (see platform-specific docs)
+- **GPUI tests**: Use `TestAppContext` and `cx.background_executor().timer()`
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo nextest run
+
+# Run specific test
+cargo nextest run --package <crate> --test <test_name>
+
+# Run with output
+cargo nextest run --nocapture
+
+# Run only failing tests
+cargo nextest run --only-failed
+```
+
+### Test Configuration
+
+- Uses `nextest` for better test execution
+- Slow tests configured with extended timeouts (300s for some)
+- Sequential test groups for database operations
+- Priority-based execution order
+
+## Key Scripts and Tools
+
+### Build Scripts
+
+- **`./script/bootstrap`**: Setup development environment
+- **`./script/clippy`**: Run clippy with project-specific rules
+- **`./script/prettier`**: Format documentation
+- **`./script/check-licenses`**: Verify license compliance
+
+### Development Tools
+
+- **`cargo xtask`**: Custom development tasks
+  - `cargo xtask workflows` - Generate GitHub workflows
+  - `cargo xtask clippy` - Run clippy through xtask
+  - `cargo xtask licenses` - Check license compliance
+- **`script/histogram`**: Compare frame rendering performance
+- **`./script/new-crate`**: Generate new crate structure
+
+## Gotchas and Patterns
+
+### Common Patterns
+
+1. **Entity Management**: Always use proper entity lifecycle management
+2. **Error Handling**: Never silently discard errors with `let _ =`
+3. **Async Context**: Use variable shadowing for borrowed references in async blocks
+4. **UI Updates**: Call `cx.notify()` when state affects rendering
+5. **Actions**: Use `actions!` macro for simple actions, `#[derive(Action)]` for complex
+
+### Important Gotchas
+
+1. **No mod.rs files**: Use direct file paths instead
+2. **GPUI timers**: Use `cx.background_executor().timer()` instead of `smol::Timer::after()`
+3. **Database tests**: Must run sequentially, configured in `.config/nextest.toml`
+4. **License compliance**: All crates must have correct license metadata
+5. **Binary size**: Profile-specific optimizations in workspace Cargo.toml
+
+### Platform-Specific Issues
+
+- **macOS**: Development builds bypass keychain by default
+- **Windows**: Requires specific Visual Studio components
+- **Linux**: May need additional system dependencies
+
+## Configuration Files
+
+### Key Configs
+
+- **`.config/nextest.toml`**: Test configuration and timeouts
+- **`typos.toml`**: Spelling checking configuration
+- **`clippy.toml`**: Clippy lint configuration
+- **`rust-toolchain.toml`**: Rust toolchain specification
+- **`.prettierrc`**: Documentation formatting rules
+
+### Workspace Config
+
+- **`Cargo.toml`**: Workspace dependencies and build profiles
+- **`[profile.dev]`**: Development-specific optimizations
+- **`[profile.release]`**: Release build configurations
+
+## Contributing Guidelines
+
+### PR Process
+
+1. **Confirm feature** with maintainers before implementation
+2. **Include tests** for all changes
+3. **Attach screenshots** for UI changes
+4. **Keep PRs focused** - one change per PR
+5. **Follow coding guidelines** in `.rules`
+
+### What to Avoid
+
+- Features that could be extensions
+- Stylistic changes that don't affect logic
+- Giant refactorings
+- AI-generated code without understanding
+- Changes without tests
+
+## Resources
+
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)**: Detailed contribution guide
+- **[Development Docs](./docs/src/development/)**: Platform-specific build instructions
+- **[Glossary](./docs/src/development/glossary.md)**: Zed terminology and concepts
+- **[Issue Templates](.github/ISSUE_TEMPLATE/)**: Bug and crash report templates
+
+## Debugging
+
+### Common Issues
+
+1. **License errors**: Check `publish = false` in crate Cargo.toml and SPDX identifiers
+2. **Build failures**: Use `cargo tree` to check dependency conflicts
+3. **Test timeouts**: Check nextest configuration for extended timeouts
+4. **Linking errors**: Ensure all dependencies are correctly specified
+
+### Performance Profiling
+
+- Use `ZED_MEASUREMENTS=1` for frame timing
+- Compare performance with `script/histogram`
+- Use `#[perf]` attribute for unit test benchmarking
+
+This guide should help you work effectively within the Zed codebase. When in doubt, check existing patterns in the code and refer to the contributing guidelines.
