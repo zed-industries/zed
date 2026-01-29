@@ -317,6 +317,17 @@ impl UserMessage {
                         MentionUri::Diagnostics { .. } => {
                             write!(&mut diagnostics_context, "\n{}\n", content).ok();
                         }
+                        MentionUri::TerminalSelection => {
+                            write!(
+                                &mut selection_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "console",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())

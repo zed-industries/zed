@@ -6870,6 +6870,7 @@ impl AcpThreadView {
                     cx.open_url(url.as_str());
                 }
                 MentionUri::Diagnostics { .. } => {}
+                MentionUri::TerminalSelection => {}
             })
         } else {
             cx.open_url(&url);
@@ -7648,6 +7649,18 @@ impl AcpThreadView {
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_editor(cx).update(cx, |editor, cx| {
             editor.insert_selections(window, cx);
+        });
+    }
+
+    /// Inserts terminal text as a crease into the message editor.
+    pub(crate) fn insert_terminal_text(
+        &self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_terminal_crease(text, window, cx);
         });
     }
 

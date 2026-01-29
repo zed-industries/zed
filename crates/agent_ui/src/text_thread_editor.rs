@@ -64,8 +64,11 @@ use workspace::{
     CollaboratorId,
     searchable::{Direction, SearchableItemHandle},
 };
+
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use workspace::{
     Save, Toast, Workspace,
+    dock::Panel,
     item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
@@ -156,6 +159,14 @@ pub trait AgentPanelDelegate {
         workspace: &mut Workspace,
         selection_ranges: Vec<Range<Anchor>>,
         buffer: Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    );
+
+    fn quote_terminal_text(
+        &self,
+        workspace: &mut Workspace,
+        text: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -1487,7 +1498,40 @@ impl TextThreadEditor {
             return;
         };
 
-        let Some((selections, buffer)) = maybe!({
+        // Try terminal selection first (requires focus, so more specific)
+        if let Some(terminal_text) = maybe!({
+            let terminal_panel = workspace.panel::<TerminalPanel>(cx)?;
+
+            if !terminal_panel
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+            {
+                return None;
+            }
+
+            let terminal_view = terminal_panel.read(cx).pane().and_then(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|t| t.downcast::<TerminalView>())
+            })?;
+
+            terminal_view
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .last_content
+                .selection_text
+                .clone()
+        }) {
+            if !terminal_text.is_empty() {
+                agent_panel_delegate.quote_terminal_text(workspace, terminal_text, window, cx);
+                return;
+            }
+        }
+
+        // Try editor selection
+        if let Some((selections, buffer)) = maybe!({
             let editor = workspace
                 .active_item(cx)
                 .and_then(|item| item.act_as::<Editor>(cx))?;
@@ -1506,15 +1550,11 @@ impl TextThreadEditor {
                     .collect::<Vec<_>>()
             });
             Some((selections, buffer))
-        }) else {
-            return;
-        };
-
-        if selections.is_empty() {
-            return;
+        }) {
+            if !selections.is_empty() {
+                agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
+            }
         }
-
-        agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
     /// Handles the SendReviewToAgent action from the ProjectDiff toolbar.
@@ -1711,6 +1751,54 @@ impl TextThreadEditor {
                 editor.insert_creases(vec![crease], cx);
                 editor.fold_at(start_row, window, cx);
             }
+        })
+    }
+
+    pub fn quote_terminal_text(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crease_title = "terminal".to_string();
+        let formatted_text = format!("```console\n{}\n```\n", text);
+
+        self.editor.update(cx, |editor, cx| {
+            // Insert newline first if not at the start of a line
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            if point.column > 0 {
+                editor.insert("\n", window, cx);
+            }
+
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            let start_row = MultiBufferRow(point.row);
+
+            editor.insert(&formatted_text, window, cx);
+
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor_before = snapshot.anchor_after(point);
+            let anchor_after = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .bias_left(&snapshot);
+
+            let fold_placeholder =
+                quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
+            let crease = Crease::inline(
+                anchor_before..anchor_after,
+                fold_placeholder,
+                render_quote_selection_output_toggle,
+                |_, _, _, _| Empty.into_any(),
+            );
+            editor.insert_creases(vec![crease], cx);
+            editor.fold_at(start_row, window, cx);
         })
     }
 
@@ -3547,5 +3635,27 @@ mod tests {
         cx.set_global(settings_store);
 
         theme::init(theme::LoadThemes::JustBase, cx);
+    }
+
+    #[gpui::test]
+    async fn test_quote_terminal_text(cx: &mut TestAppContext) {
+        let (_context, text_thread_editor, mut cx) =
+            setup_text_thread_editor_text(vec![(Role::User, "")], cx).await;
+
+        let terminal_output = "$ ls -la\ntotal 0\ndrwxr-xr-x  2 user user  40 Jan  1 00:00 .";
+
+        text_thread_editor.update_in(&mut cx, |text_thread_editor, window, cx| {
+            text_thread_editor.quote_terminal_text(terminal_output.to_string(), window, cx);
+
+            text_thread_editor.editor.update(cx, |editor, cx| {
+                let text = editor.text(cx);
+                // The text should contain the terminal output wrapped in a code block
+                assert!(
+                    text.contains(&format!("```console\n{}\n```", terminal_output)),
+                    "Terminal text should be wrapped in code block. Got: {}",
+                    text
+                );
+            });
+        });
     }
 }
