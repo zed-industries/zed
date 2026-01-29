@@ -33,6 +33,7 @@ use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
+pub mod commit_log_view;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
@@ -63,6 +64,7 @@ pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
     file_history_view::init(cx);
+    commit_log_view::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -268,6 +270,23 @@ pub fn init(cx: &mut App) {
             };
             file_history_view::FileHistoryView::open(
                 repo_path,
+                git_store.downgrade(),
+                repo.downgrade(),
+                workspace.weak_handle(),
+                window,
+                cx,
+            );
+        });
+        workspace.register_action(|workspace, _: &git::CommitLog, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            let Some(repo) = panel.read(cx).active_repository.clone() else {
+                return;
+            };
+            let project = workspace.project();
+            let git_store = project.read(cx).git_store();
+            commit_log_view::CommitLogView::open(
                 git_store.downgrade(),
                 repo.downgrade(),
                 workspace.weak_handle(),

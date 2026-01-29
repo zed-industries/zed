@@ -123,6 +123,7 @@
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "git::Blame",
       "alt-g m": "git::OpenModifiedFiles",
+      "alt-g l": "git::CommitLog",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-alt-e": "editor::ToggleEditPrediction",

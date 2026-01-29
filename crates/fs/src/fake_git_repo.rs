@@ -488,6 +488,19 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn commit_log_paginated(
+        &self,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<git::repository::CommitLog>> {
+        async move {
+            Ok(git::repository::CommitLog {
+                entries: Vec::new(),
+            })
+        }
+        .boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
