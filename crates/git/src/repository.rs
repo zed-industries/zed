@@ -40,6 +40,7 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+pub const GIT_GRAPH_MAX_BATCH_SIZE: usize = 64;
 
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
@@ -52,7 +53,7 @@ static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
 /// Commit data needed for the git graph visualization.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphCommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
@@ -63,6 +64,34 @@ pub struct GraphCommitData {
     pub subject: SharedString,
 }
 
+impl GraphCommitData {
+    pub fn to_proto(&self) -> proto::GraphCommitData {
+        proto::GraphCommitData {
+            sha: self.sha.to_string(),
+            parents: self.parents.iter().map(|p| p.to_string()).collect(),
+            author_name: self.author_name.to_string(),
+            author_email: self.author_email.to_string(),
+            commit_timestamp: self.commit_timestamp,
+            subject: self.subject.to_string(),
+        }
+    }
+
+    pub fn from_proto(commit: &proto::GraphCommitData) -> Result<Self> {
+        Ok(GraphCommitData {
+            sha: Oid::from_str(&commit.sha)?,
+            parents: commit
+                .parents
+                .iter()
+                .filter_map(|parent| Oid::from_str(&parent).ok())
+                .collect(),
+            author_name: SharedString::from(&commit.author_name),
+            author_email: SharedString::from(&commit.author_email),
+            commit_timestamp: commit.commit_timestamp,
+            subject: SharedString::from(&commit.subject),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct InitialGraphCommitData {
     pub sha: Oid,
@@ -70,26 +99,60 @@ pub struct InitialGraphCommitData {
     pub ref_names: Vec<SharedString>,
 }
 
-struct CommitDataRequest {
-    sha: Oid,
-    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+impl InitialGraphCommitData {
+    pub fn to_proto(&self) -> proto::InitialGraphCommit {
+        proto::InitialGraphCommit {
+            sha: self.sha.to_string(),
+            parents: self.parents.iter().map(|p| p.to_string()).collect(),
+            ref_names: self.ref_names.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    pub fn from_proto(commit: proto::InitialGraphCommit) -> Result<Self> {
+        let sha = Oid::from_str(&commit.sha)?;
+        let parents = commit
+            .parents
+            .iter()
+            .filter_map(|parent| Oid::from_str(&parent).ok())
+            .collect();
+        let ref_names = commit.ref_names.iter().map(SharedString::from).collect();
+        Ok(Self {
+            sha,
+            parents,
+            ref_names,
+        })
+    }
+}
+
+pub struct CommitDataRequest {
+    pub sha: Oid,
+    pub response_tx: oneshot::Sender<Result<GraphCommitData>>,
 }
 
 pub struct CommitDataReader {
-    request_tx: smol::channel::Sender<CommitDataRequest>,
-    _task: Task<()>,
+    pub request_tx: smol::channel::Sender<CommitDataRequest>,
+    pub _task: Task<()>,
 }
 
 impl CommitDataReader {
-    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx
-            .send(CommitDataRequest { sha, response_tx })
-            .await
-            .map_err(|_| anyhow!("commit data reader task closed"))?;
-        response_rx
-            .await
-            .map_err(|_| anyhow!("commit data reader task dropped response"))?
+    pub async fn read(&self, shas: Vec<Oid>) -> Result<Vec<Result<GraphCommitData>>> {
+        let mut rxs = Vec::with_capacity(shas.len());
+        let mut commits = Vec::with_capacity(shas.len());
+        for sha in shas {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.request_tx
+                .send(CommitDataRequest { sha, response_tx })
+                .await
+                .map_err(|_| anyhow!("commit data reader task closed"))?;
+            rxs.push(response_rx);
+        }
+        for rx in rxs {
+            commits.push(
+                rx.await
+                    .map_err(|_| anyhow!("commit data reader task dropped response"))?,
+            );
+        }
+        Ok(commits)
     }
 }
 
@@ -542,6 +605,25 @@ impl LogOrder {
             LogOrder::ReverseChronological => "--reverse",
         }
     }
+
+    pub fn to_proto(&self) -> i32 {
+        match self {
+            LogOrder::DateOrder => 0,
+            LogOrder::TopoOrder => 1,
+            LogOrder::AuthorDateOrder => 2,
+            LogOrder::ReverseChronological => 3,
+        }
+    }
+
+    pub fn from_proto(proto: i32) -> Result<Self> {
+        Ok(match proto {
+            0 => LogOrder::DateOrder,
+            1 => LogOrder::TopoOrder,
+            2 => LogOrder::AuthorDateOrder,
+            3 => LogOrder::ReverseChronological,
+            _ => return Err(anyhow!("Invalid proto value for LogOrder")),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -561,6 +643,30 @@ impl LogSource {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
         }
+    }
+    pub fn to_proto(&self) -> proto::get_initial_graph_commit::LogSource {
+        match self {
+            LogSource::All => proto::get_initial_graph_commit::LogSource::All(true),
+            LogSource::Branch(branch) => {
+                proto::get_initial_graph_commit::LogSource::Branch(branch.to_string())
+            }
+            LogSource::Sha(sha) => proto::get_initial_graph_commit::LogSource::Sha(sha.to_string()),
+        }
+    }
+
+    pub fn from_proto(
+        log_source: Option<proto::get_initial_graph_commit::LogSource>,
+    ) -> Result<Self> {
+        Ok(match log_source {
+            Some(proto::get_initial_graph_commit::LogSource::All(_)) => LogSource::All,
+            Some(proto::get_initial_graph_commit::LogSource::Branch(branch)) => {
+                LogSource::Branch(SharedString::from(branch))
+            }
+            Some(proto::get_initial_graph_commit::LogSource::Sha(sha)) => {
+                LogSource::Sha(Oid::from_str(&sha)?)
+            }
+            None => return Err(anyhow!("Empty proto value for LogSource")),
+        })
     }
 }
 
@@ -2676,12 +2782,10 @@ async fn run_commit_data_reader(
     let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
     let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
 
-    const MAX_BATCH_SIZE: usize = 64;
-
     while let Ok(first_request) = request_rx.recv().await {
         let mut pending_requests = vec![first_request];
 
-        while pending_requests.len() < MAX_BATCH_SIZE {
+        while pending_requests.len() < GIT_GRAPH_MAX_BATCH_SIZE {
             match request_rx.try_recv() {
                 Ok(request) => pending_requests.push(request),
                 Err(_) => break,

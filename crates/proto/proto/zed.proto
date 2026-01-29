@@ -455,7 +455,11 @@ message Envelope {
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
         FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
         GetContextServerCommand get_context_server_command = 411;
-        ContextServerCommand context_server_command = 412; // current max
+        ContextServerCommand context_server_command = 412;
+        GetInitialGraphCommit get_initial_graph_commit = 413;
+        GetInitialGraphCommitResponse get_initial_graph_commit_response = 414;
+        GetGraphCommitData get_graph_commit_data = 415;
+        GetGraphCommitDataResponse get_graph_commit_data_response = 416; // current max
     }
 
     reserved 87 to 88;
