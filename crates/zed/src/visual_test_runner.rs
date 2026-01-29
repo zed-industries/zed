@@ -2482,14 +2482,62 @@ fn run_tool_permissions_visual_tests(
     .ok();
     cx.run_until_parked();
 
-    // Save screenshot 2: The tool permissions sub-page
+    // Save screenshot 2: The tool permissions sub-page (list of tools)
     let subpage_output_path = PathBuf::from(&output_dir).join("tool_permissions_subpage.png");
 
     if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
         let _: Result<(), _> = screenshot.save(&subpage_output_path);
         println!(
-            "Screenshot 2 (sub-page) saved to: {}",
+            "Screenshot 2 (tool list) saved to: {}",
             subpage_output_path.display()
+        );
+    }
+
+    // Now navigate into a specific tool (Terminal) to show the tool config page
+    // We need to use push_dynamic_sub_page since the tool pages are nested
+    settings_window_handle
+        .update(cx, |settings_window, window, cx| {
+            settings_window.push_dynamic_sub_page(
+                "Terminal",
+                "Configure Tool Rules",
+                None,
+                settings_ui::pages::render_terminal_tool_config,
+                window,
+                cx,
+            );
+        })
+        .context("Failed to navigate to Terminal tool config")?;
+
+    cx.run_until_parked();
+
+    // Give the tool config page time to render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Refresh and redraw
+    cx.update_window(settings_window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    // Save screenshot 3: Individual tool config page
+    let tool_config_output_path =
+        PathBuf::from(&output_dir).join("tool_permissions_tool_config.png");
+
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&tool_config_output_path);
+        println!(
+            "Screenshot 3 (tool config) saved to: {}",
+            tool_config_output_path.display()
         );
     }
 

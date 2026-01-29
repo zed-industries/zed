@@ -1,6 +1,6 @@
 mod components;
 mod page_data;
-mod pages;
+pub mod pages;
 
 use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
@@ -3426,6 +3426,34 @@ impl SettingsWindow {
             .push(SubPage::new(sub_page_link, section_header));
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    /// Push a dynamically-created sub-page with a custom render function.
+    /// This is useful for nested sub-pages that aren't defined in the main pages list.
+    pub fn push_dynamic_sub_page(
+        &mut self,
+        title: impl Into<SharedString>,
+        section_header: impl Into<SharedString>,
+        json_path: Option<&'static str>,
+        render: fn(
+            &SettingsWindow,
+            &ScrollHandle,
+            &mut Window,
+            &mut Context<SettingsWindow>,
+        ) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let sub_page_link = SubPageLink {
+            title: title.into(),
+            r#type: SubPageType::default(),
+            description: None,
+            json_path,
+            in_json: true,
+            files: USER,
+            render,
+        };
+        self.push_sub_page(sub_page_link, section_header.into(), window, cx);
     }
 
     /// Navigate to a sub-page by its json_path.
