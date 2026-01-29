@@ -399,6 +399,9 @@ impl Server {
             .add_message_handler(
                 broadcast_project_message_from_host::<proto::PullWorkspaceDiagnostics>,
             )
+            .add_request_handler(
+                forward_read_only_project_request::<proto::PullDocumentDiagnosticsForBufferEdit>,
+            )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
             .add_request_handler(request_contact)
