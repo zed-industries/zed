@@ -37,7 +37,7 @@ pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelSpecification {
-    Remote(RemoteKernelSpecification),
+    JupyterServer(RemoteKernelSpecification),
     Jupyter(LocalKernelSpecification),
     PythonEnv(LocalKernelSpecification),
     SshRemote(SshRemoteKernelSpecification),
@@ -91,7 +91,7 @@ impl KernelSpecification {
         match self {
             Self::Jupyter(spec) => spec.name.clone().into(),
             Self::PythonEnv(spec) => spec.name.clone().into(),
-            Self::Remote(spec) => spec.name.clone().into(),
+            Self::JupyterServer(spec) => spec.name.clone().into(),
             Self::SshRemote(spec) => spec.name.clone().into(),
             Self::WslRemote(spec) => spec.name.clone().into(),
         }
@@ -101,7 +101,7 @@ impl KernelSpecification {
         match self {
             Self::Jupyter(_) => "Jupyter".into(),
             Self::PythonEnv(_) => "Python Environment".into(),
-            Self::Remote(_) => "Remote".into(),
+            Self::JupyterServer(_) => "Jupyter Server".into(),
             Self::SshRemote(_) => "SSH Remote".into(),
             Self::WslRemote(_) => "WSL Remote".into(),
         }
@@ -111,7 +111,7 @@ impl KernelSpecification {
         SharedString::from(match self {
             Self::Jupyter(spec) => spec.path.to_string_lossy().into_owned(),
             Self::PythonEnv(spec) => spec.path.to_string_lossy().into_owned(),
-            Self::Remote(spec) => spec.url.to_string(),
+            Self::JupyterServer(spec) => spec.url.to_string(),
             Self::SshRemote(_) => "Remote".to_string(),
             Self::WslRemote(_) => "WSL".to_string(),
         })
@@ -121,7 +121,7 @@ impl KernelSpecification {
         SharedString::from(match self {
             Self::Jupyter(spec) => spec.kernelspec.language.clone(),
             Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
-            Self::Remote(spec) => spec.kernelspec.language.clone(),
+            Self::JupyterServer(spec) => spec.kernelspec.language.clone(),
             Self::SshRemote(spec) => spec.kernelspec.language.clone(),
             Self::WslRemote(spec) => spec.kernelspec.language.clone(),
         })
@@ -131,7 +131,7 @@ impl KernelSpecification {
         let lang_name = match self {
             Self::Jupyter(spec) => spec.kernelspec.language.clone(),
             Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
-            Self::Remote(spec) => spec.kernelspec.language.clone(),
+            Self::JupyterServer(spec) => spec.kernelspec.language.clone(),
             Self::SshRemote(spec) => spec.kernelspec.language.clone(),
             Self::WslRemote(spec) => spec.kernelspec.language.clone(),
         };

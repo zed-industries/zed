@@ -156,9 +156,9 @@ impl PickerDelegate for KernelPickerDelegate {
                 "Python Env",
                 Some(truncate_path(&kernelspec.path(), 42)),
             ),
-            KernelSpecification::Remote(_) => (
+            KernelSpecification::JupyterServer(_) => (
                 kernelspec.name(),
-                "Remote",
+                "Jupyter Server",
                 Some(truncate_path(&kernelspec.path(), 42)),
             ),
             KernelSpecification::SshRemote(_) => (kernelspec.name(), "SSH Remote", None),

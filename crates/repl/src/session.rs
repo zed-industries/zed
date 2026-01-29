@@ -295,13 +295,15 @@ impl Session {
                 window,
                 cx,
             ),
-            KernelSpecification::Remote(remote_kernel_specification) => RemoteRunningKernel::new(
-                remote_kernel_specification,
-                working_directory,
-                session_view,
-                window,
-                cx,
-            ),
+            KernelSpecification::JupyterServer(remote_kernel_specification) => {
+                RemoteRunningKernel::new(
+                    remote_kernel_specification,
+                    working_directory,
+                    session_view,
+                    window,
+                    cx,
+                )
+            }
             KernelSpecification::SshRemote(spec) => {
                 let project = self
                     .editor

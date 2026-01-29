@@ -379,7 +379,7 @@ impl NotebookEditor {
                 window,
                 cx,
             ),
-            KernelSpecification::Remote(remote_spec) => {
+            KernelSpecification::JupyterServer(remote_spec) => {
                 RemoteRunningKernel::new(remote_spec, working_directory, view, window, cx)
             }
 

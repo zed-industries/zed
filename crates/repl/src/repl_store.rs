@@ -154,7 +154,12 @@ impl ReplStore {
                 Some(cx.spawn(async move |_, _| {
                     list_remote_kernelspecs(remote_server, http_client)
                         .await
-                        .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())
+                        .map(|specs| {
+                            specs
+                                .into_iter()
+                                .map(KernelSpecification::JupyterServer)
+                                .collect()
+                        })
                 }))
             }
             _ => None,
@@ -267,7 +272,7 @@ impl ReplStore {
                     runtime_specification.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
-                KernelSpecification::Remote(remote_spec) => {
+                KernelSpecification::JupyterServer(remote_spec) => {
                     remote_spec.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
