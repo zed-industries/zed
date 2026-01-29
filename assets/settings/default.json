@@ -1050,6 +1050,7 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
+          "debugger": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
