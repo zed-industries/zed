@@ -840,6 +840,8 @@ mod tests {
             rejected_patch: None,
             captured_prompt_input: None,
             telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
 
         let new_content = indoc! {r#"
