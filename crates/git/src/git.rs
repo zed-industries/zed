@@ -87,6 +87,8 @@ actions!(
         Amend,
         /// Enable the --signoff option.
         Signoff,
+        /// Enable the commit hooks option.
+        Hooks,
         /// Cancels the current git operation.
         Cancel,
         /// Expands the commit message editor.
