@@ -778,7 +778,7 @@ impl ShellKind {
         match self {
             ShellKind::Cmd => "",
             ShellKind::Nushell => "overlay use",
-            ShellKind::PowerShell | ShellKind::Pwsh => ".",
+            ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => ".",
             ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
@@ -787,7 +787,6 @@ impl ShellKind {
             | ShellKind::Xonsh
             | ShellKind::Elvish
             | ShellKind::UnknownUnix => "source",
-            ShellKind::UnknownWindows => ".",
         }
     }
 
