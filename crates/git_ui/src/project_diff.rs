@@ -286,30 +286,28 @@ impl ProjectDiff {
                 window,
                 cx,
             );
-            diff_display_editor
-                .rhs_editor()
-                .update(cx, |editor, cx| {
-                    editor.disable_diagnostics(cx);
-                    editor.set_show_diff_review_button(true, cx);
+            diff_display_editor.rhs_editor().update(cx, |editor, cx| {
+                editor.disable_diagnostics(cx);
+                editor.set_show_diff_review_button(true, cx);
 
-                    match branch_diff.read(cx).diff_base() {
-                        DiffBase::Head => {
-                            editor.register_addon(GitPanelAddon {
-                                workspace: workspace.downgrade(),
-                            });
-                        }
-                        DiffBase::Merge { .. } => {
-                            editor.register_addon(BranchDiffAddon {
-                                branch_diff: branch_diff.clone(),
-                            });
-                            editor.start_temporary_diff_override();
-                            editor.set_render_diff_hunk_controls(
-                                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                                cx,
-                            );
-                        }
+                match branch_diff.read(cx).diff_base() {
+                    DiffBase::Head => {
+                        editor.register_addon(GitPanelAddon {
+                            workspace: workspace.downgrade(),
+                        });
                     }
-                });
+                    DiffBase::Merge { .. } => {
+                        editor.register_addon(BranchDiffAddon {
+                            branch_diff: branch_diff.clone(),
+                        });
+                        editor.start_temporary_diff_override();
+                        editor.set_render_diff_hunk_controls(
+                            Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                            cx,
+                        );
+                    }
+                }
+            });
             diff_display_editor
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
@@ -633,12 +631,7 @@ impl ProjectDiff {
         };
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
-            let was_empty = editor
-                .rhs_editor()
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .is_empty();
+            let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
             let (_, is_newly_added) = editor.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
@@ -2035,8 +2028,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let diff_editor =
-            diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
+        let diff_editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
 
         assert_state_with_diff(
             &diff_editor,

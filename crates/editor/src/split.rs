@@ -319,12 +319,8 @@ impl SplittableEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let rhs_editor = cx.new(|cx| {
-            let mut editor = Editor::for_multibuffer(
-                rhs_multibuffer.clone(),
-                Some(project.clone()),
-                window,
-                cx,
-            );
+            let mut editor =
+                Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor
         });
@@ -345,25 +341,26 @@ impl SplittableEditor {
         });
         let panes = PaneGroup::new(pane);
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
-        let subscriptions = vec![cx.subscribe(
-            &rhs_editor,
-            |this, _, event: &EditorEvent, cx| match event {
-                EditorEvent::ExpandExcerptsRequested {
-                    excerpt_ids,
-                    lines,
-                    direction,
-                } => {
-                    this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
-                }
-                EditorEvent::SelectionsChanged { .. } => {
-                    if let Some(lhs) = &mut this.lhs {
-                        lhs.has_latest_selection = false;
+        let subscriptions =
+            vec![cx.subscribe(
+                &rhs_editor,
+                |this, _, event: &EditorEvent, cx| match event {
+                    EditorEvent::ExpandExcerptsRequested {
+                        excerpt_ids,
+                        lines,
+                        direction,
+                    } => {
+                        this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
                     }
-                    cx.emit(event.clone());
-                }
-                _ => cx.emit(event.clone()),
-            },
-        )];
+                    EditorEvent::SelectionsChanged { .. } => {
+                        if let Some(lhs) = &mut this.lhs {
+                            lhs.has_latest_selection = false;
+                        }
+                        cx.emit(event.clone());
+                    }
+                    _ => cx.emit(event.clone()),
+                },
+            )];
 
         window.defer(cx, {
             let workspace = workspace.downgrade();
@@ -409,12 +406,8 @@ impl SplittableEditor {
             multibuffer
         });
         let lhs_editor = cx.new(|cx| {
-            let mut editor = Editor::for_multibuffer(
-                lhs_multibuffer.clone(),
-                Some(project.clone()),
-                window,
-                cx,
-            );
+            let mut editor =
+                Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.number_deleted_lines = true;
             editor.set_delegate_expand_excerpts(true);
             editor
@@ -442,34 +435,35 @@ impl SplittableEditor {
             pane
         });
 
-        let subscriptions = vec![cx.subscribe(
-            &lhs_editor,
-            |this, _, event: &EditorEvent, cx| match event {
-                EditorEvent::ExpandExcerptsRequested {
-                    excerpt_ids,
-                    lines,
-                    direction,
-                } => {
-                    if this.lhs.is_some() {
-                        let rhs_display_map = this.rhs_editor.read(cx).display_map.read(cx);
-                        let rhs_ids: Vec<_> = excerpt_ids
-                            .iter()
-                            .filter_map(|id| {
-                                rhs_display_map.companion_excerpt_to_my_excerpt(*id, cx)
-                            })
-                            .collect();
-                        this.expand_excerpts(rhs_ids.into_iter(), *lines, *direction, cx);
+        let subscriptions =
+            vec![cx.subscribe(
+                &lhs_editor,
+                |this, _, event: &EditorEvent, cx| match event {
+                    EditorEvent::ExpandExcerptsRequested {
+                        excerpt_ids,
+                        lines,
+                        direction,
+                    } => {
+                        if this.lhs.is_some() {
+                            let rhs_display_map = this.rhs_editor.read(cx).display_map.read(cx);
+                            let rhs_ids: Vec<_> = excerpt_ids
+                                .iter()
+                                .filter_map(|id| {
+                                    rhs_display_map.companion_excerpt_to_my_excerpt(*id, cx)
+                                })
+                                .collect();
+                            this.expand_excerpts(rhs_ids.into_iter(), *lines, *direction, cx);
+                        }
                     }
-                }
-                EditorEvent::SelectionsChanged { .. } => {
-                    if let Some(lhs) = &mut this.lhs {
-                        lhs.has_latest_selection = true;
+                    EditorEvent::SelectionsChanged { .. } => {
+                        if let Some(lhs) = &mut this.lhs {
+                            lhs.has_latest_selection = true;
+                        }
+                        cx.emit(event.clone());
                     }
-                    cx.emit(event.clone());
-                }
-                _ => cx.emit(event.clone()),
-            },
-        )];
+                    _ => cx.emit(event.clone()),
+                },
+            )];
         let mut lhs = LhsEditor {
             editor: lhs_editor,
             multibuffer: lhs_multibuffer,
@@ -513,12 +507,9 @@ impl SplittableEditor {
         );
 
         for (path, diff) in path_diffs {
-            for (lhs, rhs) in lhs.update_path_excerpts_from_rhs(
-                path,
-                &self.rhs_multibuffer,
-                diff.clone(),
-                cx,
-            ) {
+            for (lhs, rhs) in
+                lhs.update_path_excerpts_from_rhs(path, &self.rhs_multibuffer, diff.clone(), cx)
+            {
                 companion.add_excerpt_mapping(lhs, rhs);
             }
             companion.add_buffer_mapping(
@@ -530,10 +521,7 @@ impl SplittableEditor {
         let companion = cx.new(|_| companion);
 
         rhs_display_map.update(cx, |dm, cx| {
-            dm.set_companion(
-                Some((lhs_display_map.downgrade(), companion.clone())),
-                cx,
-            );
+            dm.set_companion(Some((lhs_display_map.downgrade(), companion.clone())), cx);
         });
         lhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((rhs_display_map.downgrade(), companion)), cx);
@@ -631,10 +619,7 @@ impl SplittableEditor {
     ) {
         if let Some(lhs) = &mut self.lhs {
             if lhs.has_latest_selection {
-                self.rhs_editor
-                    .read(cx)
-                    .focus_handle(cx)
-                    .focus(window, cx);
+                self.rhs_editor.read(cx).focus_handle(cx).focus(window, cx);
                 self.rhs_editor.update(cx, |editor, cx| {
                     editor.request_autoscroll(Autoscroll::fit(), cx);
                 });
@@ -914,24 +899,23 @@ impl SplittableEditor {
             .map(|s| s.editor.read(cx).display_map.clone());
 
         let (anchors, added_a_new_excerpt) =
-            self.rhs_multibuffer
-                .update(cx, |rhs_multibuffer, cx| {
-                    let (anchors, added_a_new_excerpt) = rhs_multibuffer.set_excerpts_for_path(
-                        path.clone(),
-                        buffer.clone(),
-                        ranges,
-                        context_line_count,
-                        cx,
-                    );
-                    if !anchors.is_empty()
-                        && rhs_multibuffer
-                            .diff_for(buffer.read(cx).remote_id())
-                            .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
-                    {
-                        rhs_multibuffer.add_diff(diff.clone(), cx);
-                    }
-                    (anchors, added_a_new_excerpt)
-                });
+            self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
+                let (anchors, added_a_new_excerpt) = rhs_multibuffer.set_excerpts_for_path(
+                    path.clone(),
+                    buffer.clone(),
+                    ranges,
+                    context_line_count,
+                    cx,
+                );
+                if !anchors.is_empty()
+                    && rhs_multibuffer
+                        .diff_for(buffer.read(cx).remote_id())
+                        .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
+                {
+                    rhs_multibuffer.add_diff(diff.clone(), cx);
+                }
+                (anchors, added_a_new_excerpt)
+            });
 
         if let Some(lhs) = &mut self.lhs {
             if let Some(lhs_display_map) = &lhs_display_map {
@@ -1003,8 +987,7 @@ impl SplittableEditor {
                 &lhs_display_map,
                 cx,
             );
-            lhs
-                .multibuffer
+            lhs.multibuffer
                 .update(cx, |buffer, cx| buffer.remove_excerpts_for_path(path, cx))
         }
     }
@@ -1539,9 +1522,8 @@ impl LhsEditor {
         cx: &mut App,
     ) -> Vec<(ExcerptId, ExcerptId)> {
         let rhs_multibuffer_ref = rhs_multibuffer.read(cx);
-        let rhs_excerpt_ids: Vec<ExcerptId> = rhs_multibuffer_ref
-            .excerpts_for_path(&path_key)
-            .collect();
+        let rhs_excerpt_ids: Vec<ExcerptId> =
+            rhs_multibuffer_ref.excerpts_for_path(&path_key).collect();
 
         let Some(excerpt_id) = rhs_multibuffer_ref.excerpts_for_path(&path_key).next() else {
             self.multibuffer.update(cx, |multibuffer, cx| {
@@ -1607,10 +1589,7 @@ impl LhsEditor {
 
         debug_assert_eq!(rhs_excerpt_ids.len(), lhs_excerpt_ids.len());
 
-        lhs_excerpt_ids
-            .into_iter()
-            .zip(rhs_excerpt_ids)
-            .collect()
+        lhs_excerpt_ids.into_iter().zip(rhs_excerpt_ids).collect()
     }
 
     fn sync_path_excerpts(
@@ -1771,10 +1750,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) {
         let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _cx| {
-            let lhs = editor
-                .lhs
-                .as_ref()
-                .expect("should have lhs editor");
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
             (editor.rhs_editor.clone(), lhs.editor.clone())
         });
 
@@ -1784,10 +1760,8 @@ mod tests {
         let _ = editor_content_with_blocks_and_width(&lhs_editor, lhs_width, cx);
         cx.run_until_parked();
 
-        let rhs_content =
-            editor_content_with_blocks_and_width(&rhs_editor, rhs_width, cx);
-        let lhs_content =
-            editor_content_with_blocks_and_width(&lhs_editor, lhs_width, cx);
+        let rhs_content = editor_content_with_blocks_and_width(&rhs_editor, rhs_width, cx);
+        let lhs_content = editor_content_with_blocks_and_width(&lhs_editor, lhs_width, cx);
 
         if rhs_content != expected_rhs || lhs_content != expected_lhs {
             editor.update(cx, |editor, cx| editor.debug_print(cx));
@@ -1808,12 +1782,7 @@ mod tests {
         let rng = &mut rng;
         for _ in 0..operations {
             let buffers = editor.update(cx, |editor, cx| {
-                editor
-                    .rhs_editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .all_buffers()
+                editor.rhs_editor.read(cx).buffer().read(cx).all_buffers()
             });
 
             if buffers.is_empty() {
