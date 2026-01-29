@@ -2,10 +2,7 @@ use crate::KERNEL_DOCS_URL;
 use crate::kernels::KernelSpecification;
 use crate::repl_store::ReplStore;
 
-use gpui::AnyView;
-use gpui::DismissEvent;
-
-use gpui::FontWeight;
+use gpui::{AnyView, DismissEvent, FontWeight};
 use picker::Picker;
 use picker::PickerDelegate;
 use project::WorktreeId;
@@ -31,12 +28,14 @@ where
     tooltip: TT,
     info_text: Option<SharedString>,
     worktree_id: WorktreeId,
+    active_toolchain_name: Option<SharedString>,
 }
 
 pub struct KernelPickerDelegate {
     all_kernels: Vec<KernelSpecification>,
     filtered_kernels: Vec<KernelSpecification>,
     selected_kernelspec: Option<KernelSpecification>,
+    active_toolchain_name: Option<SharedString>,
     on_select: OnSelect,
 }
 
@@ -55,7 +54,13 @@ where
     T: PopoverTrigger + ButtonCommon,
     TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
-    pub fn new(on_select: OnSelect, worktree_id: WorktreeId, trigger: T, tooltip: TT) -> Self {
+    pub fn new(
+        on_select: OnSelect,
+        worktree_id: WorktreeId,
+        active_toolchain_name: Option<SharedString>,
+        trigger: T,
+        tooltip: TT,
+    ) -> Self {
         KernelSelector {
             on_select,
             handle: None,
@@ -63,6 +68,7 @@ where
             tooltip,
             info_text: None,
             worktree_id,
+            active_toolchain_name,
         }
     }
 
@@ -74,6 +80,19 @@ where
     pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
         self.info_text = Some(text.into());
         self
+    }
+}
+
+impl KernelPickerDelegate {
+    /// Sort kernels by type: Python Environments, Jupyter, Remote
+    fn sort_kernels(kernels: Vec<KernelSpecification>) -> Vec<KernelSpecification> {
+        let mut sorted = kernels;
+        sorted.sort_by_key(|kernel| match kernel {
+            KernelSpecification::PythonEnv(_) => 0,
+            KernelSpecification::Jupyter(_) => 1,
+            KernelSpecification::Remote(_) => 2,
+        });
+        sorted
     }
 }
 
@@ -112,11 +131,6 @@ impl PickerDelegate for KernelPickerDelegate {
     ) -> Task<()> {
         let all_kernels = self.all_kernels.clone();
 
-        if query.is_empty() {
-            self.filtered_kernels = all_kernels;
-            return Task::ready(());
-        }
-
         self.filtered_kernels = if query.is_empty() {
             all_kernels
         } else {
@@ -125,6 +139,9 @@ impl PickerDelegate for KernelPickerDelegate {
                 .filter(|kernel| kernel.name().to_lowercase().contains(&query.to_lowercase()))
                 .collect()
         };
+
+        // Sort after filtering
+        self.filtered_kernels = Self::sort_kernels(self.filtered_kernels.clone());
 
         Task::ready(())
     }
@@ -147,6 +164,9 @@ impl PickerDelegate for KernelPickerDelegate {
     ) -> Option<Self::ListItem> {
         let kernelspec = self.filtered_kernels.get(ix)?;
         let is_selected = self.selected_kernelspec.as_ref() == Some(kernelspec);
+        // Mark Python environment as recommended if it matches the active toolchain
+        let is_recommended = matches!(kernelspec, KernelSpecification::PythonEnv(_))
+            && self.active_toolchain_name.as_ref() == Some(&kernelspec.name());
         let icon = kernelspec.icon(cx);
 
         let (name, kernel_type, path_or_url) = match kernelspec {
@@ -207,7 +227,14 @@ impl PickerDelegate for KernelPickerDelegate {
                                             Label::new(kernel_type)
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted),
-                                        ),
+                                        )
+                                        .when(is_recommended, |flex| {
+                                            flex.child(
+                                                Label::new("Recommended")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Accent),
+                                            )
+                                        }),
                                 ),
                         ),
                 )
@@ -261,11 +288,15 @@ where
 
         let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
 
+        // Sort kernels by type
+        let sorted_kernels = KernelPickerDelegate::sort_kernels(all_kernels);
+
         let delegate = KernelPickerDelegate {
             on_select: self.on_select,
-            all_kernels: all_kernels.clone(),
-            filtered_kernels: all_kernels,
+            all_kernels: sorted_kernels.clone(),
+            filtered_kernels: sorted_kernels,
             selected_kernelspec,
+            active_toolchain_name: self.active_toolchain_name,
         };
 
         let picker_view = cx.new(|cx| {

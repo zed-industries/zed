@@ -3,7 +3,7 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
     prelude::*,
 };
-use project::ProjectItem as _;
+use project::{ProjectItem as _, toolchain_store::ToolchainStoreEvent};
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
@@ -111,6 +111,25 @@ pub fn init(cx: &mut App) {
                             .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
                             .detach_and_log_err(cx);
                     });
+
+                    // Subscribe to toolchain changes to refresh Python kernels
+                    if let Some(toolchain_store) = project.read(cx).toolchain_store() {
+                        let worktree_id = project_path.worktree_id;
+                        let project = project.clone();
+                        cx.subscribe_in(
+                            &toolchain_store,
+                            window,
+                            move |_editor, _store, _event: &ToolchainStoreEvent, _window, cx| {
+                                let store = ReplStore::global(cx);
+                                store.update(cx, |store, cx| {
+                                    store
+                                        .refresh_python_kernelspecs(worktree_id, &project, cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            },
+                        )
+                        .detach();
+                    }
                 }
 
                 editor
