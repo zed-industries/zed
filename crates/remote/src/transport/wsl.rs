@@ -13,6 +13,7 @@ use rpc::proto::Envelope;
 use semver::Version;
 use smol::{fs, process};
 use std::{
+    borrow::Cow,
     ffi::OsStr,
     fmt::Write as _,
     path::{Path, PathBuf},
@@ -26,6 +27,40 @@ use util::{
     shell::{PosixShell, Shell, ShellKind},
     shell_builder::ShellBuilder,
 };
+
+fn prepend_command_prefix<'a>(shell_kind: Option<ShellKind>, command: &'a str) -> Cow<'a, str> {
+    let prefix = match shell_kind {
+        Some(kind) => kind.command_prefix(),
+        #[cfg(windows)]
+        None => Some('&'),
+        #[cfg(unix)]
+        None => None,
+    };
+    match prefix {
+        Some(prefix) if !command.starts_with(prefix) => Cow::Owned(format!("{prefix}{command}")),
+        _ => Cow::Borrowed(command),
+    }
+}
+
+fn try_quote(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
+    match shell_kind {
+        Some(kind) => kind.try_quote(arg),
+        #[cfg(windows)]
+        None => Some(ShellKind::quote_powershell(arg)),
+        #[cfg(unix)]
+        None => shlex::try_quote(arg).ok(),
+    }
+}
+
+fn try_quote_prefix_aware(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
+    match shell_kind {
+        Some(kind) => kind.try_quote_prefix_aware(arg),
+        #[cfg(windows)]
+        None => Some(ShellKind::quote_powershell(arg)),
+        #[cfg(unix)]
+        None => shlex::try_quote(arg).ok(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
 pub struct WslConnectionOptions {
@@ -47,7 +82,7 @@ pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
     platform: RemotePlatform,
     shell: String,
-    shell_kind: ShellKind,
+    shell_kind: Option<ShellKind>,
     default_system_shell: String,
     has_wsl_interop: bool,
     connection_options: WslConnectionOptions,
@@ -76,7 +111,7 @@ impl WslRemoteConnection {
             },
             shell: String::new(),
             // TODO: Consider using the remote's actual shell instead of hardcoding "sh"
-            shell_kind: ShellKind::Posix(PosixShell::Sh),
+            shell_kind: Some(ShellKind::Posix(PosixShell::Sh)),
             default_system_shell: String::from("/bin/sh"),
             has_wsl_interop: false,
         };
@@ -86,7 +121,7 @@ impl WslRemoteConnection {
             .await
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
-        this.shell_kind = ShellKind::new(&this.shell, false);
+        this.shell_kind = ShellKind::new(&this.shell);
         this.has_wsl_interop = this.detect_has_wsl_interop().await.unwrap_or_default();
         log::info!(
             "Remote has wsl interop {}",
@@ -112,7 +147,7 @@ impl WslRemoteConnection {
     }
 
     async fn detect_platform(&self) -> Result<RemotePlatform> {
-        let program = self.shell_kind.prepend_command_prefix("uname");
+        let program = prepend_command_prefix(self.shell_kind, "uname");
         let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
         parse_platform(&output)
     }
@@ -181,7 +216,7 @@ impl WslRemoteConnection {
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
-            let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
+            let mkdir = prepend_command_prefix(self.shell_kind, "mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
@@ -254,7 +289,7 @@ impl WslRemoteConnection {
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
-            let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
+            let mkdir = prepend_command_prefix(self.shell_kind, "mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
                 .context("Failed to create directory when uploading file")?;
@@ -272,7 +307,7 @@ impl WslRemoteConnection {
         );
 
         let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
-        let cp = self.shell_kind.prepend_command_prefix("cp");
+        let cp = prepend_command_prefix(self.shell_kind, "cp");
         self.run_wsl_command(
             &cp,
             &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Posix)],
@@ -449,7 +484,7 @@ impl RemoteConnection for WslRemoteConnection {
                 exec,
                 "{}={} ",
                 k,
-                shell_kind.try_quote(v).context("shell quoting")?
+                try_quote(shell_kind, v).context("shell quoting")?
             )?;
         }
 
@@ -457,12 +492,10 @@ impl RemoteConnection for WslRemoteConnection {
             write!(
                 exec,
                 "{}",
-                shell_kind
-                    .try_quote_prefix_aware(&program)
-                    .context("shell quoting")?
+                try_quote_prefix_aware(shell_kind, &program).context("shell quoting")?
             )?;
             for arg in args {
-                let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
+                let arg = try_quote(shell_kind, &arg).context("shell quoting")?;
                 write!(exec, " {}", &arg)?;
             }
         } else {

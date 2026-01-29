@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, path::Path, sync::LazyLock};
+use std::{borrow::Cow, ffi::OsStr, path::Path, sync::LazyLock};
 
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -39,10 +39,10 @@ impl Shell {
         }
     }
 
-    pub fn shell_kind(&self, is_windows: bool) -> ShellKind {
+    pub fn shell_kind(&self) -> Option<ShellKind> {
         match self {
-            Shell::Program(program) => ShellKind::new(program, is_windows),
-            Shell::WithArguments { program, .. } => ShellKind::new(program, is_windows),
+            Shell::Program(program) => ShellKind::new(program),
+            Shell::WithArguments { program, .. } => ShellKind::new(program),
             Shell::System => ShellKind::system(),
         }
     }
@@ -75,7 +75,7 @@ impl PosixShell {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShellKind {
     Posix(PosixShell),
     Csh,
@@ -90,16 +90,6 @@ pub enum ShellKind {
     Cmd,
     Xonsh,
     Elvish,
-    /// An unrecognized shell on Windows. We cannot safely parse its command syntax,
-    /// so `always_allow` patterns are disabled for security. For non-security
-    /// purposes, this falls back to PowerShell-like behavior.
-    #[cfg_attr(windows, default)]
-    UnknownWindows,
-    /// An unrecognized shell on Unix. We cannot safely parse its command syntax,
-    /// so `always_allow` patterns are disabled for security. For non-security
-    /// purposes, this falls back to POSIX-like behavior.
-    #[cfg_attr(unix, default)]
-    UnknownUnix,
 }
 
 pub fn get_system_shell() -> String {
@@ -270,26 +260,25 @@ pub fn get_windows_system_shell() -> String {
 }
 
 impl ShellKind {
-    /// Returns the name of the shell, or `None` for unknown shells.
-    pub fn name(&self) -> Option<&'static str> {
+    /// Returns the name of the shell.
+    pub fn name(&self) -> &'static str {
         match self {
-            ShellKind::Posix(posix) => Some(posix.name()),
-            ShellKind::Csh => Some("csh"),
-            ShellKind::Tcsh => Some("tcsh"),
-            ShellKind::Fish => Some("fish"),
-            ShellKind::PowerShell => Some("powershell"),
-            ShellKind::Pwsh => Some("pwsh"),
-            ShellKind::Nushell => Some("nu"),
-            ShellKind::Cmd => Some("cmd"),
-            ShellKind::Rc => Some("rc"),
-            ShellKind::Xonsh => Some("xonsh"),
-            ShellKind::Elvish => Some("elvish"),
-            ShellKind::UnknownWindows | ShellKind::UnknownUnix => None,
+            ShellKind::Posix(posix) => posix.name(),
+            ShellKind::Csh => "csh",
+            ShellKind::Tcsh => "tcsh",
+            ShellKind::Fish => "fish",
+            ShellKind::PowerShell => "powershell",
+            ShellKind::Pwsh => "pwsh",
+            ShellKind::Nushell => "nu",
+            ShellKind::Cmd => "cmd",
+            ShellKind::Rc => "rc",
+            ShellKind::Xonsh => "xonsh",
+            ShellKind::Elvish => "elvish",
         }
     }
 
-    pub fn system() -> Self {
-        Self::new(&get_system_shell(), cfg!(windows))
+    pub fn system() -> Option<Self> {
+        Self::new(&get_system_shell())
     }
 
     /// Returns whether this shell's command chaining syntax can be parsed by brush-parser.
@@ -303,7 +292,7 @@ impl ShellKind {
     ///
     /// # Security Note
     ///
-    /// Only explicitly recognized shells return `true`. Unknown shells return `false` to
+    /// Only explicitly recognized shells return `true`. Unknown shells (None) return `false` to
     /// prevent security bypasses - if we don't know a shell's syntax, we can't safely
     /// parse it for `always_allow` patterns.
     ///
@@ -329,44 +318,36 @@ impl ShellKind {
             | ShellKind::Nushell
             | ShellKind::Elvish
             | ShellKind::Rc => true,
-            ShellKind::UnknownWindows | ShellKind::UnknownUnix => false,
         }
     }
 
-    pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
-        let program = program.as_ref();
-        let program = program
-            .file_stem()
-            .unwrap_or_else(|| program.as_os_str())
-            .to_string_lossy();
-
-        match &*program {
-            "powershell" => ShellKind::PowerShell,
-            "pwsh" => ShellKind::Pwsh,
-            "cmd" => ShellKind::Cmd,
-            "nu" => ShellKind::Nushell,
-            "fish" => ShellKind::Fish,
-            "csh" => ShellKind::Csh,
-            "tcsh" => ShellKind::Tcsh,
-            "rc" => ShellKind::Rc,
-            "xonsh" => ShellKind::Xonsh,
-            "elvish" => ShellKind::Elvish,
-            "sh" => ShellKind::Posix(PosixShell::Sh),
-            "bash" => ShellKind::Posix(PosixShell::Bash),
-            "zsh" => ShellKind::Posix(PosixShell::Zsh),
-            "dash" => ShellKind::Posix(PosixShell::Dash),
-            "ksh" => ShellKind::Posix(PosixShell::Ksh),
-            "mksh" => ShellKind::Posix(PosixShell::Mksh),
-            "ash" => ShellKind::Posix(PosixShell::Ash),
+    pub fn new(program: impl AsRef<Path>) -> Option<Self> {
+        match program.as_ref().file_stem().and_then(OsStr::to_str)? {
+            "powershell" => Some(ShellKind::PowerShell),
+            "pwsh" => Some(ShellKind::Pwsh),
+            "cmd" => Some(ShellKind::Cmd),
+            "nu" => Some(ShellKind::Nushell),
+            "fish" => Some(ShellKind::Fish),
+            "csh" => Some(ShellKind::Csh),
+            "tcsh" => Some(ShellKind::Tcsh),
+            "rc" => Some(ShellKind::Rc),
+            "xonsh" => Some(ShellKind::Xonsh),
+            "elvish" => Some(ShellKind::Elvish),
+            "sh" => Some(ShellKind::Posix(PosixShell::Sh)),
+            "bash" => Some(ShellKind::Posix(PosixShell::Bash)),
+            "zsh" => Some(ShellKind::Posix(PosixShell::Zsh)),
+            "dash" => Some(ShellKind::Posix(PosixShell::Dash)),
+            "ksh" => Some(ShellKind::Posix(PosixShell::Ksh)),
+            "mksh" => Some(ShellKind::Posix(PosixShell::Mksh)),
+            "ash" => Some(ShellKind::Posix(PosixShell::Ash)),
             // Unrecognized shell - we cannot safely parse its syntax for
             // `always_allow` patterns, so they will be disabled.
             // Fall back to platform-specific behavior for non-security purposes.
-            _ if is_windows => ShellKind::UnknownWindows,
-            _ => ShellKind::UnknownUnix,
+            _ => None,
         }
     }
 
-    pub fn to_shell_variable(self, input: &str) -> String {
+    pub fn to_shell_variable(&self, input: &str) -> String {
         match self {
             Self::PowerShell | Self::Pwsh => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
@@ -378,8 +359,6 @@ impl ShellKind {
             Self::Nushell => Self::to_nushell_variable(input),
             Self::Xonsh => input.to_owned(),
             Self::Elvish => input.to_owned(),
-            Self::UnknownWindows => Self::to_powershell_variable(input),
-            Self::UnknownUnix => input.to_owned(),
         }
     }
 
@@ -402,7 +381,7 @@ impl ShellKind {
         }
     }
 
-    fn to_powershell_variable(input: &str) -> String {
+    pub fn to_powershell_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
             if var_str.find(':').is_none() {
                 // If the input starts with "${", remove the trailing "}"
@@ -498,7 +477,7 @@ impl ShellKind {
 
     pub fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
-            ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => {
+            ShellKind::PowerShell | ShellKind::Pwsh => {
                 vec!["-C".to_owned(), combined_command]
             }
             ShellKind::Cmd => vec![
@@ -513,8 +492,7 @@ impl ShellKind {
             | ShellKind::Tcsh
             | ShellKind::Rc
             | ShellKind::Xonsh
-            | ShellKind::Elvish
-            | ShellKind::UnknownUnix => interactive
+            | ShellKind::Elvish => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -533,9 +511,7 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Cmd
             | ShellKind::Xonsh
-            | ShellKind::Elvish
-            | ShellKind::UnknownUnix => None,
-            ShellKind::UnknownWindows => Some('&'),
+            | ShellKind::Elvish => None,
         }
     }
 
@@ -560,9 +536,7 @@ impl ShellKind {
             | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish
-            | ShellKind::UnknownWindows
-            | ShellKind::UnknownUnix => ';',
+            | ShellKind::Elvish => ';',
         }
     }
 
@@ -576,11 +550,7 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Pwsh
             | ShellKind::Xonsh => "&&",
-            ShellKind::PowerShell
-            | ShellKind::Nushell
-            | ShellKind::Elvish
-            | ShellKind::UnknownWindows
-            | ShellKind::UnknownUnix => ";",
+            ShellKind::PowerShell | ShellKind::Nushell | ShellKind::Elvish => ";",
         }
     }
 
@@ -596,13 +566,11 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish
-            | ShellKind::UnknownUnix => shlex::try_quote(arg).ok(),
-            ShellKind::UnknownWindows => Some(Self::quote_powershell(arg)),
+            | ShellKind::Elvish => shlex::try_quote(arg).ok(),
         }
     }
 
-    fn quote_windows(arg: &str, enclose: bool) -> Cow<'_, str> {
+    pub fn quote_windows(arg: &str, enclose: bool) -> Cow<'_, str> {
         if arg.is_empty() {
             return Cow::Borrowed("\"\"");
         }
@@ -810,15 +778,14 @@ impl ShellKind {
         match self {
             ShellKind::Cmd => "",
             ShellKind::Nushell => "overlay use",
-            ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => ".",
+            ShellKind::PowerShell | ShellKind::Pwsh => ".",
             ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Posix(_)
             | ShellKind::Rc
             | ShellKind::Xonsh
-            | ShellKind::Elvish
-            | ShellKind::UnknownUnix => "source",
+            | ShellKind::Elvish => "source",
         }
     }
 
@@ -834,9 +801,7 @@ impl ShellKind {
             | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish
-            | ShellKind::UnknownWindows
-            | ShellKind::UnknownUnix => "clear",
+            | ShellKind::Elvish => "clear",
         }
     }
 
@@ -846,7 +811,7 @@ impl ShellKind {
     pub const fn tty_escape_args(&self) -> bool {
         match self {
             ShellKind::Cmd => false,
-            ShellKind::Posix
+            ShellKind::Posix(_)
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc

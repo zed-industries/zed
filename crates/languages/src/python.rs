@@ -1168,13 +1168,13 @@ fn wr_distance(
     }
 }
 
-fn micromamba_shell_name(kind: ShellKind) -> &'static str {
+fn micromamba_shell_name(kind: Option<ShellKind>) -> &'static str {
     match kind {
-        ShellKind::Csh => "csh",
-        ShellKind::Fish => "fish",
-        ShellKind::Nushell => "nu",
-        ShellKind::PowerShell => "powershell",
-        ShellKind::Cmd => "cmd.exe",
+        Some(ShellKind::Csh) => "csh",
+        Some(ShellKind::Fish) => "fish",
+        Some(ShellKind::Nushell) => "nu",
+        Some(ShellKind::PowerShell) => "powershell",
+        Some(ShellKind::Cmd) => "cmd.exe",
         // default / catch-all:
         _ => "posix",
     }
@@ -1339,7 +1339,7 @@ impl ToolchainLister for PythonToolchainProvider {
     fn activation_script(
         &self,
         toolchain: &Toolchain,
-        shell: ShellKind,
+        shell: Option<ShellKind>,
         cx: &App,
     ) -> BoxFuture<'static, Vec<String>> {
         let settings = TerminalSettings::get_global(cx);
@@ -1406,12 +1406,14 @@ impl ToolchainLister for PythonToolchainProvider {
                     | PythonEnvironmentKind::Poetry,
                 ) => {
                     if let Some(activation_scripts) = &toolchain.activation_scripts {
-                        if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                            let activate_keyword = shell.activate_keyword();
-                            if let Some(quoted) =
-                                shell.try_quote(&activate_script_path.to_string_lossy())
-                            {
-                                activation_script.push(format!("{activate_keyword} {quoted}"));
+                        if let Some(ref shell_kind) = shell {
+                            if let Some(activate_script_path) = activation_scripts.get(shell_kind) {
+                                let activate_keyword = shell_kind.activate_keyword();
+                                if let Some(quoted) =
+                                    shell_kind.try_quote(&activate_script_path.to_string_lossy())
+                                {
+                                    activation_script.push(format!("{activate_keyword} {quoted}"));
+                                }
                             }
                         }
                     }
@@ -1424,18 +1426,26 @@ impl ToolchainLister for PythonToolchainProvider {
                     let pyenv = &manager.executable;
                     let pyenv = pyenv.display();
                     activation_script.extend(match shell {
-                        ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                        ShellKind::Posix(_) | ShellKind::UnknownUnix => {
+                        Some(ShellKind::Fish) => {
+                            Some(format!("\"{pyenv}\" shell - fish {version}"))
+                        }
+                        Some(ShellKind::Posix(_)) => {
                             Some(format!("\"{pyenv}\" shell - sh {version}"))
                         }
-                        ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                        ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => None,
-                        ShellKind::Csh => None,
-                        ShellKind::Tcsh => None,
-                        ShellKind::Cmd => None,
-                        ShellKind::Rc => None,
-                        ShellKind::Xonsh => None,
-                        ShellKind::Elvish => None,
+                        #[cfg(unix)]
+                        None => Some(format!("\"{pyenv}\" shell - sh {version}")),
+                        Some(ShellKind::Nushell) => {
+                            Some(format!("^\"{pyenv}\" shell - nu {version}"))
+                        }
+                        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => None,
+                        #[cfg(windows)]
+                        None => None,
+                        Some(ShellKind::Csh) => None,
+                        Some(ShellKind::Tcsh) => None,
+                        Some(ShellKind::Cmd) => None,
+                        Some(ShellKind::Rc) => None,
+                        Some(ShellKind::Xonsh) => None,
+                        Some(ShellKind::Elvish) => None,
                     })
                 }
                 _ => {}

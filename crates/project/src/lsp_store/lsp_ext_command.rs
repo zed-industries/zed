@@ -23,6 +23,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+#[cfg(windows)]
+use task::ShellKind;
 use task::TaskTemplate;
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
@@ -657,7 +659,7 @@ impl LspCommand for GetLspRunnables {
                     );
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
-                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
+                        let shell_kind = task_template.shell.shell_kind();
                         task_template.args.push("--".to_string());
                         task_template.args.extend(
                             cargo
@@ -683,7 +685,14 @@ impl LspCommand for GetLspRunnables {
                                 // That bit is not auto-expanded when using single quotes.
                                 // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
                                 .flat_map(|extra_arg| {
-                                    shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
+                                    let quoted = match shell_kind {
+                                        Some(kind) => kind.try_quote(&extra_arg),
+                                        #[cfg(windows)]
+                                        None => Some(ShellKind::quote_powershell(&extra_arg)),
+                                        #[cfg(unix)]
+                                        None => shlex::try_quote(&extra_arg).ok(),
+                                    };
+                                    quoted.map(|s| s.to_string())
                                 }),
                         );
                     }

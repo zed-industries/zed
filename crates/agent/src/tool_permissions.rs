@@ -64,7 +64,7 @@ impl ToolPermissionDecision {
         input: &str,
         permissions: &ToolPermissions,
         always_allow_tool_actions: bool,
-        shell_kind: ShellKind,
+        shell_kind: Option<ShellKind>,
     ) -> ToolPermissionDecision {
         // If always_allow_tool_actions is enabled, bypass all permission checks.
         // This is intentionally placed first - it's a global override that the user
@@ -95,7 +95,10 @@ impl ToolPermissionDecision {
         if tool_name == TerminalTool::name() {
             // Check if this shell's syntax can be parsed by brush-parser.
             // See the doc comment above for shell compatibility notes.
-            if !shell_kind.supports_posix_chaining() {
+            let supports_chaining = shell_kind
+                .map(|k| k.supports_posix_chaining())
+                .unwrap_or(false);
+            if !supports_chaining {
                 // For shells with incompatible syntax, we can't reliably parse
                 // the command to extract sub-commands.
                 if !rules.always_allow.is_empty() {
@@ -106,7 +109,7 @@ impl ToolPermissionDecision {
                         terminal tool because Zed cannot parse its command chaining syntax. \
                         Please remove the always_allow patterns from your tool_permissions \
                         settings, or switch to a supported shell.";
-                    let message = if let Some(name) = shell_kind.name() {
+                    let message = if let Some(name) = shell_kind.map(|k| k.name()) {
                         format!("The {} shell{}", name, SUFFIX)
                     } else {
                         format!("This shell is unrecognized, and{}", SUFFIX)
@@ -257,7 +260,7 @@ mod tests {
         deny: Vec<(&'static str, bool)>,
         confirm: Vec<(&'static str, bool)>,
         global: bool,
-        shell: ShellKind,
+        shell: Option<ShellKind>,
     }
 
     impl PermTest {
@@ -270,7 +273,7 @@ mod tests {
                 deny: vec![],
                 confirm: vec![],
                 global: false,
-                shell: ShellKind::Posix(PosixShell::Sh),
+                shell: Some(ShellKind::Posix(PosixShell::Sh)),
             }
         }
 
@@ -306,7 +309,7 @@ mod tests {
             self.global = g;
             self
         }
-        fn shell(mut self, s: ShellKind) -> Self {
+        fn shell(mut self, s: Option<ShellKind>) -> Self {
             self.shell = s;
             self
         }
@@ -381,7 +384,7 @@ mod tests {
                 tools: collections::HashMap::default(),
             },
             global,
-            ShellKind::Posix(PosixShell::Sh),
+            Some(ShellKind::Posix(PosixShell::Sh)),
         )
     }
 
@@ -621,7 +624,7 @@ mod tests {
                 "x",
                 &p,
                 true,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Allow
         );
@@ -632,7 +635,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Deny(_)
         ));
@@ -642,7 +645,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Allow
         );
@@ -669,7 +672,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Confirm
         );
@@ -703,7 +706,7 @@ mod tests {
                 "echo hi",
                 &p,
                 true,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Allow
         ));
@@ -714,7 +717,7 @@ mod tests {
                 "echo hi",
                 &p,
                 false,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Deny(_)
         ));
@@ -909,7 +912,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Deny(_)
         ));
@@ -919,7 +922,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                ShellKind::Posix(PosixShell::Sh)
+                Some(ShellKind::Posix(PosixShell::Sh))
             ),
             ToolPermissionDecision::Allow
         );
@@ -956,14 +959,17 @@ mod tests {
     fn nushell_allows_with_allow_pattern() {
         // Nushell uses `;` for sequential execution, which brush-parser handles.
         // The `and`/`or` keywords are boolean operators, not command chaining.
-        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_allow();
+        t("ls")
+            .allow(&["^ls"])
+            .shell(Some(ShellKind::Nushell))
+            .is_allow();
     }
 
     #[test]
     fn nushell_denies_with_deny_pattern() {
         t("rm -rf /")
             .deny(&["rm\\s+-rf"])
-            .shell(ShellKind::Nushell)
+            .shell(Some(ShellKind::Nushell))
             .is_deny();
     }
 
@@ -971,7 +977,7 @@ mod tests {
     fn nushell_confirms_with_confirm_pattern() {
         t("sudo reboot")
             .confirm(&["sudo"])
-            .shell(ShellKind::Nushell)
+            .shell(Some(ShellKind::Nushell))
             .is_confirm();
     }
 
@@ -980,7 +986,7 @@ mod tests {
         t("ls")
             .deny(&["rm"])
             .mode(ToolPermissionMode::Allow)
-            .shell(ShellKind::Nushell)
+            .shell(Some(ShellKind::Nushell))
             .is_allow();
     }
 
@@ -988,47 +994,40 @@ mod tests {
     fn elvish_allows_with_allow_pattern() {
         // Elvish uses `;` to separate pipelines, which brush-parser handles.
         // The `and`/`or` special commands require parentheses around expressions.
-        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_allow();
+        t("ls")
+            .allow(&["^ls"])
+            .shell(Some(ShellKind::Elvish))
+            .is_allow();
     }
 
     #[test]
     fn rc_allows_with_allow_pattern() {
         // Rc (Plan 9) uses `;` for sequential execution, which brush-parser handles.
         // Rc does not have `&&`/`||` operators.
-        t("ls").allow(&["^ls"]).shell(ShellKind::Rc).is_allow();
+        t("ls")
+            .allow(&["^ls"])
+            .shell(Some(ShellKind::Rc))
+            .is_allow();
     }
 
     #[test]
     fn unknown_shell_denies_when_always_allow_configured() {
         // Unknown shells have unrecognized syntax, so we cannot safely parse them.
         // For security, always_allow patterns are disabled.
-        t("ls")
-            .allow(&["^ls"])
-            .shell(ShellKind::UnknownUnix)
-            .is_deny();
-        t("ls")
-            .allow(&["^ls"])
-            .shell(ShellKind::UnknownWindows)
-            .is_deny();
+        t("ls").allow(&["^ls"]).shell(None).is_deny();
     }
 
     #[test]
     fn unknown_shell_allows_deny_patterns() {
         // Deny patterns still work for unknown shells since they're checked
         // against the raw input string.
-        t("rm -rf /")
-            .deny(&["rm\\s+-rf"])
-            .shell(ShellKind::UnknownUnix)
-            .is_deny();
+        t("rm -rf /").deny(&["rm\\s+-rf"]).shell(None).is_deny();
     }
 
     #[test]
     fn unknown_shell_allows_confirm_patterns() {
         // Confirm patterns still work for unknown shells.
-        t("sudo reboot")
-            .confirm(&["sudo"])
-            .shell(ShellKind::UnknownUnix)
-            .is_confirm();
+        t("sudo reboot").confirm(&["sudo"]).shell(None).is_confirm();
     }
 
     #[test]
@@ -1037,7 +1036,7 @@ mod tests {
         t("ls")
             .deny(&["rm"])
             .mode(ToolPermissionMode::Allow)
-            .shell(ShellKind::UnknownUnix)
+            .shell(None)
             .is_allow();
     }
 
@@ -1072,7 +1071,7 @@ mod tests {
             "x",
             &p,
             false,
-            ShellKind::Posix(PosixShell::Sh),
+            Some(ShellKind::Posix(PosixShell::Sh)),
         );
         match result {
             ToolPermissionDecision::Deny(msg) => {

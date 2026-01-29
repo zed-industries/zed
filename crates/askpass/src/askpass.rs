@@ -359,7 +359,7 @@ fn generate_askpass_script(
         .try_quote_prefix_aware(&askpass_program)
         .context("Failed to shell-escape Askpass program path")?;
     let askpass_socket = askpass_socket
-        .try_shell_safe(shell_kind)
+        .try_shell_safe(Some(&shell_kind))
         .context("Failed to shell-escape Askpass socket path")?;
     let print_args = "printf '%s\\0' \"$@\"";
     let shebang = "#!/bin/sh";
@@ -384,7 +384,7 @@ fn generate_askpass_script(
         .try_quote_prefix_aware(&askpass_program)
         .context("Failed to shell-escape Askpass program path")?;
     let askpass_socket = askpass_socket
-        .try_shell_safe(shell_kind)
+        .try_shell_safe(Some(&shell_kind))
         .context("Failed to shell-escape Askpass socket path")?;
     Ok(format!(
         r#"

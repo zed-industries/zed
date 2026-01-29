@@ -23,6 +23,7 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
+    borrow::Cow,
     net::IpAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -42,7 +43,7 @@ pub(crate) struct SshRemoteConnection {
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
     ssh_shell: String,
-    ssh_shell_kind: ShellKind,
+    ssh_shell_kind: Option<ShellKind>,
     ssh_default_system_shell: String,
     _temp_dir: TempDir,
 }
@@ -591,7 +592,7 @@ impl SshRemoteConnection {
         let ssh_shell = socket.shell(is_windows).await;
         log::info!("Remote shell discovered: {}", ssh_shell);
 
-        let ssh_shell_kind = ShellKind::new(&ssh_shell, is_windows);
+        let ssh_shell_kind = ShellKind::new(&ssh_shell);
         let ssh_platform = socket.platform(ssh_shell_kind, is_windows).await?;
         log::info!("Remote platform discovered: {:?}", ssh_platform);
 
@@ -1127,15 +1128,14 @@ impl SshSocket {
     // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
     fn ssh_command(
         &self,
-        shell_kind: ShellKind,
+        shell_kind: Option<ShellKind>,
         program: &str,
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
     ) -> process::Command {
         let mut command = util::command::new_smol_command("ssh");
-        let program = shell_kind.prepend_command_prefix(program);
-        let mut to_run = shell_kind
-            .try_quote_prefix_aware(&program)
+        let program = prepend_command_prefix(shell_kind, program);
+        let mut to_run = try_quote_prefix_aware(shell_kind, &program)
             .expect("shell quoting")
             .into_owned();
         for arg in args {
@@ -1145,12 +1145,12 @@ impl SshSocket {
                 "multiline arguments do not work in all shells"
             );
             to_run.push(' ');
-            to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
+            to_run.push_str(&try_quote(shell_kind, arg.as_ref()).expect("shell quoting"));
         }
-        let to_run = if shell_kind == ShellKind::Cmd {
+        let to_run = if shell_kind == Some(ShellKind::Cmd) {
             to_run // 'cd' prints the current directory in CMD
         } else {
-            let separator = shell_kind.sequential_commands_separator();
+            let separator = sequential_commands_separator(shell_kind);
             format!("cd{separator} {to_run}")
         };
         self.ssh_options(&mut command, true)
@@ -1165,7 +1165,7 @@ impl SshSocket {
 
     async fn run_command(
         &self,
-        shell_kind: ShellKind,
+        shell_kind: Option<ShellKind>,
         program: &str,
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
@@ -1226,7 +1226,7 @@ impl SshSocket {
         arguments
     }
 
-    async fn platform(&self, shell: ShellKind, is_windows: bool) -> Result<RemotePlatform> {
+    async fn platform(&self, shell: Option<ShellKind>, is_windows: bool) -> Result<RemotePlatform> {
         if is_windows {
             self.platform_windows(shell).await
         } else {
@@ -1234,7 +1234,7 @@ impl SshSocket {
         }
     }
 
-    async fn platform_posix(&self, shell: ShellKind) -> Result<RemotePlatform> {
+    async fn platform_posix(&self, shell: Option<ShellKind>) -> Result<RemotePlatform> {
         let output = self
             .run_command(shell, "uname", &["-sm"], false)
             .await
@@ -1242,7 +1242,7 @@ impl SshSocket {
         parse_platform(&output)
     }
 
-    async fn platform_windows(&self, shell: ShellKind) -> Result<RemotePlatform> {
+    async fn platform_windows(&self, shell: Option<ShellKind>) -> Result<RemotePlatform> {
         let output = self
             .run_command(
                 shell,
@@ -1273,7 +1273,7 @@ impl SshSocket {
     /// If it succeeds and returns Windows-like output, we assume it's Windows.
     async fn probe_is_windows(&self) -> bool {
         match self
-            .run_command(ShellKind::Cmd, "cmd.exe", &["/c", "ver"], false)
+            .run_command(Some(ShellKind::Cmd), "cmd.exe", &["/c", "ver"], false)
             .await
         {
             // Windows 'ver' command outputs something like "Microsoft Windows [Version 10.0.19045.5011]"
@@ -1295,7 +1295,7 @@ impl SshSocket {
         match self
             // TODO: Consider using the remote's actual shell instead of hardcoding "sh"
             .run_command(
-                ShellKind::Posix(PosixShell::Sh),
+                Some(ShellKind::Posix(PosixShell::Sh)),
                 "sh",
                 &["-c", "echo $SHELL"],
                 false,
@@ -1320,7 +1320,7 @@ impl SshSocket {
         // (We'd need to know what the shell is to do that...)
         match self
             .run_command(
-                ShellKind::Cmd,
+                Some(ShellKind::Cmd),
                 "powershell",
                 &[
                     "-E",
@@ -1569,6 +1569,60 @@ impl SshConnectionOptions {
     }
 }
 
+fn prepend_command_prefix<'a>(shell_kind: Option<ShellKind>, command: &'a str) -> Cow<'a, str> {
+    let prefix = match shell_kind {
+        Some(kind) => kind.command_prefix(),
+        #[cfg(windows)]
+        None => Some('&'),
+        #[cfg(unix)]
+        None => None,
+    };
+    match prefix {
+        Some(prefix) if !command.starts_with(prefix) => Cow::Owned(format!("{prefix}{command}")),
+        _ => Cow::Borrowed(command),
+    }
+}
+
+fn sequential_commands_separator(shell_kind: Option<ShellKind>) -> char {
+    match shell_kind {
+        Some(kind) => kind.sequential_commands_separator(),
+        #[cfg(windows)]
+        None => ';',
+        #[cfg(unix)]
+        None => ';',
+    }
+}
+
+fn sequential_and_commands_separator(shell_kind: Option<ShellKind>) -> &'static str {
+    match shell_kind {
+        Some(kind) => kind.sequential_and_commands_separator(),
+        #[cfg(windows)]
+        None => ";",
+        #[cfg(unix)]
+        None => ";",
+    }
+}
+
+fn try_quote(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
+    match shell_kind {
+        Some(kind) => kind.try_quote(arg),
+        #[cfg(windows)]
+        None => Some(ShellKind::quote_powershell(arg)),
+        #[cfg(unix)]
+        None => shlex::try_quote(arg).ok(),
+    }
+}
+
+fn try_quote_prefix_aware(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
+    match shell_kind {
+        Some(kind) => kind.try_quote_prefix_aware(arg),
+        #[cfg(windows)]
+        None => Some(ShellKind::quote_powershell(arg)),
+        #[cfg(unix)]
+        None => shlex::try_quote(arg).ok(),
+    }
+}
+
 fn build_command_posix(
     input_program: Option<String>,
     input_args: &[String],
@@ -1578,7 +1632,7 @@ fn build_command_posix(
     ssh_env: HashMap<String, String>,
     ssh_path_style: PathStyle,
     ssh_shell: &str,
-    ssh_shell_kind: ShellKind,
+    ssh_shell_kind: Option<ShellKind>,
     ssh_args: Vec<String>,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
@@ -1596,20 +1650,20 @@ fn build_command_posix(
             write!(
                 exec,
                 "cd \"$HOME/{working_dir}\" {} ",
-                ssh_shell_kind.sequential_and_commands_separator()
+                sequential_and_commands_separator(ssh_shell_kind)
             )?;
         } else {
             write!(
                 exec,
                 "cd \"{working_dir}\" {} ",
-                ssh_shell_kind.sequential_and_commands_separator()
+                sequential_and_commands_separator(ssh_shell_kind)
             )?;
         }
     } else {
         write!(
             exec,
             "cd {} ",
-            ssh_shell_kind.sequential_and_commands_separator()
+            sequential_and_commands_separator(ssh_shell_kind)
         )?;
     };
     write!(exec, "exec env ")?;
@@ -1619,7 +1673,7 @@ fn build_command_posix(
             exec,
             "{}={} ",
             k,
-            ssh_shell_kind.try_quote(v).context("shell quoting")?
+            try_quote(ssh_shell_kind, v).context("shell quoting")?
         )?;
     }
 
@@ -1627,12 +1681,10 @@ fn build_command_posix(
         write!(
             exec,
             "{}",
-            ssh_shell_kind
-                .try_quote_prefix_aware(&input_program)
-                .context("shell quoting")?
+            try_quote_prefix_aware(ssh_shell_kind, &input_program).context("shell quoting")?
         )?;
         for arg in input_args {
-            let arg = ssh_shell_kind.try_quote(&arg).context("shell quoting")?;
+            let arg = try_quote(ssh_shell_kind, arg).context("shell quoting")?;
             write!(exec, " {}", &arg)?;
         }
     } else {
@@ -1674,7 +1726,7 @@ fn build_command_windows(
     ssh_env: HashMap<String, String>,
     ssh_path_style: PathStyle,
     ssh_shell: &str,
-    _ssh_shell_kind: ShellKind,
+    _ssh_shell_kind: Option<ShellKind>,
     ssh_args: Vec<String>,
     interactive: Interactive,
 ) -> Result<CommandTemplate> {
@@ -1780,7 +1832,7 @@ mod tests {
             env.clone(),
             PathStyle::Posix,
             "/bin/bash",
-            ShellKind::Posix(PosixShell::Bash),
+            Some(ShellKind::Posix(PosixShell::Bash)),
             vec!["-o".to_string(), "ControlMaster=auto".to_string()],
             Interactive::No,
         )?;
@@ -1799,7 +1851,7 @@ mod tests {
             env.clone(),
             PathStyle::Posix,
             "/bin/fish",
-            ShellKind::Fish,
+            Some(ShellKind::Fish),
             vec!["-p".to_string(), "2222".to_string()],
             Interactive::Yes,
         )?;
@@ -1831,7 +1883,7 @@ mod tests {
             env.clone(),
             PathStyle::Posix,
             "/bin/fish",
-            ShellKind::Fish,
+            Some(ShellKind::Fish),
             vec!["-p".to_string(), "2222".to_string()],
             Interactive::Yes,
         )?;
