@@ -109,9 +109,9 @@ actions!(
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
         /// Next commit message editor history item
-        NextCommitEditorHistoryItem,
+        NextCommitEditorHistoryEntry,
         /// Previous commit message editor history item
-        PrevCommitEditorHistoryItem,
+        PrevCommitEditorHistoryEntry,
     ]
 );
 
@@ -2089,19 +2089,19 @@ impl GitPanel {
         }
     }
 
-    fn next_commit_editor_history_item(
+    fn next_commit_editor_history_entry(
         &mut self,
-        _: &NextCommitEditorHistoryItem,
-        window: &mut Window,
+        _: &NextCommitEditorHistoryEntry,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         log::info!("Next editor history item");
     }
 
-    fn prev_commit_editor_history_item(
+    fn prev_commit_editor_history_entry(
         &mut self,
-        _: &PrevCommitEditorHistoryItem,
-        window: &mut Window,
+        _: &PrevCommitEditorHistoryEntry,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         log::info!("Previous editor history item");
@@ -5528,8 +5528,8 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
-            .on_action(cx.listener(Self::next_commit_editor_history_item))
-            .on_action(cx.listener(Self::prev_commit_editor_history_item))
+            .on_action(cx.listener(Self::next_commit_editor_history_entry))
+            .on_action(cx.listener(Self::prev_commit_editor_history_entry))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
