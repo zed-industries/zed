@@ -53,21 +53,23 @@ impl HelloWorld {
             }))
             .when(self.secondary_open, |this| {
                 this.child(
-                    // GPUI can't support deferred here yet,
-                    // it was inside another deferred element.
-                    anchored()
-                        .anchor(Corner::TopLeft)
-                        .snap_to_window_with_margin(px(8.))
-                        .child(
-                            popover()
-                                .child("This is second level Popover")
-                                .bg(gpui::white())
-                                .border_color(gpui::blue())
-                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                    this.secondary_open = false;
-                                    cx.notify();
-                                })),
-                        ),
+                    // Now GPUI supports nested deferred!
+                    deferred(
+                        anchored()
+                            .anchor(Corner::TopLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(
+                                popover()
+                                    .child("This is second level Popover with nested deferred!")
+                                    .bg(gpui::white())
+                                    .border_color(gpui::blue())
+                                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                        this.secondary_open = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .priority(2),
                 )
             })
     }
