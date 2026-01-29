@@ -4956,9 +4956,7 @@ impl EditorElement {
             std::collections::HashMap::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor
-            .sticky_headers(&snapshot.display_snapshot, style, cx)
-            .unwrap_or_default();
+        let items = editor.sticky_headers(style, cx).unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -5012,11 +5010,9 @@ impl EditorElement {
                     || end_row.as_f64() <= excerpt_scroll_top)
                     && sticky_row.as_f64() > adjusted_scroll_top + FILE_HEADER_HEIGHT as f64
                 {
-                    dbg!("skip due to wrong range relative to excerpt");
                     continue;
                 }
                 if end_row.as_f64() <= adjusted_scroll_top + FILE_HEADER_HEIGHT as f64 {
-                    dbg!("skip due to scrolling out of view from the top");
                     continue;
                 }
             } else {
@@ -10936,6 +10932,8 @@ impl Element for EditorElement {
 
                     self.paint_text(layout, window, cx);
 
+                    self.paint_sticky_headers(layout, window, cx);
+
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_gutter_highlights(layout, window, cx);
                         self.paint_gutter_indicators(layout, window, cx);
@@ -10946,8 +10944,6 @@ impl Element for EditorElement {
                             self.paint_blocks(layout, window, cx);
                         });
                     }
-
-                    self.paint_sticky_headers(layout, window, cx);
 
                     window.with_element_namespace("blocks", |window| {
                         if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
@@ -11186,8 +11182,8 @@ impl StickyHeaderLine {
         );
 
         let hitbox_bounds = Bounds::new(
-            gutter_hitbox.origin + point(Pixels::ZERO, offset),
-            size(text_hitbox.right() - gutter_hitbox.left(), line_height),
+            text_hitbox.origin + point(Pixels::ZERO, offset),
+            size(text_hitbox.right(), line_height),
         );
         let available_text_width =
             (hitbox_bounds.size.width - gutter_hitbox.size.width).max(Pixels::ZERO);

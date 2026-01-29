@@ -1945,11 +1945,9 @@ impl Editor {
 
     pub fn sticky_headers(
         &self,
-        snapshot: &DisplaySnapshot,
         style: &EditorStyle,
         cx: &App,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
-        let selections = self.selections.all::<Point>(&snapshot);
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
