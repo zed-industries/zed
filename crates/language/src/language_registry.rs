@@ -740,6 +740,7 @@ impl LanguageRegistry {
         self.language_for_file_internal(path, None, None)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn load_language_for_file_path<'a>(
         self: &Arc<Self>,
         path: &'a Path,
