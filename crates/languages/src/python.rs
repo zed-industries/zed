@@ -1408,18 +1408,23 @@ impl ToolchainLister for PythonToolchainProvider {
                     | PythonEnvironmentKind::Poetry,
                 ) => {
                     if let Some(activation_scripts) = &toolchain.activation_scripts {
-                        if let Some(ref shell_kind) = shell {
-                            // Use activation_script_key() to normalize POSIX shells (e.g., Bash, Zsh)
-                            // to Posix(Sh) for lookup, since activation scripts are stored with Posix(Sh) key
-                            let lookup_key = shell_kind.activation_script_key();
-                            if let Some(activate_script_path) = activation_scripts.get(&lookup_key)
+                        // For unknown shells, fall back to platform-appropriate defaults:
+                        // POSIX (sh) on Unix, PowerShell on Windows
+                        #[cfg(unix)]
+                        let fallback_shell = ShellKind::Posix(PosixShell::Sh);
+                        #[cfg(windows)]
+                        let fallback_shell = ShellKind::PowerShell;
+
+                        let shell_kind = shell.unwrap_or(fallback_shell);
+                        // Use activation_script_key() to normalize POSIX shells (e.g., Bash, Zsh)
+                        // to Posix(Sh) for lookup, since activation scripts are stored with Posix(Sh) key
+                        let lookup_key = shell_kind.activation_script_key();
+                        if let Some(activate_script_path) = activation_scripts.get(&lookup_key) {
+                            let activate_keyword = shell_kind.activate_keyword();
+                            if let Some(quoted) =
+                                shell_kind.try_quote(&activate_script_path.to_string_lossy())
                             {
-                                let activate_keyword = shell_kind.activate_keyword();
-                                if let Some(quoted) =
-                                    shell_kind.try_quote(&activate_script_path.to_string_lossy())
-                                {
-                                    activation_script.push(format!("{activate_keyword} {quoted}"));
-                                }
+                                activation_script.push(format!("{activate_keyword} {quoted}"));
                             }
                         }
                     }
