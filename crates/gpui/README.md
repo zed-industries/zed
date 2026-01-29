@@ -64,3 +64,50 @@ In addition to the systems above, GPUI provides a range of smaller services that
 - The `[gpui::test]` macro provides a convenient way to write tests for your GPUI applications. Tests also have their own kind of context, a `TestAppContext` which provides ways of simulating common platform input. See `app::test_context` and `test` modules for more details.
 
 Currently, the best way to learn about these APIs is to read the Zed source code or drop a question in the [Zed Discord](https://zed.dev/community-links). We're working on improving the documentation, creating more examples, and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
+
+## Drag and Drop
+
+GPUI supports configurable drag-and-drop from external sources. By default, windows accept file drops.
+
+### Configuring Drag Types
+
+```rust
+use gpui::{WindowOptions, DragType};
+use smallvec::smallvec;
+
+let options = WindowOptions {
+    drag_types: smallvec![DragType::Files, DragType::Urls],
+    ..Default::default()
+};
+```
+
+### Handling Drops
+
+```rust
+use gpui::{ExternalDrop, DropItem};
+
+div()
+    .on_drop(|drop: ExternalDrop, _window, _cx| {
+        for item in drop.items() {
+            match item {
+                DropItem::Path(path) => println!("File: {}", path.display()),
+                DropItem::Url(url) => println!("URL: {}", url),
+            }
+        }
+    })
+```
+
+### Migration from ExternalPaths
+
+`ExternalPaths` is deprecated. Use `ExternalDrop` instead:
+
+```rust
+// Old (deprecated)
+.on_drop(|paths: ExternalPaths, _window, _cx| { /* ... */ })
+
+// New
+.on_drop(|drop: ExternalDrop, _window, _cx| {
+    for path in drop.paths() { /* handle file paths */ }
+    for url in drop.urls() { /* handle URLs */ }
+})
+```
