@@ -271,6 +271,25 @@ fn find_target(
             begin = None;
             target = String::new();
         } else if ch == '.' {
+            // If we have a number that starts at or after the cursor position,
+            // and the next char is not a digit, end the match.
+            // This handles Markdown list markers like "1. " where the number should be incrementable,
+            // but still allows "111..2" to skip past 111 and find 2 when cursor is after 111.
+            if is_num {
+                if let Some(begin_offset) = begin {
+                    if begin_offset >= start_offset {
+                        if let Some(&next_ch) = chars.peek() {
+                            if !next_ch.is_digit(radix) {
+                                end = Some(offset);
+                                break;
+                            }
+                        } else {
+                            end = Some(offset);
+                            break;
+                        }
+                    }
+                }
+            }
             is_num = false;
             begin = None;
             target = String::new();
@@ -845,5 +864,34 @@ mod test {
         cx.simulate_shared_keystrokes("shift-v y p p ctrl-v k k l ctrl-a")
             .await;
         cx.shared_state().await.assert_eq(indoc! {"ˇ144\n144\n144"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_markdown_list_markers(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Increment list marker when cursor is on the number
+        cx.set_state("ˇ1. First item", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("ˇ2. First item", Mode::Normal);
+
+        // Decrement list marker
+        cx.simulate_keystrokes("ctrl-x");
+        cx.assert_state("ˇ1. First item", Mode::Normal);
+
+        // Increment multi-digit list marker
+        cx.set_state("ˇ9. Ninth item", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("1ˇ0. Ninth item", Mode::Normal);
+
+        // List marker at end of line (no text after)
+        cx.set_state("ˇ5.", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-a");
+        cx.assert_state("ˇ6.", Mode::Normal);
+
+        // Increment by count
+        cx.set_state("ˇ1. First item", Mode::Normal);
+        cx.simulate_keystrokes("5 ctrl-a");
+        cx.assert_state("ˇ6. First item", Mode::Normal);
     }
 }
