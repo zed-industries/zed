@@ -496,6 +496,25 @@ pub(crate) enum PrimitiveBatch<'a> {
     Surfaces(&'a [PaintSurface]),
 }
 
+/// The blend mode used to combine a primitive with the content behind it.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[repr(u32)]
+pub enum BlendMode {
+    #[default]
+    /// Standard alpha blending.
+    Normal = 0,
+    /// Multiplies the background by the source color.
+    Multiply = 1,
+    /// Adds the source color to the background.
+    Add = 2,
+    /// Subtracts the source color from the background.
+    Subtract = 3,
+    /// Inverts the background color based on the source color.
+    Invert = 4,
+    /// Lightens the background based on the source color.
+    Screen = 5,
+}
+
 #[derive(Default, Debug, Clone)]
 #[repr(C)]
 pub(crate) struct Quad {
@@ -507,6 +526,7 @@ pub(crate) struct Quad {
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
+    pub blend_mode: u32, // Prevent auto-generator issues by using u32 instead of BlendMode
 }
 
 impl From<Quad> for Primitive {
