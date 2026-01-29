@@ -192,8 +192,12 @@ async fn capture_windows(
         Some(ShellKind::Nushell) => cmd.args([
             "-c",
             &format!(
-                "cd '{}'; ^'{}' --printenv",
+                "cd '{}'; {}'{}' --printenv",
                 directory.display(),
+                ShellKind::Nushell
+                    .command_prefix()
+                    .map(|prefix| prefix.to_string())
+                    .unwrap_or_default(),
                 zed_path.display()
             ),
         ]),
