@@ -1270,11 +1270,10 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> (Point<Pixels>, Option<AnchoredForceSnap>) {
-        let entry_id = self.state.selection.as_ref().map(|s| s.entry_id);
-
-        if entry_id.is_none() || entry_id == Some(ProjectEntryId::from_usize(0)) {
-            return (event_position, None);
-        }
+        let entry_id = match self.state.selection.as_ref().map(|s| s.entry_id) {
+            Some(id) if id != ProjectEntryId::from_usize(0) => id,
+            _ => return (event_position, None),
+        };
 
         if let Some(selection) = &self.state.selection {
             let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
@@ -1302,11 +1301,25 @@ impl ProjectPanel {
 
             let (_, entry_ix, _) = self.index_for_selection(*selection).unwrap_or_default();
 
-            let offset_y = self.scroll_handle.offset().y.to_f64();
+            let mut offset_y = self.scroll_handle.offset().y.to_f64();
             let viewport = self.scroll_handle.viewport();
             let viewport_height = window.viewport_size().height;
-
             let entry_height = ui_font_size + 10.0;
+
+            let min_offset_y = self.calculate_min_entry_offset_y(
+                entry_ix,
+                entry_height,
+                entry_id,
+                selection.worktree_id,
+                cx,
+            );
+
+            if let Some(min_offset_y) = min_offset_y {
+                if offset_y < min_offset_y {
+                    offset_y = min_offset_y;
+                }
+            }
+
             let mut entry_y =
                 (((entry_ix + 1) as f64) * entry_height + viewport.top().to_f64()) + offset_y;
 
@@ -1326,6 +1339,36 @@ impl ProjectPanel {
         } else {
             (event_position, None)
         }
+    }
+
+    fn calculate_min_entry_offset_y(
+        &self,
+        entry_ix: usize,
+        entry_height: f64,
+        entry_id: ProjectEntryId,
+        worktree_id: WorktreeId,
+        cx: &App,
+    ) -> Option<f64> {
+        let project = self.project.read(cx);
+        let worktree = project.worktree_for_id(worktree_id, cx)?;
+        let dir_entry = worktree.read(cx).entry_for_id(entry_id)?;
+
+        if dir_entry.kind != EntryKind::Dir {
+            return None;
+        }
+
+        let path = dir_entry.path.as_ref();
+
+        let num_parents = if path.is_empty() {
+            0
+        } else {
+            path.len().saturating_sub(1)
+        };
+
+        let scrolled_entries = (entry_ix - num_parents) as f64;
+        let total_offset_y = scrolled_entries * entry_height;
+
+        Some(-total_offset_y)
     }
 
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
