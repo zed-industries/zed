@@ -568,7 +568,6 @@ impl Search {
                 }
                 matched_buffers += 1;
                 matches += ranges.len();
-
                 _ = tx.send(SearchResult::Buffer { buffer, ranges }).await?;
             }
             anyhow::Ok(())
