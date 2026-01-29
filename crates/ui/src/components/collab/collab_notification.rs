@@ -45,7 +45,7 @@ impl RenderOnce for CollabNotification {
             .child(
                 h_flex()
                     .min_w_0()
-                    .gap_2()
+                    .gap_4()
                     .child(Avatar::new(self.avatar_uri).size(px(40.)))
                     .child(v_flex().truncate().children(self.children)),
             )
