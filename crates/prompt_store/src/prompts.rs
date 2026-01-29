@@ -59,7 +59,7 @@ impl ProjectContext {
             arch: std::env::consts::ARCH.to_string(),
             shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
                 .name()
-                .unwrap_or(if cfg!(windows) { "powershell" } else { "bash" })
+                .unwrap_or("bash")
                 .to_string(),
         }
     }
