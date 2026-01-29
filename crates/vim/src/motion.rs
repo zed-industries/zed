@@ -3293,6 +3293,29 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_paragraph_motion_with_whitespace_lines(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test that whitespace-only lines are NOT treated as paragraph boundaries
+        // Per vim's :help paragraph - only truly empty lines are boundaries
+        // Line 2 has 4 spaces (whitespace-only), line 4 is truly empty
+        cx.set_shared_state("ˇfirst\n    \nstill first\n\nsecond")
+            .await;
+        cx.simulate_shared_keystrokes("}").await;
+
+        // Should skip whitespace-only line and stop at truly empty line
+        let mut shared_state = cx.shared_state().await;
+        shared_state.assert_eq("first\n    \nstill first\nˇ\nsecond");
+        shared_state.assert_matches();
+
+        // Should go back to original position
+        cx.simulate_shared_keystrokes("{").await;
+        let mut shared_state = cx.shared_state().await;
+        shared_state.assert_eq("ˇfirst\n    \nstill first\n\nsecond");
+        shared_state.assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_matching(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 

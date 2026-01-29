@@ -164,7 +164,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("luau", &["luau"]),
     ("markdown", &["markdown", "md"]),
     ("metal", &["metal"]),
-    ("nim", &["nim"]),
+    ("nim", &["nim", "nims", "nimble"]),
     ("nix", &["nix"]),
     ("ocaml", &["ml", "mli"]),
     ("odin", &["odin"]),

@@ -2,6 +2,7 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, SharedString, Task};
@@ -24,11 +25,13 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
+use terminal::terminal_settings::TerminalSettings;
+
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use std::process::Stdio;
-use terminal::terminal_settings::TerminalSettings;
+
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
@@ -43,7 +46,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
+use task::{PosixShell, ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1165,13 +1168,15 @@ fn wr_distance(
     }
 }
 
-fn micromamba_shell_name(kind: ShellKind) -> &'static str {
+fn micromamba_shell_name(kind: Option<ShellKind>) -> &'static str {
     match kind {
-        ShellKind::Csh => "csh",
-        ShellKind::Fish => "fish",
-        ShellKind::Nushell => "nu",
-        ShellKind::PowerShell => "powershell",
-        ShellKind::Cmd => "cmd.exe",
+        Some(ShellKind::Csh) => "csh",
+        Some(ShellKind::Fish) => "fish",
+        Some(ShellKind::Nushell) => "nu",
+        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => "powershell",
+        Some(ShellKind::Cmd) => "cmd.exe",
+        #[cfg(windows)]
+        None => "powershell",
         // default / catch-all:
         _ => "posix",
     }
@@ -1333,94 +1338,131 @@ impl ToolchainLister for PythonToolchainProvider {
             .context("Could not convert a venv into a toolchain")
     }
 
-    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String> {
-        let Ok(toolchain) =
-            serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
-        else {
-            return vec![];
-        };
+    fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: Option<ShellKind>,
+        cx: &App,
+    ) -> BoxFuture<'static, Vec<String>> {
+        let settings = TerminalSettings::get_global(cx);
+        let conda_manager = settings
+            .detect_venv
+            .as_option()
+            .map(|venv| venv.conda_manager)
+            .unwrap_or(settings::CondaManager::Auto);
 
-        log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
+        let toolchain_clone = toolchain.clone();
+        Box::pin(async move {
+            let Ok(toolchain) =
+                serde_json::from_value::<PythonToolchainData>(toolchain_clone.as_json.clone())
+            else {
+                return vec![];
+            };
 
-        let mut activation_script = vec![];
+            log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
 
-        match toolchain.environment.kind {
-            Some(PythonEnvironmentKind::Conda) => {
-                let settings = TerminalSettings::get_global(cx);
-                let conda_manager = settings
-                    .detect_venv
-                    .as_option()
-                    .map(|venv| venv.conda_manager)
-                    .unwrap_or(settings::CondaManager::Auto);
-                let manager = match conda_manager {
-                    settings::CondaManager::Conda => "conda",
-                    settings::CondaManager::Mamba => "mamba",
-                    settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => toolchain
-                        .environment
-                        .manager
-                        .as_ref()
-                        .and_then(|m| m.executable.file_name())
-                        .and_then(|name| name.to_str())
-                        .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
-                        .unwrap_or("conda"),
-                };
+            let mut activation_script = vec![];
 
-                // Activate micromamba shell in the child shell
-                // [required for micromamba]
-                if manager == "micromamba" {
-                    let shell = micromamba_shell_name(shell);
-                    activation_script
-                        .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+            match toolchain.environment.kind {
+                Some(PythonEnvironmentKind::Conda) => {
+                    let Some(manager_info) = &toolchain.environment.manager else {
+                        return vec![];
+                    };
+                    if smol::fs::metadata(&manager_info.executable).await.is_err() {
+                        return vec![];
+                    }
+
+                    let manager = match conda_manager {
+                        settings::CondaManager::Conda => "conda",
+                        settings::CondaManager::Mamba => "mamba",
+                        settings::CondaManager::Micromamba => "micromamba",
+                        settings::CondaManager::Auto => toolchain
+                            .environment
+                            .manager
+                            .as_ref()
+                            .and_then(|m| m.executable.file_name())
+                            .and_then(|name| name.to_str())
+                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                            .unwrap_or("conda"),
+                    };
+
+                    // Activate micromamba shell in the child shell
+                    // [required for micromamba]
+                    if manager == "micromamba" {
+                        let shell = micromamba_shell_name(shell);
+                        activation_script
+                            .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                    }
+
+                    if let Some(name) = &toolchain.environment.name {
+                        activation_script.push(format!("{manager} activate {name}"));
+                    } else {
+                        activation_script.push(format!("{manager} activate base"));
+                    }
                 }
+                Some(
+                    PythonEnvironmentKind::Venv
+                    | PythonEnvironmentKind::VirtualEnv
+                    | PythonEnvironmentKind::Uv
+                    | PythonEnvironmentKind::UvWorkspace
+                    | PythonEnvironmentKind::Poetry,
+                ) => {
+                    if let Some(activation_scripts) = &toolchain.activation_scripts {
+                        // For unknown shells, fall back to platform-appropriate defaults:
+                        // POSIX (sh) on Unix, PowerShell on Windows
+                        #[cfg(unix)]
+                        let fallback_shell = ShellKind::Posix(PosixShell::Sh);
+                        #[cfg(windows)]
+                        let fallback_shell = ShellKind::PowerShell;
 
-                if let Some(name) = &toolchain.environment.name {
-                    activation_script.push(format!("{manager} activate {name}"));
-                } else {
-                    activation_script.push(format!("{manager} activate base"));
-                }
-            }
-            Some(
-                PythonEnvironmentKind::Venv
-                | PythonEnvironmentKind::VirtualEnv
-                | PythonEnvironmentKind::Uv
-                | PythonEnvironmentKind::UvWorkspace
-                | PythonEnvironmentKind::Poetry,
-            ) => {
-                if let Some(activation_scripts) = &toolchain.activation_scripts {
-                    if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                        let activate_keyword = shell.activate_keyword();
-                        if let Some(quoted) =
-                            shell.try_quote(&activate_script_path.to_string_lossy())
-                        {
-                            activation_script.push(format!("{activate_keyword} {quoted}"));
+                        let shell_kind = shell.unwrap_or(fallback_shell);
+                        // Use activation_script_key() to normalize POSIX shells (e.g., Bash, Zsh)
+                        // to Posix(Sh) for lookup, since activation scripts are stored with Posix(Sh) key
+                        let lookup_key = shell_kind.activation_script_key();
+                        if let Some(activate_script_path) = activation_scripts.get(&lookup_key) {
+                            let activate_keyword = shell_kind.activate_keyword();
+                            if let Some(quoted) =
+                                shell_kind.try_quote(&activate_script_path.to_string_lossy())
+                            {
+                                activation_script.push(format!("{activate_keyword} {quoted}"));
+                            }
                         }
                     }
                 }
+                Some(PythonEnvironmentKind::Pyenv) => {
+                    let Some(manager) = &toolchain.environment.manager else {
+                        return vec![];
+                    };
+                    let version = toolchain.environment.version.as_deref().unwrap_or("system");
+                    let pyenv = &manager.executable;
+                    let pyenv = pyenv.display();
+                    let pyenv_sh_activation = format!("\"{pyenv}\" shell - sh {version}");
+                    activation_script.extend(match shell {
+                        Some(ShellKind::Fish) => {
+                            Some(format!("\"{pyenv}\" shell - fish {version}"))
+                        }
+                        Some(ShellKind::Posix(_)) => Some(pyenv_sh_activation),
+                        #[cfg(unix)]
+                        None => Some(pyenv_sh_activation),
+                        Some(ShellKind::Nushell) => {
+                            Some(format!("^\"{pyenv}\" shell - nu {version}"))
+                        }
+                        Some(ShellKind::PowerShell)
+                        | Some(ShellKind::Pwsh)
+                        | Some(ShellKind::Csh)
+                        | Some(ShellKind::Tcsh)
+                        | Some(ShellKind::Cmd)
+                        | Some(ShellKind::Rc)
+                        | Some(ShellKind::Xonsh)
+                        | Some(ShellKind::Elvish) => None,
+                        #[cfg(windows)]
+                        None => None,
+                    })
+                }
+                _ => {}
             }
-            Some(PythonEnvironmentKind::Pyenv) => {
-                let Some(manager) = &toolchain.environment.manager else {
-                    return vec![];
-                };
-                let version = toolchain.environment.version.as_deref().unwrap_or("system");
-                let pyenv = &manager.executable;
-                let pyenv = pyenv.display();
-                activation_script.extend(match shell {
-                    ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                    ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::PowerShell | ShellKind::Pwsh => None,
-                    ShellKind::Csh => None,
-                    ShellKind::Tcsh => None,
-                    ShellKind::Cmd => None,
-                    ShellKind::Rc => None,
-                    ShellKind::Xonsh => None,
-                    ShellKind::Elvish => None,
-                })
-            }
-            _ => {}
-        }
-        activation_script
+            activation_script
+        })
     }
 }
 
@@ -1478,8 +1520,9 @@ async fn resolve_venv_activation_scripts(
 ) {
     log::debug!("(Python) Resolving activation scripts for venv toolchain {venv:?}");
     if let Some(prefix) = &venv.prefix {
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
         for (shell_kind, script_name) in &[
-            (ShellKind::Posix, "activate"),
+            (ShellKind::Posix(PosixShell::Sh), "activate"),
             (ShellKind::Rc, "activate"),
             (ShellKind::Csh, "activate.csh"),
             (ShellKind::Tcsh, "activate.csh"),

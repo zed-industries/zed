@@ -136,3 +136,15 @@
   (primitive_type)
   (sized_type_specifier)
 ] @type
+
+; GNU __attribute__
+(attribute_specifier) @attribute
+(attribute_specifier
+  (argument_list
+    (identifier) @attribute))
+
+; C23 [[attributes]]
+(attribute
+  prefix: (identifier) @attribute)
+(attribute
+  name: (identifier) @attribute)

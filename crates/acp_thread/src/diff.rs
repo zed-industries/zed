@@ -1,11 +1,11 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{MultiBuffer, PathKey, multibuffer_context_lines};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
 use itertools::Itertools;
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
 };
+use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
@@ -63,7 +63,7 @@ impl Diff {
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
                         hunk_ranges,
-                        multibuffer_context_lines(cx),
+                        excerpt_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(diff, cx);
@@ -90,9 +90,10 @@ impl Diff {
             let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
             diff.language_changed(language.clone(), language_registry.clone(), cx);
             let secondary_diff = cx.new(|cx| {
-                let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
-                diff.language_changed(language, language_registry, cx);
-                diff
+                // For the secondary diff buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
+                // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
+                // view multibuffers.
+                BufferDiff::new_unchanged(&buffer_text_snapshot, cx)
             });
             diff.set_secondary_diff(secondary_diff);
             diff
@@ -300,7 +301,7 @@ impl PendingDiff {
                         path_key,
                         buffer,
                         ranges,
-                        multibuffer_context_lines(cx),
+                        excerpt_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -326,7 +327,7 @@ impl PendingDiff {
                 PathKey::for_buffer(&self.new_buffer, cx),
                 self.new_buffer.clone(),
                 ranges,
-                multibuffer_context_lines(cx),
+                excerpt_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);
@@ -408,7 +409,6 @@ async fn build_buffer_diff(
 
     secondary_diff
         .update(cx, |secondary_diff, cx| {
-            secondary_diff.language_changed(language.clone(), language_registry.clone(), cx);
             secondary_diff.set_snapshot(update.clone(), &buffer, cx)
         })
         .await;

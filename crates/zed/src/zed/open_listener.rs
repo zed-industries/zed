@@ -457,21 +457,26 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let grouped_locations = if paths.is_empty() && diff_paths.is_empty() {
-        // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
-        if open_new_workspace == Some(true) {
-            Vec::new()
+    let grouped_locations: Vec<(SerializedWorkspaceLocation, PathList)> =
+        if paths.is_empty() && diff_paths.is_empty() {
+            if open_new_workspace == Some(true) {
+                Vec::new()
+            } else {
+                // The workspace_id from the database is not used;
+                // open_paths will assign a new WorkspaceId when opening the workspace.
+                restorable_workspace_locations(cx, &app_state)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_workspace_id, location, paths)| (location, paths))
+                    .collect()
+            }
         } else {
-            restorable_workspace_locations(cx, &app_state)
-                .await
-                .unwrap_or_default()
-        }
-    } else {
-        vec![(
-            SerializedWorkspaceLocation::Local,
-            PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
-        )]
-    };
+            vec![(
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
+            )]
+        };
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch

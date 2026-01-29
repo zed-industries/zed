@@ -65,3 +65,14 @@ impl FeatureFlag for DiffReviewFeatureFlag {
         false
     }
 }
+
+/// Controls whether we show the new thinking toggle in the Agent Panel when using models through the Zed provider (Cloud).
+pub struct CloudThinkingToggleFeatureFlag;
+
+impl FeatureFlag for CloudThinkingToggleFeatureFlag {
+    const NAME: &'static str = "cloud-thinking-toggle";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
