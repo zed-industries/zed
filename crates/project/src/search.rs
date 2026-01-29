@@ -1,10 +1,10 @@
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
 use itertools::Itertools as _;
 use language::{Buffer, BufferSnapshot, CharKind};
+use memchr::memmem::Finder;
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
@@ -60,7 +60,7 @@ impl SearchInputs {
 #[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
-        search: AhoCorasick,
+        finder: Finder<'static>,
         replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
@@ -101,10 +101,7 @@ impl SearchQuery {
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
-        if !case_sensitive && !query.is_ascii() {
-            // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
-            // Fallback to regex search as recommended by
-            // https://docs.rs/aho-corasick/1.1/aho_corasick/struct.AhoCorasickBuilder.html#method.ascii_case_insensitive
+        if !case_sensitive {
             return Self::regex(
                 regex::escape(&query),
                 whole_word,
@@ -117,9 +114,7 @@ impl SearchQuery {
                 buffers,
             );
         }
-        let search = AhoCorasickBuilder::new()
-            .ascii_case_insensitive(!case_sensitive)
-            .build([&query])?;
+        let finder = Finder::new(query.as_bytes()).into_owned();
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
@@ -128,7 +123,7 @@ impl SearchQuery {
             buffers,
         };
         Ok(Self::Text {
-            search,
+            finder,
             replacement: None,
             whole_word,
             case_sensitive,
@@ -348,15 +343,15 @@ impl SearchQuery {
         // Yield from this function every 128 bytes scanned.
         const YIELD_THRESHOLD: usize = 128;
         match self {
-            Self::Text { search, .. } => {
+            Self::Text { finder, .. } => {
                 if query_str.contains('\n') {
                     reader.read_to_string(&mut text)?;
-                    Ok(search.is_match(&text))
+                    Ok(finder.find(text.as_bytes()).is_some())
                 } else {
                     // Yield from this function every 128 bytes scanned.
                     const YIELD_THRESHOLD: usize = 128;
                     while reader.read_line(&mut text)? > 0 {
-                        if search.is_match(&text) {
+                        if finder.find(text.as_bytes()).is_some() {
                             return Ok(true);
                         }
                         bytes_read += text.len();
@@ -451,36 +446,42 @@ impl SearchQuery {
         let mut matches = Vec::new();
         match self {
             Self::Text {
-                search, whole_word, ..
+                finder, whole_word, ..
             } => {
-                for (ix, mat) in search
-                    .stream_find_iter(rope.bytes_in_range(0..rope.len()))
-                    .enumerate()
-                {
+                let needle_len = finder.needle().len();
+                let text = rope.to_string();
+                let mut start = 0;
+                let mut ix = 0;
+                while let Some(pos) = finder.find(&text.as_bytes()[start..]) {
+                    let match_start = start + pos;
+                    let match_end = match_start + needle_len;
+
                     if (ix + 1) % YIELD_INTERVAL == 0 {
                         yield_now().await;
                     }
+                    ix += 1;
 
-                    let mat = mat.unwrap();
                     if *whole_word {
-                        let classifier = buffer.char_classifier_at(range_offset + mat.start());
+                        let classifier = buffer.char_classifier_at(range_offset + match_start);
 
                         let prev_kind = rope
-                            .reversed_chars_at(mat.start())
+                            .reversed_chars_at(match_start)
                             .next()
                             .map(|c| classifier.kind(c));
                         let start_kind =
-                            classifier.kind(rope.chars_at(mat.start()).next().unwrap());
+                            classifier.kind(rope.chars_at(match_start).next().unwrap());
                         let end_kind =
-                            classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
+                            classifier.kind(rope.reversed_chars_at(match_end).next().unwrap());
+                        let next_kind = rope.chars_at(match_end).next().map(|c| classifier.kind(c));
                         if (Some(start_kind) == prev_kind && start_kind == CharKind::Word)
                             || (Some(end_kind) == next_kind && end_kind == CharKind::Word)
                         {
+                            start = match_start + 1;
                             continue;
                         }
                     }
-                    matches.push(mat.start()..mat.end())
+                    matches.push(match_start..match_end);
+                    start = match_end;
                 }
             }
 
