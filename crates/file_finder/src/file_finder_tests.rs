@@ -1210,10 +1210,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        (
-            worktrees[0].read(cx).id(),
-            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
-        )
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
     });
 
     let b_path = ProjectPath {
@@ -1674,14 +1671,12 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
             "External file should get opened in a new worktree"
         );
 
-        WorktreeId::from_usize(
-            worktrees
-                .into_iter()
-                .find(|worktree| worktree.entity_id().as_u64() as usize != worktree_id.to_usize())
-                .expect("New worktree should have a different id")
-                .entity_id()
-                .as_u64() as usize,
-        )
+        worktrees
+            .into_iter()
+            .find(|worktree| worktree.read(cx).id() != worktree_id)
+            .expect("New worktree should have a different id")
+            .read(cx)
+            .id()
     });
     cx.dispatch_action(workspace::CloseActiveItem {
         save_intent: None,

@@ -147,7 +147,7 @@ impl WorktreeStore {
         }
     }
 
-    pub fn next_worktree_id(&self) -> impl Future<Output = Result<u64>> + use<> {
+    pub fn next_worktree_id(&self) -> impl Future<Output = Result<WorktreeId>> + use<> {
         let strategy = match (&self.state, &self.downstream_client) {
             // we are a remote server, the client is in charge of assigning worktree ids
             (WorktreeStoreState::Local { .. }, Some((client, REMOTE_SERVER_PROJECT_ID))) => {
@@ -168,6 +168,7 @@ impl WorktreeStore {
                     .worktree_id),
                 Either::Right(id) => Ok(id),
             }
+            .map(WorktreeId::from_proto)
         }
     }
 

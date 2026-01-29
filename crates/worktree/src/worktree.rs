@@ -368,7 +368,7 @@ impl Worktree {
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
         scanning_enabled: bool,
-        worktree_id: u64,
+        worktree_id: WorktreeId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
@@ -494,7 +494,7 @@ impl Worktree {
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Snapshot::new(
-                worktree.id,
+                WorktreeId::from_proto(worktree.id),
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
@@ -2138,13 +2138,13 @@ impl RemoteWorktree {
 
 impl Snapshot {
     pub fn new(
-        id: u64,
+        id: WorktreeId,
         root_name: Arc<RelPath>,
         abs_path: Arc<Path>,
         path_style: PathStyle,
     ) -> Self {
         Snapshot {
-            id: WorktreeId::from_usize(id as usize),
+            id,
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name
