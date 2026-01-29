@@ -345,16 +345,16 @@ impl SearchQuery {
 
         let mut text = String::new();
         let mut bytes_read = 0;
-        // Yield from this function every 128 bytes scanned.
-        const YIELD_THRESHOLD: usize = 128;
+        // Yield from this function every 20KB scanned.
+        const YIELD_THRESHOLD: usize = 20 * 1024;
         match self {
             Self::Text { search, .. } => {
                 if query_str.contains('\n') {
                     reader.read_to_string(&mut text)?;
                     Ok(search.is_match(&text))
                 } else {
-                    // Yield from this function every 128 bytes scanned.
-                    const YIELD_THRESHOLD: usize = 128;
+                    // Yield from this function every 20KB scanned.
+                    const YIELD_THRESHOLD: usize = 20 * 1024;
                     while reader.read_line(&mut text)? > 0 {
                         if search.is_match(&text) {
                             return Ok(true);
