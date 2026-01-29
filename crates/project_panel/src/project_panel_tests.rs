@@ -2,7 +2,6 @@ use super::*;
 use collections::HashSet;
 use editor::MultiBufferOffset;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
-use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
 use serde_json::json;
