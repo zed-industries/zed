@@ -60,10 +60,11 @@ use crate::platform::{
     },
 };
 use crate::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
-    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, DropItem, ExternalDrop,
+    FileDropEvent, Keystroke, LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton,
+    Pixels, Platform, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point,
+    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -873,17 +874,32 @@ impl X11Client {
                 let Some(reply) = reply else {
                     return Some(());
                 };
+                #[allow(deprecated)]
                 if let Ok(file_list) = str::from_utf8(&reply.value) {
-                    let paths: SmallVec<[_; 2]> = file_list
-                        .lines()
-                        .filter_map(|path| Url::parse(path).log_err())
-                        .filter_map(|url| url.to_file_path().log_err())
-                        .collect();
+                    let mut items: SmallVec<[DropItem; 2]> = SmallVec::new();
+                    for line in file_list.lines() {
+                        if let Ok(url) = Url::parse(line) {
+                            match url.scheme() {
+                                "file" => {
+                                    if let Ok(path) = url.to_file_path() {
+                                        items.push(DropItem::Path(path));
+                                    }
+                                }
+                                "http" | "https" => {
+                                    items.push(DropItem::Url(url));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    let external_drop = ExternalDrop(items);
+                    // Convert to legacy ExternalPaths for backwards compatibility
+                    let paths = external_drop.to_external_paths();
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position: state.xdnd_state.position,
-                        paths: crate::ExternalPaths(paths),
+                        paths,
                     });
-                    drop(state);
+                    std::mem::drop(state);
                     window.handle_input(input);
                     self.0.borrow_mut().xdnd_state.retrieved = true;
                 }
