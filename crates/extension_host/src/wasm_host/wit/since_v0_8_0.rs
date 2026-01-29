@@ -909,6 +909,158 @@ impl dap::Host for WasmState {
     }
 }
 
+impl terminal::Host for WasmState {
+    async fn create_terminal(
+        &mut self,
+        options: terminal::TerminalOptions,
+    ) -> wasmtime::Result<Result<terminal::TerminalHandle, String>> {
+        self.capability_granter.grant_terminal_create()?;
+        let ext_options = extension::TerminalOptions {
+            cwd: options.cwd.map(PathBuf::from),
+            env: options.env,
+            command: options.command,
+            args: options.args,
+            title_override: None,
+            in_pane_of: None,
+            activate: true,
+        };
+        let task =
+            extension::ExtensionTerminalProxy::create_terminal(&*self.host.proxy, ext_options);
+        match task.await {
+            Ok(handle) => Ok(Ok(handle)),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn send_text(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+        text: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.capability_granter.grant_terminal_input()?;
+        let task = extension::ExtensionTerminalProxy::send_text(&*self.host.proxy, terminal, text);
+        match task.await {
+            Ok(()) => Ok(Ok(())),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn send_key(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+        key: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.capability_granter.grant_terminal_input()?;
+        let task = extension::ExtensionTerminalProxy::send_key(&*self.host.proxy, terminal, key);
+        match task.await {
+            Ok(()) => Ok(Ok(())),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn read_screen(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+    ) -> wasmtime::Result<Result<terminal::TerminalContent, String>> {
+        self.capability_granter.grant_terminal_read()?;
+        let task = extension::ExtensionTerminalProxy::read_screen(&*self.host.proxy, terminal);
+        match task.await {
+            Ok(content) => Ok(Ok(terminal::TerminalContent {
+                lines: content.lines,
+                cursor_row: content.cursor_row,
+                cursor_col: content.cursor_col,
+            })),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn split_terminal(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+        direction: terminal::SplitDirection,
+        options: terminal::TerminalOptions,
+    ) -> wasmtime::Result<Result<terminal::TerminalHandle, String>> {
+        self.capability_granter.grant_terminal_create()?;
+        // WIT uses axis-based naming: horizontal = stacked vertically, vertical = side by side
+        let ext_direction = match direction {
+            terminal::SplitDirection::Horizontal => extension::SplitDirection::Down,
+            terminal::SplitDirection::Vertical => extension::SplitDirection::Right,
+        };
+        let ext_options = extension::TerminalOptions {
+            cwd: options.cwd.map(PathBuf::from),
+            env: options.env,
+            command: options.command,
+            args: options.args,
+            title_override: None,
+            in_pane_of: None,
+            activate: true,
+        };
+        let task = extension::ExtensionTerminalProxy::split_terminal(
+            &*self.host.proxy,
+            terminal,
+            ext_direction,
+            ext_options,
+        );
+        match task.await {
+            Ok(handle) => Ok(Ok(handle)),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn close_terminal(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.capability_granter.grant_terminal_close()?;
+        let task = extension::ExtensionTerminalProxy::close_terminal(&*self.host.proxy, terminal);
+        match task.await {
+            Ok(()) => Ok(Ok(())),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn list_terminals(
+        &mut self,
+    ) -> wasmtime::Result<Result<Vec<terminal::TerminalHandle>, String>> {
+        self.capability_granter.grant_terminal_read()?;
+        let task = extension::ExtensionTerminalProxy::list_terminals(&*self.host.proxy);
+        match task.await {
+            Ok(workspace_terminals) => {
+                let handles: Vec<terminal::TerminalHandle> = workspace_terminals
+                    .into_iter()
+                    .flat_map(|ws| ws.terminals.into_iter().map(|info| info.entity_id))
+                    .collect();
+                Ok(Ok(handles))
+            }
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn get_cwd(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+    ) -> wasmtime::Result<Result<Option<String>, String>> {
+        self.capability_granter.grant_terminal_read()?;
+        let task = extension::ExtensionTerminalProxy::get_cwd(&*self.host.proxy, terminal);
+        match task.await {
+            Ok(cwd) => Ok(Ok(cwd)),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+
+    async fn is_idle(
+        &mut self,
+        terminal: terminal::TerminalHandle,
+    ) -> wasmtime::Result<Result<bool, String>> {
+        self.capability_granter.grant_terminal_read()?;
+        let task = extension::ExtensionTerminalProxy::is_idle(&*self.host.proxy, terminal);
+        match task.await {
+            Ok(idle) => Ok(Ok(idle)),
+            Err(e) => Ok(Err(e.to_string())),
+        }
+    }
+}
+
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,

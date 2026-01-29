@@ -1,0 +1,63 @@
+interface terminal {
+    use common.{env-vars};
+
+    /// A handle to a terminal in the workspace.
+    type terminal-handle = u64;
+
+    /// Options for creating a terminal.
+    record terminal-options {
+        /// The working directory for the terminal.
+        cwd: option<string>,
+        /// Environment variables to set.
+        env: env-vars,
+        /// The command to run instead of the default shell.
+        command: option<string>,
+        /// Arguments for the command.
+        args: list<string>,
+    }
+
+    /// The content of a terminal screen.
+    record terminal-content {
+        /// The screen text, line by line.
+        lines: list<string>,
+        /// The cursor row position (0-indexed).
+        cursor-row: u32,
+        /// The cursor column position (0-indexed).
+        cursor-col: u32,
+    }
+
+    /// Direction to split a terminal pane.
+    enum split-direction {
+        /// Split horizontally (terminals stacked vertically).
+        horizontal,
+        /// Split vertically (terminals side by side).
+        vertical,
+    }
+
+    /// Creates a new terminal in the workspace.
+    create-terminal: func(options: terminal-options) -> result<terminal-handle, string>;
+
+    /// Sends text input to a terminal.
+    send-text: func(terminal: terminal-handle, text: string) -> result<_, string>;
+
+    /// Sends a special key to a terminal (e.g., "enter", "ctrl-c", "escape").
+    send-key: func(terminal: terminal-handle, key: string) -> result<_, string>;
+
+    /// Reads the current screen content of a terminal.
+    read-screen: func(terminal: terminal-handle) -> result<terminal-content, string>;
+
+    /// Splits the terminal pane, creating a new terminal.
+    split-terminal: func(terminal: terminal-handle, direction: split-direction, options: terminal-options) -> result<terminal-handle, string>;
+
+    /// Closes a terminal.
+    close-terminal: func(terminal: terminal-handle) -> result<_, string>;
+
+    /// Lists all terminals in the workspace.
+    list-terminals: func() -> result<list<terminal-handle>, string>;
+
+    /// Gets the terminal's current working directory.
+    get-cwd: func(terminal: terminal-handle) -> result<option<string>, string>;
+
+    /// Checks if the terminal is idle (waiting for input).
+    is-idle: func(terminal: terminal-handle) -> result<bool, string>;
+}

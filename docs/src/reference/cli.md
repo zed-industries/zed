@@ -189,3 +189,207 @@ On Windows, the CLI supports opening paths from WSL distributions. This is handl
 | `1`  | Error (details printed to stderr) |
 
 When using `--wait`, the exit code reflects whether the files were saved before closing.
+
+## Terminal Subcommands
+
+The `zed terminal` subcommands enable programmatic control of Zed's integrated terminals, allowing external tools, scripts, and AI agents to create, manage, and interact with terminal sessions.
+
+> **Note:** This feature is opt-in and disabled by default. Enable it in Settings > Terminal > CLI, or add `"terminal": { "cli_enabled": true }` to your settings. When enabled, any process running as your user can control terminals—this grants the same access you already have but through a programmatic interface.
+
+### Environment Variables
+
+Each terminal receives an environment variable that scripts can use for self-reference:
+
+- `ZED_TERM_ID` — The entity ID of the terminal (session-scoped, not persistent across Zed restarts)
+
+### Commands
+
+All terminal commands use the format: `zed terminal <command> [options]`
+
+#### `zed terminal create`
+
+Create a new terminal in the active workspace.
+
+```sh
+zed terminal create [options]
+```
+
+| Option                 | Description                                                        |
+| ---------------------- | ------------------------------------------------------------------ |
+| `--cwd <path>`         | Working directory for the terminal                                 |
+| `--command <cmd>`      | Command to run instead of default shell                            |
+| `--args <args>...`     | Arguments for the command (use `--` before args starting with `-`) |
+| `--env <KEY=VALUE>...` | Environment variables to set                                       |
+| `--title <title>`      | Title override for the terminal tab                                |
+| `--in-pane-of <id>`    | Create as a tab in the pane containing terminal with this ID       |
+| `--no-activate`        | Create as a background tab (don't focus)                           |
+
+Examples:
+
+```sh
+# Create a terminal in a specific directory
+zed terminal create --cwd /path/to/project
+
+# Run a specific command
+zed terminal create --command python --args script.py
+
+# Create with custom title and environment
+zed terminal create --title "Build Server" --env PORT=3000
+```
+
+#### `zed terminal send`
+
+Send text input to a terminal.
+
+```sh
+zed terminal send <terminal> <text>
+```
+
+The `<terminal>` argument can be an entity ID or a terminal title.
+
+Examples:
+
+```sh
+zed terminal send 12345 "npm run build"
+zed terminal send "Build Server" "exit"
+```
+
+#### `zed terminal key`
+
+Send a special key to a terminal.
+
+```sh
+zed terminal key <terminal> <key>
+```
+
+Keys use the same format as Zed keybindings. Modifiers (`ctrl`, `alt`, `shift`) can be combined with `-`. Examples: `enter`, `ctrl-c`, `alt-f`, `ctrl-shift-up`.
+
+Examples:
+
+```sh
+zed terminal key 12345 enter
+zed terminal key 12345 ctrl-c
+```
+
+#### `zed terminal read`
+
+Read the current screen content of a terminal.
+
+```sh
+zed terminal read <terminal>
+```
+
+Returns JSON with `lines` (array of strings), `cursor_row`, and `cursor_col`.
+
+#### `zed terminal list`
+
+List all terminals with their entity IDs and titles.
+
+```sh
+zed terminal list
+```
+
+Returns JSON with workspaces containing terminal arrays. The terminal you're running from (if any) is marked with `you_are_here: true`.
+
+#### `zed terminal cwd`
+
+Get the current working directory of a terminal.
+
+```sh
+zed terminal cwd <terminal>
+```
+
+#### `zed terminal idle`
+
+Check if a terminal is idle (no running foreground process).
+
+```sh
+zed terminal idle <terminal>
+```
+
+Returns JSON with `idle: true/false`.
+
+#### `zed terminal close`
+
+Close a terminal.
+
+```sh
+zed terminal close <terminal>
+```
+
+#### `zed terminal split`
+
+Split a terminal pane in a given direction, creating a new terminal.
+
+```sh
+zed terminal split <terminal> [--direction <direction>] [--title <title>]
+```
+
+Directions: `up`, `down`, `left`, `right` (default: `right`)
+
+Example:
+
+```sh
+zed terminal split 12345 --direction right --title "Tests"
+```
+
+#### `zed terminal layout`
+
+Get the terminal panel layout tree or reorganize terminals.
+
+```sh
+# Get current layout (returns JSON)
+zed terminal layout
+
+# Reorganize into a layout mode
+zed terminal layout --tile-vertical    # Side-by-side columns
+zed terminal layout --tile-horizontal  # Stacked rows
+zed terminal layout --consolidate      # All in one pane as tabs
+```
+
+#### `zed terminal focus`
+
+Focus a specific terminal.
+
+```sh
+zed terminal focus <terminal>
+```
+
+#### `zed terminal title`
+
+Set or clear the title override for a terminal.
+
+```sh
+zed terminal title <terminal> [--set <title>]
+```
+
+If `--set` is omitted, clears any title override.
+
+#### `zed terminal move`
+
+Move a terminal to another pane.
+
+```sh
+zed terminal move <terminal> --to-pane-of <other-terminal>
+```
+
+### Example: Automated Build Pipeline
+
+```sh
+#!/bin/bash
+# Create terminals for a development workflow
+
+# Create build terminal
+zed terminal create --title "Build" --cwd ~/project
+BUILD_ID=$(zed terminal list | jq -r '.workspaces[].terminals[] | select(.title=="Build") | .entity_id')
+
+# Create test terminal in same pane
+zed terminal create --title "Tests" --in-pane-of "$BUILD_ID" --no-activate
+
+# Split for logs
+zed terminal split "$BUILD_ID" --direction right --title "Logs"
+
+# Start build
+zed terminal send "Build" "npm run watch"
+zed terminal key "Build" enter
+```
