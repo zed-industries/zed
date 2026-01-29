@@ -1,21 +1,23 @@
-use gpui::{Action, AnyElement, Hsla, MouseButton, prelude::*, svg};
+use gpui::{
+    Action, AnyElement, Hsla, MAX_BUTTONS_PER_SIDE, MouseButton, WindowButton, prelude::*, svg,
+};
 use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
-    side: String,
-    buttons: Vec<gpui::WindowButton>,
+    id: &'static str,
+    buttons: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
     close_action: Box<dyn Action>,
 }
 
 impl LinuxWindowControls {
     pub fn new(
-        side: impl Into<String>,
-        buttons: Vec<gpui::WindowButton>,
+        id: &'static str,
+        buttons: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
         close_action: Box<dyn Action>,
     ) -> Self {
         Self {
-            side: side.into(),
+            id,
             buttons,
             close_action,
         }
@@ -24,38 +26,30 @@ impl LinuxWindowControls {
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if self.buttons.is_empty() {
-            return h_flex();
-        }
-
         let is_maximized = window.is_maximized();
-        let side = self.side.clone();
         let button_elements: Vec<AnyElement> = self
             .buttons
-            .into_iter()
-            .enumerate()
-            .map(|(i, button)| {
-                create_window_button(
-                    button,
-                    format!("{}-{}", side, i),
-                    is_maximized,
-                    &*self.close_action,
-                    cx,
-                )
+            .iter()
+            .filter_map(|b| *b)
+            .map(|button| {
+                create_window_button(button, button.id(), is_maximized, &*self.close_action, cx)
             })
             .collect();
 
         h_flex()
-            .gap_3()
-            .px_3()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(button_elements)
+            .id(self.id)
+            .when(!button_elements.is_empty(), |el| {
+                el.gap_3()
+                    .px_3()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .children(button_elements)
+            })
     }
 }
 
 fn create_window_button(
     button: gpui::WindowButton,
-    id: String,
+    id: &'static str,
     is_maximized: bool,
     close_action: &dyn Action,
     cx: &mut App,

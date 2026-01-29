@@ -170,7 +170,7 @@ impl LinuxCommon {
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
-            button_layout: WindowButtonLayout::default_layout(),
+            button_layout: WindowButtonLayout::default(),
             callbacks,
             signal,
             menus: Vec::new(),

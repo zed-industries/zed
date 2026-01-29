@@ -25,7 +25,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
-    button_layout: Option<String>,
+    button_layout: Option<gpui::WindowButtonLayout>,
 }
 
 impl PlatformTitleBar {
@@ -73,7 +73,7 @@ impl PlatformTitleBar {
         self.children = children.into_iter().collect();
     }
 
-    pub fn set_button_layout(&mut self, button_layout: Option<String>) {
+    pub fn set_button_layout(&mut self, button_layout: Option<gpui::WindowButtonLayout>) {
         self.button_layout = button_layout;
     }
 
@@ -94,14 +94,9 @@ impl Render for PlatformTitleBar {
         let button_layout = if self.platform_style == PlatformStyle::Linux
             && matches!(decorations, Decorations::Client { .. })
         {
-            Some(
-                self.button_layout
-                    .as_ref()
-                    .map(|layout| gpui::WindowButtonLayout::parse(layout))
-                    .unwrap_or_else(|| window.button_layout()),
-            )
+            self.button_layout.unwrap_or_else(|| window.button_layout())
         } else {
-            None
+            gpui::WindowButtonLayout::default()
         };
 
         let title_bar = h_flex()
@@ -154,16 +149,12 @@ impl Render for PlatformTitleBar {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
                     this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
-                } else if let Some(ref layout) = button_layout {
-                    if !layout.left.is_empty() {
-                        this.child(platform_linux::LinuxWindowControls::new(
-                            "left",
-                            layout.left.clone(),
-                            close_action.as_ref().boxed_clone(),
-                        ))
-                    } else {
-                        this.pl_2()
-                    }
+                } else if button_layout.left[0].is_some() {
+                    this.child(platform_linux::LinuxWindowControls::new(
+                        "left-window-controls",
+                        button_layout.left,
+                        close_action.as_ref().boxed_clone(),
+                    ))
                 } else {
                     this.pl_2()
                 }
@@ -201,16 +192,10 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Mac => title_bar,
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
-                            let button_layout = self
-                                .button_layout
-                                .as_ref()
-                                .map(|layout| gpui::WindowButtonLayout::parse(layout))
-                                .unwrap_or_else(|| window.button_layout());
-
                             let mut result = title_bar;
-                            if !button_layout.right.is_empty() {
+                            if button_layout.right[0].is_some() {
                                 result = result.child(platform_linux::LinuxWindowControls::new(
-                                    "right",
+                                    "right-window-controls",
                                     button_layout.right,
                                     close_action.as_ref().boxed_clone(),
                                 ));

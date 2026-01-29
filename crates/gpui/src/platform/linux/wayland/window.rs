@@ -1410,7 +1410,7 @@ impl PlatformWindow for WaylandWindow {
         let state = self.borrow();
         let client = state.client.get_client();
         drop(state);
-        client.borrow().common.button_layout.clone()
+        client.borrow().common.button_layout
     }
 }
 

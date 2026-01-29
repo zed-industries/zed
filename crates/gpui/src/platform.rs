@@ -455,13 +455,40 @@ pub enum WindowButton {
     Close,
 }
 
+impl WindowButton {
+    /// Returns a stable element ID for this button type
+    pub fn id(&self) -> &'static str {
+        match self {
+            WindowButton::Minimize => "minimize",
+            WindowButton::Maximize => "maximize-or-restore",
+            WindowButton::Close => "close",
+        }
+    }
+}
+
+/// Maximum number of buttons per side in the titlebar
+pub const MAX_BUTTONS_PER_SIDE: usize = 3;
+
 /// Window control button layout configuration
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowButtonLayout {
     /// Buttons displayed on the left side of the titlebar
-    pub left: Vec<WindowButton>,
+    pub left: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
     /// Buttons displayed on the right side of the titlebar
-    pub right: Vec<WindowButton>,
+    pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+}
+
+impl Default for WindowButtonLayout {
+    fn default() -> Self {
+        Self {
+            left: [None; MAX_BUTTONS_PER_SIDE],
+            right: [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close),
+            ],
+        }
+    }
 }
 
 impl WindowButtonLayout {
@@ -469,42 +496,31 @@ impl WindowButtonLayout {
     /// Format: "button1,button2:button3,button4"
     /// Left of colon = left side, right of colon = right side
     pub fn parse(layout_string: &str) -> Self {
-        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
-
-        let parse_buttons = |s: &str| -> Vec<WindowButton> {
-            s.split(',')
-                .filter_map(|name| match name.trim() {
+        fn parse_side(s: &str) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
+            let mut result = [None; MAX_BUTTONS_PER_SIDE];
+            let mut i = 0;
+            for name in s.split(',') {
+                if i >= MAX_BUTTONS_PER_SIDE {
+                    break;
+                }
+                if let Some(btn) = match name.trim() {
                     "minimize" => Some(WindowButton::Minimize),
                     "maximize" => Some(WindowButton::Maximize),
                     "close" => Some(WindowButton::Close),
                     _ => None,
-                })
-                .collect()
-        };
-
-        Self {
-            left: parse_buttons(left_str),
-            right: parse_buttons(right_str),
+                } {
+                    result[i] = Some(btn);
+                    i += 1;
+                }
+            }
+            result
         }
-    }
 
-    /// Returns the default layout matching current Zed behavior.
-    /// All buttons on the right: minimize, maximize, close
-    pub fn default_layout() -> Self {
+        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
         Self {
-            left: vec![],
-            right: vec![
-                WindowButton::Minimize,
-                WindowButton::Maximize,
-                WindowButton::Close,
-            ],
+            left: parse_side(left_str),
+            right: parse_side(right_str),
         }
-    }
-}
-
-impl Default for WindowButtonLayout {
-    fn default() -> Self {
-        Self::default_layout()
     }
 }
 
@@ -636,7 +652,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn button_layout(&self) -> WindowButtonLayout {
-        WindowButtonLayout::default_layout()
+        WindowButtonLayout::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
@@ -2069,21 +2085,25 @@ mod tests {
         let layout = WindowButtonLayout::parse("close,minimize:maximize");
         assert_eq!(
             layout.left,
-            vec![WindowButton::Close, WindowButton::Minimize]
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
         );
-        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
     }
 
     #[test]
     fn test_window_button_layout_parse_right_only() {
         let layout = WindowButtonLayout::parse("minimize,maximize,close");
-        assert_eq!(layout.left, vec![]);
+        assert_eq!(layout.left, [None, None, None]);
         assert_eq!(
             layout.right,
-            vec![
-                WindowButton::Minimize,
-                WindowButton::Maximize,
-                WindowButton::Close
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
             ]
         );
     }
@@ -2093,13 +2113,13 @@ mod tests {
         let layout = WindowButtonLayout::parse("close,minimize,maximize:");
         assert_eq!(
             layout.left,
-            vec![
-                WindowButton::Close,
-                WindowButton::Minimize,
-                WindowButton::Maximize
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize)
             ]
         );
-        assert_eq!(layout.right, vec![]);
+        assert_eq!(layout.right, [None, None, None]);
     }
 
     #[test]
@@ -2107,16 +2127,20 @@ mod tests {
         let layout = WindowButtonLayout::parse(" close , minimize : maximize ");
         assert_eq!(
             layout.left,
-            vec![WindowButton::Close, WindowButton::Minimize]
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
         );
-        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
     }
 
     #[test]
     fn test_window_button_layout_parse_empty() {
         let layout = WindowButtonLayout::parse("");
-        assert_eq!(layout.left, vec![]);
-        assert_eq!(layout.right, vec![]);
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
     }
 
     #[test]
@@ -2124,38 +2148,39 @@ mod tests {
         let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo");
         assert_eq!(
             layout.left,
-            vec![WindowButton::Close, WindowButton::Minimize]
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
         );
-        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
     }
 
     #[test]
     fn test_window_button_layout_parse_gnome_style() {
-        // GNOME default: close only on right
         let layout = WindowButtonLayout::parse("close");
-        assert_eq!(layout.left, vec![]);
-        assert_eq!(layout.right, vec![WindowButton::Close]);
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Close), None, None]);
     }
 
     #[test]
     fn test_window_button_layout_parse_elementary_style() {
-        // Elementary default: close on left, maximize on right
         let layout = WindowButtonLayout::parse("close:maximize");
-        assert_eq!(layout.left, vec![WindowButton::Close]);
-        assert_eq!(layout.right, vec![WindowButton::Maximize]);
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
     }
 
     #[test]
     fn test_window_button_layout_default() {
-        // KDE default: minimize, maximize, close on right
         let layout = WindowButtonLayout::default();
-        assert_eq!(layout.left, vec![]);
+        assert_eq!(layout.left, [None, None, None]);
         assert_eq!(
             layout.right,
-            vec![
-                WindowButton::Minimize,
-                WindowButton::Maximize,
-                WindowButton::Close
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
             ]
         );
     }

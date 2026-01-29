@@ -1768,6 +1768,6 @@ impl PlatformWindow for X11Window {
             return crate::WindowButtonLayout::default();
         };
         drop(state);
-        client.with_common(|common| common.button_layout.clone())
+        client.with_common(|common| common.button_layout)
     }
 }
