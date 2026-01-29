@@ -149,7 +149,12 @@ pub fn init(cx: &mut App) {
                     let thread = workspace
                         .panel::<AgentPanel>(cx)
                         .and_then(|panel| panel.read(cx).active_thread_view().cloned())
-                        .and_then(|thread_view| thread_view.read(cx).thread().cloned());
+                        .and_then(|thread_view| {
+                            thread_view
+                                .read(cx)
+                                .as_active_thread()
+                                .map(|r| r.thread.clone())
+                        });
 
                     if let Some(thread) = thread {
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
@@ -507,7 +512,7 @@ impl AgentPanel {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = ThreadStore::global(cx);
         let acp_history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
@@ -1221,9 +1226,10 @@ impl AgentPanel {
 
     pub(crate) fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.read(cx).thread().cloned()
-            }
+            ActiveView::ExternalAgentThread { thread_view, .. } => thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|r| r.thread.clone()),
             _ => None,
         }
     }
@@ -1638,7 +1644,11 @@ impl AgentPanel {
                     .as_native_thread(cx)
                     .map_or(false, |t| t.read(cx).is_generating_title());
 
-                if let Some(title_editor) = thread_view.read(cx).title_editor() {
+                if let Some(title_editor) = thread_view
+                    .read(cx)
+                    .as_active_thread()
+                    .and_then(|ready| ready.title_editor.clone())
+                {
                     let container = div()
                         .w_full()
                         .on_action({
@@ -2949,6 +2959,38 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
 
                     text_thread_editor.update(cx, |text_thread_editor, cx| {
                         text_thread_editor.quote_ranges(selection_ranges, snapshot, window, cx)
+                    });
+                }
+            });
+        });
+    }
+
+    fn quote_terminal_text(
+        &self,
+        workspace: &mut Workspace,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(window, cx) {
+            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
+        }
+
+        panel.update(cx, |_, cx| {
+            // Wait to create a new context until the workspace is no longer
+            // being updated.
+            cx.defer_in(window, move |panel, window, cx| {
+                if let Some(thread_view) = panel.active_thread_view() {
+                    thread_view.update(cx, |thread_view, cx| {
+                        thread_view.insert_terminal_text(text, window, cx);
+                    });
+                } else if let Some(text_thread_editor) = panel.active_text_thread_editor() {
+                    text_thread_editor.update(cx, |text_thread_editor, cx| {
+                        text_thread_editor.quote_terminal_text(text, window, cx)
                     });
                 }
             });

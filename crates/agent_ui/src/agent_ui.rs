@@ -137,6 +137,8 @@ actions!(
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
         OpenPermissionDropdown,
+        /// Toggles thinking mode for models that support extended thinking.
+        ToggleThinkingMode,
     ]
 );
 
@@ -256,6 +258,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
+    agent::ThreadStore::init_global(cx);
     assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {

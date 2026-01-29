@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression},
     vars::{self, PathCondition},
 };
 
@@ -175,12 +175,7 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
             "fetch-depth",
             "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
         )))
-        .add_step(
-            Step::new(step_name.clone())
-                .run(script)
-                .id(step_name)
-                .shell(BASH_SHELL),
-        );
+        .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
 }

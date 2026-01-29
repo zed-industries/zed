@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt;
-use util::shell::ShellKind;
+use util::shell::{PosixShell, ShellKind};
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
@@ -301,7 +301,8 @@ impl DockerExecConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let shell_kind = ShellKind::Posix;
+        // TODO: Consider using the remote's actual shell instead of hardcoding "sh"
+        let shell_kind = ShellKind::Posix(PosixShell::Sh);
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
         let server_mode = shell_kind

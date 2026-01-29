@@ -368,6 +368,7 @@ impl Worktree {
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
         scanning_enabled: bool,
+        worktree_id: WorktreeId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
@@ -404,7 +405,7 @@ impl Worktree {
                 repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
-                    cx.entity_id().as_u64(),
+                    worktree_id,
                     abs_path
                         .file_name()
                         .and_then(|f| f.to_str())
@@ -493,7 +494,7 @@ impl Worktree {
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Snapshot::new(
-                worktree.id,
+                WorktreeId::from_proto(worktree.id),
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
@@ -1831,7 +1832,7 @@ impl LocalWorktree {
             .unbounded_send((self.snapshot(), Arc::default()))
             .ok();
 
-        let worktree_id = cx.entity_id().as_u64();
+        let worktree_id = self.id.to_proto();
         let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes)) = snapshots_rx.next().await {
@@ -2137,13 +2138,13 @@ impl RemoteWorktree {
 
 impl Snapshot {
     pub fn new(
-        id: u64,
+        id: WorktreeId,
         root_name: Arc<RelPath>,
         abs_path: Arc<Path>,
         path_style: PathStyle,
     ) -> Self {
         Snapshot {
-            id: WorktreeId::from_usize(id as usize),
+            id,
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name
