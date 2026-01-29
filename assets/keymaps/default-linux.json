@@ -317,6 +317,7 @@
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
+      "ctrl-alt-k": "agent::ToggleThinkingMode",
     },
   },
   {

@@ -81,7 +81,7 @@ use crate::{
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
     KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleProfileSelector,
+    ToggleProfileSelector, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -5868,13 +5868,13 @@ impl AcpThreadView {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
-                            .child(self.render_follow_toggle(cx)),
+                            .child(self.render_follow_toggle(cx))
+                            .children(self.render_thinking_toggle(cx)),
                     )
                     .child(
                         h_flex()
                             .gap_1()
                             .children(self.render_token_usage(cx))
-                            .children(self.render_thinking_toggle(cx))
                             .when_some(self.as_active_thread(), |this, active| {
                                 this.children(active.profile_selector.clone()).map(|this| {
                                     // Either config_options_view OR (mode_selector + model_selector)
@@ -6253,18 +6253,22 @@ impl AcpThreadView {
 
         let thinking = thread.thinking_enabled();
 
-        let tooltip_label = if thinking {
-            "Disable Thinking Mode".to_string()
+        let (tooltip_label, icon) = if thinking {
+            ("Disable Thinking Mode", IconName::ThinkingMode)
         } else {
-            "Enable Thinking Mode".to_string()
+            ("Enable Thinking Mode", IconName::ToolThink)
         };
 
+        let focus_handle = self.message_editor.focus_handle(cx);
+
         Some(
-            IconButton::new("thinking-mode", IconName::ToolThink)
+            IconButton::new("thinking-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .toggle_state(thinking)
-                .tooltip(Tooltip::text(tooltip_label))
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+                })
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     if let Some(thread) = this.as_native_thread(cx) {
                         thread.update(cx, |thread, cx| {
@@ -8148,6 +8152,13 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(Self::open_add_context_menu))
+            .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |thread, cx| {
+                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                    });
+                }
+            }))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
