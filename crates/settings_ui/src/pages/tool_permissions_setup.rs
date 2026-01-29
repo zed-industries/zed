@@ -39,17 +39,10 @@ pub(crate) fn render_tool_permissions_setup_page(
     .into_any_element()
 }
 
+#[derive(IntoElement)]
 struct ToolPermissionsSetupPageView {
     page: Entity<ToolPermissionsSetupPage>,
     scroll_handle: ScrollHandle,
-}
-
-impl IntoElement for ToolPermissionsSetupPageView {
-    type Element = AnyElement;
-
-    fn into_element(self) -> Self::Element {
-        self.into_any_element()
-    }
 }
 
 impl RenderOnce for ToolPermissionsSetupPageView {

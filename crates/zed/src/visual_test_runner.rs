@@ -162,6 +162,11 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Create AppState using the test initialization
     let app_state = cx.update(|cx| init_app_state(cx));
 
+    // Set the global app state so settings_ui and other subsystems can find it
+    cx.update(|cx| {
+        AppState::set_global(Arc::downgrade(&app_state), cx);
+    });
+
     // Initialize all Zed subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
@@ -183,6 +188,18 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        settings_ui::init(cx);
+
+        // Initialize agent_ui (needed for agent thread tests)
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        agent_ui::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            prompt_builder,
+            app_state.languages.clone(),
+            true, // is_eval - skip language model settings initialization
+            cx,
+        );
 
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
@@ -476,6 +493,23 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
         Err(e) => {
             eprintln!("✗ diff_review_button: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 7: Tool Permissions Settings UI visual test
+    println!("\n--- Test 7: tool_permissions_settings ---");
+    match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ tool_permissions_settings: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ tool_permissions_settings: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ tool_permissions_settings: FAILED - {}", e);
             failed += 1;
         }
     }
@@ -2317,4 +2351,129 @@ fn run_agent_thread_view_test(
             Ok(TestResult::BaselineUpdated(p.clone()))
         }
     }
+}
+
+/// Visual test for the Tool Permissions Settings UI page
+///
+/// Opens the settings UI at the agent.tool_permissions path and takes a screenshot.
+#[cfg(target_os = "macos")]
+fn run_tool_permissions_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use zed_actions::OpenSettingsAt;
+
+    // Create a minimal workspace to dispatch the settings action from
+    let window_size = size(px(900.0), px(700.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window for settings test")?;
+
+    cx.run_until_parked();
+
+    // Dispatch the OpenSettingsAt action to open settings at the tool_permissions path
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent.tool_permissions".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt action")?;
+
+    cx.run_until_parked();
+
+    // Give the settings window time to open and render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Find the settings window - it should be the newest window (last in the list)
+    let all_windows = cx.update(|cx| cx.windows());
+    let settings_window = all_windows.last().copied().context("No windows found")?;
+
+    // Take screenshot of the settings window
+    let test_result = run_visual_test(
+        "tool_permissions_settings",
+        settings_window,
+        cx,
+        update_baseline,
+    )?;
+
+    // Save the screenshot to a known location for easy viewing
+    let output_dir = std::env::var("VISUAL_TEST_OUTPUT_DIR")
+        .unwrap_or_else(|_| "target/visual_tests".to_string());
+    let output_path = PathBuf::from(&output_dir).join("tool_permissions_settings.png");
+
+    // Capture one more screenshot and save it directly
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        std::fs::create_dir_all(&output_dir).ok();
+        let _: Result<(), _> = screenshot.save(&output_path);
+        println!("Screenshot saved to: {}", output_path.display());
+    }
+
+    // Clean up - close the settings window
+    let _ = cx.update_window(settings_window, |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    cx.run_until_parked();
+
+    // Give background tasks time to finish
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    Ok(test_result)
 }
