@@ -3,6 +3,11 @@ use std::borrow::Cow;
 use crate::shell::get_system_shell;
 use crate::shell::{Shell, ShellKind};
 
+const POSIX_STDIN_REDIRECT_PREFIX: char = '(';
+const POSIX_STDIN_REDIRECT_SUFFIX: &str = ") </dev/null";
+const POWERSHELL_STDIN_REDIRECT_PREFIX: &str = "$null | & {";
+const POWERSHELL_STDIN_REDIRECT_SUFFIX: &str = "}";
+
 /// ShellBuilder is used to turn a user-requested task into a
 /// program that can be executed by the shell.
 pub struct ShellBuilder {
@@ -117,6 +122,44 @@ impl ShellBuilder {
         }
     }
 
+    fn apply_stdin_redirect(&self, combined_command: &mut String) {
+        match self.kind {
+            Some(ShellKind::Fish) => {
+                combined_command.insert_str(0, "begin; ");
+                combined_command.push_str("; end </dev/null");
+            }
+            Some(
+                ShellKind::Posix(_)
+                | ShellKind::Nushell
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+                | ShellKind::Rc
+                | ShellKind::Xonsh
+                | ShellKind::Elvish,
+            ) => {
+                combined_command.insert(0, POSIX_STDIN_REDIRECT_PREFIX);
+                combined_command.push_str(POSIX_STDIN_REDIRECT_SUFFIX);
+            }
+            #[cfg(unix)]
+            None => {
+                combined_command.insert(0, POSIX_STDIN_REDIRECT_PREFIX);
+                combined_command.push_str(POSIX_STDIN_REDIRECT_SUFFIX);
+            }
+            Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => {
+                combined_command.insert_str(0, POWERSHELL_STDIN_REDIRECT_PREFIX);
+                combined_command.push_str(POWERSHELL_STDIN_REDIRECT_SUFFIX);
+            }
+            #[cfg(windows)]
+            None => {
+                combined_command.insert_str(0, POWERSHELL_STDIN_REDIRECT_PREFIX);
+                combined_command.push_str(POWERSHELL_STDIN_REDIRECT_SUFFIX);
+            }
+            Some(ShellKind::Cmd) => {
+                combined_command.push_str("< NUL");
+            }
+        }
+    }
+
     fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self.kind {
             Some(ref kind) => kind.args_for_shell(interactive, combined_command),
@@ -156,41 +199,7 @@ impl ShellBuilder {
                 command
             });
             if self.redirect_stdin {
-                match self.kind {
-                    Some(ShellKind::Fish) => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
-                    }
-                    Some(
-                        ShellKind::Posix(_)
-                        | ShellKind::Nushell
-                        | ShellKind::Csh
-                        | ShellKind::Tcsh
-                        | ShellKind::Rc
-                        | ShellKind::Xonsh
-                        | ShellKind::Elvish,
-                    ) => {
-                        combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
-                    }
-                    #[cfg(unix)]
-                    None => {
-                        combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
-                    }
-                    Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    #[cfg(windows)]
-                    None => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    Some(ShellKind::Cmd) => {
-                        combined_command.push_str("< NUL");
-                    }
-                }
+                self.apply_stdin_redirect(&mut combined_command);
             }
 
             self.args
@@ -214,41 +223,7 @@ impl ShellBuilder {
                 command
             });
             if self.redirect_stdin {
-                match self.kind {
-                    Some(ShellKind::Fish) => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
-                    }
-                    Some(
-                        ShellKind::Posix(_)
-                        | ShellKind::Nushell
-                        | ShellKind::Csh
-                        | ShellKind::Tcsh
-                        | ShellKind::Rc
-                        | ShellKind::Xonsh
-                        | ShellKind::Elvish,
-                    ) => {
-                        combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
-                    }
-                    #[cfg(unix)]
-                    None => {
-                        combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
-                    }
-                    Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    #[cfg(windows)]
-                    None => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    Some(ShellKind::Cmd) => {
-                        combined_command.push_str("< NUL");
-                    }
-                }
+                self.apply_stdin_redirect(&mut combined_command);
             }
 
             self.args
