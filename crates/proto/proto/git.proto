@@ -589,3 +589,13 @@ message RunGitHook {
     uint64 repository_id = 2;
     GitHook hook = 3;
 }
+
+message GitFileHistoryCount {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string path = 3;
+}
+
+message GitFileHistoryCountResponse {
+    uint64 count = 1;
+}
