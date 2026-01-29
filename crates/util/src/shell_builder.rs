@@ -44,7 +44,7 @@ impl ShellBuilder {
             self.program.clone()
         } else {
             match self.kind {
-                ShellKind::PowerShell | ShellKind::Pwsh => {
+                ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => {
                     format!("{} -C '{}'", self.program, command_to_use_in_label)
                 }
                 ShellKind::Cmd => {
@@ -64,9 +64,6 @@ impl ShellBuilder {
                         "{PROGRAM} {interactivity}-c '{command_to_use_in_label}'",
                         PROGRAM = self.program
                     )
-                }
-                ShellKind::UnknownWindows => {
-                    format!("{} -C '{}'", self.program, command_to_use_in_label)
                 }
             }
         }
