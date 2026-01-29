@@ -2019,7 +2019,12 @@ impl EditorElement {
                 // Scrollmanager
                 editor.scroll_manager.read(cx).scrollbars_visible()
             }
-            ShowScrollbar::System => self.editor.read(cx).scroll_manager.read(cx).scrollbars_visible(),
+            ShowScrollbar::System => self
+                .editor
+                .read(cx)
+                .scroll_manager
+                .read(cx)
+                .scrollbars_visible(),
             ShowScrollbar::Always => true,
             ShowScrollbar::Never => return None,
         };
@@ -2049,7 +2054,11 @@ impl EditorElement {
             right_margin,
             editor_width,
             show_scrollbars,
-            self.editor.read(cx).scroll_manager.read(cx).active_scrollbar_state(),
+            self.editor
+                .read(cx)
+                .scroll_manager
+                .read(cx)
+                .active_scrollbar_state(),
             window,
         ))
     }
@@ -2107,9 +2116,9 @@ impl EditorElement {
             .map(|vertical_scrollbar| vertical_scrollbar.hitbox.origin)
             .unwrap_or_else(|| editor_bounds.top_right());
 
-        let thumb_state = self
-            .editor
-            .read_with(cx, |editor, cx| editor.scroll_manager.read(cx).minimap_thumb_state());
+        let thumb_state = self.editor.read_with(cx, |editor, cx| {
+            editor.scroll_manager.read(cx).minimap_thumb_state()
+        });
 
         let show_thumb = match minimap_settings.thumb {
             MinimapThumb::Always => true,
@@ -4938,7 +4947,9 @@ impl EditorElement {
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor.sticky_headers(style, cx).unwrap_or_default();
+        let items = editor
+            .sticky_headers(&snapshot.display_snapshot, style, cx)
+            .unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -7089,7 +7100,12 @@ impl EditorElement {
         let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
         };
-        let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.read(cx).any_scrollbar_dragged();
+        let any_scrollbar_dragged = self
+            .editor
+            .read(cx)
+            .scroll_manager
+            .read(cx)
+            .any_scrollbar_dragged();
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
@@ -7643,7 +7659,12 @@ impl EditorElement {
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut layout) = layout.minimap.take() {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
-            let dragging_minimap = self.editor.read(cx).scroll_manager.read(cx).is_dragging_minimap();
+            let dragging_minimap = self
+                .editor
+                .read(cx)
+                .scroll_manager
+                .read(cx)
+                .is_dragging_minimap();
 
             window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
@@ -7941,7 +7962,8 @@ impl EditorElement {
                             / ScrollPixelOffset::from(line_height);
                         let mut scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
-                        let forbid_vertical_scroll = editor.scroll_manager.read(cx).forbid_vertical_scroll();
+                        let forbid_vertical_scroll =
+                            editor.scroll_manager.read(cx).forbid_vertical_scroll();
                         if forbid_vertical_scroll {
                             scroll_position.y = current_scroll_position.y;
                         }
@@ -9653,9 +9675,10 @@ impl Element for EditorElement {
                         autoscroll_containing_element,
                         needs_horizontal_autoscroll,
                     ) = self.editor.update(cx, |editor, cx| {
-                        let autoscroll_request = editor.scroll_manager.update(cx, |scroll_manager, _| {
-                            scroll_manager.take_autoscroll_request()
-                        });
+                        let autoscroll_request =
+                            editor.scroll_manager.update(cx, |scroll_manager, _| {
+                                scroll_manager.take_autoscroll_request()
+                            });
 
                         let autoscroll_containing_element =
                             autoscroll_request.is_some() || editor.has_pending_selection();

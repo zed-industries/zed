@@ -2869,10 +2869,7 @@ fn window_top(
     text_layout_details: &TextLayoutDetails,
     mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    let first_visible_line = text_layout_details
-        .scroll_anchor
-        .anchor
-        .to_display_point(map);
+    let first_visible_line = text_layout_details.scroll_anchor.top_display_point(map);
 
     if first_visible_line.row() != DisplayRow(0)
         && text_layout_details.vertical_scroll_margin as usize > times
@@ -2905,10 +2902,7 @@ fn window_middle(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details
-            .scroll_anchor
-            .anchor
-            .to_display_point(map);
+        let first_visible_line = text_layout_details.scroll_anchor.top_display_point(map);
 
         let max_visible_rows =
             (visible_rows as u32).min(map.max_point().row().0 - first_visible_line.row().0);
@@ -2931,10 +2925,7 @@ fn window_bottom(
     mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details
-            .scroll_anchor
-            .anchor
-            .to_display_point(map);
+        let first_visible_line = text_layout_details.scroll_anchor.top_display_point(map);
         let bottom_row = first_visible_line.row().0
             + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
         if bottom_row < map.max_point().row().0

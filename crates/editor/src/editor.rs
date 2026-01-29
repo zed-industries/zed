@@ -1971,6 +1971,7 @@ impl Editor {
 
     pub fn sticky_headers(
         &self,
+        display_snapshot: &DisplaySnapshot,
         style: &EditorStyle,
         cx: &App,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
@@ -1980,8 +1981,7 @@ impl Editor {
             .scroll_manager
             .read(cx)
             .anchor()
-            .anchor
-            .to_point(&multi_buffer_snapshot);
+            .top_point(display_snapshot);
         let max_row = multi_buffer_snapshot.max_point().row;
 
         let start_row = (multi_buffer_visible_start.row).min(max_row);
@@ -2340,7 +2340,7 @@ impl Editor {
             display_map: display_map.clone(),
             placeholder_display_map: None,
             selections,
-            scroll_manager: cx.new(|cx| ScrollManager::new(cx)),
+            scroll_manager: cx.new(|cx| ScrollManager::new(display_map.entity_id(), cx)),
             columnar_selection_state: None,
             add_selections_state: None,
             select_next_state: None,
@@ -2586,7 +2586,7 @@ impl Editor {
                         let snapshot = editor.snapshot(window, cx);
                         editor.update_restoration_data(cx, move |data| {
                             data.scroll_position = (
-                                new_anchor.top_row(snapshot.buffer_snapshot()),
+                                new_anchor.top_row(&snapshot.display_snapshot),
                                 new_anchor.offset,
                             );
                         });
@@ -5579,14 +5579,11 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> HashMap<ExcerptId, (Entity<Buffer>, clock::Global, Range<usize>)> {
         let project = self.project().cloned();
+        let scroll_anchor = self.scroll_manager.read(cx).anchor();
+        let display_snapshot = self.display_snapshot(cx);
+        let multi_buffer_visible_start = scroll_anchor.top_point(&display_snapshot);
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let multi_buffer_visible_start = self
-            .scroll_manager
-            .read(cx)
-            .anchor()
-            .anchor
-            .to_point(&multi_buffer_snapshot);
         let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
             multi_buffer_visible_start
                 + Point::new(self.visible_line_count(cx).unwrap_or(0.).ceil() as u32, 0),
@@ -7554,12 +7551,12 @@ impl Editor {
             self.debounced_selection_highlight_complete = false;
         }
         if on_buffer_edit || query_changed {
+            let display_snapshot = self.display_snapshot(cx);
             let multi_buffer_visible_start = self
                 .scroll_manager
                 .read(cx)
                 .anchor()
-                .anchor
-                .to_point(&multi_buffer_snapshot);
+                .top_point(&display_snapshot);
             let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
                 multi_buffer_visible_start
                     + Point::new(self.visible_line_count(cx).unwrap_or(0.).ceil() as u32, 0),
@@ -14969,12 +14966,13 @@ impl Editor {
         );
     }
 
-    fn navigation_data(&self, cursor_anchor: Anchor, cx: &App) -> NavigationData {
+    fn navigation_data(&self, cursor_anchor: Anchor, cx: &mut App) -> NavigationData {
         let buffer = self.buffer.read(cx).read(cx);
         let cursor_position = cursor_anchor.to_point(&buffer);
-        let scroll_anchor = self.scroll_manager.read(cx).anchor();
-        let scroll_top_row = scroll_anchor.top_row(&buffer);
         drop(buffer);
+        let scroll_anchor = self.scroll_manager.read(cx).anchor();
+        let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_top_row = scroll_anchor.top_row(&display_snapshot);
 
         NavigationData {
             cursor_anchor,
@@ -14984,7 +14982,7 @@ impl Editor {
         }
     }
 
-    fn navigation_entry(&self, cursor_anchor: Anchor, cx: &App) -> Option<NavigationEntry> {
+    fn navigation_entry(&self, cursor_anchor: Anchor, cx: &mut App) -> Option<NavigationEntry> {
         let Some(history) = self.nav_history.clone() else {
             return None;
         };

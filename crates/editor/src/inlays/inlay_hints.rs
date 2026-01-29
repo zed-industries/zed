@@ -2135,7 +2135,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         let visible_range_after_scrolls = editor_visible_range(&editor, cx);
         let visible_line_count = editor
-            .update(cx, |editor, _window, _| {
+            .update(cx, |editor, _window, cx| {
                 editor.visible_line_count(cx).unwrap()
             })
             .unwrap();

@@ -466,10 +466,10 @@ impl DisplayMap {
             )
             .snapshot;
 
-        if let Some((companion_dm, _)) = &self.companion {
-            let _ = companion_dm.update(cx, |dm, _cx| {
+        let companion_display_snapshot = if let Some((companion_dm, _)) = &self.companion {
+            let companion_snapshot = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
-                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(_cx));
+                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(cx));
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
@@ -477,8 +477,12 @@ impl DisplayMap {
                         their_companion_ref.map(|c| (c, dm.entity_id)),
                     );
                 }
+                dm.snapshot_without_companion(cx)
             });
-        }
+            companion_snapshot.ok().map(Box::new)
+        } else {
+            None
+        };
 
         DisplaySnapshot {
             block_snapshot,
@@ -489,6 +493,29 @@ impl DisplayMap {
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
+            display_map_id: self.entity_id,
+            companion_display_snapshot,
+        }
+    }
+
+    fn snapshot_without_companion(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
+        let (wrap_snapshot, wrap_edits) = self.sync_through_wrap(cx);
+        let block_snapshot = self
+            .block_map
+            .read(wrap_snapshot, wrap_edits, None, None)
+            .snapshot;
+
+        DisplaySnapshot {
+            block_snapshot,
+            diagnostics_max_severity: self.diagnostics_max_severity,
+            crease_snapshot: self.crease_map.snapshot(),
+            text_highlights: self.text_highlights.clone(),
+            inlay_highlights: self.inlay_highlights.clone(),
+            clip_at_line_ends: self.clip_at_line_ends,
+            masked: self.masked,
+            fold_placeholder: self.fold_placeholder.clone(),
+            display_map_id: self.entity_id,
+            companion_display_snapshot: None,
         }
     }
 
@@ -1555,9 +1582,15 @@ pub struct DisplaySnapshot {
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
+    display_map_id: EntityId,
+    pub(crate) companion_display_snapshot: Option<Box<DisplaySnapshot>>,
 }
 
 impl DisplaySnapshot {
+    pub fn display_map_id(&self) -> EntityId {
+        self.display_map_id
+    }
+
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
@@ -2733,7 +2766,7 @@ pub mod tests {
 
         _ = cx.update_window(window, |_, window, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, _cx| editor.text_layout_details(window, cx));
+                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
 
             let font_size = px(12.0);
             let wrap_width = Some(px(96.));

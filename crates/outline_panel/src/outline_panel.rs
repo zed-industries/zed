@@ -1148,7 +1148,15 @@ impl OutlinePanel {
                     }
 
                     active_editor.update(cx, |editor, cx| {
-                        editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, window, cx);
+                        editor.set_scroll_anchor(
+                            ScrollAnchor::from_parts(
+                                anchor,
+                                offset,
+                                editor.display_map.entity_id(),
+                            ),
+                            window,
+                            cx,
+                        );
                     });
                 }
 

@@ -230,7 +230,7 @@ impl FollowableItem for Editor {
             singleton: buffer.is_singleton(),
             title: buffer.explicit_title().map(ToOwned::to_owned),
             excerpts,
-            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor, &snapshot)),
+            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.raw_anchor(), &snapshot)),
             scroll_x: scroll_anchor.offset.x,
             scroll_y: scroll_anchor.offset.y,
             selections: self
@@ -305,7 +305,7 @@ impl FollowableItem for Editor {
                     let snapshot = self.buffer.read(cx).snapshot(cx);
                     let scroll_anchor = self.scroll_manager.read(cx).anchor();
                     update.scroll_top_anchor =
-                        Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
+                        Some(serialize_anchor(&scroll_anchor.raw_anchor(), &snapshot));
                     update.scroll_x = scroll_anchor.offset.x;
                     update.scroll_y = scroll_anchor.offset.y;
                     true
@@ -487,10 +487,11 @@ async fn update_editor_from_message(
             editor.request_autoscroll_remotely(Autoscroll::newest(), cx);
         } else if let Some(scroll_top_anchor) = scroll_top_anchor {
             editor.set_scroll_anchor_remote(
-                ScrollAnchor {
-                    anchor: scroll_top_anchor,
-                    offset: point(message.scroll_x, message.scroll_y),
-                },
+                ScrollAnchor::from_parts(
+                    scroll_top_anchor,
+                    point(message.scroll_x, message.scroll_y),
+                    editor.display_map.entity_id(),
+                ),
                 window,
                 cx,
             );
@@ -599,7 +600,8 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
-            let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+            let display_snapshot = self.display_snapshot(cx);
+            let newest_selection = self.selections.newest::<Point>(&display_snapshot);
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
@@ -608,9 +610,13 @@ impl Item for Editor {
             };
 
             let mut scroll_anchor = data.scroll_anchor;
-            if !buffer.can_resolve(&scroll_anchor.anchor) {
-                scroll_anchor.anchor = buffer.anchor_before(
-                    buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
+            if !scroll_anchor.can_resolve(&display_snapshot) {
+                scroll_anchor = ScrollAnchor::from_parts(
+                    buffer.anchor_before(
+                        buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
+                    ),
+                    scroll_anchor.offset,
+                    self.display_map.entity_id(),
                 );
             }
 
@@ -1373,7 +1379,11 @@ impl ProjectItem for Editor {
             let (top_row, offset) = restoration_data.scroll_position;
             let anchor =
                 Anchor::in_buffer(*excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
-            editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
+            editor.set_scroll_anchor(
+                ScrollAnchor::from_parts(anchor, offset, editor.display_map.entity_id()),
+                window,
+                cx,
+            );
         }
 
         editor

@@ -5,7 +5,7 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
+    InlayHintRefreshReason, RowExt, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
@@ -35,30 +35,96 @@ pub type ScrollPixelOffset = f64;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {
     pub offset: gpui::Point<ScrollOffset>,
-    pub anchor: Anchor,
+    anchor: Anchor,
+    pub display_map_id: gpui::EntityId,
 }
 
 impl ScrollAnchor {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(display_map_id: gpui::EntityId) -> Self {
         Self {
             offset: gpui::Point::default(),
             anchor: Anchor::min(),
+            display_map_id,
+        }
+    }
+
+    pub fn from_parts(
+        anchor: Anchor,
+        offset: gpui::Point<ScrollOffset>,
+        display_map_id: gpui::EntityId,
+    ) -> Self {
+        Self {
+            anchor,
+            offset,
+            display_map_id,
+        }
+    }
+
+    fn resolve_snapshot<'a>(&self, snapshot: &'a DisplaySnapshot) -> &'a DisplaySnapshot {
+        if self.display_map_id != snapshot.display_map_id() {
+            snapshot
+                .companion_display_snapshot
+                .as_deref()
+                .unwrap_or(snapshot)
+        } else {
+            snapshot
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
+        let resolved_snapshot = self.resolve_snapshot(snapshot);
+
         self.offset.apply_along(Axis::Vertical, |offset| {
             if self.anchor == Anchor::min() {
                 0.
             } else {
-                let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
+                let scroll_top = self
+                    .anchor
+                    .to_display_point(resolved_snapshot)
+                    .row()
+                    .as_f64();
                 (offset + scroll_top).max(0.)
             }
         })
     }
 
-    pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
-        self.anchor.to_point(buffer).row
+    pub fn top_row(&self, snapshot: &DisplaySnapshot) -> u32 {
+        self.top_point(snapshot).row
+    }
+
+    pub fn top_display_point(&self, snapshot: &DisplaySnapshot) -> DisplayPoint {
+        if self.display_map_id == snapshot.display_map_id() {
+            self.anchor.to_display_point(snapshot)
+        } else if let Some(companion) = &snapshot.companion_display_snapshot {
+            self.anchor.to_display_point(companion)
+        } else {
+            self.anchor.to_display_point(snapshot)
+        }
+    }
+
+    pub fn top_point(&self, snapshot: &DisplaySnapshot) -> Point {
+        if self.display_map_id == snapshot.display_map_id() {
+            self.anchor.to_point(snapshot.buffer_snapshot())
+        } else if let Some(companion) = &snapshot.companion_display_snapshot {
+            let display_point = self.anchor.to_display_point(companion);
+            display_point.to_point(snapshot)
+        } else {
+            self.anchor.to_point(snapshot.buffer_snapshot())
+        }
+    }
+
+    pub fn raw_anchor(&self) -> Anchor {
+        self.anchor
+    }
+
+    pub fn can_resolve(&self, snapshot: &DisplaySnapshot) -> bool {
+        if self.display_map_id == snapshot.display_map_id() {
+            snapshot.buffer_snapshot().can_resolve(&self.anchor)
+        } else if let Some(companion) = &snapshot.companion_display_snapshot {
+            companion.buffer_snapshot().can_resolve(&self.anchor)
+        } else {
+            false
+        }
     }
 }
 
@@ -174,10 +240,10 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new(display_map_id: gpui::EntityId, cx: &mut App) -> Self {
         ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
-            anchor: ScrollAnchor::new(),
+            anchor: ScrollAnchor::new(display_map_id),
             ongoing: OngoingScroll::new(),
             sticky_header_line_count: 0,
             autoscroll_request: None,
@@ -238,6 +304,7 @@ impl ScrollManager {
         scroll_beyond_last_line: ScrollBeyondLastLine,
         cx: &mut Context<Self>,
     ) -> Option<(ScrollAnchor, u32)> {
+        let display_map_id = map.display_map_id();
         let scroll_top = scroll_position.y.max(0.);
         let scroll_top = match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scroll_top,
@@ -280,6 +347,7 @@ impl ScrollManager {
                 scroll_position.x.max(0.),
                 scroll_top - top_anchor.to_display_point(map).row().as_f64(),
             ),
+            display_map_id,
         };
         let top_row = scroll_top_buffer_point.row;
 
@@ -291,6 +359,7 @@ impl ScrollManager {
             ScrollAnchor {
                 offset: gpui::Point::new(anchor.offset.x, self.anchor.offset.y),
                 anchor: self.anchor.anchor,
+                display_map_id: anchor.display_map_id,
             }
         } else {
             anchor
@@ -504,8 +573,12 @@ impl Editor {
             delta.y = 0.0;
         }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let position =
-            self.scroll_manager.read(cx).anchor.scroll_position(&display_map) + delta.map(f64::from);
+        let position = self
+            .scroll_manager
+            .read(cx)
+            .anchor
+            .scroll_position(&display_map)
+            + delta.map(f64::from);
         self.set_scroll_position_taking_display_map(position, true, false, display_map, window, cx);
     }
 
@@ -539,6 +612,7 @@ impl Editor {
             ScrollAnchor {
                 anchor: new_anchor,
                 offset: Default::default(),
+                display_map_id: self.display_map.entity_id(),
             },
             window,
             cx,
@@ -582,7 +656,11 @@ impl Editor {
             .set_previous_scroll_position(None);
 
         let adjusted_position = if self.scroll_manager.read(cx).forbid_vertical_scroll {
-            let current_position = self.scroll_manager.read(cx).anchor.scroll_position(&display_map);
+            let current_position = self
+                .scroll_manager
+                .read(cx)
+                .anchor
+                .scroll_position(&display_map);
             gpui::Point::new(scroll_position.x, current_position.y)
         } else {
             scroll_position
@@ -630,7 +708,10 @@ impl Editor {
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<ScrollOffset> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.scroll_manager.read(cx).anchor.scroll_position(&display_map)
+        self.scroll_manager
+            .read(cx)
+            .anchor
+            .scroll_position(&display_map)
     }
 
     pub fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -711,11 +792,11 @@ impl Editor {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let snapshot = &self.buffer().read(cx).snapshot(cx);
-        if !scroll_anchor.anchor.is_valid(snapshot) {
+        if !scroll_anchor.raw_anchor().is_valid(snapshot) {
             log::warn!("Invalid scroll anchor: {:?}", scroll_anchor);
             return;
         }
-        let top_row = scroll_anchor.anchor.to_point(snapshot).row;
+        let top_row = scroll_anchor.raw_anchor().to_point(snapshot).row;
         let changed = self.scroll_manager.update(cx, |scroll_manager, cx| {
             scroll_manager.set_anchor(scroll_anchor, cx)
         });
@@ -853,6 +934,7 @@ impl Editor {
             let scroll_anchor = ScrollAnchor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,
+                display_map_id: self.display_map.entity_id(),
             };
             self.set_scroll_anchor(scroll_anchor, window, cx);
         }

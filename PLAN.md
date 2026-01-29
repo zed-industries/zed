@@ -55,51 +55,42 @@ Key places to update (non-exhaustive):
 - `crates/agent_ui/src/text_thread_editor.rs`
 - `crates/editor/src/editor_tests.rs`
 
-### Step 3: Add `SplitSide` to `ScrollAnchor`
+### Step 3: Add `display_map_id` to `ScrollAnchor`
 
 **File:** `crates/editor/src/scroll.rs`
 
-We will reuse the existing `SplitSide` enum already defined in `crates/editor/src/element.rs`:
+Update `ScrollAnchor` to track which display map it originated from:
 
 ```rust
-pub enum SplitSide {
-    Left,
-    Right,
-}
-```
-
-Update `ScrollAnchor` to track which side it originated from:
-
-```rust
-use crate::element::SplitSide;
-
 pub struct ScrollAnchor {
     pub offset: gpui::Point<ScrollOffset>,
     pub anchor: Anchor,
-    /// Which side of a split diff this anchor belongs to.
-    /// `None` for non-split editors.
-    pub split_side: Option<SplitSide>,
+    /// The EntityId of the DisplayMap this anchor was created from.
+    /// Used to determine if translation is needed when resolving the anchor
+    /// in a split diff view where LHS and RHS have different display maps.
+    pub display_map_id: EntityId,
 }
 ```
 
-Update `ScrollAnchor::new()` to initialize `split_side: None`.
+Update `ScrollAnchor::new()` to take a `display_map_id: EntityId` parameter.
 
-### Step 4: Add `Option<SplitSide>` to `EditorSnapshot`
+### Step 4: Track `display_map_id` in `EditorSnapshot`
 
 **File:** `crates/editor/src/editor.rs`
 
-Add a field to `EditorSnapshot`:
+The `EditorSnapshot` already contains a `DisplaySnapshot`, and `DisplaySnapshot` has access to its `DisplayMap`'s `EntityId`. We can use this to compare against the `ScrollAnchor`'s `display_map_id` to determine if translation is needed.
+
+Ensure `DisplaySnapshot` exposes its `EntityId` (if not already available):
 
 ```rust
-pub struct EditorSnapshot {
-    // ... existing fields ...
-    /// Which side of a split diff this snapshot belongs to.
-    /// `None` for non-split editors.
-    pub split_side: Option<SplitSide>,
+impl DisplaySnapshot {
+    pub fn display_map_id(&self) -> EntityId {
+        self.display_map_id
+    }
 }
 ```
 
-Update `Editor::snapshot()` to populate this field. The editor will need to know its own split side, which can be stored as a field on `Editor` or passed in when creating the snapshot.
+This may require storing the `EntityId` in `DisplaySnapshot` when it's created from `DisplayMap::snapshot()`.
 
 ### Step 5: Add `companion_display_snapshot` to `DisplaySnapshot`
 
@@ -129,11 +120,11 @@ Update `EditorSnapshot::scroll_position()` to handle translation. The key insigh
 
 ```rust
 pub fn scroll_position(&self) -> gpui::Point<ScrollOffset> {
-    let anchor_side = self.scroll_anchor.split_side;
-    let snapshot_side = self.split_side;
-    
-    // If sides match or no translation needed, use direct calculation
-    if anchor_side == snapshot_side || anchor_side.is_none() || snapshot_side.is_none() {
+    let anchor_display_map_id = self.scroll_anchor.display_map_id;
+    let our_display_map_id = self.display_snapshot.display_map_id();
+
+    // If the anchor's display_map_id matches ours, use direct calculation
+    if anchor_display_map_id == our_display_map_id {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     } else {
         // Translation needed: resolve the anchor against the companion's snapshot
@@ -144,7 +135,7 @@ pub fn scroll_position(&self) -> gpui::Point<ScrollOffset> {
 }
 ```
 
-This works because `ScrollAnchor::scroll_position` converts the anchor to a display point using the provided snapshot. When the anchor is from the other side, we simply use the companion's snapshot (which understands that side's multibuffer) to resolve it correctly.
+This works because `ScrollAnchor::scroll_position` converts the anchor to a display point using the provided snapshot. When the anchor is from a different display map, we use the companion's snapshot (which understands that side's multibuffer) to resolve it correctly.
 
 ### Step 7: Share `ScrollManager` Between LHS and RHS
 
@@ -168,24 +159,24 @@ let lhs_editor = cx.new(|cx| {
 });
 ```
 
-### Step 8: Set `split_side` When Updating Scroll Position
+### Step 8: Set `display_map_id` When Updating Scroll Position
 
 **File:** `crates/editor/src/scroll.rs`
 
-When setting the scroll anchor, include the split side:
+When setting the scroll anchor, include the display map's EntityId:
 
 ```rust
 impl ScrollManager {
-    fn set_anchor(&mut self, anchor: ScrollAnchor, split_side: Option<SplitSide>) {
+    fn set_anchor(&mut self, anchor: ScrollAnchor, display_map_id: EntityId) {
         self.anchor = ScrollAnchor {
-            split_side,
+            display_map_id,
             ..anchor
         };
     }
 }
 ```
 
-The `Editor` will need to track and pass its `split_side` when updating scroll state.
+The `Editor` will pass its `display_map.entity_id()` when updating scroll state. This naturally identifies which side of a split the anchor belongs to without needing a separate enum.
 
 ### Step 9: Wire Up `companion_display_snapshot`
 
@@ -211,7 +202,7 @@ pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
     let companion_display_snapshot = self.companion_display_map
         .as_ref()
         .map(|companion| Box::new(companion.read(cx).snapshot_without_companion(cx)));
-    
+
     DisplaySnapshot {
         companion_display_snapshot,
         // ... rest of fields ...
