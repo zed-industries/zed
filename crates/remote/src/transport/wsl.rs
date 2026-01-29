@@ -470,7 +470,7 @@ impl RemoteConnection for WslRemoteConnection {
             write!(&mut exec, "{} -l", self.shell)?;
         }
         let (command, args) =
-            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
+            ShellBuilder::new(&Shell::Program(self.shell.clone())).build(Some(exec), &[]);
 
         let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![

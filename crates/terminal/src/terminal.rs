@@ -2561,7 +2561,7 @@ mod tests {
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
-            ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
+            ShellBuilder::new(&Shell::System).build(Some(command.to_owned()), &args);
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2782,7 +2782,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System, false)
+        let (program, args) = ShellBuilder::new(&Shell::System)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
             .update(|cx| {

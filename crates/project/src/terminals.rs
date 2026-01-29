@@ -524,8 +524,7 @@ impl Project {
             .and_then(|remote_client| remote_client.read(cx).shell())
             .map(Shell::Program)
             .unwrap_or_else(|| settings.shell.clone());
-        let is_windows = self.path_style(cx).is_windows();
-        let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
+        let builder = ShellBuilder::new(&shell).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let env_task = self.resolve_directory_environment(
