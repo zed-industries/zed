@@ -189,11 +189,14 @@ impl TeacherPrompt {
         prompt
     }
 
-    pub fn parse(example: &Example, response: &str) -> Result<String> {
+    pub fn parse(example: &Example, response: &str) -> Result<(String, Option<usize>)> {
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
-        let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
+        let new_editable_region = Self::extract_editable_region(&new_editable_region);
+        let cursor_offset = new_editable_region.find(Self::USER_CURSOR_MARKER);
+        let mut new_editable_region = new_editable_region.replace(Self::USER_CURSOR_MARKER, "");
+
         let old_editable_region = Self::extract_editable_region(
             &example
                 .prompt
@@ -222,11 +225,14 @@ impl TeacherPrompt {
             .matches('\n')
             .count();
 
-        let diff = language::unified_diff_with_offsets(
+        // Use full context so cursor offset (relative to editable region start) aligns with diff content
+        let editable_region_lines = old_editable_region.lines().count() as u32;
+        let diff = language::unified_diff_with_context(
             &old_editable_region,
             &new_editable_region,
             editable_region_start_line as u32,
             editable_region_start_line as u32,
+            editable_region_lines,
         );
 
         let diff = indoc::formatdoc! {"
@@ -237,7 +243,7 @@ impl TeacherPrompt {
             diff = diff,
         };
 
-        Ok(diff)
+        Ok((diff, cursor_offset))
     }
 
     fn format_edit_history(edit_history: &str) -> String {
@@ -320,16 +326,14 @@ impl TeacherPrompt {
         result
     }
 
-    fn extract_editable_region(text: &str) -> String {
+    fn extract_editable_region(text: &str) -> &str {
         let start = text
             .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
         let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
         let region = &text[start..end];
-        let region = region.strip_suffix('\n').unwrap_or(region);
-
-        region.replace(Self::USER_CURSOR_MARKER, "")
+        region.strip_suffix('\n').unwrap_or(region)
     }
 
     fn is_udiff_content_line(s: &str) -> bool {
@@ -538,24 +542,6 @@ mod tests {
         let text = indoc::indoc! {"
             one
             two three"};
-        let parsed = TeacherPrompt::extract_editable_region(text);
-        assert_eq!(
-            parsed,
-            indoc::indoc! {"
-            one
-            two three"}
-        );
-    }
-
-    #[test]
-    fn test_extract_editable_region_strips_cursor_marker() {
-        let text = indoc::indoc! {"
-            <|editable_region_start|>
-            one
-            <|user_cursor|>two three
-
-            <|editable_region_end|>
-            "};
         let parsed = TeacherPrompt::extract_editable_region(text);
         assert_eq!(
             parsed,

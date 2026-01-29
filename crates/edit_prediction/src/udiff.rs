@@ -190,38 +190,6 @@ pub async fn refresh_worktree_entries(
     Ok(())
 }
 
-/// Extract the diff for a specific file from a multi-file diff.
-/// Returns an error if the file is not found in the diff.
-pub fn extract_file_diff(full_diff: &str, file_path: &str) -> Result<String> {
-    let mut result = String::new();
-    let mut in_target_file = false;
-    let mut found_file = false;
-
-    for line in full_diff.lines() {
-        if line.starts_with("diff --git") {
-            if in_target_file {
-                break;
-            }
-            in_target_file = line.contains(&format!("a/{}", file_path))
-                || line.contains(&format!("b/{}", file_path));
-            if in_target_file {
-                found_file = true;
-            }
-        }
-
-        if in_target_file {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    if !found_file {
-        anyhow::bail!("File '{}' not found in diff", file_path);
-    }
-
-    Ok(result)
-}
-
 pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
     if prefix.is_empty() {
         return Cow::Borrowed(diff);
@@ -1455,63 +1423,6 @@ mod tests {
         });
 
         FakeFs::new(cx.background_executor.clone())
-    }
-
-    #[test]
-    fn test_extract_file_diff() {
-        let multi_file_diff = indoc! {r#"
-            diff --git a/file1.txt b/file1.txt
-            index 1234567..abcdefg 100644
-            --- a/file1.txt
-            +++ b/file1.txt
-            @@ -1,3 +1,4 @@
-             line1
-            +added line
-             line2
-             line3
-            diff --git a/file2.txt b/file2.txt
-            index 2345678..bcdefgh 100644
-            --- a/file2.txt
-            +++ b/file2.txt
-            @@ -1,2 +1,2 @@
-            -old line
-            +new line
-             unchanged
-        "#};
-
-        let file1_diff = extract_file_diff(multi_file_diff, "file1.txt").unwrap();
-        assert_eq!(
-            file1_diff,
-            indoc! {r#"
-                diff --git a/file1.txt b/file1.txt
-                index 1234567..abcdefg 100644
-                --- a/file1.txt
-                +++ b/file1.txt
-                @@ -1,3 +1,4 @@
-                 line1
-                +added line
-                 line2
-                 line3
-            "#}
-        );
-
-        let file2_diff = extract_file_diff(multi_file_diff, "file2.txt").unwrap();
-        assert_eq!(
-            file2_diff,
-            indoc! {r#"
-                diff --git a/file2.txt b/file2.txt
-                index 2345678..bcdefgh 100644
-                --- a/file2.txt
-                +++ b/file2.txt
-                @@ -1,2 +1,2 @@
-                -old line
-                +new line
-                 unchanged
-            "#}
-        );
-
-        let result = extract_file_diff(multi_file_diff, "nonexistent.txt");
-        assert!(result.is_err());
     }
 
     #[test]

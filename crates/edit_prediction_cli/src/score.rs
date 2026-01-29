@@ -60,7 +60,9 @@ pub async fn run_scoring(
     let mut scores = vec![];
     for prediction in &example.predictions {
         let actual_patch = prediction.actual_patch.clone().or_else(|| {
-            parse_prediction_output(example, &prediction.actual_output, prediction.provider).ok()
+            parse_prediction_output(example, &prediction.actual_output, prediction.provider)
+                .ok()
+                .map(|(patch, _)| patch)
         });
 
         let Some(actual_patch) = actual_patch else {
