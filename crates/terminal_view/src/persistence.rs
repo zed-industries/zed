@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{StreamExt as _, stream::FuturesUnordered};
+use futures::{StreamExt as _, stream::FuturesOrdered};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -242,7 +242,7 @@ async fn deserialize_pane_group(
 
                     let items = pane.update_in(cx, |pane, window, cx| {
                         populate_pane_items(pane, new_items, active_item, window, cx);
-                        pane.set_pinned_count(pinned_count);
+                        pane.set_pinned_count(pinned_count.min(pane.items_len()));
                         pane.items_len()
                     });
                     // Avoid blank panes in splits
@@ -290,7 +290,7 @@ fn deserialize_terminal_views(
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
 ) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
-    let mut deserialized_items = item_ids
+    let deserialized_items = item_ids
         .iter()
         .map(|item_id| {
             cx.update(|window, cx| {
@@ -305,15 +305,12 @@ fn deserialize_terminal_views(
             })
             .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
         })
-        .collect::<FuturesUnordered<_>>();
+        .collect::<FuturesOrdered<_>>();
     async move {
-        let mut items = Vec::with_capacity(deserialized_items.len());
-        while let Some(item) = deserialized_items.next().await {
-            if let Some(item) = item.log_err() {
-                items.push(item);
-            }
-        }
-        items
+        deserialized_items
+            .filter_map(|item| async { item.log_err() })
+            .collect()
+            .await
     }
 }
 
