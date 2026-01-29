@@ -1761,9 +1761,18 @@ impl TextThreadEditor {
         cx: &mut Context<Self>,
     ) {
         let crease_title = "terminal".to_string();
-        let formatted_text = format!("```terminal\n{}\n```", text);
+        let formatted_text = format!("```console\n{}\n```\n", text);
 
         self.editor.update(cx, |editor, cx| {
+            // Insert newline first if not at the start of a line
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            if point.column > 0 {
+                editor.insert("\n", window, cx);
+            }
+
             let point = editor
                 .selections
                 .newest::<Point>(&editor.display_snapshot(cx))
@@ -3642,7 +3651,7 @@ mod tests {
                 let text = editor.text(cx);
                 // The text should contain the terminal output wrapped in a code block
                 assert!(
-                    text.contains(&format!("```terminal\n{}\n```", terminal_output)),
+                    text.contains(&format!("```console\n{}\n```", terminal_output)),
                     "Terminal text should be wrapped in code block. Got: {}",
                     text
                 );

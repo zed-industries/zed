@@ -322,7 +322,7 @@ impl UserMessage {
                                 &mut selection_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: "terminal",
+                                    tag: "console",
                                     text: content
                                 }
                             )
