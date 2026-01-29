@@ -50,6 +50,8 @@ use std::{
     sync::{Arc, OnceLock},
     time::Instant,
 };
+use std::time::Duration;
+use tokio::time::timeout;
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
@@ -1276,11 +1278,23 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                                 cx,
                             )
                         });
-                        open_task.await.map(|_| ())
+
+                        // SAFETY: Add a 5-second timeout to prevent crash loops
+                        // caused by parser failures (e.g., tree-sitter-html on large files).
+                        match timeout(Duration::from_secs(5), open_task).await {
+                            Ok(inner_result) => inner_result,
+                            Err(_) => {
+                                log::error!(
+                                    "Timeout restoring workspace {:?}. Skipping to prevent hang.",
+                                    paths.paths()
+                                );
+                                Ok(())
+                            }
+                        }
                     });
 
                     // If we're using system window tabs and this is the first workspace,
-                    // wait for it to finish so that the other windows can be added as tabs.
+                    // wait for it to finish so that other windows can be added as tabs.
                     if use_system_window_tabs && index == 0 {
                         results.push(task.await);
                     } else {
@@ -1333,7 +1347,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 )
             };
 
-            // Try to find an active workspace to show the toast
+            // Try to find an active workspace to show it to toast
             let toast_shown = cx.update(|cx| {
                 if let Some(window) = cx.active_window()
                     && let Some(workspace) = window.downcast::<Workspace>()
@@ -1350,7 +1364,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             });
 
             // If we couldn't show a toast (no windows opened successfully),
-            // we've already logged the errors above, so the user can check logs
+            // we've already logged to errors above, so user can check logs
             if !toast_shown {
                 log::error!(
                     "Failed to show notification for window restoration errors, because no workspace windows were available."
