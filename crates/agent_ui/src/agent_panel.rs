@@ -149,7 +149,12 @@ pub fn init(cx: &mut App) {
                     let thread = workspace
                         .panel::<AgentPanel>(cx)
                         .and_then(|panel| panel.read(cx).active_thread_view().cloned())
-                        .and_then(|thread_view| thread_view.read(cx).thread().cloned());
+                        .and_then(|thread_view| {
+                            thread_view
+                                .read(cx)
+                                .as_active_thread()
+                                .map(|r| r.thread.clone())
+                        });
 
                     if let Some(thread) = thread {
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
@@ -1221,9 +1226,10 @@ impl AgentPanel {
 
     pub(crate) fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.read(cx).thread().cloned()
-            }
+            ActiveView::ExternalAgentThread { thread_view, .. } => thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|r| r.thread.clone()),
             _ => None,
         }
     }
@@ -1638,7 +1644,11 @@ impl AgentPanel {
                     .as_native_thread(cx)
                     .map_or(false, |t| t.read(cx).is_generating_title());
 
-                if let Some(title_editor) = thread_view.read(cx).title_editor() {
+                if let Some(title_editor) = thread_view
+                    .read(cx)
+                    .as_active_thread()
+                    .and_then(|ready| ready.title_editor.clone())
+                {
                     let container = div()
                         .w_full()
                         .on_action({

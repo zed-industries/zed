@@ -302,6 +302,20 @@ impl MessageEditor {
         }
     }
 
+    pub fn set_command_state(
+        &mut self,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.prompt_capabilities = prompt_capabilities;
+        self.available_commands = available_commands;
+        self.cached_user_commands = cached_user_commands;
+        self.cached_user_command_errors = cached_user_command_errors;
+    }
+
     fn command_hint(&self, snapshot: &MultiBufferSnapshot) -> Option<Inlay> {
         let available_commands = self.available_commands.borrow();
         if available_commands.is_empty() {
