@@ -30,6 +30,10 @@ impl From<Nextest> for Step<Run> {
     }
 }
 
+pub fn enable_long_paths() -> Step<Run> {
+    named::pwsh("git config --system core.longpaths true")
+}
+
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
         "actions",
