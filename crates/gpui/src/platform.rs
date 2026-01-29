@@ -1637,8 +1637,10 @@ pub enum ClipboardEntry {
     String(ClipboardString),
     /// An image entry
     Image(Image),
-    /// A file entry
+    /// A file paths entry
     ExternalPaths(crate::ExternalPaths),
+    /// A URLs entry (http/https)
+    Urls(SmallVec<[url::Url; 2]>),
 }
 
 impl ClipboardItem {
@@ -1689,7 +1691,7 @@ impl ClipboardItem {
         if answer.is_empty() {
             for entry in self.entries.iter() {
                 if let ClipboardEntry::ExternalPaths(paths) = entry {
-                    for path in &paths.0 {
+                    for path in paths.paths() {
                         use std::fmt::Write as _;
                         _ = write!(answer, "{}", path.display());
                     }

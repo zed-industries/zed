@@ -7526,6 +7526,7 @@ dependencies = [
  "taffy",
  "thiserror 2.0.17",
  "unicode-segmentation",
+ "url",
  "usvg",
  "util",
  "util_macros",

@@ -593,8 +593,7 @@ impl ExternalDrop {
         })
     }
 
-    /// Convert to legacy ExternalPaths (paths only).
-    #[allow(deprecated)]
+    /// Convert to ExternalPaths (paths only, ignoring URLs).
     pub fn to_external_paths(&self) -> ExternalPaths {
         ExternalPaths(self.paths().cloned().collect())
     }
@@ -606,11 +605,7 @@ impl Render for ExternalDrop {
     }
 }
 
-/// A collection of paths from the platform, such as from a file drop.
-#[deprecated(
-    since = "0.3.0",
-    note = "Use ExternalDrop instead, which supports both files and URLs"
-)]
+/// A collection of paths from the platform, such as from a file drop or clipboard.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 

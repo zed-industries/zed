@@ -52,7 +52,6 @@ fn test_external_drop_to_legacy() {
         DropItem::Url(url::Url::parse("https://example.com/").unwrap()),
     ]);
 
-    #[allow(deprecated)]
     let legacy = drop.to_external_paths();
     assert_eq!(legacy.paths().len(), 1);
 }

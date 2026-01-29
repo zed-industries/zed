@@ -699,7 +699,7 @@ impl MacWindow {
                 pasteboard_types.push(NSFilenamesPboardType);
             }
             if drag_types.contains(&DragType::Urls) {
-                pasteboard_types.push(NSString::alloc(nil).init_str("public.url"));
+                pasteboard_types.push(ns_string("public.url"));
             }
             if !pasteboard_types.is_empty() {
                 let types_array = NSArray::arrayWithObjects(nil, &pasteboard_types);
@@ -2542,8 +2542,8 @@ fn external_drop_from_event(
     // Handle URLs
     if drag_types.contains(&DragType::Urls) {
         unsafe {
-            let url_type = NSString::alloc(nil).init_str("public.url");
-            let url_string_type = NSString::alloc(nil).init_str("public.url-name");
+            let url_type = ns_string("public.url");
+            let url_string_type = ns_string("public.url-name");
 
             // Try to get URL from pasteboard
             let pasteboard_string: id = msg_send![pasteboard, stringForType: url_type];
