@@ -42,8 +42,9 @@ impl ToolPermissionDecision {
     ///
     /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are
     ///   boolean operators on values (e.g., `$true and $false`), not command chaining.
-    /// - **Elvish**: Uses `;` to separate pipelines. The `and`/`or` special commands
-    ///   operate on expressions (e.g., `and (cmd1) (cmd2)`), requiring parentheses.
+    /// - **Elvish**: Uses `;` to separate pipelines, which brush-parser handles. Elvish
+    ///   does not have `&&` or `||` operators. Its `and`/`or` are special commands that
+    ///   operate on values, not command chaining (e.g., `and $true $false`).
     /// - **Rc (Plan 9)**: Uses `;` for sequential execution. Does not have `&&`/`||`.
     ///
     /// # Pattern Matching Tips

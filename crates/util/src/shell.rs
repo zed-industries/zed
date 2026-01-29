@@ -285,9 +285,9 @@ impl ShellKind {
     ///
     /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are boolean
     ///   operators on values (e.g., `$true and $false`), not command chaining operators.
-    /// - **Elvish**: Uses `;` to separate pipelines. The `and`/`or` special commands operate
-    ///   on expressions with short-circuit evaluation (e.g., `and (cmd1) (cmd2)`), requiring
-    ///   parentheses around commands.
+    /// - **Elvish**: Uses `;` to separate pipelines, which brush-parser handles. Elvish does
+    ///   not have `&&` or `||` operators. Its `and`/`or` are special commands that operate
+    ///   on values, not command chaining (e.g., `and $true $false`).
     /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
     ///   have `&&`/`||` operators for conditional chaining.
     pub fn supports_posix_chaining(&self) -> bool {
