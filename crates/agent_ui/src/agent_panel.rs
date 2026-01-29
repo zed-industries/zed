@@ -150,7 +150,10 @@ pub fn init(cx: &mut App) {
                         .panel::<AgentPanel>(cx)
                         .and_then(|panel| panel.read(cx).active_thread_view().cloned())
                         .and_then(|thread_view| {
-                            thread_view.read(cx).as_ready().map(|r| r.thread.clone())
+                            thread_view
+                                .read(cx)
+                                .as_active_thread()
+                                .map(|r| r.thread.clone())
                         });
 
                     if let Some(thread) = thread {
@@ -1223,9 +1226,10 @@ impl AgentPanel {
 
     pub(crate) fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.active_view {
-            ActiveView::ExternalAgentThread { thread_view, .. } => {
-                thread_view.read(cx).as_ready().map(|r| r.thread.clone())
-            }
+            ActiveView::ExternalAgentThread { thread_view, .. } => thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|r| r.thread.clone()),
             _ => None,
         }
     }
@@ -1642,7 +1646,7 @@ impl AgentPanel {
 
                 if let Some(title_editor) = thread_view
                     .read(cx)
-                    .as_ready()
+                    .as_active_thread()
                     .and_then(|ready| ready.title_editor.clone())
                 {
                     let container = div()

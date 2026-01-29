@@ -1,6 +1,6 @@
 use super::*;
 
-pub struct ReadyThreadState {
+pub struct ActiveThreadState {
     pub thread: Entity<AcpThread>,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -66,7 +66,7 @@ pub struct TurnFields {
     pub turn_tokens: Option<u64>,
 }
 
-impl ReadyThreadState {
+impl ActiveThreadState {
     pub fn new(
         thread: Entity<AcpThread>,
         workspace: WeakEntity<Workspace>,
@@ -361,7 +361,7 @@ impl ReadyThreadState {
         let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
-            if let ThreadState::Ready(ReadyThreadState {
+            if let ThreadState::Active(ActiveThreadState {
                 is_loading_contents,
                 ..
             }) = &mut this.thread_state
@@ -444,7 +444,7 @@ impl ReadyThreadState {
                 .ok();
             } else {
                 this.update(cx, |this, cx| {
-                    if let ThreadState::Ready(ReadyThreadState {
+                    if let ThreadState::Active(ActiveThreadState {
                         should_be_following,
                         ..
                     }) = &mut this.thread_state
@@ -972,7 +972,7 @@ impl ReadyThreadState {
             };
 
             this.update_in(cx, |this, window, cx| {
-                if let ThreadState::Ready(ReadyThreadState {
+                if let ThreadState::Active(ActiveThreadState {
                     resume_thread_metadata,
                     ..
                 }) = &mut this.thread_state

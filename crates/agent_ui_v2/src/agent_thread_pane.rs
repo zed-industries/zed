@@ -142,7 +142,7 @@ impl AgentThreadPane {
     fn title(&self, cx: &App) -> SharedString {
         if let Some(active_thread_view) = &self.thread_view {
             let thread_view = active_thread_view.view.read(cx);
-            if let Some(ready) = thread_view.as_ready() {
+            if let Some(ready) = thread_view.as_active_thread() {
                 let title = ready.thread.read(cx).title();
                 if !title.is_empty() {
                     return title;
