@@ -147,6 +147,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type SemanticTokensHighlights = TreeMap<BufferId, Arc<[SemanticTokenHighlight]>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
@@ -188,6 +189,8 @@ pub struct DisplayMap {
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
+    /// The semantic tokens from the language server.
+    pub semantic_token_highlights: SemanticTokensHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
     pub(crate) fold_placeholder: FoldPlaceholder,
@@ -300,6 +303,14 @@ impl Companion {
     }
 }
 
+/// A `SemanticToken`, but positioned to an offset in a buffer, and stylized.
+#[derive(Debug, Clone)]
+pub struct SemanticTokenHighlight {
+    pub range: Range<Anchor>,
+    pub style: HighlightStyle,
+    pub token_type: Option<SharedString>,
+}
+
 impl DisplayMap {
     pub fn new(
         buffer: Entity<MultiBuffer>,
@@ -339,6 +350,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
+            semantic_token_highlights: TreeMap::default(),
             clip_at_line_ends: false,
             masked: false,
             companion: None,
@@ -486,6 +498,7 @@ impl DisplayMap {
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
+            semantic_token_highlights: self.semantic_token_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
@@ -1207,11 +1220,16 @@ impl DisplayMap {
         Some((highlights.0, &highlights.1))
     }
 
-    #[cfg(feature = "test-support")]
     pub fn all_text_highlights(
         &self,
-    ) -> impl Iterator<Item = &Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        self.text_highlights.values()
+    ) -> impl Iterator<Item = (&HighlightKey, &Arc<(HighlightStyle, Vec<Range<Anchor>>)>)> {
+        self.text_highlights.iter()
+    }
+
+    pub fn all_semantic_token_highlights(
+        &self,
+    ) -> impl Iterator<Item = (&BufferId, &Arc<[SemanticTokenHighlight]>)> {
+        self.semantic_token_highlights.iter()
     }
 
     #[instrument(skip_all)]
@@ -1411,12 +1429,17 @@ impl DisplayMap {
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
+
+    pub fn invalidate_semantic_highlights(&mut self, buffer_id: BufferId) {
+        self.semantic_token_highlights.remove(&buffer_id);
+    }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub semantic_token_highlights: Option<&'a SemanticTokensHighlights>,
     pub styles: HighlightStyles,
 }
 
@@ -1551,6 +1574,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
+    semantic_token_highlights: SemanticTokensHighlights,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
@@ -1595,6 +1619,23 @@ impl DisplaySnapshot {
 
     pub fn is_empty(&self) -> bool {
         self.buffer_snapshot().len() == MultiBufferOffset(0)
+    }
+
+    /// Returns whether tree-sitter syntax highlighting should be used.
+    /// Returns `false` if any buffer with semantic token highlights has the "full" mode setting,
+    /// meaning LSP semantic tokens should replace tree-sitter highlighting.
+    pub fn use_tree_sitter_for_syntax(&self, position: DisplayRow, cx: &App) -> bool {
+        let position = DisplayPoint::new(position, 0);
+        let Some((buffer_snapshot, ..)) = self.point_to_buffer_point(position.to_point(self))
+        else {
+            return false;
+        };
+        let settings = language_settings(
+            buffer_snapshot.language().map(|l| l.name()),
+            buffer_snapshot.file(),
+            cx,
+        );
+        settings.semantic_tokens.use_tree_sitter()
     }
 
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
@@ -1772,6 +1813,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
+                semantic_token_highlights: Some(&self.semantic_token_highlights),
                 styles: highlight_styles,
             },
         )
