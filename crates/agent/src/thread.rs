@@ -317,7 +317,7 @@ impl UserMessage {
                         MentionUri::Diagnostics { .. } => {
                             write!(&mut diagnostics_context, "\n{}\n", content).ok();
                         }
-                        MentionUri::TerminalSelection => {
+                        MentionUri::TerminalSelection { .. } => {
                             write!(
                                 &mut selection_context,
                                 "\n{}",

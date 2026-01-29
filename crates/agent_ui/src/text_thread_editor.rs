@@ -65,10 +65,8 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use workspace::{
     Save, Toast, Workspace,
-    dock::Panel,
     item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
@@ -1498,39 +1496,8 @@ impl TextThreadEditor {
             return;
         };
 
-        // Try terminal selection first (requires focus, so more specific)
-        if let Some(terminal_text) = maybe!({
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx)?;
-
-            if !terminal_panel
-                .read(cx)
-                .focus_handle(cx)
-                .contains_focused(window, cx)
-            {
-                return None;
-            }
-
-            let terminal_view = terminal_panel.read(cx).pane().and_then(|pane| {
-                pane.read(cx)
-                    .active_item()
-                    .and_then(|t| t.downcast::<TerminalView>())
-            })?;
-
-            terminal_view
-                .read(cx)
-                .terminal()
-                .read(cx)
-                .last_content
-                .selection_text
-                .clone()
-        }) {
-            if !terminal_text.is_empty() {
-                agent_panel_delegate.quote_terminal_text(workspace, terminal_text, window, cx);
-                return;
-            }
-        }
-
-        // Try editor selection
+        // Get buffer info for the delegate call (even if empty, AcpThreadView ignores these
+        // params and calls insert_selections which handles both terminal and buffer)
         if let Some((selections, buffer)) = maybe!({
             let editor = workspace
                 .active_item(cx)
@@ -1551,9 +1518,7 @@ impl TextThreadEditor {
             });
             Some((selections, buffer))
         }) {
-            if !selections.is_empty() {
-                agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
-            }
+            agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
         }
     }
 

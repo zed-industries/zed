@@ -6621,7 +6621,7 @@ impl AcpThreadView {
             .map(|active| active.prompt_capabilities.borrow().image)
             .unwrap_or_default();
 
-        let has_selection = workspace
+        let has_editor_selection = workspace
             .upgrade()
             .and_then(|ws| {
                 ws.read(cx)
@@ -6633,6 +6633,13 @@ impl AcpThreadView {
                     editor.has_non_empty_selection(&editor.display_snapshot(cx))
                 })
             });
+
+        let has_terminal_selection = workspace
+            .upgrade()
+            .and_then(|ws| ws.read(cx).panel::<TerminalPanel>(cx))
+            .is_some_and(|panel| !panel.read(cx).terminal_selections(cx).is_empty());
+
+        let has_selection = has_editor_selection || has_terminal_selection;
 
         ContextMenu::build(window, cx, move |menu, _window, _cx| {
             menu.key_context("AddContextMenu")
@@ -6721,10 +6728,10 @@ impl AcpThreadView {
                         .disabled(!has_selection)
                         .handler({
                             move |window, cx| {
-                                message_editor.focus_handle(cx).focus(window, cx);
-                                message_editor.update(cx, |editor, cx| {
-                                    editor.insert_selections(window, cx);
-                                });
+                                window.dispatch_action(
+                                    zed_actions::agent::AddSelectionToThread.boxed_clone(),
+                                    cx,
+                                );
                             }
                         }),
                 )
@@ -6870,7 +6877,7 @@ impl AcpThreadView {
                     cx.open_url(url.as_str());
                 }
                 MentionUri::Diagnostics { .. } => {}
-                MentionUri::TerminalSelection => {}
+                MentionUri::TerminalSelection { .. } => {}
             })
         } else {
             cx.open_url(&url);
