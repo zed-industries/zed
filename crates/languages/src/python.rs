@@ -1425,9 +1425,11 @@ impl ToolchainLister for PythonToolchainProvider {
                     let pyenv = pyenv.display();
                     activation_script.extend(match shell {
                         ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                        ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
+                        ShellKind::Posix | ShellKind::UnknownUnix => {
+                            Some(format!("\"{pyenv}\" shell - sh {version}"))
+                        }
                         ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                        ShellKind::PowerShell | ShellKind::Pwsh => None,
+                        ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => None,
                         ShellKind::Csh => None,
                         ShellKind::Tcsh => None,
                         ShellKind::Cmd => None,
