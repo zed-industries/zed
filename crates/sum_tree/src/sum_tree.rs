@@ -1,8 +1,8 @@
 mod cursor;
 mod tree_map;
 
-use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
+use heapless::Vec as ArrayVec;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator as _};
 use std::marker::PhantomData;
 use std::mem;
@@ -14,6 +14,17 @@ use ztracing::instrument;
 pub const TREE_BASE: usize = 2;
 #[cfg(not(test))]
 pub const TREE_BASE: usize = 6;
+
+// Helper for when we cannot use ArrayVec::<T>::push().unwrap() as T doesn't impl Debug
+trait CapacityResultExt {
+    fn unwrap_oob(self);
+}
+
+impl<T> CapacityResultExt for Result<(), T> {
+    fn unwrap_oob(self) {
+        self.unwrap_or_else(|_| panic!("item should fit into fixed size ArrayVec"))
+    }
+}
 
 /// An item that can be stored in a [`SumTree`]
 ///
@@ -241,8 +252,9 @@ impl<T: Item> SumTree<T> {
 
         let mut iter = iter.into_iter().fuse().peekable();
         while iter.peek().is_some() {
-            let items: ArrayVec<T, { 2 * TREE_BASE }> = iter.by_ref().take(2 * TREE_BASE).collect();
-            let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
+            let items: ArrayVec<T, { 2 * TREE_BASE }, u8> =
+                iter.by_ref().take(2 * TREE_BASE).collect();
+            let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8> =
                 items.iter().map(|item| item.summary(cx)).collect();
 
             let mut summary = item_summaries[0].clone();
@@ -282,8 +294,8 @@ impl<T: Item> SumTree<T> {
                 };
                 let child_summary = child_node.summary();
                 <T::Summary as Summary>::add_summary(summary, child_summary, cx);
-                child_summaries.push(child_summary.clone());
-                child_trees.push(child_node);
+                child_summaries.push(child_summary.clone()).unwrap_oob();
+                child_trees.push(child_node.clone()).unwrap_oob();
 
                 if child_trees.len() == 2 * TREE_BASE {
                     parent_nodes.extend(current_parent_node.take());
@@ -313,8 +325,8 @@ impl<T: Item> SumTree<T> {
             .into_par_iter()
             .chunks(2 * TREE_BASE)
             .map(|items| {
-                let items: ArrayVec<T, { 2 * TREE_BASE }> = items.into_iter().collect();
-                let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
+                let items: ArrayVec<T, { 2 * TREE_BASE }, u8> = items.into_iter().collect();
+                let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8> =
                     items.iter().map(|item| item.summary(cx)).collect();
                 let mut summary = item_summaries[0].clone();
                 for item_summary in &item_summaries[1..] {
@@ -335,9 +347,9 @@ impl<T: Item> SumTree<T> {
                 .into_par_iter()
                 .chunks(2 * TREE_BASE)
                 .map(|child_nodes| {
-                    let child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }> =
+                    let child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }, u8> =
                         child_nodes.into_iter().collect();
-                    let child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> = child_trees
+                    let child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8> = child_trees
                         .iter()
                         .map(|child_tree| child_tree.summary().clone())
                         .collect();
@@ -747,14 +759,16 @@ impl<T: Item> SumTree<T> {
                 <T::Summary as Summary>::add_summary(summary, other_node.summary(), cx);
 
                 let height_delta = *height - other_node.height();
-                let mut summaries_to_append = ArrayVec::<T::Summary, { 2 * TREE_BASE }>::new();
-                let mut trees_to_append = ArrayVec::<SumTree<T>, { 2 * TREE_BASE }>::new();
+                let mut summaries_to_append = ArrayVec::<T::Summary, { 2 * TREE_BASE }, u8>::new();
+                let mut trees_to_append = ArrayVec::<SumTree<T>, { 2 * TREE_BASE }, u8>::new();
                 if height_delta == 0 {
                     summaries_to_append.extend(other_node.child_summaries().iter().cloned());
                     trees_to_append.extend(other_node.child_trees().iter().cloned());
                 } else if height_delta == 1 && !other_node.is_underflowing() {
-                    summaries_to_append.push(other_node.summary().clone());
-                    trees_to_append.push(other)
+                    summaries_to_append
+                        .push(other_node.summary().clone())
+                        .unwrap_oob();
+                    trees_to_append.push(other).unwrap_oob();
                 } else {
                     let tree_to_append = child_trees
                         .last_mut()
@@ -764,15 +778,17 @@ impl<T: Item> SumTree<T> {
                         child_trees.last().unwrap().0.summary().clone();
 
                     if let Some(split_tree) = tree_to_append {
-                        summaries_to_append.push(split_tree.0.summary().clone());
-                        trees_to_append.push(split_tree);
+                        summaries_to_append
+                            .push(split_tree.0.summary().clone())
+                            .unwrap_oob();
+                        trees_to_append.push(split_tree).unwrap_oob();
                     }
                 }
 
                 let child_count = child_trees.len() + trees_to_append.len();
                 if child_count > 2 * TREE_BASE {
-                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }>;
-                    let right_summaries: ArrayVec<_, { 2 * TREE_BASE }>;
+                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }, u8>;
+                    let right_summaries: ArrayVec<_, { 2 * TREE_BASE }, u8>;
                     let left_trees;
                     let right_trees;
 
@@ -817,7 +833,7 @@ impl<T: Item> SumTree<T> {
                     let left_items;
                     let right_items;
                     let left_summaries;
-                    let right_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>;
+                    let right_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>;
 
                     let midpoint = (child_count + child_count % 2) / 2;
                     {
@@ -882,8 +898,10 @@ impl<T: Item> SumTree<T> {
             *child_summaries.first_mut().unwrap() = first.summary().clone();
             if let Some(tree) = res {
                 if child_trees.len() < 2 * TREE_BASE {
-                    child_summaries.insert(0, tree.summary().clone());
-                    child_trees.insert(0, tree);
+                    child_summaries
+                        .insert(0, tree.summary().clone())
+                        .unwrap_oob();
+                    child_trees.insert(0, tree).unwrap_oob();
                     None
                 } else {
                     let new_child_summaries = {
@@ -965,7 +983,7 @@ impl<T: Item> SumTree<T> {
                         .iter()
                         .chain(child_summaries.iter())
                         .cloned();
-                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }> =
+                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }, u8> =
                         all_summaries.by_ref().take(midpoint).collect();
                     *child_summaries = all_summaries.collect();
 
@@ -1014,7 +1032,7 @@ impl<T: Item> SumTree<T> {
                         .iter()
                         .chain(item_summaries.iter())
                         .cloned();
-                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }> =
+                    let left_summaries: ArrayVec<_, { 2 * TREE_BASE }, u8> =
                         all_summaries.by_ref().take(midpoint).collect();
                     *item_summaries = all_summaries.collect();
 
@@ -1037,11 +1055,11 @@ impl<T: Item> SumTree<T> {
     ) -> Self {
         let height = left.0.height() + 1;
         let mut child_summaries = ArrayVec::new();
-        child_summaries.push(left.0.summary().clone());
-        child_summaries.push(right.0.summary().clone());
+        child_summaries.push(left.0.summary().clone()).unwrap_oob();
+        child_summaries.push(right.0.summary().clone()).unwrap_oob();
         let mut child_trees = ArrayVec::new();
-        child_trees.push(left);
-        child_trees.push(right);
+        child_trees.push(left).unwrap_oob();
+        child_trees.push(right).unwrap_oob();
         SumTree(Arc::new(Node::Internal {
             height,
             summary: sum(child_summaries.iter(), cx),
@@ -1201,13 +1219,13 @@ pub enum Node<T: Item> {
     Internal {
         height: u8,
         summary: T::Summary,
-        child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
-        child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }>,
+        child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>,
+        child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }, u8>,
     },
     Leaf {
         summary: T::Summary,
-        items: ArrayVec<T, { 2 * TREE_BASE }>,
-        item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
+        items: ArrayVec<T, { 2 * TREE_BASE }, u8>,
+        item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>,
     },
 }
 
@@ -1272,14 +1290,14 @@ impl<T: Item> Node<T> {
         }
     }
 
-    fn child_trees(&self) -> &ArrayVec<SumTree<T>, { 2 * TREE_BASE }> {
+    fn child_trees(&self) -> &ArrayVec<SumTree<T>, { 2 * TREE_BASE }, u8> {
         match self {
             Node::Internal { child_trees, .. } => child_trees,
             Node::Leaf { .. } => panic!("Leaf nodes have no child trees"),
         }
     }
 
-    fn items(&self) -> &ArrayVec<T, { 2 * TREE_BASE }> {
+    fn items(&self) -> &ArrayVec<T, { 2 * TREE_BASE }, u8> {
         match self {
             Node::Leaf { items, .. } => items,
             Node::Internal { .. } => panic!("Internal nodes have no items"),
