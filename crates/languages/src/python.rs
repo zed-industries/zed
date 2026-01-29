@@ -1173,8 +1173,10 @@ fn micromamba_shell_name(kind: Option<ShellKind>) -> &'static str {
         Some(ShellKind::Csh) => "csh",
         Some(ShellKind::Fish) => "fish",
         Some(ShellKind::Nushell) => "nu",
-        Some(ShellKind::PowerShell) => "powershell",
+        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => "powershell",
         Some(ShellKind::Cmd) => "cmd.exe",
+        #[cfg(windows)]
+        None => "powershell",
         // default / catch-all:
         _ => "posix",
     }
