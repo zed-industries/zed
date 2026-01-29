@@ -1425,32 +1425,17 @@ impl ToolchainLister for PythonToolchainProvider {
                     let version = toolchain.environment.version.as_deref().unwrap_or("system");
                     let pyenv = &manager.executable;
                     let pyenv = pyenv.display();
+                    let pyenv_sh_activation = format!("\"{pyenv}\" shell - sh {version}");
                     activation_script.extend(match shell {
                         Some(ShellKind::Fish) => {
                             Some(format!("\"{pyenv}\" shell - fish {version}"))
                         }
+                        Some(ShellKind::Posix(_)) => Some(pyenv_sh_activation),
                         #[cfg(unix)]
-                        Some(ShellKind::Posix(_)) | None => {
-                            Some(format!("\"{pyenv}\" shell - sh {version}"))
-                        }
-                        #[cfg(windows)]
-                        Some(ShellKind::Posix(_)) => {
-                            Some(format!("\"{pyenv}\" shell - sh {version}"))
-                        }
+                        None => Some(pyenv_sh_activation),
                         Some(ShellKind::Nushell) => {
                             Some(format!("^\"{pyenv}\" shell - nu {version}"))
                         }
-                        #[cfg(windows)]
-                        Some(ShellKind::PowerShell)
-                        | Some(ShellKind::Pwsh)
-                        | Some(ShellKind::Csh)
-                        | Some(ShellKind::Tcsh)
-                        | Some(ShellKind::Cmd)
-                        | Some(ShellKind::Rc)
-                        | Some(ShellKind::Xonsh)
-                        | Some(ShellKind::Elvish)
-                        | None => None,
-                        #[cfg(unix)]
                         Some(ShellKind::PowerShell)
                         | Some(ShellKind::Pwsh)
                         | Some(ShellKind::Csh)
@@ -1459,6 +1444,8 @@ impl ToolchainLister for PythonToolchainProvider {
                         | Some(ShellKind::Rc)
                         | Some(ShellKind::Xonsh)
                         | Some(ShellKind::Elvish) => None,
+                        #[cfg(windows)]
+                        None => None,
                     })
                 }
                 _ => {}
