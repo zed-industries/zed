@@ -852,9 +852,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
                         if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
-                            // panel.update(cx, |panel, cx| {
-                            //     panel.open_with_initial_prompt(initial_prompt, window, cx);
-                            // });
+                            panel.update(cx, |panel, cx| {
+                                panel.new_external_thread_with_text(initial_prompt, window, cx);
+                            });
                         }
                     })
                 })
