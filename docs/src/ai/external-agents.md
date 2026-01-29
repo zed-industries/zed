@@ -2,8 +2,7 @@
 
 Zed supports many external agents, including CLI-based ones, through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation.
-[Claude Code](https://www.anthropic.com/claude-code) and [Codex](https://developers.openai.com/codex) are also included by default, and you can [add more custom ACP-compatible agents](#add-more-agents) as well.
+You can interact with agents like [Gemini CLI](https://github.com/google-gemini/gemini-cli) (that servers as the reference ACP implementation), as well as [Claude Code](https://www.anthropic.com/claude-code), [Codex](https://developers.openai.com/codex), [GitHub Copilot](https://github.com/github/copilot-language-server-release), and many others that [you can add](#add-more-agents).
 
 > Note that Zed's interaction with external agents is strictly UI-based; the billing, legal, and terms arrangement is directly between you and the agent provider.
 > Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
@@ -11,15 +10,13 @@ Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as t
 ## Gemini CLI {#gemini-cli}
 
 Zed provides the ability to run [Gemini CLI](https://github.com/google-gemini/gemini-cli) directly in the [agent panel](./agent-panel.md).
-
 Under the hood we run Gemini CLI in the background, and talk to it over ACP.
-This means that you're running the real Gemini CLI, with all of the advantages of that, but you can see and interact with files in your editor.
 
 ### Getting Started
 
-As of [Zed Stable v0.201.5](https://zed.dev/releases/stable/0.201.5) you should be able to use Gemini CLI directly from Zed. First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
+First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
 
 ```json [keymap]
 [
@@ -33,9 +30,11 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 #### Installation
 
-The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/google-gemini/gemini-cli). This installation is only available to Zed and is kept up to date as you use the agent.
+The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/google-gemini/gemini-cli).
+This installation is only available to Zed and is kept up to date as you use the agent.
 
-By default, Zed will use this managed version of Gemini CLI even if you have it installed globally. However, you can configure it to use a version in your `PATH` by adding this to your settings:
+By default, Zed will use this managed version of Gemini CLI even if you have it installed globally.
+However, you can configure it to use a version in your `PATH` by adding this to your settings:
 
 ```json [settings]
 {
@@ -52,9 +51,11 @@ By default, Zed will use this managed version of Gemini CLI even if you have it 
 After you have Gemini CLI running, you'll be prompted to choose your authentication method.
 
 Most users should click the "Log in with Google".
-This will cause a browser window to pop-up and auth directly with Gemini CLI. Zed does not see your OAuth or access tokens in this case.
+This will cause a browser window to pop-up and auth directly with Gemini CLI.
+Zed does not see your OAuth or access tokens in this case.
 
-You can also use the "Gemini API Key". If you select this, and have the `GEMINI_API_KEY` set, then we will use that.
+You can also use the "Gemini API Key".
+If you select this, and have the `GEMINI_API_KEY` set, then we will use that.
 Otherwise Zed will prompt you for an API key which will be stored securely in your keychain, and used to start Gemini CLI from within Zed.
 
 The "Vertex AI" option is for those who are using [Vertex AI](https://cloud.google.com/vertex-ai), and have already configured their environment correctly.
@@ -78,7 +79,7 @@ Under the hood, Zed runs Claude Code and communicate to it over ACP, through [a 
 
 Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Code thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
 
 ```json [keymap]
 [
@@ -92,7 +93,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 ### Authentication
 
-As of version `0.202.7` (stable) and `0.203.2` (preview), authentication to Zed's Claude Code installation is decoupled entirely from Zed's agent.
+As of version `0.202.7`, authentication to Zed's Claude Code installation is decoupled entirely from Zed's agent.
 That is to say, an Anthropic API key added via the [Zed Agent's settings](./llm-providers.md#anthropic) will _not_ be utilized by Claude Code for authentication and billing.
 
 To ensure you're using your billing method of choice, [open a new Claude Code thread](./agent-panel.md#new-thread).
@@ -122,7 +123,7 @@ If you want to override the executable used by the adapter, you can set the `CLA
 ### Usage
 
 Similar to Zed's first-party agent, you can use Claude Code to do anything that you need.
-And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
+And to give it context, you can @-mention files, recent threads, diagnostics, symbols, and more.
 
 In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview) to support some of its specific features.
 However, the SDK doesn't yet expose everything needed to fully support all of them:
@@ -147,10 +148,10 @@ Under the hood, Zed runs Codex CLI and communicates to it over ACP, through [a d
 
 ### Getting Started
 
-As of Zed Stable v0.208 you should be able to use Codex directly from Zed.
+As of version `0.208`, you should be able to use Codex directly from Zed.
 Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
 
 ```json
 [
@@ -199,9 +200,9 @@ And to give it context, you can @-mention files, symbols, or fetch the web.
 
 <div class="warning">
 
-Note that starting from v0.221.x, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
+Starting from `v0.221.x`, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
 Learn more about it in [the release blog post](https://zed.dev/blog/acp-registry).
-At some point in the near future, Agent Server extensions should be deprecated.
+At some point in the near future, Agent Server extensions will be deprecated.
 
 </div>
 
@@ -213,21 +214,21 @@ See what agents are available by filtering for "Agent Servers" in the extensions
 
 #### Overview
 
-As mentioned above, the Agent Server extensions should be deprecated in the near future to give room to the ACP Registry.
+As mentioned above, the Agent Server extensions will be deprecated in the near future to give room to the ACP Registry.
 
 [The ACP Registry](https://github.com/agentclientprotocol/registry) is an easy way for developers to distribute their ACP-compatible agents to any client that speaks the protocol.
-And for clients, it's the easiest way to get the latest version of the agent.
+And for clients, it's the easiest way to find and install agents while keeping their version always up-to-date.
 
 At the moment, the registry is a curated set of agents, including only the ones that [support authentication](https://agentclientprotocol.com/rfds/auth-methods).
 
 #### Using it in Zed
 
 Use the `zed: acp registry` command to quickly go to the ACP Registry page.
-There's also a button ("Add Agent") that takes you there in the Agent Pane's configuration view.
+There's also a button ("Add Agent") that takes you there in the agent panel's configuration view.
 
-From there, you can just install agents from the registry and use them right away in Zed's Agent Panel.
+From there, you can click to install your preferred agent and it will become available right away in the `+` icon button in the agent panel.
 
-If you installed the same agent through both the extension and the registry, the registry version takes precedence.
+> If you installed the same agent through both the extension and the registry, the registry version takes precedence.
 
 ### Custom Agents
 
@@ -257,9 +258,9 @@ This lets you see the messages being sent and received between Zed and the agent
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
 
+It's helpful to attach data from this view if you're opening issues about problems with external agents like Claude Code, Codex, OpenCode, etc.
+
 ## MCP Servers
 
-Note that for external agents, access to MCP servers [installed from Zed](./mcp.md) may vary depending on the ACP agent implementation.
-
-Regarding the built-in ones, Claude Code and Codex both support it, and Gemini CLI does not yet.
-In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).
+Note that for external agents, access to MCP servers [installed from Zed](./mcp.md) may vary depending on the ACP implementation.
+For example, Claude Code and Codex both support it, but Gemini CLI does not yet.
