@@ -102,6 +102,13 @@ struct State {
 }
 
 impl State {
+    fn is_unfolded(&self, entry_id: &ProjectEntryId) -> bool {
+        self.unfolded_dir_ids.contains(entry_id)
+            || self.edit_state.as_ref().map_or(false, |edit_state| {
+                edit_state.temporarily_unfolded == Some(*entry_id)
+            })
+    }
+
     fn derive(old: &Self) -> Self {
         Self {
             last_worktree_root_id: None,
@@ -201,6 +208,7 @@ struct EditState {
     processing_filename: Option<Arc<RelPath>>,
     previously_focused: Option<SelectedEntry>,
     validation_state: ValidationState,
+    temporarily_unfolded: Option<ProjectEntryId>,
 }
 
 impl EditState {
@@ -1996,6 +2004,7 @@ impl ProjectPanel {
             previously_focused: self.state.selection,
             depth: 0,
             validation_state: ValidationState::None,
+            temporarily_unfolded: (new_entry_id != entry_id).then_some(new_entry_id),
         });
         self.filename_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
@@ -2053,6 +2062,7 @@ impl ProjectPanel {
                     previously_focused: None,
                     depth: 0,
                     validation_state: ValidationState::None,
+                    temporarily_unfolded: None,
                 });
                 let file_name = entry.path.file_name().unwrap_or_default().to_string();
                 let selection = selection.unwrap_or_else(|| {
@@ -3539,19 +3549,6 @@ impl ProjectPanel {
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
-                        let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
-                            hash_map::Entry::Occupied(e) => e.into_mut(),
-                            hash_map::Entry::Vacant(e) => {
-                                // The first time a worktree's root entry becomes available,
-                                // mark that root entry as expanded.
-                                if let Some(entry) = worktree_snapshot.root_entry() {
-                                    e.insert(vec![entry.id]).as_slice()
-                                } else {
-                                    &[]
-                                }
-                            }
-                        };
-
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
                         if let Some(edit_state) = &new_state.edit_state
@@ -3586,7 +3583,7 @@ impl ProjectPanel {
                             }
                             if auto_collapse_dirs && entry.kind.is_dir() {
                                 auto_folded_ancestors.push(entry.id);
-                                if !new_state.unfolded_dir_ids.contains(&entry.id)
+                                if !new_state.is_unfolded(&entry.id)
                                     && let Some(root_path) = worktree_snapshot.root_entry()
                                 {
                                     let mut child_entries =
@@ -3717,6 +3714,20 @@ impl ProjectPanel {
                                         Some((entry.id, worktree_snapshot.id(), width_estimate))
                                 }
                             }
+
+                            let expanded_dir_ids =
+                                match new_state.expanded_dir_ids.entry(worktree_id) {
+                                    hash_map::Entry::Occupied(e) => e.into_mut(),
+                                    hash_map::Entry::Vacant(e) => {
+                                        // The first time a worktree's root entry becomes available,
+                                        // mark that root entry as expanded.
+                                        if let Some(entry) = worktree_snapshot.root_entry() {
+                                            e.insert(vec![entry.id]).as_slice()
+                                        } else {
+                                            &[]
+                                        }
+                                    }
+                                };
 
                             if expanded_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
@@ -6680,7 +6691,88 @@ fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
 }
 
 #[inline]
+fn is_entry_dir(kind: &EntryKind) -> bool {
+    matches!(
+        kind,
+        EntryKind::UnloadedDir | EntryKind::PendingDir | EntryKind::Dir
+    )
+}
+
+#[inline]
+fn sort_mode_rank(is_dir: bool, mode: &settings::ProjectPanelSortMode) -> Option<u8> {
+    match mode {
+        settings::ProjectPanelSortMode::Mixed => None,
+        settings::ProjectPanelSortMode::DirectoriesFirst => Some(if is_dir { 0 } else { 1 }),
+        settings::ProjectPanelSortMode::FilesFirst => Some(if is_dir { 1 } else { 0 }),
+    }
+}
+
+#[inline]
+fn ordering_for_first_entry(first_is_new: bool, new_before_other: bool) -> cmp::Ordering {
+    match (first_is_new, new_before_other) {
+        (true, true) => cmp::Ordering::Less,
+        (true, false) => cmp::Ordering::Greater,
+        (false, true) => cmp::Ordering::Greater,
+        (false, false) => cmp::Ordering::Less,
+    }
+}
+
+/// Compare two entries when creating a new entry.
+///
+/// ## Calculation
+/// | Mode             | Creating | Placement In Parent       |
+/// |------------------|----------|---------------------------|
+/// | DirectoriesFirst | dir      | top                       |
+/// | DirectoriesFirst | file     | top of files (after dirs) |
+/// | Mixed            | dir      | top                       |
+/// | Mixed            | file     | top                       |
+/// | FilesFirst       | dir      | top of dirs (after files) |
+/// | FilesFirst       | file     | top                       |
+#[inline]
+fn cmp_new_entry(
+    a: &Entry,
+    b: &Entry,
+    mode: &settings::ProjectPanelSortMode,
+) -> Option<cmp::Ordering> {
+    let (new_entry, other, first_is_new) = if a.id == NEW_ENTRY_ID {
+        (a, b, true)
+    } else {
+        (b, a, false)
+    };
+
+    if other.path.parent()? != new_entry.path.parent()? {
+        return None;
+    }
+
+    let new_is_dir = is_entry_dir(&new_entry.kind);
+    let other_is_dir = is_entry_dir(&other.kind);
+
+    if let (Some(new_rank), Some(other_rank)) = (
+        sort_mode_rank(new_is_dir, mode),
+        sort_mode_rank(other_is_dir, mode),
+    ) {
+        match new_rank.cmp(&other_rank) {
+            cmp::Ordering::Less => return Some(ordering_for_first_entry(first_is_new, true)),
+            cmp::Ordering::Greater => return Some(ordering_for_first_entry(first_is_new, false)),
+            _ => {}
+        }
+    } else {
+        if new_is_dir != other_is_dir {
+            return None;
+        }
+    }
+
+    Some(ordering_for_first_entry(first_is_new, true))
+}
+
+#[inline]
 fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
+    if a.id == NEW_ENTRY_ID || b.id == NEW_ENTRY_ID {
+        if let Some(ordering) = cmp_new_entry(a, b, mode) {
+            return ordering;
+        }
+    }
+
     match mode {
         settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b),
         settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b),
