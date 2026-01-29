@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{Focusable, div};
+use gpui::{ElementId, Focusable, div};
 use ui::{
     ActiveTheme as _, App, FluentBuilder as _, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Styled as _, Window,
@@ -7,21 +7,27 @@ use ui::{
 
 #[derive(IntoElement)]
 pub struct SettingsInputField {
+    id: Option<ElementId>,
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
     confirm: Option<Box<dyn Fn(Option<String>, &mut Window, &mut App)>>,
     tab_index: Option<isize>,
 }
 
-// TODO: Update the `ui_input::InputField` to use `window.use_state` and `RenceOnce` and remove this component
 impl SettingsInputField {
     pub fn new() -> Self {
         Self {
+            id: None,
             initial_text: None,
             placeholder: None,
             confirm: None,
             tab_index: None,
         }
+    }
+
+    pub fn with_id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     pub fn with_initial_text(mut self, initial_text: String) -> Self {
@@ -50,21 +56,39 @@ impl SettingsInputField {
 
 impl RenderOnce for SettingsInputField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
-        let editor = window.use_state(cx, {
-            move |window, cx| {
-                let mut editor = Editor::single_line(window, cx);
-                if let Some(text) = self.initial_text {
-                    editor.set_text(text, window, cx);
-                }
+        let editor = if let Some(id) = self.id {
+            window.use_keyed_state(id, cx, {
+                let initial_text = self.initial_text.clone();
+                let placeholder = self.placeholder;
+                move |window, cx| {
+                    let mut editor = Editor::single_line(window, cx);
+                    if let Some(text) = initial_text {
+                        editor.set_text(text, window, cx);
+                    }
 
-                if let Some(placeholder) = self.placeholder {
-                    editor.set_placeholder_text(placeholder, window, cx);
+                    if let Some(placeholder) = placeholder {
+                        editor.set_placeholder_text(placeholder, window, cx);
+                    }
+                    editor
                 }
-                // todo(settings_ui): We should have an observe global use for settings store
-                // so whenever a settings file is updated, the settings ui updates too
-                editor
-            }
-        });
+            })
+        } else {
+            window.use_state(cx, {
+                let initial_text = self.initial_text.clone();
+                let placeholder = self.placeholder;
+                move |window, cx| {
+                    let mut editor = Editor::single_line(window, cx);
+                    if let Some(text) = initial_text {
+                        editor.set_text(text, window, cx);
+                    }
+
+                    if let Some(placeholder) = placeholder {
+                        editor.set_placeholder_text(placeholder, window, cx);
+                    }
+                    editor
+                }
+            })
+        };
 
         let weak_editor = editor.downgrade();
 

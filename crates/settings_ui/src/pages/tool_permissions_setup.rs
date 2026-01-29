@@ -2,10 +2,10 @@ use agent_settings::AgentSettings;
 use gpui::{FontWeight, ReadGlobal, ScrollHandle, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
-use ui::{ContextMenu, PopoverMenu, prelude::*};
+use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
 
 use crate::{
-    SettingsWindow, USER,
+    SettingsWindow,
     components::{SettingsInputField, SettingsSectionHeader},
 };
 
@@ -252,20 +252,20 @@ pub(crate) fn render_tool_config_page(
                 ))
                 .child(render_rule_section(
                     tool_id,
-                    "Always Deny",
-                    "Patterns that auto-reject (highest priority)",
-                    Color::Error,
-                    RuleType::Deny,
-                    &rules.always_deny,
-                    cx,
-                ))
-                .child(render_rule_section(
-                    tool_id,
                     "Always Confirm",
                     "Patterns that always require confirmation",
                     Color::Warning,
                     RuleType::Confirm,
                     &rules.always_confirm,
+                    cx,
+                ))
+                .child(render_rule_section(
+                    tool_id,
+                    "Always Deny",
+                    "Patterns that auto-reject (highest priority)",
+                    Color::Error,
+                    RuleType::Deny,
+                    &rules.always_deny,
                     cx,
                 ))
                 .child(render_default_mode_section(tool_id, rules.default_mode, cx)),
@@ -304,45 +304,78 @@ fn render_rule_section(
         .child(
             v_flex()
                 .w_full()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().editor_background)
-                .p_2()
                 .gap_1()
                 .when(patterns.is_empty(), |this| {
                     this.child(
-                        Label::new("No patterns configured")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        div().py_2().child(
+                            Label::new("No patterns configured")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                 })
                 .children(patterns.iter().enumerate().map(|(index, pattern)| {
-                    let pattern_clone = pattern.clone();
-                    let tool_id_owned = tool_id.to_string();
-                    let delete_id = format!("{}-{:?}-{}", tool_id, rule_type, index);
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                        .child(
-                            Label::new(pattern.clone())
-                                .size(LabelSize::Small)
-                                .single_line(),
-                        )
-                        .child(
-                            IconButton::new(delete_id, IconName::Trash)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    delete_pattern(&tool_id_owned, rule_type, &pattern_clone, cx);
-                                })),
-                        )
+                    render_pattern_row(tool_id, rule_type, index, pattern.clone(), cx)
                 }))
                 .child(render_add_pattern_input(tool_id, rule_type, cx)),
+        )
+        .child(
+            div()
+                .mt_4()
+                .h_px()
+                .w_full()
+                .bg(cx.theme().colors().border_variant),
+        )
+        .into_any_element()
+}
+
+fn render_pattern_row(
+    tool_id: &'static str,
+    rule_type: RuleType,
+    index: usize,
+    pattern: String,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let pattern_for_delete = pattern.clone();
+    let pattern_for_update = pattern.clone();
+    let tool_id_for_delete = tool_id.to_string();
+    let tool_id_for_update = tool_id.to_string();
+    let input_id = format!("{}-{:?}-pattern-{}", tool_id, rule_type, index);
+    let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
+
+    h_flex()
+        .w_full()
+        .gap_2()
+        .child(
+            div().flex_1().child(
+                SettingsInputField::new()
+                    .with_id(input_id)
+                    .with_initial_text(pattern)
+                    .tab_index(0)
+                    .on_confirm(move |new_pattern, _window, cx| {
+                        if let Some(new_pattern) = new_pattern {
+                            let new_pattern = new_pattern.trim().to_string();
+                            if !new_pattern.is_empty() && new_pattern != pattern_for_update {
+                                update_pattern(
+                                    &tool_id_for_update,
+                                    rule_type,
+                                    &pattern_for_update,
+                                    new_pattern,
+                                    cx,
+                                );
+                            }
+                        }
+                    }),
+            ),
+        )
+        .child(
+            IconButton::new(delete_id, IconName::Trash)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Delete pattern"))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
+                })),
         )
         .into_any_element()
 }
@@ -353,22 +386,31 @@ fn render_add_pattern_input(
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let tool_id_owned = tool_id.to_string();
+    let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
 
     h_flex()
         .w_full()
         .gap_2()
         .pt_2()
         .child(
-            SettingsInputField::new()
-                .with_placeholder("Enter regex pattern and press Enter...")
-                .tab_index(0)
-                .on_confirm(move |pattern, _window, cx| {
-                    if let Some(pattern) = pattern {
-                        if !pattern.trim().is_empty() {
-                            save_pattern(&tool_id_owned, rule_type, pattern.trim().to_string(), cx);
+            div().flex_1().child(
+                SettingsInputField::new()
+                    .with_id(input_id)
+                    .with_placeholder("Enter regex pattern and press Enter...")
+                    .tab_index(0)
+                    .on_confirm(move |pattern, _window, cx| {
+                        if let Some(pattern) = pattern {
+                            if !pattern.trim().is_empty() {
+                                save_pattern(
+                                    &tool_id_owned,
+                                    rule_type,
+                                    pattern.trim().to_string(),
+                                    cx,
+                                );
+                            }
                         }
-                    }
-                }),
+                    }),
+            ),
         )
         .into_any_element()
 }
@@ -376,7 +418,7 @@ fn render_add_pattern_input(
 fn render_default_mode_section(
     tool_id: &'static str,
     current_mode: ToolPermissionMode,
-    cx: &mut Context<SettingsWindow>,
+    _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let mode_label = match current_mode {
         ToolPermissionMode::Allow => "Allow",
@@ -387,10 +429,7 @@ fn render_default_mode_section(
     let tool_id_owned = tool_id.to_string();
 
     v_flex()
-        .mt_8()
-        .pt_4()
-        .border_t_1()
-        .border_color(cx.theme().colors().border_variant)
+        .mt_4()
         .gap_2()
         .child(
             v_flex()
@@ -532,6 +571,39 @@ fn save_pattern(tool_name: &str, rule_type: RuleType, pattern: String, cx: &mut 
 
         if !rules_list.0.iter().any(|r| r.pattern == rule.pattern) {
             rules_list.0.push(rule);
+        }
+    });
+}
+
+fn update_pattern(
+    tool_name: &str,
+    rule_type: RuleType,
+    old_pattern: &str,
+    new_pattern: String,
+    cx: &mut App,
+) {
+    let tool_name = tool_name.to_string();
+    let old_pattern = old_pattern.to_string();
+
+    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+        let tool_permissions = settings
+            .agent
+            .get_or_insert_default()
+            .tool_permissions
+            .get_or_insert_default();
+
+        if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
+            let rules_list = match rule_type {
+                RuleType::Allow => &mut tool_rules.always_allow,
+                RuleType::Deny => &mut tool_rules.always_deny,
+                RuleType::Confirm => &mut tool_rules.always_confirm,
+            };
+
+            if let Some(list) = rules_list {
+                if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
+                    rule.pattern = new_pattern;
+                }
+            }
         }
     });
 }
