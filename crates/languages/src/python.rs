@@ -46,7 +46,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
+use task::{PosixShell, ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1499,8 +1499,9 @@ async fn resolve_venv_activation_scripts(
 ) {
     log::debug!("(Python) Resolving activation scripts for venv toolchain {venv:?}");
     if let Some(prefix) = &venv.prefix {
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
         for (shell_kind, script_name) in &[
-            (ShellKind::Posix("sh"), "activate"),
+            (ShellKind::Posix(PosixShell::Sh), "activate"),
             (ShellKind::Rc, "activate"),
             (ShellKind::Csh, "activate.csh"),
             (ShellKind::Tcsh, "activate.csh"),

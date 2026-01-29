@@ -20,7 +20,7 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use util::{ResultExt as _, debug_panic, maybe, paths::PathExt, shell::ShellKind};
+use util::{ResultExt as _, debug_panic, maybe, paths::PathExt, shell::{PosixShell, ShellKind}};
 
 /// Path to the program used for askpass
 ///
@@ -208,7 +208,8 @@ impl PasswordProxy {
         let shell_kind = if cfg!(windows) {
             ShellKind::PowerShell
         } else {
-            ShellKind::Posix("sh")
+            // TODO: Consider using the user's actual shell instead of hardcoding "sh"
+            ShellKind::Posix(PosixShell::Sh)
         };
         let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
         // Create an askpass script that communicates back to this process.

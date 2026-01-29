@@ -32,7 +32,7 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{PosixShell, ShellKind},
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -918,7 +918,8 @@ impl SshRemoteConnection {
         dst_path: &RelPath,
         tmp_path: &RelPath,
     ) -> Result<()> {
-        let shell_kind = ShellKind::Posix("sh");
+        // TODO: Consider using the remote's actual shell instead of hardcoding "sh"
+        let shell_kind = ShellKind::Posix(PosixShell::Sh);
         let server_mode = 0o755;
         let orig_tmp_path = tmp_path.display(self.path_style());
         let server_mode = format!("{:o}", server_mode);
@@ -1292,7 +1293,13 @@ impl SshSocket {
     async fn shell_posix(&self) -> String {
         const DEFAULT_SHELL: &str = "sh";
         match self
-            .run_command(ShellKind::Posix("sh"), "sh", &["-c", "echo $SHELL"], false)
+            // TODO: Consider using the remote's actual shell instead of hardcoding "sh"
+            .run_command(
+                ShellKind::Posix(PosixShell::Sh),
+                "sh",
+                &["-c", "echo $SHELL"],
+                false,
+            )
             .await
         {
             Ok(output) => parse_shell(&output, DEFAULT_SHELL),
@@ -1386,7 +1393,8 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = ShellKind::Posix("sh")
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
+        let mut tokens = ShellKind::Posix(PosixShell::Sh)
             .split(input)
             .context("invalid input")?
             .into_iter();

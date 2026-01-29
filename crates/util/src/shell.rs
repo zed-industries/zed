@@ -48,9 +48,36 @@ impl Shell {
     }
 }
 
+/// Specific POSIX-compatible shell variants.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PosixShell {
+    #[default]
+    Sh,
+    Bash,
+    Zsh,
+    Dash,
+    Ksh,
+    Mksh,
+    Ash,
+}
+
+impl PosixShell {
+    pub fn name(&self) -> &'static str {
+        match self {
+            PosixShell::Sh => "sh",
+            PosixShell::Bash => "bash",
+            PosixShell::Zsh => "zsh",
+            PosixShell::Dash => "dash",
+            PosixShell::Ksh => "ksh",
+            PosixShell::Mksh => "mksh",
+            PosixShell::Ash => "ash",
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShellKind {
-    Posix(&'static str),
+    Posix(PosixShell),
     Csh,
     Tcsh,
     Rc,
@@ -246,7 +273,7 @@ impl ShellKind {
     /// Returns the name of the shell, or `None` for unknown shells.
     pub fn name(&self) -> Option<&'static str> {
         match self {
-            ShellKind::Posix(name) => Some(name),
+            ShellKind::Posix(posix) => Some(posix.name()),
             ShellKind::Csh => Some("csh"),
             ShellKind::Tcsh => Some("tcsh"),
             ShellKind::Fish => Some("fish"),
@@ -324,13 +351,13 @@ impl ShellKind {
             "rc" => ShellKind::Rc,
             "xonsh" => ShellKind::Xonsh,
             "elvish" => ShellKind::Elvish,
-            "sh" => ShellKind::Posix("sh"),
-            "bash" => ShellKind::Posix("bash"),
-            "zsh" => ShellKind::Posix("zsh"),
-            "dash" => ShellKind::Posix("dash"),
-            "ksh" => ShellKind::Posix("ksh"),
-            "mksh" => ShellKind::Posix("mksh"),
-            "ash" => ShellKind::Posix("ash"),
+            "sh" => ShellKind::Posix(PosixShell::Sh),
+            "bash" => ShellKind::Posix(PosixShell::Bash),
+            "zsh" => ShellKind::Posix(PosixShell::Zsh),
+            "dash" => ShellKind::Posix(PosixShell::Dash),
+            "ksh" => ShellKind::Posix(PosixShell::Ksh),
+            "mksh" => ShellKind::Posix(PosixShell::Mksh),
+            "ash" => ShellKind::Posix(PosixShell::Ash),
             // Unrecognized shell - we cannot safely parse its syntax for
             // `always_allow` patterns, so they will be disabled.
             // Fall back to platform-specific behavior for non-security purposes.
