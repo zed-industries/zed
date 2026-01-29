@@ -15203,6 +15203,7 @@ dependencies = [
  "copilot",
  "copilot_ui",
  "edit_prediction",
+ "edit_prediction_ui",
  "editor",
  "feature_flags",
  "fs",
