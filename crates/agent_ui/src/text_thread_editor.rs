@@ -65,10 +65,8 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use workspace::{
     Save, Toast, Workspace,
-    dock::Panel,
     item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
