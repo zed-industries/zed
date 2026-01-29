@@ -65,6 +65,7 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use workspace::{
     Save, Toast, Workspace,
     dock::Panel,
@@ -73,7 +74,6 @@ use workspace::{
     pane,
     searchable::{SearchEvent, SearchableItem},
 };
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use zed_actions::agent::{AddSelectionToThread, PasteRaw, ToggleModelSelector};
 
 use crate::CycleFavoriteModels;
@@ -1502,7 +1502,11 @@ impl TextThreadEditor {
         if let Some(terminal_text) = maybe!({
             let terminal_panel = workspace.panel::<TerminalPanel>(cx)?;
 
-            if !terminal_panel.read(cx).focus_handle(cx).contains_focused(window, cx) {
+            if !terminal_panel
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+            {
                 return None;
             }
 
@@ -3626,11 +3630,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_quote_terminal_text(cx: &mut TestAppContext) {
-        let (_context, text_thread_editor, mut cx) = setup_text_thread_editor_text(
-            vec![(Role::User, "")],
-            cx,
-        )
-        .await;
+        let (_context, text_thread_editor, mut cx) =
+            setup_text_thread_editor_text(vec![(Role::User, "")], cx).await;
 
         let terminal_output = "$ ls -la\ntotal 0\ndrwxr-xr-x  2 user user  40 Jan  1 00:00 .";
 
@@ -3648,6 +3649,4 @@ mod tests {
             });
         });
     }
-
-
 }

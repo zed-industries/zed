@@ -1018,7 +1018,14 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let formatted_text = format!("```terminal\n{}\n```", text);
-        self.insert_crease_impl(formatted_text, "Terminal".to_string(), IconName::Terminal, false, window, cx);
+        self.insert_crease_impl(
+            formatted_text,
+            "Terminal".to_string(),
+            IconName::Terminal,
+            false,
+            window,
+            cx,
+        );
         self.editor.update(cx, |editor, cx| {
             editor.insert(" ", window, cx);
         });
@@ -1232,8 +1239,11 @@ impl MessageEditor {
                     while let Some(block_start) = chunk_text[search_start..].find("```terminal") {
                         let absolute_block_start = chunk_start + search_start + block_start;
                         // Find the closing ```
-                        if let Some(block_end_relative) = chunk_text[search_start + block_start + 11..].find("\n```") {
-                            let absolute_block_end = absolute_block_start + 11 + block_end_relative + 4;
+                        if let Some(block_end_relative) =
+                            chunk_text[search_start + block_start + 11..].find("\n```")
+                        {
+                            let absolute_block_end =
+                                absolute_block_start + 11 + block_end_relative + 4;
                             terminal_blocks.push(absolute_block_start..absolute_block_end);
                             search_start = search_start + block_start + 11 + block_end_relative + 4;
                         } else {
