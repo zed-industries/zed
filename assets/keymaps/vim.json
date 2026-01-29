@@ -853,6 +853,12 @@
     },
   },
   {
+    "context": "BufferSearchBar && !in_replace && (vim_mode == helix_normal || vim_mode == helix_select)",
+    "bindings": {
+      "escape": "buffer_search::Dismiss",
+    },
+  },
+  {
     "context": "VimControl && !menu || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
