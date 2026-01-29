@@ -1,5 +1,5 @@
 use edit_prediction::{
-    ApiKeyState, EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag,
+    ApiKeyState, MercuryFeatureFlag, SweepFeatureFlag,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
