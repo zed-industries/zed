@@ -34,9 +34,11 @@ use crate::kernels::{
     NativeRunningKernel, RemoteRunningKernel,
 };
 use crate::repl_store::ReplStore;
+
 use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 actions!(
     notebook,
@@ -243,7 +245,7 @@ impl NotebookEditor {
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
-            kernel: Kernel::StartingKernel(Task::ready(()).shared()),
+            kernel: Kernel::Shutdown, // TODO: use recommended kernel after the implementation is done in repl
             kernel_specification: None,
             execution_requests: HashMap::default(),
             kernel_picker_handle: PopoverMenuHandle::default(),
@@ -1164,6 +1166,62 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                this.select_previous(&menu::SelectPrevious, window, cx);
+                if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                    if let Some(cell) = this.cell_map.get(cell_id) {
+                        match cell {
+                            Cell::Code(cell) => {
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_end(&Default::default(), window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            Cell::Markdown(cell) => {
+                                cell.update(cx, |cell, cx| {
+                                    cell.set_editing(true);
+                                    cx.notify();
+                                });
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_end(&Default::default(), window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }))
+            .on_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                this.select_next(&menu::SelectNext, window, cx);
+                if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
+                    if let Some(cell) = this.cell_map.get(cell_id) {
+                        match cell {
+                            Cell::Code(cell) => {
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_beginning(&Default::default(), window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            Cell::Markdown(cell) => {
+                                cell.update(cx, |cell, cx| {
+                                    cell.set_editing(true);
+                                    cx.notify();
+                                });
+                                let editor = cell.read(cx).editor().clone();
+                                editor.update(cx, |editor, cx| {
+                                    editor.move_to_beginning(&Default::default(), window, cx);
+                                });
+                                editor.focus_handle(cx).focus(window, cx);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }))
             .on_action(
                 cx.listener(|this, action, window, cx| this.restart_kernel(action, window, cx)),
             )
