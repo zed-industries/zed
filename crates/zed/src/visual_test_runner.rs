@@ -2362,7 +2362,7 @@ fn run_agent_thread_view_test(
 fn run_tool_permissions_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
-    update_baseline: bool,
+    _update_baseline: bool,
 ) -> Result<TestResult> {
     use zed_actions::OpenSettingsAt;
 
