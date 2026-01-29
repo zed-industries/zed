@@ -6,7 +6,7 @@ use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
+    git_history_view::GitHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
@@ -1230,7 +1230,7 @@ impl GitPanel {
             let repo_path = entry.repo_path.clone();
             let git_store = self.project.read(cx).git_store();
 
-            FileHistoryView::open(
+            GitHistoryView::open(
                 repo_path,
                 git_store.downgrade(),
                 active_repo.downgrade(),
@@ -4472,23 +4472,52 @@ impl GitPanel {
                 )
                 .when(commit.has_parent, |this| {
                     let has_unstaged = self.has_unstaged_changes();
+                    let repo = active_repository.downgrade();
+                    let git_store = self.project.read(cx).git_store().downgrade();
+                    let workspace = self.workspace.clone();
+
                     this.pr_2().child(
-                        panel_icon_button("undo", IconName::Undo)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::with_meta(
-                                    "Uncommit",
-                                    Some(&git::Uncommit),
-                                    if has_unstaged {
-                                        "git reset HEAD^ --soft"
-                                    } else {
-                                        "git reset HEAD^"
-                                    },
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
+                        h_flex()
+                            .child(
+                                panel_icon_button("history", IconName::HistoryRerun)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::text("Recent Commits")(window, cx)
+                                    })
+                                    .on_click(move |_, window, cx| {
+                                        GitHistoryView::open(
+                                            RepoPath::from_rel_path(RelPath::empty()),
+                                            git_store.clone(),
+                                            repo.clone(),
+                                            workspace.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .child(
+                                panel_icon_button("undo", IconName::Undo)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::with_meta(
+                                            "Uncommit",
+                                            Some(&git::Uncommit),
+                                            if has_unstaged {
+                                                "git reset HEAD^ --soft"
+                                            } else {
+                                                "git reset HEAD^"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| {
+                                            this.uncommit(window, cx)
+                                        }),
+                                    ),
+                            ),
                     )
                 }),
         )
