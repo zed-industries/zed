@@ -101,6 +101,8 @@ actions!(
         Clone,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Adds a file to .git/info/exclude.
+        AddToGitExclude,
     ]
 );
 
