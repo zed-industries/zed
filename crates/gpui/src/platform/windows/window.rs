@@ -1036,14 +1036,15 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                     .ok()
                     .log_err();
                 let scale_factor = self.0.state.scale_factor.get();
-                let external_drop = ExternalDrop(items);
+                let items = ExternalDrop(items);
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                     position: logical_point(
                         cursor_position.x as f32,
                         cursor_position.y as f32,
                         scale_factor,
                     ),
-                    paths: external_drop.to_external_paths(),
+                    paths: items.to_external_paths(),
+                    items,
                 });
                 self.handle_drag_drop(input);
             } else {

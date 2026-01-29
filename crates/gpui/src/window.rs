@@ -3916,13 +3916,18 @@ impl Window {
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
+            #[allow(deprecated)]
             PlatformInput::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, paths } => {
+                FileDropEvent::Entered {
+                    position,
+                    paths: _,
+                    items,
+                } => {
                     self.mouse_position = position;
                     if cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
-                            value: Arc::new(paths.clone()),
-                            view: cx.new(|_| paths).into(),
+                            value: Arc::new(items.clone()),
+                            view: cx.new(|_| items).into(),
                             cursor_offset: position,
                             cursor_style: None,
                         });

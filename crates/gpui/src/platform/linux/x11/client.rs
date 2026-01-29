@@ -892,12 +892,13 @@ impl X11Client {
                             }
                         }
                     }
-                    let external_drop = ExternalDrop(items);
+                    let items = ExternalDrop(items);
                     // Convert to legacy ExternalPaths for backwards compatibility
-                    let paths = external_drop.to_external_paths();
+                    let paths = items.to_external_paths();
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position: state.xdnd_state.position,
                         paths,
+                        items,
                     });
                     std::mem::drop(state);
                     window.handle_input(input);

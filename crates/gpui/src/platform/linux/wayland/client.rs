@@ -2052,12 +2052,13 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 return;
                             }
 
-                            let external_drop = ExternalDrop(items);
+                            let items = ExternalDrop(items);
                             // Convert to legacy ExternalPaths for backwards compatibility
                             #[allow(deprecated)]
                             let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                                 position,
-                                paths: external_drop.to_external_paths(),
+                                paths: items.to_external_paths(),
+                                items,
                             });
 
                             let client = this.get_client();

@@ -2468,11 +2468,15 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let drag_types = window_state.lock().drag_types.clone();
-    let drop = external_drop_from_event(dragging_info, &drag_types);
-    if let Some(drop) = drop {
+    let items = external_drop_from_event(dragging_info, &drag_types);
+    if let Some(items) = items {
         // Convert to legacy ExternalPaths for backwards compatibility
-        let paths = drop.to_external_paths();
-        let event = PlatformInput::FileDrop(FileDropEvent::Entered { position, paths });
+        let paths = items.to_external_paths();
+        let event = PlatformInput::FileDrop(FileDropEvent::Entered {
+            position,
+            paths,
+            items,
+        });
         if send_new_event(&window_state, event) {
             window_state.lock().external_files_dragged = true;
             return NSDragOperationCopy;

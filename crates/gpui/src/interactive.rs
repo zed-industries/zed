@@ -636,7 +636,11 @@ pub enum FileDropEvent {
         /// The position of the mouse relative to the window.
         position: Point<Pixels>,
         /// The paths of the files that are being dragged.
+        /// Deprecated: Use `items` field instead, which supports both files and URLs.
+        #[deprecated(note = "Use `items` field instead")]
         paths: ExternalPaths,
+        /// The items being dragged (files and/or URLs).
+        items: ExternalDrop,
     },
     /// The files are being dragged over the window
     Pending {
