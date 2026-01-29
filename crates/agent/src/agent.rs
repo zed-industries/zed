@@ -165,6 +165,7 @@ impl LanguageModels {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
+            cost: model.model_cost_info().map(|cost| cost.to_shared_string()),
         }
     }
 
@@ -1747,6 +1748,7 @@ mod internal_tests {
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
+                    cost: None,
                 }]
             )])
         );
