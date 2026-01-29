@@ -482,7 +482,10 @@ impl MetalRenderer {
             .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
 
         loop {
-            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+            let mut instance_buffer = self
+                .instance_buffer_pool
+                .lock()
+                .acquire(&self.device, self.unified_memory);
 
             let command_buffer =
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
