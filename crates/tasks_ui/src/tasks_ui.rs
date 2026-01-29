@@ -204,19 +204,19 @@ where
                 else {
                     return Task::ready(Vec::new());
                 };
-                let (language, buffer) = task_contexts
+                let (file, language) = task_contexts
                     .location()
                     .map(|location| {
-                        let buffer = location.buffer.clone();
+                        let buffer = location.buffer.read(cx);
                         (
-                            buffer.read(cx).language_at(location.range.start),
-                            Some(buffer),
+                            buffer.file().cloned(),
+                            buffer.language_at(location.range.start),
                         )
                     })
                     .unwrap_or_default();
                 task_inventory
                     .read(cx)
-                    .list_tasks(buffer, language, task_contexts.worktree(), cx)
+                    .list_tasks(file, language, task_contexts.worktree(), cx)
             })?
             .await;
 

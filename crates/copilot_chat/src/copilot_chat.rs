@@ -14,7 +14,6 @@ use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use itertools::Itertools;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +83,11 @@ pub enum ModelSupportedEndpoint {
     ChatCompletions,
     #[serde(rename = "/responses")]
     Responses,
+    #[serde(rename = "/v1/messages")]
+    Messages,
+    /// Unknown endpoint that we don't explicitly support yet
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Deserialize)]
@@ -690,7 +694,6 @@ async fn get_models(
                     .as_ref()
                     .is_none_or(|policy| policy.state == "enabled")
         })
-        .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
         .collect();
 
     if let Some(default_model_position) = models.iter().position(|model| model.is_chat_default) {
@@ -1008,5 +1011,466 @@ mod tests {
         assert_eq!(schema.data.len(), 1);
         assert_eq!(schema.data[0].id, "future-model-v1");
         assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
+    }
+
+    #[test]
+    fn test_models_with_pending_policy_deserialize() {
+        // This test verifies that models with policy states other than "enabled"
+        // (such as "pending" or "requires_consent") are properly deserialized.
+        // Note: These models will be filtered out by get_models() and won't appear
+        // in the model picker until the user enables them on GitHub.
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4",
+                  "object": "model",
+                  "policy": {
+                    "state": "pending",
+                    "terms": "Enable access to Claude models from Anthropic."
+                  },
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4"
+                },
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-opus-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-opus-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Opus 4",
+                  "object": "model",
+                  "policy": {
+                    "state": "requires_consent",
+                    "terms": "Enable access to Claude models from Anthropic."
+                  },
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-opus-4"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        // Both models should deserialize successfully (filtering happens in get_models)
+        assert_eq!(schema.data.len(), 2);
+        assert_eq!(schema.data[0].id, "claude-sonnet-4");
+        assert_eq!(schema.data[1].id, "claude-opus-4");
+    }
+
+    #[test]
+    fn test_multiple_anthropic_models_preserved() {
+        // This test verifies that multiple Claude models from Anthropic
+        // are all preserved and not incorrectly deduplicated.
+        // This was the root cause of issue #47540.
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4"
+                },
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-opus-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-opus-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Opus 4",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-opus-4"
+                },
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4.5",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4.5",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4.5",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4.5"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        // All three Anthropic models should be preserved
+        assert_eq!(schema.data.len(), 3);
+        assert_eq!(schema.data[0].id, "claude-sonnet-4");
+        assert_eq!(schema.data[1].id, "claude-opus-4");
+        assert_eq!(schema.data[2].id, "claude-sonnet-4.5");
+    }
+
+    #[test]
+    fn test_models_with_same_family_both_preserved() {
+        // Test that models sharing the same family (e.g., thinking variants)
+        // are both preserved in the model list.
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4"
+                },
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4-thinking",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4 (Thinking)",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4-thinking"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        // Both models should be preserved even though they share the same family
+        assert_eq!(schema.data.len(), 2);
+        assert_eq!(schema.data[0].id, "claude-sonnet-4");
+        assert_eq!(schema.data[1].id, "claude-sonnet-4-thinking");
+    }
+
+    #[test]
+    fn test_mixed_vendor_models_all_preserved() {
+        // Test that models from different vendors are all preserved.
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": false, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "gpt-4o",
+                    "limits": { "max_context_window_tokens": 128000, "max_output_tokens": 16384, "max_prompt_tokens": 110000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "gpt-4o",
+                  "is_chat_default": true,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "GPT-4o",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Azure OpenAI",
+                  "version": "gpt-4o"
+                },
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4"
+                },
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "gemini-2.0-flash",
+                    "limits": { "max_context_window_tokens": 1000000, "max_output_tokens": 8192, "max_prompt_tokens": 900000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "gemini-2.0-flash",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Gemini 2.0 Flash",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Google",
+                  "version": "gemini-2.0-flash"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        // All three models from different vendors should be preserved
+        assert_eq!(schema.data.len(), 3);
+        assert_eq!(schema.data[0].id, "gpt-4o");
+        assert_eq!(schema.data[1].id, "claude-sonnet-4");
+        assert_eq!(schema.data[2].id, "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn test_model_with_messages_endpoint_deserializes() {
+        // Anthropic Claude models use /v1/messages endpoint.
+        // This test verifies such models deserialize correctly (issue #47540 root cause).
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "claude-sonnet-4",
+                    "limits": { "max_context_window_tokens": 200000, "max_output_tokens": 16384, "max_prompt_tokens": 90000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "claude-sonnet-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Claude Sonnet 4",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-sonnet-4",
+                  "supported_endpoints": ["/v1/messages"]
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "claude-sonnet-4");
+        assert_eq!(
+            schema.data[0].supported_endpoints,
+            vec![ModelSupportedEndpoint::Messages]
+        );
+    }
+
+    #[test]
+    fn test_model_with_unknown_endpoint_deserializes() {
+        // Future-proofing: unknown endpoints should deserialize to Unknown variant
+        // instead of causing the entire model to fail deserialization.
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": false, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "future-model",
+                    "limits": { "max_context_window_tokens": 128000, "max_output_tokens": 8192, "max_prompt_tokens": 120000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "future-model-v2",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Future Model v2",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "OpenAI",
+                  "version": "v2.0",
+                  "supported_endpoints": ["/v2/completions", "/chat/completions"]
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "future-model-v2");
+        assert_eq!(
+            schema.data[0].supported_endpoints,
+            vec![
+                ModelSupportedEndpoint::Unknown,
+                ModelSupportedEndpoint::ChatCompletions
+            ]
+        );
+    }
+
+    #[test]
+    fn test_model_with_multiple_endpoints() {
+        // Test model with multiple supported endpoints (common for newer models).
+        let json = r#"{
+              "data": [
+                {
+                  "billing": { "is_premium": true, "multiplier": 1 },
+                  "capabilities": {
+                    "family": "gpt-4o",
+                    "limits": { "max_context_window_tokens": 128000, "max_output_tokens": 16384, "max_prompt_tokens": 110000 },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "gpt-4o",
+                  "is_chat_default": true,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "GPT-4o",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "OpenAI",
+                  "version": "gpt-4o",
+                  "supported_endpoints": ["/chat/completions", "/responses"]
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "gpt-4o");
+        assert_eq!(
+            schema.data[0].supported_endpoints,
+            vec![
+                ModelSupportedEndpoint::ChatCompletions,
+                ModelSupportedEndpoint::Responses
+            ]
+        );
+    }
+
+    #[test]
+    fn test_supports_response_method() {
+        // Test the supports_response() method which determines endpoint routing.
+        let model_with_responses_only = Model {
+            billing: ModelBilling {
+                is_premium: false,
+                multiplier: 1.0,
+                restricted_to: None,
+            },
+            capabilities: ModelCapabilities {
+                family: "test".to_string(),
+                limits: ModelLimits::default(),
+                supports: ModelSupportedFeatures {
+                    streaming: true,
+                    tool_calls: true,
+                    parallel_tool_calls: false,
+                    vision: false,
+                },
+                model_type: "chat".to_string(),
+                tokenizer: None,
+            },
+            id: "test-model".to_string(),
+            name: "Test Model".to_string(),
+            policy: None,
+            vendor: ModelVendor::OpenAI,
+            is_chat_default: false,
+            is_chat_fallback: false,
+            model_picker_enabled: true,
+            supported_endpoints: vec![ModelSupportedEndpoint::Responses],
+        };
+
+        let model_with_chat_completions = Model {
+            supported_endpoints: vec![ModelSupportedEndpoint::ChatCompletions],
+            ..model_with_responses_only.clone()
+        };
+
+        let model_with_both = Model {
+            supported_endpoints: vec![
+                ModelSupportedEndpoint::ChatCompletions,
+                ModelSupportedEndpoint::Responses,
+            ],
+            ..model_with_responses_only.clone()
+        };
+
+        let model_with_messages = Model {
+            supported_endpoints: vec![ModelSupportedEndpoint::Messages],
+            ..model_with_responses_only.clone()
+        };
+
+        // Only /responses endpoint -> supports_response = true
+        assert!(model_with_responses_only.supports_response());
+
+        // Only /chat/completions endpoint -> supports_response = false
+        assert!(!model_with_chat_completions.supports_response());
+
+        // Both endpoints (has /chat/completions) -> supports_response = false
+        assert!(!model_with_both.supports_response());
+
+        // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
+        assert!(!model_with_messages.supports_response());
     }
 }

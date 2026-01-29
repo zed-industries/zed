@@ -37,7 +37,7 @@ use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
 use client::UserStore;
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
@@ -512,7 +512,7 @@ impl AgentPanel {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = ThreadStore::global(cx);
         let acp_history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
@@ -2286,7 +2286,7 @@ impl AgentPanel {
                                     .handler({
                                         move |window, cx| {
                                             window.dispatch_action(
-                                                Box::new(zed_actions::AgentRegistry),
+                                                Box::new(zed_actions::AcpRegistry),
                                                 cx,
                                             )
                                         }
@@ -2401,7 +2401,7 @@ impl AgentPanel {
         let plan = self.user_store.read(cx).plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        plan.is_some_and(|plan| plan == Plan::V2(PlanV2::ZedFree)) && has_previous_trial
+        plan.is_some_and(|plan| plan == Plan::ZedFree) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2411,9 +2411,7 @@ impl AgentPanel {
 
         let user_store = self.user_store.read(cx);
 
-        if user_store
-            .plan()
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro))
+        if user_store.plan().is_some_and(|plan| plan == Plan::ZedPro)
             && user_store
                 .subscription_period()
                 .and_then(|period| period.0.checked_add_days(chrono::Days::new(1)))

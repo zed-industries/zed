@@ -191,7 +191,7 @@ impl EditorBlock {
                 .child(
                     div()
                         .flex_1()
-                        .size_full()
+                        .overflow_x_hidden()
                         .py(text_line_height / 2.)
                         .mr(editor_margins.right)
                         .pr_2()

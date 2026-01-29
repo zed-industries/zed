@@ -121,6 +121,8 @@ actions!(
         ResetTrialUpsell,
         /// Resets the trial end upsell notification.
         ResetTrialEndUpsell,
+        /// Opens the "Add Context" menu in the message editor.
+        OpenAddContextMenu,
         /// Continues the current thread.
         ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
@@ -254,6 +256,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
+    agent::ThreadStore::init_global(cx);
     assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
@@ -276,7 +279,7 @@ pub fn init(
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
             move |workspace: &mut Workspace,
-                  _: &zed_actions::AgentRegistry,
+                  _: &zed_actions::AcpRegistry,
                   window: &mut Window,
                   cx: &mut Context<Workspace>| {
                 let existing = workspace
@@ -538,6 +541,7 @@ mod tests {
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
+            cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),

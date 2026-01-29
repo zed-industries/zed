@@ -8,7 +8,6 @@ use editor::display_map::{CreaseId, EditorMargins};
 use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
-    actions::{MoveDown, MoveUp},
 };
 use fs::Fs;
 use gpui::{
@@ -31,7 +30,10 @@ use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-use zed_actions::agent::ToggleModelSelector;
+use zed_actions::{
+    agent::ToggleModelSelector,
+    editor::{MoveDown, MoveUp},
+};
 
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
@@ -1116,14 +1118,13 @@ impl<T: 'static> PromptEditor<T> {
             .child({
                 let settings = ThemeSettings::get_global(cx);
                 let font_size = settings.buffer_font_size(cx);
-                let line_height = font_size * 1.2;
 
                 let text_style = TextStyle {
                     color: colors.editor_foreground,
                     font_family: settings.buffer_font.family.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
-                    line_height: line_height.into(),
+                    line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
 

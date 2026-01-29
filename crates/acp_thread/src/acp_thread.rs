@@ -39,7 +39,6 @@ pub use terminal::*;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
-use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -54,6 +53,7 @@ use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use text::Bias;
 use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
@@ -964,6 +964,9 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    // subagent cancellation fields
+    user_stopped: Arc<std::sync::atomic::AtomicBool>,
+    user_stop_tx: watch::Sender<bool>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1179,6 +1182,8 @@ impl AcpThread {
             }
         });
 
+        let (user_stop_tx, _user_stop_rx) = watch::channel(false);
+
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -1195,11 +1200,28 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
+            user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            user_stop_tx,
         }
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    /// Marks this thread as stopped by user action and signals any listeners.
+    pub fn stop_by_user(&mut self) {
+        self.user_stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.user_stop_tx.send(true).ok();
+    }
+
+    pub fn was_stopped_by_user(&self) -> bool {
+        self.user_stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn user_stop_receiver(&self) -> watch::Receiver<bool> {
+        self.user_stop_tx.receiver()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -2333,8 +2355,11 @@ impl AcpThread {
                 let format_on_save = buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
 
-                    let settings =
-                        language::language_settings::LanguageSettings::for_buffer(buffer, cx);
+                    let settings = language::language_settings::language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.file(),
+                        cx,
+                    );
 
                     settings.format_on_save != FormatOnSave::Off
                 });
@@ -2396,7 +2421,6 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
-        let is_windows = project.read(cx).path_style(cx).is_windows();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -2410,10 +2434,9 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) =
-                    ShellBuilder::new(&Shell::Program(shell), is_windows)
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
+                let (task_command, task_args) = ShellBuilder::new(&Shell::Program(shell))
+                    .redirect_stdin_to_dev_null()
+                    .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2631,6 +2654,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2705,6 +2729,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2765,7 +2790,7 @@ mod tests {
         // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (completion_tx, _completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+        let (program, args) = ShellBuilder::new(&Shell::System).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
             &[],
         );
@@ -2791,6 +2816,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    PathStyle::local(),
                 )
             })
             .await
@@ -4080,6 +4106,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4126,6 +4153,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4186,6 +4214,7 @@ mod tests {
                 None,
                 0,
                 cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)

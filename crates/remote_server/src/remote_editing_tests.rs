@@ -7,7 +7,6 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
 use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
-use languages::rust_lang;
 use prompt_store::ProjectContext;
 
 use extension::ExtensionHostProxy;
@@ -16,7 +15,7 @@ use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
-    language_settings::{AllLanguageSettings, LanguageSettings},
+    language_settings::{AllLanguageSettings, language_settings},
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -433,7 +432,6 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     let worktree_id = project
         .update(cx, |project, cx| {
-            project.languages().add(rust_lang());
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -474,8 +472,9 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     });
 
     cx.read(|cx| {
+        let file = buffer.read(cx).file();
         assert_eq!(
-            LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
+            language_settings(Some("Rust".into()), file, cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -598,7 +597,6 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let worktree_id = project
         .update(cx, |project, cx| {
-            project.languages().add(rust_lang());
             project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
@@ -621,8 +619,9 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     let fake_second_lsp = fake_second_lsp.next().await.unwrap();
 
     cx.read(|cx| {
+        let file = buffer.read(cx).file();
         assert_eq!(
-            LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
+            language_settings(Some("Rust".into()), file, cx).language_servers,
             ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });

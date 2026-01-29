@@ -913,7 +913,13 @@ impl WorktreeStore {
                 }
             }
         }
-        self.send_project_updates(cx);
+        // Only send project updates if we share in a collaborative mode.
+        // Otherwise we are the remote server which is currently constructing
+        // worktree store before the client actually has set up its message
+        // handlers.
+        if remote_id != REMOTE_SERVER_PROJECT_ID {
+            self.send_project_updates(cx);
+        }
     }
 
     pub fn unshared(&mut self, cx: &mut Context<Self>) {

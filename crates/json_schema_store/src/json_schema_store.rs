@@ -300,6 +300,17 @@ async fn resolve_dynamic_schema(
             });
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
+        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions),
+        "action" => {
+            let normalized_action_name = rest.context("No Action name provided")?;
+            let action_name = denormalize_action_name(normalized_action_name);
+            let mut generator = settings::KeymapFile::action_schema_generator();
+            let schema = cx
+                .update(|cx| cx.action_schema_by_name(&action_name, &mut generator))
+                .flatten();
+            root_schema_from_action_schema(schema, &mut generator).to_value()
+        }
+        "tasks" => task::TaskTemplates::generate_json_schema(),
         _ => {
             anyhow::bail!("Unrecognized schema: {schema_name}");
         }

@@ -23,7 +23,7 @@ use std::{
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::{Shell, ShellKind},
+    shell::{PosixShell, Shell, ShellKind},
     shell_builder::ShellBuilder,
 };
 
@@ -75,7 +75,8 @@ impl WslRemoteConnection {
                 arch: RemoteArch::X86_64,
             },
             shell: String::new(),
-            shell_kind: ShellKind::Posix,
+            // TODO: Consider using the user's actual shell instead of hardcoding "sh"
+            shell_kind: ShellKind::Posix(PosixShell::Sh),
             default_system_shell: String::from("/bin/sh"),
             has_wsl_interop: false,
         };
@@ -85,7 +86,8 @@ impl WslRemoteConnection {
             .await
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
-        this.shell_kind = ShellKind::new(&this.shell, false);
+        // WSL is always Linux, so is_windows = false
+        this.shell_kind = ShellKind::new_with_fallback(&this.shell, false);
         this.has_wsl_interop = this.detect_has_wsl_interop().await.unwrap_or_default();
         log::info!(
             "Remote has wsl interop {}",
@@ -176,7 +178,7 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
@@ -200,7 +202,7 @@ impl WslRemoteConnection {
         )
         .await?
         {
-            let tmp_path = paths::remote_wsl_server_dir_relative().join(
+            let tmp_path = paths::remote_server_dir_relative().join(
                 &RelPath::unix(&format!(
                     "download-{}-{}",
                     std::process::id(),
@@ -468,7 +470,7 @@ impl RemoteConnection for WslRemoteConnection {
             write!(&mut exec, "{} -l", self.shell)?;
         }
         let (command, args) =
-            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
+            ShellBuilder::new(&Shell::Program(self.shell.clone())).build(Some(exec), &[]);
 
         let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![

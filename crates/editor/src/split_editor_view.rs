@@ -1,33 +1,26 @@
-use std::{cmp, collections::HashMap, path, path::Path};
+use std::cmp;
 
-use collections::HashSet;
-use file_icons::FileIcons;
-use git::status::FileStatus;
+use collections::{HashMap, HashSet};
 use gpui::{
-    AbsoluteLength, Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
-    Context, DragMoveEvent, Element, Entity, Focusable, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, LayoutId, Length, Modifiers, MouseButton, ParentElement, Pixels,
-    StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div, linear_color_stop,
-    linear_gradient, point, px, size,
+    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, Context, DragMoveEvent, Element,
+    Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
+    ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
+    linear_color_stop, linear_gradient, point, px, size,
 };
-use multi_buffer::{Anchor, ExcerptId, ExcerptInfo};
-use project::Entry;
+use multi_buffer::{Anchor, ExcerptId};
 use settings::Settings;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::scrollbars::ShowScrollbar;
-use ui::{
-    Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, Indicator, KeyBinding, Label,
-    Tooltip, h_flex, prelude::*, right_click_menu, text_for_keystroke, v_flex,
-};
-use workspace::{ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
+use ui::{h_flex, prelude::*, v_flex};
+
+use gpui::ContentMask;
 
 use crate::{
-    DisplayRow, Editor, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, JumpData,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, RowExt, StickyHeaderExcerpt, ToggleFold,
-    ToggleFoldAll,
+    DisplayRow, Editor, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, RowExt, StickyHeaderExcerpt,
     display_map::Block,
-    element::{EditorElement, SplitSide},
+    element::{EditorElement, SplitSide, header_jump_data, render_buffer_header},
     scroll::ScrollOffset,
     split::SplittableEditor,
 };
@@ -319,7 +312,7 @@ impl Element for SplitBufferHeadersElement {
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
@@ -334,13 +327,15 @@ impl Element for SplitBufferHeadersElement {
 
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                for header_layout in &mut prepaint.non_sticky_headers {
-                    header_layout.element.paint(window, cx);
-                }
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    for header_layout in &mut prepaint.non_sticky_headers {
+                        header_layout.element.paint(window, cx);
+                    }
 
-                if let Some(mut sticky_header) = prepaint.sticky_header.take() {
-                    sticky_header.paint(window, cx);
-                }
+                    if let Some(mut sticky_header) = prepaint.sticky_header.take() {
+                        sticky_header.paint(window, cx);
+                    }
+                });
             });
         });
     }
@@ -532,8 +527,17 @@ impl SplitBufferHeadersElement {
                     .top_0(),
             )
             .child(
-                self.render_buffer_header(excerpt, false, selected, true, jump_data, window, cx)
-                    .into_any_element(),
+                render_buffer_header(
+                    &self.editor,
+                    excerpt,
+                    false,
+                    selected,
+                    true,
+                    jump_data,
+                    window,
+                    cx,
+                )
+                .into_any_element(),
             )
             .into_any_element();
 
@@ -606,9 +610,17 @@ impl SplitBufferHeadersElement {
                 latest_selection_anchors,
             );
 
-            let mut header = self
-                .render_buffer_header(excerpt, is_folded, selected, false, jump_data, window, cx)
-                .into_any_element();
+            let mut header = render_buffer_header(
+                &self.editor,
+                excerpt,
+                is_folded,
+                selected,
+                false,
+                jump_data,
+                window,
+                cx,
+            )
+            .into_any_element();
 
             let y_offset = (block_row.0 as f64 - scroll_position.y) * f64::from(line_height);
             let origin = point(bounds.origin.x, bounds.origin.y + Pixels::from(y_offset));
@@ -625,462 +637,4 @@ impl SplitBufferHeadersElement {
 
         headers
     }
-
-    fn render_buffer_header(
-        &self,
-        for_excerpt: &ExcerptInfo,
-        is_folded: bool,
-        is_selected: bool,
-        is_sticky: bool,
-        jump_data: JumpData,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> impl IntoElement {
-        let editor = self.editor.read(cx);
-        let multi_buffer = editor.buffer.read(cx);
-        let is_read_only = self.editor.read(cx).read_only(cx);
-
-        let file_status = multi_buffer
-            .all_diff_hunks_expanded()
-            .then(|| editor.status_for_buffer_id(for_excerpt.buffer_id, cx))
-            .flatten();
-        let indicator = multi_buffer
-            .buffer(for_excerpt.buffer_id)
-            .and_then(|buffer| {
-                let buffer = buffer.read(cx);
-                let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
-                    (true, _) => Some(Color::Warning),
-                    (_, true) => Some(Color::Accent),
-                    (false, false) => None,
-                };
-                indicator_color.map(|indicator_color| Indicator::dot().color(indicator_color))
-            });
-
-        let include_root = editor
-            .project
-            .as_ref()
-            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-            .unwrap_or_default();
-        let file = for_excerpt.buffer.file();
-        let can_open_excerpts = file.is_none_or(|file| file.can_open());
-        let path_style = file.map(|file| file.path_style(cx));
-        let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
-        let (parent_path, filename) = if let Some(path) = &relative_path {
-            if let Some(path_style) = path_style {
-                let (dir, file_name) = path_style.split(path);
-                (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
-            } else {
-                (None, Some(path.clone()))
-            }
-        } else {
-            (None, None)
-        };
-        let focus_handle = self.editor.read(cx).focus_handle(cx);
-        let colors = cx.theme().colors();
-
-        let header = div()
-            .p_1()
-            .w_full()
-            .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
-            .child(
-                h_flex()
-                    .size_full()
-                    .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                    .pl_1()
-                    .pr_2()
-                    .rounded_sm()
-                    .gap_1p5()
-                    .when(is_sticky, |el| el.shadow_md())
-                    .border_1()
-                    .map(|border| {
-                        let border_color = if !is_sticky
-                            && is_selected
-                            && is_folded
-                            && focus_handle.contains_focused(window, cx)
-                        {
-                            colors.border_focused
-                        } else {
-                            colors.border
-                        };
-                        border.border_color(border_color)
-                    })
-                    .bg(colors.editor_subheader_background)
-                    .hover(|style| style.bg(colors.element_hover))
-                    .map(|header| {
-                        let editor = self.editor.clone();
-                        let buffer_id = for_excerpt.buffer_id;
-                        let toggle_chevron_icon =
-                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
-                        let button_size = rems_from_px(28.);
-
-                        header.child(
-                            div()
-                                .hover(|style| style.bg(colors.element_selected))
-                                .rounded_xs()
-                                .child(
-                                    ButtonLike::new("toggle-buffer-fold")
-                                        .style(ButtonStyle::Transparent)
-                                        .height(button_size.into())
-                                        .width(button_size)
-                                        .children(toggle_chevron_icon)
-                                        .tooltip({
-                                            let focus_handle = focus_handle.clone();
-                                            let is_folded_for_tooltip = is_folded;
-                                            move |_window, cx| {
-                                                Tooltip::with_meta_in(
-                                                    if is_folded_for_tooltip {
-                                                        "Unfold Excerpt"
-                                                    } else {
-                                                        "Fold Excerpt"
-                                                    },
-                                                    Some(&ToggleFold),
-                                                    format!(
-                                                        "{} to toggle all",
-                                                        text_for_keystroke(
-                                                            &Modifiers::alt(),
-                                                            "click",
-                                                            cx
-                                                        )
-                                                    ),
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .on_click(move |event, window, cx| {
-                                            if event.modifiers().alt {
-                                                editor.update(cx, |editor, cx| {
-                                                    editor.toggle_fold_all(
-                                                        &ToggleFoldAll,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            } else {
-                                                if is_folded {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.unfold_buffer(buffer_id, cx);
-                                                    });
-                                                } else {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.fold_buffer(buffer_id, cx);
-                                                    });
-                                                }
-                                            }
-                                        }),
-                                ),
-                        )
-                    })
-                    .children(
-                        editor
-                            .addons
-                            .values()
-                            .filter_map(|addon| {
-                                addon.render_buffer_header_controls(for_excerpt, window, cx)
-                            })
-                            .take(1),
-                    )
-                    .when(!is_read_only, |this| {
-                        this.child(
-                            h_flex()
-                                .size_3()
-                                .justify_center()
-                                .flex_shrink_0()
-                                .children(indicator),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .cursor_pointer()
-                            .id("path_header_block")
-                            .min_w_0()
-                            .size_full()
-                            .justify_between()
-                            .overflow_hidden()
-                            .child(h_flex().min_w_0().flex_1().gap_0p5().map(|path_header| {
-                                let filename = filename
-                                    .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
-
-                                path_header
-                                    .when(ItemSettings::get_global(cx).file_icons, |el| {
-                                        let path = path::Path::new(filename.as_str());
-                                        let icon =
-                                            FileIcons::get_icon(path, cx).unwrap_or_default();
-
-                                        el.child(Icon::from_path(icon).color(Color::Muted))
-                                    })
-                                    .child(
-                                        ButtonLike::new("filename-button")
-                                            .child(
-                                                Label::new(filename)
-                                                    .single_line()
-                                                    .color(file_status_label_color(file_status))
-                                                    .when(
-                                                        file_status.is_some_and(|s| s.is_deleted()),
-                                                        |label| label.strikethrough(),
-                                                    ),
-                                            )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    )
-                                    .when(!for_excerpt.buffer.capability.editable(), |el| {
-                                        el.child(Icon::new(IconName::FileLock).color(Color::Muted))
-                                    })
-                                    .when_some(parent_path, |then, path| {
-                                        then.child(Label::new(path).truncate().color(
-                                            if file_status.is_some_and(FileStatus::is_deleted) {
-                                                Color::Custom(colors.text_disabled)
-                                            } else {
-                                                Color::Custom(colors.text_muted)
-                                            },
-                                        ))
-                                    })
-                            }))
-                            .when(
-                                can_open_excerpts && is_selected && relative_path.is_some(),
-                                |el| {
-                                    el.child(
-                                        Button::new("open-file-button", "Open File")
-                                            .style(ButtonStyle::OutlinedGhost)
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &OpenExcerpts,
-                                                &focus_handle,
-                                                cx,
-                                            ))
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    )
-                                },
-                            )
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(window.listener_for(&self.editor, {
-                                let buffer_id = for_excerpt.buffer_id;
-                                move |editor, e: &ClickEvent, window, cx| {
-                                    if e.modifiers().alt {
-                                        editor.open_excerpts_common(
-                                            Some(jump_data.clone()),
-                                            e.modifiers().secondary(),
-                                            window,
-                                            cx,
-                                        );
-                                        return;
-                                    }
-
-                                    if is_folded {
-                                        editor.unfold_buffer(buffer_id, cx);
-                                    } else {
-                                        editor.fold_buffer(buffer_id, cx);
-                                    }
-                                }
-                            })),
-                    ),
-            );
-
-        let file = for_excerpt.buffer.file().cloned();
-        let editor = self.editor.clone();
-
-        right_click_menu("buffer-header-context-menu")
-            .trigger(move |_, _, _| header)
-            .menu(move |window, cx| {
-                let menu_context = focus_handle.clone();
-                let editor = editor.clone();
-                let file = file.clone();
-                ContextMenu::build(window, cx, move |mut menu, window, cx| {
-                    if let Some(file) = file
-                        && let Some(project) = editor.read(cx).project()
-                        && let Some(worktree) =
-                            project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
-                    {
-                        let path_style = file.path_style(cx);
-                        let worktree = worktree.read(cx);
-                        let relative_path = file.path();
-                        let entry_for_path = worktree.entry_for_path(relative_path);
-                        let abs_path = entry_for_path.map(|e| {
-                            e.canonical_path.as_deref().map_or_else(
-                                || worktree.absolutize(relative_path),
-                                Path::to_path_buf,
-                            )
-                        });
-                        let has_relative_path = worktree.root_entry().is_some_and(Entry::is_dir);
-
-                        let parent_abs_path = abs_path
-                            .as_ref()
-                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
-                        let relative_path = has_relative_path
-                            .then_some(relative_path)
-                            .map(ToOwned::to_owned);
-
-                        let visible_in_project_panel =
-                            relative_path.is_some() && worktree.is_visible();
-                        let reveal_in_project_panel = entry_for_path
-                            .filter(|_| visible_in_project_panel)
-                            .map(|entry| entry.id);
-                        menu = menu
-                            .when_some(abs_path, |menu, abs_path| {
-                                menu.entry(
-                                    "Copy Path",
-                                    Some(Box::new(zed_actions::workspace::CopyPath)),
-                                    window.handler_for(&editor, move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            abs_path.to_string_lossy().into_owned(),
-                                        ));
-                                    }),
-                                )
-                            })
-                            .when_some(relative_path, |menu, relative_path| {
-                                menu.entry(
-                                    "Copy Relative Path",
-                                    Some(Box::new(zed_actions::workspace::CopyRelativePath)),
-                                    window.handler_for(&editor, move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            relative_path.display(path_style).to_string(),
-                                        ));
-                                    }),
-                                )
-                            })
-                            .when(
-                                reveal_in_project_panel.is_some() || parent_abs_path.is_some(),
-                                |menu| menu.separator(),
-                            )
-                            .when_some(reveal_in_project_panel, |menu, entry_id| {
-                                menu.entry(
-                                    "Reveal In Project Panel",
-                                    Some(Box::new(RevealInProjectPanel::default())),
-                                    window.handler_for(&editor, move |editor, _, cx| {
-                                        if let Some(project) = &mut editor.project {
-                                            project.update(cx, |_, cx| {
-                                                cx.emit(project::Event::RevealInProjectPanel(
-                                                    entry_id,
-                                                ))
-                                            });
-                                        }
-                                    }),
-                                )
-                            })
-                            .when_some(parent_abs_path, |menu, parent_abs_path| {
-                                menu.entry(
-                                    "Open in Terminal",
-                                    Some(Box::new(OpenInTerminal)),
-                                    window.handler_for(&editor, move |_, window, cx| {
-                                        window.dispatch_action(
-                                            OpenTerminal {
-                                                working_directory: parent_abs_path.clone(),
-                                                local: false,
-                                            }
-                                            .boxed_clone(),
-                                            cx,
-                                        );
-                                    }),
-                                )
-                            });
-                    }
-
-                    menu.context(menu_context)
-                })
-            })
-    }
-}
-
-fn header_jump_data(
-    editor_snapshot: &EditorSnapshot,
-    block_row_start: DisplayRow,
-    height: u32,
-    first_excerpt: &ExcerptInfo,
-    latest_selection_anchors: &HashMap<BufferId, Anchor>,
-) -> JumpData {
-    let jump_target = if let Some(anchor) = latest_selection_anchors.get(&first_excerpt.buffer_id)
-        && let Some(range) = editor_snapshot.context_range_for_excerpt(anchor.excerpt_id)
-        && let Some(buffer) = editor_snapshot
-            .buffer_snapshot()
-            .buffer_for_excerpt(anchor.excerpt_id)
-    {
-        JumpTargetInExcerptInput {
-            id: anchor.excerpt_id,
-            buffer,
-            excerpt_start_anchor: range.start,
-            jump_anchor: anchor.text_anchor,
-        }
-    } else {
-        JumpTargetInExcerptInput {
-            id: first_excerpt.id,
-            buffer: &first_excerpt.buffer,
-            excerpt_start_anchor: first_excerpt.range.context.start,
-            jump_anchor: first_excerpt.range.primary.start,
-        }
-    };
-    header_jump_data_inner(editor_snapshot, block_row_start, height, &jump_target)
-}
-
-struct JumpTargetInExcerptInput<'a> {
-    id: ExcerptId,
-    buffer: &'a language::BufferSnapshot,
-    excerpt_start_anchor: text::Anchor,
-    jump_anchor: text::Anchor,
-}
-
-fn header_jump_data_inner(
-    snapshot: &EditorSnapshot,
-    block_row_start: DisplayRow,
-    height: u32,
-    for_excerpt: &JumpTargetInExcerptInput,
-) -> JumpData {
-    let buffer = &for_excerpt.buffer;
-    let jump_position = language::ToPoint::to_point(&for_excerpt.jump_anchor, buffer);
-    let excerpt_start = for_excerpt.excerpt_start_anchor;
-    let rows_from_excerpt_start = if for_excerpt.jump_anchor == excerpt_start {
-        0
-    } else {
-        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
-        jump_position.row.saturating_sub(excerpt_start_point.row)
-    };
-
-    let line_offset_from_top = (block_row_start.0 + height + rows_from_excerpt_start)
-        .saturating_sub(
-            snapshot
-                .scroll_anchor
-                .scroll_position(&snapshot.display_snapshot)
-                .y as u32,
-        );
-
-    JumpData::MultiBufferPoint {
-        excerpt_id: for_excerpt.id,
-        anchor: for_excerpt.jump_anchor,
-        position: jump_position,
-        line_offset_from_top,
-    }
-}
-
-fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
-    file_status.map_or(Color::Default, |status| {
-        if status.is_conflicted() {
-            Color::Conflict
-        } else if status.is_modified() {
-            Color::Modified
-        } else if status.is_deleted() {
-            Color::Disabled
-        } else if status.is_created() {
-            Color::Created
-        } else {
-            Color::Default
-        }
-    })
 }

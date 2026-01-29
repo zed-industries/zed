@@ -8,7 +8,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -18,7 +18,8 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
-use cloud_llm_client::{CompletionIntent, Plan};
+use cloud_api_types::Plan;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -623,26 +624,65 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
+    ///
+    /// # Shell Compatibility for Terminal Tool
+    ///
+    /// For the terminal tool, "Always allow" options are only shown when the user's
+    /// shell supports POSIX-like command chaining syntax (`&&`, `||`, `;`, `|`).
+    ///
+    /// **Why this matters:** When a user sets up an "always allow" pattern like `^cargo`,
+    /// we need to parse the command to extract all sub-commands and verify that EVERY
+    /// sub-command matches the pattern. Otherwise, an attacker could craft a command like
+    /// `cargo build && rm -rf /` that would bypass the security check.
+    ///
+    /// **Supported shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
+    ///
+    /// **Unsupported shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
+    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
+    ///
+    /// For unsupported shells, we hide the "Always allow" UI options entirely, and if
+    /// the user has `always_allow` rules configured in settings, `ToolPermissionDecision::from_input`
+    /// will return a `Deny` with an explanatory error message.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
+        use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
         let input_value = &self.input_value;
 
-        let (pattern, pattern_display) = match tool_name.as_str() {
-            "terminal" => (
+        // Check if the user's shell supports POSIX-like command chaining.
+        // See the doc comment above for the full explanation of why this is needed.
+        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
+            ShellKind::system()
+                .map(|k| k.supports_posix_chaining())
+                .unwrap_or(false)
+        } else {
+            true
+        };
+
+        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
+            (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
-            ),
-            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+            )
+        } else if tool_name == EditFileTool::name()
+            || tool_name == DeletePathTool::name()
+            || tool_name == MovePathTool::name()
+            || tool_name == CreateDirectoryTool::name()
+            || tool_name == SaveFileTool::name()
+        {
+            (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
-            ),
-            "fetch" => (
+            )
+        } else if tool_name == FetchTool::name() {
+            (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
-            ),
-            _ => (None, None),
+            )
+        } else {
+            (None, None)
         };
 
         let mut choices = Vec::new();
@@ -662,27 +702,29 @@ impl ToolPermissionContext {
             });
         };
 
-        push_choice(
-            format!("Always for {}", tool_name.replace('_', " ")),
-            format!("always_allow:{}", tool_name),
-            format!("always_deny:{}", tool_name),
-            acp::PermissionOptionKind::AllowAlways,
-            acp::PermissionOptionKind::RejectAlways,
-        );
-
-        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-            let button_text = match tool_name.as_str() {
-                "terminal" => format!("Always for `{}` commands", display),
-                "fetch" => format!("Always for `{}`", display),
-                _ => format!("Always for `{}`", display),
-            };
+        if shell_supports_always_allow {
             push_choice(
-                button_text,
-                format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                format!("Always for {}", tool_name.replace('_', " ")),
+                format!("always_allow:{}", tool_name),
+                format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
                 acp::PermissionOptionKind::RejectAlways,
             );
+
+            if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+                let button_text = if tool_name == TerminalTool::name() {
+                    format!("Always for `{}` commands", display)
+                } else {
+                    format!("Always for `{}`", display)
+                };
+                push_choice(
+                    button_text,
+                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::RejectAlways,
+                );
+            }
         }
 
         push_choice(
@@ -1663,6 +1705,13 @@ impl Thread {
                 }
             }
 
+            // Drop the stream to release the rate limit permit before tool execution.
+            // The stream holds a semaphore guard that limits concurrent requests.
+            // Without this, the permit would be held during potentially long-running
+            // tool execution, which could cause deadlocks when tools spawn subagents
+            // that need their own permits.
+            drop(events);
+
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
@@ -1738,10 +1787,7 @@ impl Thread {
         };
 
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                None => false,
-            }
+            plan.is_some()
         } else {
             true
         };
@@ -2263,7 +2309,6 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
-            bypass_rate_limit: false,
         };
 
         log::debug!("Completion request built successfully");
@@ -2286,8 +2331,7 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool =
-            cx.has_flag::<AgentV2FeatureFlag>() && model.supports_streaming_tools();
+        let use_streaming_edit_tool = false;
 
         let mut tools = self
             .tools
@@ -2304,11 +2348,11 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", false) | ("edit_file", true) => None,
                         ("streaming_edit_file", true) => {
                             // Expose streaming tool as "edit_file"
                             Some((SharedString::from("edit_file"), tool.clone()))
                         }
-                        ("edit_file", true) => None,
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
                 } else {

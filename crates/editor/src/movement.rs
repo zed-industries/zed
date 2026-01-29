@@ -523,7 +523,7 @@ fn is_subword_boundary_end(left: char, right: char, classifier: &CharClassifier)
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
-/// is defined as a run of non-blank lines.
+/// is defined as a run of non-empty lines.
 pub fn start_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -534,25 +534,25 @@ pub fn start_of_paragraph(
         return DisplayPoint::zero();
     }
 
-    let mut found_non_blank_line = false;
+    let mut found_non_empty_line = false;
     for row in (0..point.row + 1).rev() {
-        let blank = map.buffer_snapshot().is_line_blank(MultiBufferRow(row));
-        if found_non_blank_line && blank {
+        let empty = map.buffer_snapshot().line_len(MultiBufferRow(row)) == 0;
+        if found_non_empty_line && empty {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
             }
             count -= 1;
-            found_non_blank_line = false;
+            found_non_empty_line = false;
         }
 
-        found_non_blank_line |= !blank;
+        found_non_empty_line |= !empty;
     }
 
     DisplayPoint::zero()
 }
 
 /// Returns a position of the end of the current paragraph, where a paragraph
-/// is defined as a run of non-blank lines.
+/// is defined as a run of non-empty lines.
 pub fn end_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
@@ -563,18 +563,18 @@ pub fn end_of_paragraph(
         return map.max_point();
     }
 
-    let mut found_non_blank_line = false;
+    let mut found_non_empty_line = false;
     for row in point.row..=map.buffer_snapshot().max_row().0 {
-        let blank = map.buffer_snapshot().is_line_blank(MultiBufferRow(row));
-        if found_non_blank_line && blank {
+        let empty = map.buffer_snapshot().line_len(MultiBufferRow(row)) == 0;
+        if found_non_empty_line && empty {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
             }
             count -= 1;
-            found_non_blank_line = false;
+            found_non_empty_line = false;
         }
 
-        found_non_blank_line |= !blank;
+        found_non_empty_line |= !empty;
     }
 
     map.max_point()

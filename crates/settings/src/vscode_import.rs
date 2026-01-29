@@ -216,7 +216,6 @@ impl VsCodeSettings {
             vim_mode: None,
             workspace: self.workspace_settings_content(),
             which_key: None,
-            modeline_lines: None,
         }
     }
 
@@ -666,6 +665,7 @@ impl VsCodeSettings {
         let mut project_panel_settings = ProjectPanelSettingsContent {
             auto_fold_dirs: self.read_bool("explorer.compactFolders"),
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
+            bold_folder_labels: None,
             button: None,
             default_width: None,
             dock: None,

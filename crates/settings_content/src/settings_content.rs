@@ -176,13 +176,6 @@ pub struct SettingsContent {
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
-
-    /// Number of lines to search for modelines at the beginning and end of files.
-    /// Modelines contain editor directives (e.g., vim/emacs settings) that configure
-    /// the editor behavior for specific files.
-    ///
-    /// Default: 5
-    pub modeline_lines: Option<usize>,
 }
 
 impl SettingsContent {
@@ -708,6 +701,9 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    /// When enabled, the `:substitute` command replaces all matches in a line
+    /// by default. The 'g' flag then toggles this behavior.,
+    pub gdefault: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,

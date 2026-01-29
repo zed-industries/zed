@@ -72,7 +72,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
+pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -98,9 +98,8 @@ use edit_prediction_types::{
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
-    FutureExt, StreamExt as _,
+    FutureExt,
     future::{self, Shared, join},
-    stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::{GitBlame, GlobalBlameRenderer};
@@ -108,7 +107,7 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
     Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
     TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
@@ -128,8 +127,8 @@ use language::{
     OutlineItem, Point, Runnable, Selection, SelectionGoal, TextObject, TransactionId,
     TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
-        WordsCompletionMode, all_language_settings,
+        self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        all_language_settings, language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -196,13 +195,14 @@ use std::{
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
-    AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
-    observe_buffer_font_size_adjustment,
+    AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
+    ThemeSettings, observe_buffer_font_size_adjustment,
 };
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
+use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
@@ -212,6 +212,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
 };
+use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -372,6 +373,12 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
+    _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
+        Arc::new(ErasedEditorImpl(
+            cx.new(|cx| Editor::single_line(window, cx)),
+        )) as Arc<dyn ErasedEditor>
+    });
+    _ = multi_buffer::EXCERPT_CONTEXT_LINES.set(multibuffer_context_lines);
 }
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
@@ -581,8 +588,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
-    let show_background = AllLanguageSettings::get_global(cx)
-        .defaults
+    let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -1292,7 +1298,6 @@ pub struct Editor {
     next_review_comment_id: usize,
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
-    pull_diagnostics_background_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -2481,6 +2486,7 @@ impl Editor {
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
                         cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                        cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                         cx.observe_window_activation(window, |editor, window, cx| {
                             let active = window.is_window_active();
@@ -2500,7 +2506,6 @@ impl Editor {
                 .unwrap_or_default(),
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
-            pull_diagnostics_background_task: Task::ready(()),
             colors: None,
             refresh_colors_task: Task::ready(()),
             inlay_hints: None,
@@ -3820,7 +3825,7 @@ impl Editor {
             self.selections_did_change(true, old_cursor_position, state.effects, window, cx);
 
             if self.should_open_signature_help_automatically(old_cursor_position, cx) {
-                self.show_signature_help(&ShowSignatureHelp, window, cx);
+                self.show_signature_help_auto(window, cx);
             }
         }
     }
@@ -5642,7 +5647,14 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position, cx)?;
 
-        let settings = LanguageSettings::for_buffer_at(&buffer.read(cx), buffer_position, cx);
+        let settings = language_settings::language_settings(
+            buffer
+                .read(cx)
+                .language_at(buffer_position)
+                .map(|l| l.name()),
+            buffer.read(cx).file(),
+            cx,
+        );
         if !settings.use_on_type_format {
             return None;
         }
@@ -5756,7 +5768,8 @@ impl Editor {
         let language = buffer_snapshot
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
-        let language_settings = multibuffer_snapshot.language_settings_at(buffer_position, cx);
+
+        let language_settings = language_settings(language.clone(), buffer_snapshot.file(), cx);
         let completion_settings = language_settings.completions.clone();
 
         let show_completions_on_input = self
@@ -6641,7 +6654,8 @@ impl Editor {
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
             let language = buffer.language()?;
-            let debug_adapter = LanguageSettings::for_buffer(&buffer, cx)
+            let file = buffer.file();
+            let debug_adapter = language_settings(language.name().into(), file, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -7668,7 +7682,11 @@ impl Editor {
             return EditPredictionSettings::Disabled;
         }
 
-        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
+        let buffer = buffer.read(cx);
+
+        let file = buffer.file();
+
+        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
             return EditPredictionSettings::Disabled;
         };
 
@@ -7683,7 +7701,6 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|provider| provider.provider.show_predictions_in_menu());
 
-        let file = buffer.read(cx).file();
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
 
@@ -16540,6 +16557,62 @@ impl Editor {
         self.move_cursors_to_syntax_nodes(window, cx, true);
     }
 
+    fn find_syntax_node_boundary(
+        &self,
+        selection_pos: MultiBufferOffset,
+        move_to_end: bool,
+        display_map: &DisplaySnapshot,
+        buffer: &MultiBufferSnapshot,
+    ) -> MultiBufferOffset {
+        let old_range = selection_pos..selection_pos;
+        let mut new_pos = selection_pos;
+        let mut search_range = old_range;
+        while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
+            search_range = range.clone();
+            if !node.is_named()
+                || display_map.intersects_fold(range.start)
+                || display_map.intersects_fold(range.end)
+                // If cursor is already at the end of the syntax node, continue searching
+                || (move_to_end && range.end == selection_pos)
+                // If cursor is already at the start of the syntax node, continue searching
+                || (!move_to_end && range.start == selection_pos)
+            {
+                continue;
+            }
+
+            // If we found a string_content node, find the largest parent that is still string_content
+            // Enables us to skip to the end of strings without taking multiple steps inside the string
+            let (_, final_range) = if node.kind() == "string_content" {
+                let mut current_node = node;
+                let mut current_range = range;
+                while let Some((parent, parent_range)) =
+                    buffer.syntax_ancestor(current_range.clone())
+                {
+                    if parent.kind() == "string_content" {
+                        current_node = parent;
+                        current_range = parent_range;
+                    } else {
+                        break;
+                    }
+                }
+
+                (current_node, current_range)
+            } else {
+                (node, range)
+            };
+
+            new_pos = if move_to_end {
+                final_range.end
+            } else {
+                final_range.start
+            };
+
+            break;
+        }
+
+        new_pos
+    }
+
     fn move_cursors_to_syntax_nodes(
         &mut self,
         window: &mut Window,
@@ -16568,52 +16641,12 @@ impl Editor {
                 }
 
                 let selection_pos = selection.head();
-                let old_range = selection_pos..selection_pos;
-
-                let mut new_pos = selection_pos;
-                let mut search_range = old_range;
-                while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
-                    search_range = range.clone();
-                    if !node.is_named()
-                        || display_map.intersects_fold(range.start)
-                        || display_map.intersects_fold(range.end)
-                        // If cursor is already at the end of the syntax node, continue searching
-                        || (move_to_end && range.end == selection_pos)
-                        // If cursor is already at the start of the syntax node, continue searching
-                        || (!move_to_end && range.start == selection_pos)
-                    {
-                        continue;
-                    }
-
-                    // If we found a string_content node, find the largest parent that is still string_content
-                    // Enables us to skip to the end of strings without taking multiple steps inside the string
-                    let (_, final_range) = if node.kind() == "string_content" {
-                        let mut current_node = node;
-                        let mut current_range = range;
-                        while let Some((parent, parent_range)) =
-                            buffer.syntax_ancestor(current_range.clone())
-                        {
-                            if parent.kind() == "string_content" {
-                                current_node = parent;
-                                current_range = parent_range;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        (current_node, current_range)
-                    } else {
-                        (node, range)
-                    };
-
-                    new_pos = if move_to_end {
-                        final_range.end
-                    } else {
-                        final_range.start
-                    };
-
-                    break;
-                }
+                let new_pos = self.find_syntax_node_boundary(
+                    selection_pos,
+                    move_to_end,
+                    &display_map,
+                    &buffer,
+                );
 
                 any_cursor_moved |= new_pos != selection_pos;
 
@@ -16633,6 +16666,57 @@ impl Editor {
         self.request_autoscroll(Autoscroll::newest(), cx);
 
         any_cursor_moved
+    }
+
+    pub fn select_to_start_of_larger_syntax_node(
+        &mut self,
+        _: &SelectToStartOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to_syntax_nodes(window, cx, false);
+    }
+
+    pub fn select_to_end_of_larger_syntax_node(
+        &mut self,
+        _: &SelectToEndOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to_syntax_nodes(window, cx, true);
+    }
+
+    fn select_to_syntax_nodes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        move_to_end: bool,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<MultiBufferOffset>(&display_map);
+
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                let new_pos = self.find_syntax_node_boundary(
+                    selection.head(),
+                    move_to_end,
+                    &display_map,
+                    &buffer,
+                );
+
+                let mut new_selection = selection.clone();
+                new_selection.set_head(new_pos, SelectionGoal::None);
+                new_selection
+            })
+            .collect::<Vec<_>>();
+
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select(new_selections);
+        });
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -16817,17 +16901,17 @@ impl Editor {
         runnable: &mut Runnable,
         cx: &mut App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
-        let (inventory, worktree_id, buffer) = project.read_with(cx, |project, cx| {
-            let buffer = project.buffer_for_id(runnable.buffer, cx);
-            let worktree_id = buffer
-                .as_ref()
+        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
+            let (worktree_id, file) = project
+                .buffer_for_id(runnable.buffer, cx)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| file.worktree_id(cx));
+                .map(|file| (file.worktree_id(cx), file.clone()))
+                .unzip();
 
             (
                 project.task_store().read(cx).task_inventory().cloned(),
                 worktree_id,
-                buffer,
+                file,
             )
         });
 
@@ -16838,12 +16922,7 @@ impl Editor {
             if let Some(inventory) = inventory {
                 for RunnableTag(tag) in tags {
                     let new_tasks = inventory.update(cx, |inventory, cx| {
-                        inventory.list_tasks(
-                            buffer.clone(),
-                            Some(language.clone()),
-                            worktree_id,
-                            cx,
-                        )
+                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
                     });
                     templates_with_tags.extend(new_tasks.await.into_iter().filter(
                         move |(_, template)| {
@@ -19237,8 +19316,8 @@ impl Editor {
 
     fn pull_diagnostics(
         &mut self,
-        buffer_id: Option<BufferId>,
-        window: &Window,
+        buffer_id: BufferId,
+        _window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if self.ignore_lsp_data() || !self.diagnostics_enabled() {
@@ -19250,102 +19329,27 @@ impl Editor {
         if !pull_diagnostics_settings.enabled {
             return None;
         }
-        let project = self.project()?.downgrade();
-
-        let mut edited_buffer_ids = HashSet::default();
-        let mut edited_worktree_ids = HashSet::default();
-        let edited_buffers = match buffer_id {
-            Some(buffer_id) => {
-                let buffer = self.buffer().read(cx).buffer(buffer_id)?;
-                let worktree_id = buffer.read(cx).file().map(|f| f.worktree_id(cx))?;
-                edited_buffer_ids.insert(buffer.read(cx).remote_id());
-                edited_worktree_ids.insert(worktree_id);
-                vec![buffer]
-            }
-            None => self
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .filter(|buffer| {
-                    let buffer = buffer.read(cx);
-                    match buffer.file().map(|f| f.worktree_id(cx)) {
-                        Some(worktree_id) => {
-                            edited_buffer_ids.insert(buffer.remote_id());
-                            edited_worktree_ids.insert(worktree_id);
-                            true
-                        }
-                        None => false,
-                    }
-                })
-                .collect::<Vec<_>>(),
-        };
-
-        if edited_buffers.is_empty() {
-            self.pull_diagnostics_task = Task::ready(());
-            self.pull_diagnostics_background_task = Task::ready(());
-            return None;
-        }
-
-        let mut already_used_buffers = HashSet::default();
-        let related_open_buffers = self
-            .workspace
-            .as_ref()
-            .and_then(|(workspace, _)| workspace.upgrade())
-            .into_iter()
-            .flat_map(|workspace| workspace.read(cx).panes())
-            .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
-            .filter(|editor| editor != &cx.entity())
-            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
-            .filter(|buffer| {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                if already_used_buffers.insert(buffer_id) {
-                    if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx)) {
-                        return !edited_buffer_ids.contains(&buffer_id)
-                            && edited_worktree_ids.contains(&worktree_id);
-                    }
-                }
-                false
-            })
-            .collect::<Vec<_>>();
-
         let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
-        let make_spawn = |buffers: Vec<Entity<Buffer>>, delay: Duration| {
-            if buffers.is_empty() {
-                return Task::ready(());
+        let project = self.project()?.downgrade();
+        let buffer = self.buffer().read(cx).buffer(buffer_id)?;
+
+        self.pull_diagnostics_task = cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(debounce).await;
+            if let Ok(task) = project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                })
+            }) {
+                task.await.log_err();
             }
-            let project_weak = project.clone();
-            cx.spawn_in(window, async move |_, cx| {
-                cx.background_executor().timer(delay).await;
-
-                let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
-                    buffers
-                        .into_iter()
-                        .filter_map(|buffer| {
-                            project_weak
-                                .update(cx, |project, cx| {
-                                    project.lsp_store().update(cx, |lsp_store, cx| {
-                                        lsp_store.pull_diagnostics_for_buffer(buffer, cx)
-                                    })
-                                })
-                                .ok()
-                        })
-                        .collect::<FuturesUnordered<_>>()
-                }) else {
-                    return;
-                };
-
-                while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                    if let Err(e) = pull_task {
-                        log::error!("Failed to update project diagnostics: {e:#}");
-                    }
-                }
-            })
-        };
-
-        self.pull_diagnostics_task = make_spawn(edited_buffers, debounce);
-        self.pull_diagnostics_background_task = make_spawn(related_open_buffers, debounce * 2);
+            project
+                .update(cx, |project, cx| {
+                    project.lsp_store().update(cx, |lsp_store, cx| {
+                        lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
+                    })
+                })
+                .log_err();
+        });
 
         Some(())
     }
@@ -23161,6 +23165,21 @@ impl Editor {
         Some(text_highlights)
     }
 
+    pub fn clear_background_highlights_key<T: 'static>(
+        &mut self,
+        key: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<BackgroundHighlight> {
+        let text_highlights = self
+            .background_highlights
+            .remove(&HighlightKey::TypePlus(TypeId::of::<T>(), key))?;
+        if !text_highlights.1.is_empty() {
+            self.scrollbar_marker_state.dirty = true;
+            cx.notify();
+        }
+        Some(text_highlights)
+    }
+
     pub fn highlight_gutter<T: 'static>(
         &mut self,
         ranges: impl Into<Vec<Range<Anchor>>>,
@@ -23870,8 +23889,9 @@ impl Editor {
             |mut acc, buffer| {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
-                if let hash_map::Entry::Vacant(v) = acc.entry(language) {
-                    v.insert(LanguageSettings::for_buffer(&buffer, cx).into_owned());
+                if let hash_map::Entry::Vacant(v) = acc.entry(language.clone()) {
+                    let file = buffer.file();
+                    v.insert(language_settings(language, file, cx).into_owned());
                 }
                 acc
             },
@@ -23974,6 +23994,18 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    fn theme_changed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.mode.is_full() {
+            return;
+        }
+
+        let new_accents = self.fetch_accent_data(cx);
+        if new_accents != self.accent_data {
+            self.accent_data = new_accents;
+            self.colorize_brackets(true, cx);
+        }
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -24913,7 +24945,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.pull_diagnostics(for_buffer, window, cx);
+        if let Some(buffer_id) = for_buffer {
+            self.pull_diagnostics(buffer_id, window, cx);
+        }
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
     }
 
@@ -25140,9 +25174,10 @@ fn process_completion_for_edit(
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
                 CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode = LanguageSettings::for_buffer(&buffer, cx)
-                        .completions
-                        .lsp_insert_mode;
+                    let insert_mode =
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                            .completions
+                            .lsp_insert_mode;
                     match insert_mode {
                         LspInsertMode::Insert => false,
                         LspInsertMode::Replace => true,
@@ -27709,6 +27744,90 @@ impl<T: InvalidationRegion> InvalidationStack<T> {
     }
 }
 
+#[derive(Clone)]
+struct ErasedEditorImpl(Entity<Editor>);
+
+impl ui_input::ErasedEditor for ErasedEditorImpl {
+    fn text(&self, cx: &App) -> String {
+        self.0.read(cx).text(cx)
+    }
+
+    fn set_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.set_text(text, window, cx);
+        })
+    }
+
+    fn clear(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| this.clear(window, cx));
+    }
+
+    fn set_placeholder_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.set_placeholder_text(text, window, cx);
+        });
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.0.read(cx).focus_handle(cx)
+    }
+
+    fn render(&self, _: &mut Window, cx: &App) -> AnyElement {
+        let settings = ThemeSettings::get_global(cx);
+        let theme_color = cx.theme().colors();
+
+        let text_style = TextStyle {
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.buffer_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.2),
+            color: theme_color.text,
+            ..Default::default()
+        };
+        let editor_style = EditorStyle {
+            background: theme_color.ghost_element_background,
+            local_player: cx.theme().players().local(),
+            syntax: cx.theme().syntax().clone(),
+            text: text_style,
+            ..Default::default()
+        };
+        EditorElement::new(&self.0, editor_style).into_any()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        &self.0
+    }
+
+    fn move_selection_to_end(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |editor, cx| {
+            let editor_offset = editor.buffer().read(cx).len(cx);
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::Next),
+                window,
+                cx,
+                |s| s.select_ranges(Some(editor_offset..editor_offset)),
+            );
+        });
+    }
+
+    fn subscribe(
+        &self,
+        mut callback: Box<dyn FnMut(ui_input::ErasedEditorEvent, &mut Window, &mut App) + 'static>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Subscription {
+        window.subscribe(&self.0, cx, move |_, event: &EditorEvent, window, cx| {
+            let event = match event {
+                EditorEvent::BufferEdited => ui_input::ErasedEditorEvent::BufferEdited,
+                EditorEvent::Blurred => ui_input::ErasedEditorEvent::Blurred,
+                _ => return,
+            };
+            (callback)(event, window, cx);
+        })
+    }
+}
 impl<T> Default for InvalidationStack<T> {
     fn default() -> Self {
         Self(Default::default())

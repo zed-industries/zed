@@ -97,10 +97,7 @@ use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
-use language::{
-    Point, Subscription as BufferSubscription,
-    language_settings::{AllLanguageSettings, LanguageSettings},
-};
+use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
@@ -108,7 +105,6 @@ use multi_buffer::{
 use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
-use settings::Settings;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
@@ -203,6 +199,7 @@ pub struct DisplayMap {
 
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
+    rhs_folded_buffers: HashSet<BufferId>,
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
     lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
     rhs_excerpt_to_lhs_excerpt: HashMap<ExcerptId, ExcerptId>,
@@ -214,11 +211,13 @@ pub(crate) struct Companion {
 impl Companion {
     pub(crate) fn new(
         rhs_display_map_id: EntityId,
+        rhs_folded_buffers: HashSet<BufferId>,
         rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
         lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
     ) -> Self {
         Self {
             rhs_display_map_id,
+            rhs_folded_buffers,
             rhs_buffer_to_lhs_buffer: Default::default(),
             lhs_buffer_to_rhs_buffer: Default::default(),
             rhs_excerpt_to_lhs_excerpt: Default::default(),
@@ -351,6 +350,18 @@ impl DisplayMap {
         companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
+        if let Some((_, ref companion_entity)) = companion {
+            let c = companion_entity.read(cx);
+            if self.entity_id != c.rhs_display_map_id {
+                let buffer_mapping = c.buffer_to_companion_buffer(c.rhs_display_map_id);
+                self.block_map.folded_buffers = c
+                    .rhs_folded_buffers
+                    .iter()
+                    .filter_map(|id| buffer_mapping.get(id).copied())
+                    .collect();
+            }
+        }
+
         self.companion = companion;
 
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -810,6 +821,21 @@ impl DisplayMap {
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
 
+        if let Some((_, companion_entity)) = &self.companion {
+            companion_entity.update(cx, |companion, _| {
+                if self.entity_id == companion.rhs_display_map_id {
+                    companion
+                        .rhs_folded_buffers
+                        .extend(buffer_ids.iter().copied());
+                } else {
+                    let rhs_ids = buffer_ids
+                        .iter()
+                        .filter_map(|id| companion.lhs_buffer_to_rhs_buffer.get(id).copied());
+                    companion.rhs_folded_buffers.extend(rhs_ids);
+                }
+            });
+        }
+
         let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
         let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
@@ -864,6 +890,22 @@ impl DisplayMap {
         cx: &mut Context<Self>,
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
+
+        if let Some((_, companion_entity)) = &self.companion {
+            companion_entity.update(cx, |companion, _| {
+                if self.entity_id == companion.rhs_display_map_id {
+                    for id in &buffer_ids {
+                        companion.rhs_folded_buffers.remove(id);
+                    }
+                } else {
+                    for id in &buffer_ids {
+                        if let Some(rhs_id) = companion.lhs_buffer_to_rhs_buffer.get(id) {
+                            companion.rhs_folded_buffers.remove(rhs_id);
+                        }
+                    }
+                }
+            });
+        }
 
         let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
@@ -1357,11 +1399,12 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
-        if let Some(buffer) = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx)) {
-            LanguageSettings::for_buffer(buffer, cx).tab_size
-        } else {
-            AllLanguageSettings::get_global(cx).defaults.tab_size
-        }
+        let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
+        let language = buffer
+            .and_then(|buffer| buffer.language())
+            .map(|l| l.name());
+        let file = buffer.and_then(|buffer| buffer.file());
+        language_settings(language, file, cx).tab_size
     }
 
     #[cfg(test)]

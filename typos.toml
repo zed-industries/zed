@@ -82,8 +82,6 @@ extend-ignore-re = [
     # AMD GPU Services
     "ags",
     # AMD GPU Services
-    "AGS",
-    # "noet" is a vim variable (ideally to ignore locally)
-    "noet",
+    "AGS"
 ]
 check-filename = true

@@ -597,6 +597,102 @@ mod tests {
     }
 }
 
+/// Inserts a list of images into the editor as context mentions.
+/// This is the shared implementation used by both paste and file picker operations.
+pub(crate) async fn insert_images_as_context(
+    images: Vec<gpui::Image>,
+    editor: Entity<Editor>,
+    mention_set: Entity<MentionSet>,
+    cx: &mut gpui::AsyncWindowContext,
+) {
+    if images.is_empty() {
+        return;
+    }
+
+    let replacement_text = MentionUri::PastedImage.as_link().to_string();
+
+    for image in images {
+        let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+            .update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let (excerpt_id, _, buffer_snapshot) =
+                    snapshot.buffer_snapshot().as_singleton().unwrap();
+
+                let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                let multibuffer_anchor = snapshot
+                    .buffer_snapshot()
+                    .anchor_in_excerpt(*excerpt_id, text_anchor);
+                editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        format!("{replacement_text} "),
+                    )],
+                    cx,
+                );
+                (*excerpt_id, text_anchor, multibuffer_anchor)
+            })
+            .ok()
+        else {
+            break;
+        };
+
+        let content_len = replacement_text.len();
+        let Some(start_anchor) = multibuffer_anchor else {
+            continue;
+        };
+        let end_anchor = editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+        });
+        let image = Arc::new(image);
+        let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
+            insert_crease_for_mention(
+                excerpt_id,
+                text_anchor,
+                content_len,
+                MentionUri::PastedImage.name().into(),
+                IconName::Image.path().into(),
+                Some(Task::ready(Ok(image.clone())).shared()),
+                editor.clone(),
+                window,
+                cx,
+            )
+        }) else {
+            continue;
+        };
+        let task = cx
+            .spawn(async move |cx| {
+                let image = cx
+                    .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                    .map_err(|e| e.to_string())?
+                    .await;
+                drop(tx);
+                if let Some(image) = image {
+                    Ok(Mention::Image(MentionImage {
+                        data: image.source,
+                        format: LanguageModelImage::FORMAT,
+                    }))
+                } else {
+                    Err("Failed to convert image".into())
+                }
+            })
+            .shared();
+
+        mention_set.update(cx, |mention_set, _cx| {
+            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+        });
+
+        if task.await.notify_async_err(cx).is_none() {
+            editor.update(cx, |editor, cx| {
+                editor.edit([(start_anchor..end_anchor, "")], cx);
+            });
+            mention_set.update(cx, |mention_set, _cx| {
+                mention_set.remove_mention(&crease_id)
+            });
+        }
+    }
+}
+
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
@@ -646,95 +742,12 @@ pub(crate) fn paste_images_as_context(
             );
         }
 
-        if images.is_empty() {
-            return;
-        }
-
-        let replacement_text = MentionUri::PastedImage.as_link().to_string();
         cx.update(|_window, cx| {
             cx.stop_propagation();
         })
         .ok();
-        for image in images {
-            let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
-                .update_in(cx, |message_editor, window, cx| {
-                    let snapshot = message_editor.snapshot(window, cx);
-                    let (excerpt_id, _, buffer_snapshot) =
-                        snapshot.buffer_snapshot().as_singleton().unwrap();
 
-                    let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
-                    let multibuffer_anchor = snapshot
-                        .buffer_snapshot()
-                        .anchor_in_excerpt(*excerpt_id, text_anchor);
-                    message_editor.edit(
-                        [(
-                            multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                            format!("{replacement_text} "),
-                        )],
-                        cx,
-                    );
-                    (*excerpt_id, text_anchor, multibuffer_anchor)
-                })
-                .ok()
-            else {
-                break;
-            };
-
-            let content_len = replacement_text.len();
-            let Some(start_anchor) = multibuffer_anchor else {
-                continue;
-            };
-            let end_anchor = editor.update(cx, |editor, cx| {
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
-            });
-            let image = Arc::new(image);
-            let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
-                insert_crease_for_mention(
-                    excerpt_id,
-                    text_anchor,
-                    content_len,
-                    MentionUri::PastedImage.name().into(),
-                    IconName::Image.path().into(),
-                    Some(Task::ready(Ok(image.clone())).shared()),
-                    editor.clone(),
-                    window,
-                    cx,
-                )
-            }) else {
-                continue;
-            };
-            let task = cx
-                .spawn(async move |cx| {
-                    let image = cx
-                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
-                        .map_err(|e| e.to_string())?
-                        .await;
-                    drop(tx);
-                    if let Some(image) = image {
-                        Ok(Mention::Image(MentionImage {
-                            data: image.source,
-                            format: LanguageModelImage::FORMAT,
-                        }))
-                    } else {
-                        Err("Failed to convert image".into())
-                    }
-                })
-                .shared();
-
-            mention_set.update(cx, |mention_set, _cx| {
-                mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
-            });
-
-            if task.await.notify_async_err(cx).is_none() {
-                editor.update(cx, |editor, cx| {
-                    editor.edit([(start_anchor..end_anchor, "")], cx);
-                });
-                mention_set.update(cx, |mention_set, _cx| {
-                    mention_set.remove_mention(&crease_id)
-                });
-            }
-        }
+        insert_images_as_context(images, editor, mention_set, cx).await;
     }))
 }
 
@@ -1036,9 +1049,13 @@ struct ImageHover {
 }
 
 impl Render for ImageHover {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(image) = self.image.clone() {
-            gpui::img(image).max_w_96().max_h_96().into_any_element()
+            div()
+                .p_1p5()
+                .elevation_2(cx)
+                .child(gpui::img(image).h_auto().max_w_96().rounded_sm())
+                .into_any_element()
         } else {
             gpui::Empty.into_any_element()
         }

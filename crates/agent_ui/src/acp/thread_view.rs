@@ -28,16 +28,15 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
-    CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
+    Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
+    ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
+    PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle, WeakEntity, Window,
     WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
     pulsating_between,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
-use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
@@ -49,12 +48,12 @@ use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{Anchor, ToPoint as _};
-use theme::{AgentFontSize, ThemeSettings};
+use theme::AgentFontSize;
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
-    right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
+    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
+    Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -80,7 +79,7 @@ use crate::user_slash_command::{
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
     ToggleProfileSelector,
 };
@@ -347,6 +346,7 @@ pub struct AcpThreadView {
     _subscriptions: [Subscription; 4],
     show_codex_windows_warning: bool,
     in_flight_prompt: Option<Vec<acp::ContentBlock>>,
+    add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl AcpThreadView {
@@ -539,6 +539,7 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             show_codex_windows_warning,
             in_flight_prompt: None,
+            add_context_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -1812,7 +1813,13 @@ impl AcpThreadView {
                         if let Some(workspace) = self.workspace.upgrade() {
                             let project = self.project.clone();
                             let authenticate = Self::spawn_external_agent_login(
-                                login, workspace, project, false, true, window, cx,
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
@@ -1912,14 +1919,17 @@ impl AcpThreadView {
 
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "spawn-gemini-cli")
-            && let Some(login) = self.login.clone()
-        {
+        let authenticate = if let Some(login) = self.login.clone() {
             if let Some(workspace) = self.workspace.upgrade() {
                 let project = self.project.clone();
                 Self::spawn_external_agent_login(
-                    login, workspace, project, false, false, window, cx,
+                    login,
+                    workspace,
+                    project,
+                    method.clone(),
+                    false,
+                    window,
+                    cx,
                 )
             } else {
                 Task::ready(Ok(()))
@@ -1966,8 +1976,8 @@ impl AcpThreadView {
         login: task::SpawnInTerminal,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
+        method: acp::AuthMethodId,
         previous_attempt: bool,
-        check_exit_code: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -2017,25 +2027,29 @@ impl AcpThreadView {
                 })?
                 .await?;
 
-            if check_exit_code {
-                // For extension-based auth, wait for the process to exit and check exit code
+            let success_patterns = match method.0.as_ref() {
+                "claude-login" | "spawn-gemini-cli" => vec![
+                    "Login successful".to_string(),
+                    "Type your message".to_string(),
+                ],
+                _ => Vec::new(),
+            };
+            if success_patterns.is_empty() {
+                // No success patterns specified: wait for the process to exit and check exit code
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
 
                 match exit_status {
-                    Some(status) if status.success() => {
-                        Ok(())
-                    }
-                    Some(status) => {
-                        Err(anyhow!("Login command failed with exit code: {:?}", status.code()))
-                    }
-                    None => {
-                        Err(anyhow!("Login command terminated without exit status"))
-                    }
+                    Some(status) if status.success() => Ok(()),
+                    Some(status) => Err(anyhow!(
+                        "Login command failed with exit code: {:?}",
+                        status.code()
+                    )),
+                    None => Err(anyhow!("Login command terminated without exit status")),
                 }
             } else {
-                // For hardcoded agents (claude-login, gemini-cli): look for specific output
+                // Look for specific output patterns to detect successful login
                 let mut exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .fuse();
@@ -2048,8 +2062,7 @@ impl AcpThreadView {
                                 cx.background_executor().timer(Duration::from_secs(1)).await;
                                 let content =
                                     terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                                if content.contains("Login successful")
-                                    || content.contains("Type your message")
+                                if success_patterns.iter().any(|pattern| content.contains(pattern))
                                 {
                                     return anyhow::Ok(());
                                 }
@@ -2067,7 +2080,7 @@ impl AcpThreadView {
                     }
                     _ = exit_status => {
                         if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
-                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), true, false, window, cx))?.await
+                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), method, true, window, cx))?.await
                         }
                         return Err(anyhow!("exited before logging in"));
                     }
@@ -2320,7 +2333,7 @@ impl AcpThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let style = default_markdown_style(false, false, window, cx);
+                let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_3()
@@ -2615,9 +2628,10 @@ impl AcpThreadView {
                 })
                 .text_ui_sm(cx)
                 .overflow_hidden()
-                .child(
-                    self.render_markdown(chunk, default_markdown_style(false, false, window, cx)),
-                )
+                .child(self.render_markdown(
+                    chunk,
+                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                ))
         };
 
         v_flex()
@@ -2829,7 +2843,11 @@ impl AcpThreadView {
                                         |input| {
                                             self.render_markdown(
                                                 input,
-                                                default_markdown_style(false, false, window, cx),
+                                                MarkdownStyle::themed(
+                                                    MarkdownFont::Agent,
+                                                    window,
+                                                    cx,
+                                                ),
                                             )
                                         },
                                     ))
@@ -2854,31 +2872,34 @@ impl AcpThreadView {
                 | ToolCallStatus::InProgress
                 | ToolCallStatus::Completed
                 | ToolCallStatus::Failed
-                | ToolCallStatus::Canceled => {
-                    v_flex()
-                        .when(should_show_raw_input, |this| {
-                            this.mt_1p5().w_full().child(
-                                v_flex()
-                                    .ml(rems(0.4))
-                                    .px_3p5()
-                                    .pb_1()
-                                    .gap_1()
-                                    .border_l_1()
-                                    .border_color(self.tool_card_border_color(cx))
-                                    .child(input_output_header("Raw Input:".into()))
-                                    .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                        div().id(("tool-call-raw-input-markdown", entry_ix)).child(
-                                            self.render_markdown(
-                                                input,
-                                                default_markdown_style(false, false, window, cx),
-                                            ),
-                                        )
-                                    }))
-                                    .child(input_output_header("Output:".into())),
-                            )
-                        })
-                        .children(tool_call.content.iter().enumerate().map(
-                            |(content_ix, content)| {
+                | ToolCallStatus::Canceled => v_flex()
+                    .when(should_show_raw_input, |this| {
+                        this.mt_1p5().w_full().child(
+                            v_flex()
+                                .ml(rems(0.4))
+                                .px_3p5()
+                                .pb_1()
+                                .gap_1()
+                                .border_l_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .child(input_output_header("Raw Input:".into()))
+                                .children(tool_call.raw_input_markdown.clone().map(|input| {
+                                    div().id(("tool-call-raw-input-markdown", entry_ix)).child(
+                                        self.render_markdown(
+                                            input,
+                                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                        ),
+                                    )
+                                }))
+                                .child(input_output_header("Output:".into())),
+                        )
+                    })
+                    .children(
+                        tool_call
+                            .content
+                            .iter()
+                            .enumerate()
+                            .map(|(content_ix, content)| {
                                 div().id(("tool-call-output", entry_ix)).child(
                                     self.render_tool_call_content(
                                         entry_ix,
@@ -2892,10 +2913,9 @@ impl AcpThreadView {
                                         cx,
                                     ),
                                 )
-                            },
-                        ))
-                        .into_any()
-                }
+                            }),
+                    )
+                    .into_any(),
                 ToolCallStatus::Rejected => Empty.into_any(),
             }
             .into()
@@ -3169,13 +3189,16 @@ impl AcpThreadView {
                             this.text_color(cx.theme().colors().text_muted)
                         }
                     })
-                    .child(self.render_markdown(
-                        tool_call.label.clone(),
-                        MarkdownStyle {
-                            prevent_mouse_interaction: true,
-                            ..default_markdown_style(false, true, window, cx)
-                        },
-                    ))
+                    .child(
+                        self.render_markdown(
+                            tool_call.label.clone(),
+                            MarkdownStyle {
+                                prevent_mouse_interaction: true,
+                                ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+                                    .with_muted_text(cx)
+                            },
+                        ),
+                    )
                     .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
@@ -3186,7 +3209,7 @@ impl AcpThreadView {
                     .w_full()
                     .child(self.render_markdown(
                         tool_call.label.clone(),
-                        default_markdown_style(false, true, window, cx),
+                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
                     ))
                     .into_any()
             })
@@ -3258,10 +3281,7 @@ impl AcpThreadView {
             .filter_map(|c| c.subagent_thread().cloned())
             .collect();
 
-        let tool_call_in_progress = matches!(
-            tool_call.status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
-        );
+        let tool_call_status = &tool_call.status;
 
         v_flex()
             .mx_5()
@@ -3276,7 +3296,7 @@ impl AcpThreadView {
                             entry_ix,
                             context_ix,
                             &thread,
-                            tool_call_in_progress,
+                            tool_call_status,
                             window,
                             cx,
                         )
@@ -3289,7 +3309,7 @@ impl AcpThreadView {
         entry_ix: usize,
         context_ix: usize,
         thread: &Entity<AcpThread>,
-        tool_call_in_progress: bool,
+        tool_call_status: &ToolCallStatus,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3307,7 +3327,14 @@ impl AcpThreadView {
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
-        let is_running = tool_call_in_progress;
+        let is_running = matches!(
+            tool_call_status,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        );
+        let is_canceled_or_failed = matches!(
+            tool_call_status,
+            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
+        );
 
         let card_header_id =
             SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
@@ -3316,6 +3343,11 @@ impl AcpThreadView {
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
+                .into_any_element()
+        } else if is_canceled_or_failed {
+            Icon::new(IconName::Close)
+                .size(IconSize::Small)
+                .color(Color::Error)
                 .into_any_element()
         } else {
             Icon::new(IconName::Check)
@@ -3380,32 +3412,74 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .when(has_expandable_content, |this| {
-                        this.child(
-                            Disclosure::new(
-                                SharedString::from(format!(
-                                    "subagent-disclosure-inner-{}-{}",
-                                    entry_ix, context_ix
-                                )),
-                                is_expanded,
-                            )
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(card_header_id)
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    if let Some(active) = this.as_active_thread_mut() {
-                                        if active.expanded_subagents.contains(&session_id) {
-                                            active.expanded_subagents.remove(&session_id);
-                                        } else {
-                                            active.expanded_subagents.insert(session_id.clone());
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .when(is_running, |buttons| {
+                                buttons.child(
+                                    Button::new(
+                                        SharedString::from(format!(
+                                            "stop-subagent-{}-{}",
+                                            entry_ix, context_ix
+                                        )),
+                                        "Stop",
+                                    )
+                                    .icon(IconName::Stop)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .label_size(LabelSize::Small)
+                                    .tooltip(Tooltip::text("Stop this subagent"))
+                                    .on_click({
+                                        let thread = thread.clone();
+                                        cx.listener(move |_this, _event, _window, cx| {
+                                            thread.update(cx, |thread, _cx| {
+                                                thread.stop_by_user();
+                                            });
+                                        })
+                                    }),
+                                )
+                            })
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "subagent-disclosure-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    if is_expanded {
+                                        IconName::ChevronUp
+                                    } else {
+                                        IconName::ChevronDown
+                                    },
+                                )
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .icon_size(IconSize::Small)
+                                .disabled(!has_expandable_content)
+                                .when(has_expandable_content, |button| {
+                                    button.on_click(cx.listener({
+                                        move |this, _, _, cx| {
+                                            if let Some(active) = this.as_active_thread_mut() {
+                                                if active.expanded_subagents.contains(&session_id) {
+                                                    active.expanded_subagents.remove(&session_id);
+                                                } else {
+                                                    active
+                                                        .expanded_subagents
+                                                        .insert(session_id.clone());
+                                                }
+                                            }
+                                            cx.notify();
                                         }
-                                        cx.notify();
-                                    }
-                                }
-                            })),
-                        )
-                    }),
+                                    }))
+                                })
+                                .when(
+                                    !has_expandable_content,
+                                    |button| {
+                                        button.tooltip(Tooltip::text("Waiting for content..."))
+                                    },
+                                ),
+                            ),
+                    ),
             )
             .when(is_expanded, |this| {
                 this.child(
@@ -3482,7 +3556,7 @@ impl AcpThreadView {
                     .when_some(last_assistant_markdown, |this, markdown| {
                         this.child(self.render_markdown(
                             markdown,
-                            default_markdown_style(false, false, window, cx),
+                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
                         ))
                     }),
             )
@@ -3518,7 +3592,10 @@ impl AcpThreadView {
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
-            .child(self.render_markdown(markdown, default_markdown_style(false, false, window, cx)))
+            .child(self.render_markdown(
+                markdown,
+                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+            ))
             .when(!card_layout, |this| {
                 this.child(
                     IconButton::new(button_id, IconName::ChevronUp)
@@ -4226,7 +4303,9 @@ impl AcpThreadView {
                                 terminal.update(cx, |terminal, cx| {
                                     terminal.stop_by_user(cx);
                                 });
-                                this.cancel_generation(cx);
+                                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
+                                    this.cancel_generation(cx);
+                                }
                             })
                         }),
                     )
@@ -4716,7 +4795,7 @@ impl AcpThreadView {
                             .children(description.map(|desc| {
                                 self.render_markdown(
                                     desc.clone(),
-                                    default_markdown_style(false, false, window, cx),
+                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
                                 )
                             }))
                         }
@@ -4842,8 +4921,6 @@ impl AcpThreadView {
         // block you from using the panel.
         let pending_edits = false;
 
-        let use_keep_reject_buttons = !cx.has_flag::<AgentV2FeatureFlag>();
-
         let Some(active) = self.as_active_thread() else {
             return None;
         };
@@ -4876,7 +4953,6 @@ impl AcpThreadView {
                     &changed_buffers,
                     active.edits_expanded,
                     pending_edits,
-                    use_keep_reject_buttons,
                     cx,
                 ))
                 .when(active.edits_expanded, |parent| {
@@ -4885,7 +4961,6 @@ impl AcpThreadView {
                         telemetry.clone(),
                         &changed_buffers,
                         pending_edits,
-                        use_keep_reject_buttons,
                         cx,
                     ))
                 })
@@ -5070,7 +5145,6 @@ impl AcpThreadView {
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> Div {
         const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
@@ -5155,82 +5229,59 @@ impl AcpThreadView {
                         cx.notify();
                     })),
             )
-            .when(use_keep_reject_buttons, |this| {
-                this.child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new("review-changes", IconName::ListTodo)
-                                .icon_size(IconSize::Small)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Review Changes",
-                                            &OpenAgentDiff,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
-                                })),
-                        )
-                        .child(Divider::vertical().color(DividerColor::Border))
-                        .child(
-                            Button::new("reject-all-changes", "Reject All")
-                                .label_size(LabelSize::Small)
-                                .disabled(pending_edits)
-                                .when(pending_edits, |this| {
-                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
-                                })
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &RejectAll,
-                                        &focus_handle.clone(),
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("review-changes", IconName::ListTodo)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |_window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Review Changes",
+                                        &OpenAgentDiff,
+                                        &focus_handle,
                                         cx,
                                     )
+                                }
+                            })
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
+                            })),
+                    )
+                    .child(Divider::vertical().color(DividerColor::Border))
+                    .child(
+                        Button::new("reject-all-changes", "Reject All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle.clone(), cx)
                                     .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.reject_all(&RejectAll, window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("keep-all-changes", "Keep All")
-                                .label_size(LabelSize::Small)
-                                .disabled(pending_edits)
-                                .when(pending_edits, |this| {
-                                    this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
-                                })
-                                .key_binding(
-                                    KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.keep_all(&KeepAll, window, cx);
-                                })),
-                        ),
-                )
-            })
-            .when(!use_keep_reject_buttons, |this| {
-                this.child(
-                    Button::new("review-changes", "Review Changes")
-                        .label_size(LabelSize::Small)
-                        .key_binding(
-                            KeyBinding::for_action_in(
-                                &git_ui::project_diff::Diff,
-                                &focus_handle,
-                                cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(10.))),
-                        )
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            window.dispatch_action(git_ui::project_diff::Diff.boxed_clone(), cx);
-                        })),
-                )
-            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.reject_all(&RejectAll, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("keep-all-changes", "Keep All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.keep_all(&KeepAll, window, cx);
+                            })),
+                    ),
+            )
     }
 
     fn render_edited_files_buttons(
@@ -5240,11 +5291,10 @@ impl AcpThreadView {
         action_log: &Entity<ActionLog>,
         telemetry: &ActionLogTelemetry,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         editor_bg_color: Hsla,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let container = h_flex()
+        h_flex()
             .id("edited-buttons-container")
             .visible_on_hover("edited-code")
             .absolute()
@@ -5261,118 +5311,62 @@ impl AcpThreadView {
                     }
                 }
                 cx.notify();
-            }));
-
-        if use_keep_reject_buttons {
-            container
-                .child(
-                    Button::new(("review", index), "Review")
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let workspace = self.workspace.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                let Some(file) = buffer.read(cx).file() else {
-                                    return;
-                                };
-                                let project_path = project::ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                        workspace,
-                                        project_path,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            })
-                        }),
-                )
-                .child(Divider::vertical().color(DividerColor::BorderVariant))
-                .child(
-                    Button::new(("reject-file", index), "Reject")
-                        .label_size(LabelSize::Small)
-                        .disabled(pending_edits)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let action_log = action_log.clone();
-                            let telemetry = telemetry.clone();
-                            move |_, _, cx| {
-                                action_log.update(cx, |action_log, cx| {
-                                    action_log
-                                        .reject_edits_in_ranges(
-                                            buffer.clone(),
-                                            vec![Anchor::min_max_range_for_buffer(
-                                                buffer.read(cx).remote_id(),
-                                            )],
-                                            Some(telemetry.clone()),
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
-                                })
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(("keep-file", index), "Keep")
-                        .label_size(LabelSize::Small)
-                        .disabled(pending_edits)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let action_log = action_log.clone();
-                            let telemetry = telemetry.clone();
-                            move |_, _, cx| {
-                                action_log.update(cx, |action_log, cx| {
-                                    action_log.keep_edits_in_range(
+            }))
+            .child(
+                Button::new("review", "Review")
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.open_edited_buffer(&buffer, window, cx);
+                        })
+                    }),
+            )
+            .child(Divider::vertical().color(DividerColor::BorderVariant))
+            .child(
+                Button::new(("reject-file", index), "Reject")
+                    .label_size(LabelSize::Small)
+                    .disabled(pending_edits)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        let action_log = action_log.clone();
+                        let telemetry = telemetry.clone();
+                        move |_, _, cx| {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log
+                                    .reject_edits_in_ranges(
                                         buffer.clone(),
-                                        Anchor::min_max_range_for_buffer(
+                                        vec![Anchor::min_max_range_for_buffer(
                                             buffer.read(cx).remote_id(),
-                                        ),
+                                        )],
                                         Some(telemetry.clone()),
                                         cx,
-                                    );
-                                })
-                            }
-                        }),
-                )
-                .into_any_element()
-        } else {
-            container
-                .child(
-                    Button::new(("review", index), "Review")
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let buffer = buffer.clone();
-                            let workspace = self.workspace.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                let Some(workspace) = workspace.upgrade() else {
-                                    return;
-                                };
-                                let Some(file) = buffer.read(cx).file() else {
-                                    return;
-                                };
-                                let project_path = project::ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path().clone(),
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    git_ui::project_diff::ProjectDiff::deploy_at_project_path(
-                                        workspace,
-                                        project_path,
-                                        window,
-                                        cx,
-                                    );
-                                });
+                                    )
+                                    .detach_and_log_err(cx);
                             })
-                        }),
-                )
-                .into_any_element()
-        }
+                        }
+                    }),
+            )
+            .child(
+                Button::new(("keep-file", index), "Keep")
+                    .label_size(LabelSize::Small)
+                    .disabled(pending_edits)
+                    .on_click({
+                        let buffer = buffer.clone();
+                        let action_log = action_log.clone();
+                        let telemetry = telemetry.clone();
+                        move |_, _, cx| {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log.keep_edits_in_range(
+                                    buffer.clone(),
+                                    Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
+                                    Some(telemetry.clone()),
+                                    cx,
+                                );
+                            })
+                        }
+                    }),
+            )
     }
 
     fn render_edited_files(
@@ -5381,7 +5375,6 @@ impl AcpThreadView {
         telemetry: ActionLogTelemetry,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
-        use_keep_reject_buttons: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -5450,7 +5443,6 @@ impl AcpThreadView {
                             action_log,
                             &telemetry,
                             pending_edits,
-                            use_keep_reject_buttons,
                             editor_bg_color,
                             cx,
                         );
@@ -6580,27 +6572,171 @@ impl AcpThreadView {
             }))
     }
 
-    fn render_add_context_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let message_editor = self.message_editor.clone();
-        let menu_visible = message_editor.read(cx).is_completions_menu_visible(cx);
+    fn render_add_context_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let weak_self = cx.weak_entity();
 
-        IconButton::new("add-context", IconName::AtSign)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .when(!menu_visible, |this| {
-                this.tooltip(move |_window, cx| {
-                    Tooltip::with_meta("Add Context", None, "Or type @ to include context", cx)
-                })
+        PopoverMenu::new("add-context-menu")
+            .trigger_with_tooltip(
+                IconButton::new("add-context", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Add Context",
+                            &OpenAddContextMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(gpui::Corner::BottomLeft)
+            .with_handle(self.add_context_menu_handle.clone())
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
             })
-            .on_click(cx.listener(move |_this, _, window, cx| {
-                let message_editor_clone = message_editor.clone();
+            .menu(move |window, cx| {
+                weak_self
+                    .update(cx, |this, cx| this.build_add_context_menu(window, cx))
+                    .ok()
+            })
+    }
 
-                window.defer(cx, move |window, cx| {
-                    message_editor_clone.update(cx, |message_editor, cx| {
-                        message_editor.trigger_completion_menu(window, cx);
-                    });
-                });
-            }))
+    fn build_add_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let message_editor = self.message_editor.clone();
+        let workspace = self.workspace.clone();
+        let supports_images = self
+            .as_active_thread()
+            .map(|active| active.prompt_capabilities.borrow().image)
+            .unwrap_or_default();
+
+        let has_selection = workspace
+            .upgrade()
+            .and_then(|ws| {
+                ws.read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<Editor>())
+            })
+            .is_some_and(|editor| {
+                editor.update(cx, |editor, cx| {
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                })
+            });
+
+        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+            menu.key_context("AddContextMenu")
+                .header("Context")
+                .item(
+                    ContextMenuEntry::new("Files & Directories")
+                        .icon(IconName::File)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("file", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Symbols")
+                        .icon(IconName::Code)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("symbol", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Threads")
+                        .icon(IconName::Thread)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("thread", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Rules")
+                        .icon(IconName::Reader)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_context_type("rule", window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Image")
+                        .icon(IconName::Image)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!supports_images)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.add_images_from_picker(window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Selection")
+                        .icon(IconName::CursorIBeam)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .disabled(!has_selection)
+                        .handler({
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.insert_selections(window, cx);
+                                });
+                            }
+                        }),
+                )
+        })
+    }
+
+    fn open_add_context_menu(
+        &mut self,
+        _action: &OpenAddContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.add_context_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
     }
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
@@ -7712,7 +7848,8 @@ impl AcpThreadView {
             markdown
         };
 
-        let markdown_style = default_markdown_style(false, true, window, cx);
+        let markdown_style =
+            MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx);
         let description = self
             .render_markdown(markdown, markdown_style)
             .into_any_element();
@@ -8010,6 +8147,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::handle_authorize_tool_call))
             .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
+            .on_action(cx.listener(Self::open_add_context_menu))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
@@ -8239,138 +8377,12 @@ impl Render for AcpThreadView {
     }
 }
 
-fn default_markdown_style(
-    buffer_font: bool,
-    muted_text: bool,
-    window: &Window,
-    cx: &App,
-) -> MarkdownStyle {
-    let theme_settings = ThemeSettings::get_global(cx);
-    let colors = cx.theme().colors();
-
-    let buffer_font_size = theme_settings.agent_buffer_font_size(cx);
-
-    let mut text_style = window.text_style();
-    let line_height = buffer_font_size * 1.75;
-
-    let font_family = if buffer_font {
-        theme_settings.buffer_font.family.clone()
-    } else {
-        theme_settings.ui_font.family.clone()
-    };
-
-    let font_size = if buffer_font {
-        theme_settings.agent_buffer_font_size(cx)
-    } else {
-        theme_settings.agent_ui_font_size(cx)
-    };
-
-    let text_color = if muted_text {
-        colors.text_muted
-    } else {
-        colors.text
-    };
-
-    text_style.refine(&TextStyleRefinement {
-        font_family: Some(font_family),
-        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
-        font_features: Some(theme_settings.ui_font.features.clone()),
-        font_size: Some(font_size.into()),
-        line_height: Some(line_height.into()),
-        color: Some(text_color),
-        ..Default::default()
-    });
-
-    MarkdownStyle {
-        base_text_style: text_style.clone(),
-        syntax: cx.theme().syntax().clone(),
-        selection_background_color: colors.element_selection_background,
-        code_block_overflow_x_scroll: true,
-        heading_level_styles: Some(HeadingLevelStyles {
-            h1: Some(TextStyleRefinement {
-                font_size: Some(rems(1.15).into()),
-                ..Default::default()
-            }),
-            h2: Some(TextStyleRefinement {
-                font_size: Some(rems(1.1).into()),
-                ..Default::default()
-            }),
-            h3: Some(TextStyleRefinement {
-                font_size: Some(rems(1.05).into()),
-                ..Default::default()
-            }),
-            h4: Some(TextStyleRefinement {
-                font_size: Some(rems(1.).into()),
-                ..Default::default()
-            }),
-            h5: Some(TextStyleRefinement {
-                font_size: Some(rems(0.95).into()),
-                ..Default::default()
-            }),
-            h6: Some(TextStyleRefinement {
-                font_size: Some(rems(0.875).into()),
-                ..Default::default()
-            }),
-        }),
-        code_block: StyleRefinement {
-            padding: EdgesRefinement {
-                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
-            },
-            margin: EdgesRefinement {
-                top: Some(Length::Definite(px(8.).into())),
-                left: Some(Length::Definite(px(0.).into())),
-                right: Some(Length::Definite(px(0.).into())),
-                bottom: Some(Length::Definite(px(12.).into())),
-            },
-            border_style: Some(BorderStyle::Solid),
-            border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(px(1.))),
-                left: Some(AbsoluteLength::Pixels(px(1.))),
-                right: Some(AbsoluteLength::Pixels(px(1.))),
-                bottom: Some(AbsoluteLength::Pixels(px(1.))),
-            },
-            border_color: Some(colors.border_variant),
-            background: Some(colors.editor_background.into()),
-            text: TextStyleRefinement {
-                font_family: Some(theme_settings.buffer_font.family.clone()),
-                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-                font_features: Some(theme_settings.buffer_font.features.clone()),
-                font_size: Some(buffer_font_size.into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        inline_code: TextStyleRefinement {
-            font_family: Some(theme_settings.buffer_font.family.clone()),
-            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-            font_features: Some(theme_settings.buffer_font.features.clone()),
-            font_size: Some(buffer_font_size.into()),
-            background_color: Some(colors.editor_foreground.opacity(0.08)),
-            ..Default::default()
-        },
-        link: TextStyleRefinement {
-            background_color: Some(colors.editor_foreground.opacity(0.025)),
-            color: Some(colors.text_accent),
-            underline: Some(UnderlineStyle {
-                color: Some(colors.text_accent.opacity(0.5)),
-                thickness: px(1.),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 fn plan_label_markdown_style(
     status: &acp::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
-    let default_md_style = default_markdown_style(false, false, window, cx);
+    let default_md_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
 
     MarkdownStyle {
         base_text_style: TextStyle {
@@ -9194,6 +9206,7 @@ pub(crate) mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             prompt_store::init(cx)
         });

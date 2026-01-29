@@ -17,6 +17,14 @@ name = "collab"
 sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 test-support = ["sqlite"]
 
+[lib]
+test = false
+
+[[test]]
+name = "collab_tests"
+required-features = ["test-support"]
+path = "tests/integration/collab_tests.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -81,6 +89,7 @@ buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
 channel.workspace = true
 client = { workspace = true, features = ["test-support"] }
+collab = { workspace = true, features = ["test-support"] }
 collab_ui = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 command_palette_hooks.workspace = true
@@ -130,4 +139,5 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+zed_actions.workspace = true
 zlog.workspace = true

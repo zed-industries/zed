@@ -7,7 +7,7 @@ use crate::{
 };
 use dev_container::start_dev_container;
 use editor::Editor;
-use file_finder::OpenPathDelegate;
+
 use futures::{FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
@@ -16,6 +16,7 @@ use gpui::{
 };
 use language::Point;
 use log::{debug, info};
+use open_path_prompt::OpenPathDelegate;
 use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
@@ -222,13 +223,13 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, cx);
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(34.))
                 .modal(false);
-            picker.set_query(home_dir.to_string(), window, cx);
+            picker.set_query(&home_dir.to_string(), window, cx);
             picker
         });
 
@@ -2521,6 +2522,13 @@ impl RemoteServerProjects {
             })
             .unwrap_or(false);
 
+        // We cannot currently connect a dev container from within a remote server due to the remote_server architecture
+        let is_local = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .unwrap_or(true);
+
         let modal_section = v_flex()
             .track_focus(&self.focus_handle(cx))
             .id("ssh-server-list")
@@ -2528,7 +2536,7 @@ impl RemoteServerProjects {
             .track_scroll(&state.scroll_handle)
             .size_full()
             .child(connect_button)
-            .when(has_open_project, |this| {
+            .when(has_open_project && is_local, |this| {
                 this.child(connect_dev_container_button)
             });
 
@@ -2563,7 +2571,7 @@ impl RemoteServerProjects {
         )
         .entry(state.add_new_server.clone());
 
-        if has_open_project {
+        if has_open_project && is_local {
             modal_section = modal_section.entry(state.add_new_devcontainer.clone());
         }
 

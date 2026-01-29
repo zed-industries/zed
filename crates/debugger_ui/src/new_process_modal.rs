@@ -28,7 +28,11 @@ use ui::{
     prelude::*,
 };
 use ui_input::InputField;
-use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
+use util::{
+    ResultExt, debug_panic,
+    rel_path::RelPath,
+    shell::{PosixShell, ShellKind},
+};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{
@@ -848,7 +852,7 @@ impl ConfigureMode {
     fn load(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut App) {
         self.cwd.update(cx, |input_field, cx| {
             if input_field.is_empty(cx) {
-                input_field.set_text(cwd.to_string_lossy(), window, cx);
+                input_field.set_text(&cwd.to_string_lossy(), window, cx);
             }
         });
     }
@@ -870,7 +874,8 @@ impl ConfigureMode {
             };
         }
         let command = self.program.read(cx).text(cx);
-        let mut args = ShellKind::Posix
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
+        let mut args = ShellKind::Posix(PosixShell::Sh)
             .split(&command)
             .into_iter()
             .flatten()
@@ -1298,7 +1303,8 @@ impl PickerDelegate for DebugDelegate {
             })
             .unwrap_or_default();
 
-        let mut args = ShellKind::Posix
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
+        let mut args = ShellKind::Posix(PosixShell::Sh)
             .split(&text)
             .into_iter()
             .flatten()
@@ -1333,10 +1339,11 @@ impl PickerDelegate for DebugDelegate {
         else {
             return;
         };
-        let buffer = location.buffer.read(cx);
-        let language = buffer.language();
+        let file = location.buffer.read(cx).file();
+        let language = location.buffer.read(cx).language();
+        let language_name = language.as_ref().map(|l| l.name());
         let Some(adapter): Option<DebugAdapterName> =
-            language::language_settings::LanguageSettings::for_buffer(buffer, cx)
+            language::language_settings::language_settings(language_name, file, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
