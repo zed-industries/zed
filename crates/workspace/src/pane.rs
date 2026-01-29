@@ -690,6 +690,9 @@ impl Pane {
     pub fn context_menu_focused(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.new_item_context_menu_handle.is_focused(window, cx)
             || self.split_item_context_menu_handle.is_focused(window, cx)
+            || self
+                .active_item()
+                .is_some_and(|item| item.has_auxiliary_focus(window, cx))
     }
 
     fn focus_out(&mut self, _event: FocusOutEvent, window: &mut Window, cx: &mut Context<Self>) {
