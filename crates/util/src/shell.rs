@@ -63,10 +63,15 @@ pub enum ShellKind {
     Cmd,
     Xonsh,
     Elvish,
-    /// An unrecognized shell. We cannot safely parse its command syntax,
-    /// so `always_allow` patterns are disabled for security.
+    /// An unrecognized shell on Windows. We cannot safely parse its command syntax,
+    /// so `always_allow` patterns are disabled for security. For non-security
+    /// purposes, this falls back to PowerShell-like behavior.
+    UnknownWindows,
+    /// An unrecognized shell on Unix. We cannot safely parse its command syntax,
+    /// so `always_allow` patterns are disabled for security. For non-security
+    /// purposes, this falls back to POSIX-like behavior.
     #[default]
-    Unknown,
+    UnknownUnix,
 }
 
 pub fn get_system_shell() -> String {
@@ -250,7 +255,8 @@ impl fmt::Display for ShellKind {
             ShellKind::Rc => write!(f, "rc"),
             ShellKind::Xonsh => write!(f, "xonsh"),
             ShellKind::Elvish => write!(f, "elvish"),
-            ShellKind::Unknown => write!(f, "unknown"),
+            ShellKind::UnknownWindows => write!(f, "unknown (Windows)"),
+            ShellKind::UnknownUnix => write!(f, "unknown (Unix)"),
         }
     }
 }
@@ -297,7 +303,7 @@ impl ShellKind {
             | ShellKind::Nushell
             | ShellKind::Elvish
             | ShellKind::Rc => true,
-            ShellKind::Unknown => false,
+            ShellKind::UnknownWindows | ShellKind::UnknownUnix => false,
         }
     }
 
@@ -322,7 +328,9 @@ impl ShellKind {
             "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash" => ShellKind::Posix,
             // Unrecognized shell - we cannot safely parse its syntax for
             // `always_allow` patterns, so they will be disabled.
-            _ => ShellKind::Unknown,
+            // Fall back to platform-specific behavior for non-security purposes.
+            _ if is_windows => ShellKind::UnknownWindows,
+            _ => ShellKind::UnknownUnix,
         }
     }
 
@@ -338,7 +346,8 @@ impl ShellKind {
             Self::Nushell => Self::to_nushell_variable(input),
             Self::Xonsh => input.to_owned(),
             Self::Elvish => input.to_owned(),
-            Self::Unknown => input.to_owned(),
+            Self::UnknownWindows => Self::to_powershell_variable(input),
+            Self::UnknownUnix => input.to_owned(),
         }
     }
 
@@ -457,7 +466,9 @@ impl ShellKind {
 
     pub fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
-            ShellKind::PowerShell | ShellKind::Pwsh => vec!["-C".to_owned(), combined_command],
+            ShellKind::PowerShell | ShellKind::Pwsh | ShellKind::UnknownWindows => {
+                vec!["-C".to_owned(), combined_command]
+            }
             ShellKind::Cmd => vec![
                 "/S".to_owned(),
                 "/C".to_owned(),
@@ -471,7 +482,7 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Xonsh
             | ShellKind::Elvish
-            | ShellKind::Unknown => interactive
+            | ShellKind::UnknownUnix => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -491,7 +502,8 @@ impl ShellKind {
             | ShellKind::Cmd
             | ShellKind::Xonsh
             | ShellKind::Elvish
-            | ShellKind::Unknown => None,
+            | ShellKind::UnknownUnix => None,
+            ShellKind::UnknownWindows => Some('&'),
         }
     }
 
@@ -517,7 +529,8 @@ impl ShellKind {
             | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish
-            | ShellKind::Unknown => ';',
+            | ShellKind::UnknownWindows
+            | ShellKind::UnknownUnix => ';',
         }
     }
 
@@ -531,9 +544,11 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Pwsh
             | ShellKind::Xonsh => "&&",
-            ShellKind::PowerShell | ShellKind::Nushell | ShellKind::Elvish | ShellKind::Unknown => {
-                ";"
-            }
+            ShellKind::PowerShell
+            | ShellKind::Nushell
+            | ShellKind::Elvish
+            | ShellKind::UnknownWindows
+            | ShellKind::UnknownUnix => ";",
         }
     }
 
@@ -550,7 +565,8 @@ impl ShellKind {
             | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish
-            | ShellKind::Unknown => shlex::try_quote(arg).ok(),
+            | ShellKind::UnknownUnix => shlex::try_quote(arg).ok(),
+            ShellKind::UnknownWindows => Some(Self::quote_powershell(arg)),
         }
     }
 
@@ -770,7 +786,8 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Xonsh
             | ShellKind::Elvish
-            | ShellKind::Unknown => "source",
+            | ShellKind::UnknownUnix => "source",
+            ShellKind::UnknownWindows => ".",
         }
     }
 
@@ -787,7 +804,8 @@ impl ShellKind {
             | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish
-            | ShellKind::Unknown => "clear",
+            | ShellKind::UnknownWindows
+            | ShellKind::UnknownUnix => "clear",
         }
     }
 

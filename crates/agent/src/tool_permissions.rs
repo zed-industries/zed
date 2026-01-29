@@ -955,7 +955,14 @@ mod tests {
     fn unknown_shell_denies_when_always_allow_configured() {
         // Unknown shells have unrecognized syntax, so we cannot safely parse them.
         // For security, always_allow patterns are disabled.
-        t("ls").allow(&["^ls"]).shell(ShellKind::Unknown).is_deny();
+        t("ls")
+            .allow(&["^ls"])
+            .shell(ShellKind::UnknownUnix)
+            .is_deny();
+        t("ls")
+            .allow(&["^ls"])
+            .shell(ShellKind::UnknownWindows)
+            .is_deny();
     }
 
     #[test]
@@ -964,7 +971,7 @@ mod tests {
         // against the raw input string.
         t("rm -rf /")
             .deny(&["rm\\s+-rf"])
-            .shell(ShellKind::Unknown)
+            .shell(ShellKind::UnknownUnix)
             .is_deny();
     }
 
@@ -973,7 +980,7 @@ mod tests {
         // Confirm patterns still work for unknown shells.
         t("sudo reboot")
             .confirm(&["sudo"])
-            .shell(ShellKind::Unknown)
+            .shell(ShellKind::UnknownUnix)
             .is_confirm();
     }
 
@@ -983,7 +990,7 @@ mod tests {
         t("ls")
             .deny(&["rm"])
             .mode(ToolPermissionMode::Allow)
-            .shell(ShellKind::Unknown)
+            .shell(ShellKind::UnknownUnix)
             .is_allow();
     }
 
