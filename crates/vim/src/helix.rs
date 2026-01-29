@@ -583,6 +583,7 @@ impl Vim {
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
                         helix_select: true,
+                        _dismiss_subscription: None,
                     }
                 });
             }

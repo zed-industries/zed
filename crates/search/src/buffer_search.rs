@@ -94,6 +94,7 @@ impl Deploy {
 
 pub enum Event {
     UpdateLocation,
+    Dismissed,
 }
 
 pub fn init(cx: &mut App) {
@@ -826,6 +827,7 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
+        cx.emit(Event::Dismissed);
         self.query_error = None;
         self.sync_select_next_case_sensitivity(cx);
 
