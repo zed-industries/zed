@@ -1568,7 +1568,7 @@ mod tests {
             r#"{
                 "languages": {
                     "JSON": {
-                        "auto_indent": true
+                        "auto_indent": "full"
                     }
                 }
             }"#
@@ -1578,12 +1578,12 @@ mod tests {
                     .languages_mut()
                     .get_mut("JSON")
                     .unwrap()
-                    .auto_indent = Some(false);
+                    .auto_indent = Some(crate::AutoIndentMode::None);
 
                 settings.languages_mut().insert(
                     "Rust".into(),
                     LanguageSettingsContent {
-                        auto_indent: Some(true),
+                        auto_indent: Some(crate::AutoIndentMode::Full),
                         ..Default::default()
                     },
                 );
@@ -1591,10 +1591,10 @@ mod tests {
             r#"{
                 "languages": {
                     "Rust": {
-                        "auto_indent": true
+                        "auto_indent": "full"
                     },
                     "JSON": {
-                        "auto_indent": false
+                        "auto_indent": "none"
                     }
                 }
             }"#

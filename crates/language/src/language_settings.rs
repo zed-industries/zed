@@ -12,8 +12,8 @@ use itertools::{Either, Itertools};
 use settings::IntoGpui;
 
 pub use settings::{
-    CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
+    AutoIndentMode, CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode,
+    FormatOnSave, Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
@@ -136,8 +136,8 @@ pub struct LanguageSettings {
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
-    /// Whether indentation should be adjusted based on the context whilst typing.
-    pub auto_indent: bool,
+    /// Controls automatic indentation behavior when typing.
+    pub auto_indent: AutoIndentMode,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
