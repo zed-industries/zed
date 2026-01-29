@@ -3448,7 +3448,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "story",
  "telemetry",
  "theme",
  "time",
@@ -15917,7 +15916,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "collab_ui",
  "ctrlc",
  "dialoguer",
  "editor",
