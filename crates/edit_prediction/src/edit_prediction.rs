@@ -107,6 +107,10 @@ pub struct SweepFeatureFlag;
 
 impl FeatureFlag for SweepFeatureFlag {
     const NAME: &str = "sweep-ai";
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 }
 
 pub struct MercuryFeatureFlag;
@@ -653,6 +657,25 @@ impl EditPredictionStore {
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
         self.edit_prediction_model = model;
+    }
+
+    pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
+        use icons::IconName;
+        match self.edit_prediction_model {
+            EditPredictionModel::Sweep => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::SweepAi)
+                    .with_disabled(IconName::SweepAiDisabled)
+                    .with_up(IconName::SweepAiUp)
+                    .with_down(IconName::SweepAiDown)
+                    .with_error(IconName::SweepAiError)
+            }
+            EditPredictionModel::Mercury => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
+            }
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+            }
+        }
     }
 
     pub fn has_sweep_api_token(&self, cx: &App) -> bool {
