@@ -1329,7 +1329,7 @@ impl ProjectPanel {
 
             if should_be_snapped {
                 entry_y -= entry_height;
-                force_snap = Some(AnchoredForceSnap::Above);
+                force_snap = Some(AnchoredForceSnap::Vertical);
             }
 
             (
