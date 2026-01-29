@@ -3428,6 +3428,35 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// Navigate to a sub-page by its json_path.
+    /// Returns true if the sub-page was found and pushed, false otherwise.
+    pub fn navigate_to_sub_page(
+        &mut self,
+        json_path: &str,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> bool {
+        for page in &self.pages {
+            for (item_index, item) in page.items.iter().enumerate() {
+                if let SettingsPageItem::SubPageLink(sub_page_link) = item {
+                    if sub_page_link.json_path == Some(json_path) {
+                        let section_header = page
+                            .items
+                            .iter()
+                            .take(item_index)
+                            .rev()
+                            .find_map(|item| item.header_text().map(SharedString::new_static))
+                            .unwrap_or_else(|| "Settings".into());
+
+                        self.push_sub_page(sub_page_link.clone(), section_header, window, cx);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.sub_page_stack.pop();
         self.content_focus_handle.focus_handle(cx).focus(window, cx);

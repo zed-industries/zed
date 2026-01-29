@@ -2450,27 +2450,16 @@ fn run_tool_permissions_visual_tests(
         println!("Screenshot 1 saved to: {}", output_path.display());
     }
 
-    // Now click the "Configure" button to open the sub-page
-    // The Configure button is on the right side of the "Configure Tool Rules" item
-    // The settings window is 900x700, and the button should be roughly at:
-    // - X: right side of window, around 850px (button is right-aligned)
-    // - Y: the item is highlighted by search, typically around middle of visible area
-    // We'll try clicking at approximately (830, 350) which should hit the Configure button
-    let configure_button_position = point(px(830.0), px(350.0));
+    // Navigate to the tool permissions sub-page using the public API
+    let settings_window_handle = settings_window
+        .downcast::<settings_ui::SettingsWindow>()
+        .context("Failed to downcast to SettingsWindow")?;
 
-    // Draw the window first to ensure layout is computed
-    cx.update_window(settings_window, |_, window, cx| {
-        window.draw(cx).clear();
-    })
-    .ok();
-    cx.run_until_parked();
-
-    // Simulate click on the Configure button
-    cx.simulate_click(
-        settings_window,
-        configure_button_position,
-        Modifiers::default(),
-    );
+    settings_window_handle
+        .update(cx, |settings_window, window, cx| {
+            settings_window.navigate_to_sub_page("agent.tool_permissions", window, cx);
+        })
+        .context("Failed to navigate to tool permissions sub-page")?;
 
     cx.run_until_parked();
 
