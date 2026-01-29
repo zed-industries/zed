@@ -30,7 +30,10 @@ use crate::{
     acp::{AcpThreadHistory, ThreadHistoryEvent},
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
-use crate::{ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary};
+use crate::{
+    ExternalAgent, ExternalAgentInitialContent, NewExternalAgentThread,
+    NewNativeAgentThreadFromSummary,
+};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -742,7 +745,7 @@ impl AgentPanel {
         self.external_thread(
             Some(ExternalAgent::NativeAgent),
             None,
-            Some(thread),
+            Some(ExternalAgentInitialContent::ThreadSummary(thread)),
             window,
             cx,
         );
@@ -795,7 +798,7 @@ impl AgentPanel {
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<AgentSessionInfo>,
-        summarize_thread: Option<AgentSessionInfo>,
+        initial_content: Option<ExternalAgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -857,7 +860,7 @@ impl AgentPanel {
                 agent_panel._external_thread(
                     server,
                     resume_thread,
-                    summarize_thread,
+                    initial_content,
                     workspace,
                     project,
                     ext_agent,
@@ -1414,6 +1417,21 @@ impl AgentPanel {
         }
     }
 
+    pub fn new_external_thread_with_text(
+        &mut self,
+        initial_text: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_thread(
+            None,
+            None,
+            initial_text.map(ExternalAgentInitialContent::Text),
+            window,
+            cx,
+        );
+    }
+
     pub fn new_agent_thread(
         &mut self,
         agent: AgentType,
@@ -1476,7 +1494,7 @@ impl AgentPanel {
         &mut self,
         server: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        summarize_thread: Option<AgentSessionInfo>,
+        initial_content: Option<ExternalAgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         ext_agent: ExternalAgent,
@@ -1498,7 +1516,7 @@ impl AgentPanel {
             crate::acp::AcpThreadView::new(
                 server,
                 resume_thread,
-                summarize_thread,
+                initial_content,
                 workspace.clone(),
                 project,
                 thread_store,

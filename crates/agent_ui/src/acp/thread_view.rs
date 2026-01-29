@@ -78,10 +78,10 @@ use crate::user_slash_command::{
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
-    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleProfileSelector, ToggleThinkingMode,
+    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
+    ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
+    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
+    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -388,7 +388,7 @@ impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        summarize_thread: Option<AgentSessionInfo>,
+        initial_content: Option<ExternalAgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
@@ -430,8 +430,19 @@ impl AcpThreadView {
                 window,
                 cx,
             );
-            if let Some(entry) = summarize_thread {
-                editor.insert_thread_summary(entry, window, cx);
+            if let Some(content) = initial_content {
+                match content {
+                    ExternalAgentInitialContent::ThreadSummary(entry) => {
+                        editor.insert_thread_summary(entry, window, cx);
+                    }
+                    ExternalAgentInitialContent::Text(prompt) => {
+                        editor.set_message(
+                            vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                            window,
+                            cx,
+                        );
+                    }
+                }
             }
             editor
         });
