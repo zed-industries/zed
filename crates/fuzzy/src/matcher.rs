@@ -574,6 +574,7 @@ mod tests {
             |candidate, score, positions| PathMatch {
                 score,
                 worktree_id: 0,
+                project_id: 0,
                 positions: positions.clone(),
                 path: candidate.path.into(),
                 path_prefix: RelPath::empty().into(),

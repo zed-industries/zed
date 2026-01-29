@@ -405,6 +405,7 @@ impl Worktree {
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
                     cx.entity_id().as_u64(),
+                    0,
                     abs_path
                         .file_name()
                         .and_then(|f| f.to_str())
@@ -494,6 +495,7 @@ impl Worktree {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Snapshot::new(
                 worktree.id,
+                project_id,
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
@@ -2138,12 +2140,13 @@ impl RemoteWorktree {
 impl Snapshot {
     pub fn new(
         id: u64,
+        project_id: u64,
         root_name: Arc<RelPath>,
         abs_path: Arc<Path>,
         path_style: PathStyle,
     ) -> Self {
         Snapshot {
-            id: WorktreeId::from_usize(id as usize),
+            id: WorktreeId::from_usize(id as usize, project_id),
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name

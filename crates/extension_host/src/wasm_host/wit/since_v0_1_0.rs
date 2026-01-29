@@ -430,7 +430,7 @@ impl ExtensionImports for WasmState {
                     .as_ref()
                     .zip(location.as_ref())
                     .map(|(path, location)| ::settings::SettingsLocation {
-                        worktree_id: WorktreeId::from_proto(location.worktree_id),
+                        worktree_id: WorktreeId::from_proto(location.worktree_id, 0),
                         path,
                     });
 

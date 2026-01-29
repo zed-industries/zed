@@ -91,36 +91,94 @@ impl UserSettingsContentExt for UserSettingsContent {
     }
 }
 
+/// A unique identifier for a worktree within Zed.
+///
+/// A worktree represents a root directory in a project. The `WorktreeId` combines
+/// a local entity ID with a project ID to ensure global uniqueness across remote
+/// project connections.
+///
+/// # Project ID
+///
+/// The `project_id` field distinguishes worktrees from different remote projects:
+///
+/// - **Local worktrees**: Use `project_id = 0` (via [`WorktreeId::local`]).
+/// - **Remote server worktrees**: Use `project_id = 0` (the constant
+///   `rpc::proto::REMOTE_SERVER_PROJECT_ID`).
+/// - **Collab project worktrees**: Use the actual project ID assigned by the
+///   collaboration server.
+///
+/// This distinction is necessary because the local `id` (derived from the entity ID)
+/// is only unique within a single project context. When connecting to multiple
+/// remote projects simultaneously, two worktrees from different projects could
+/// have the same local ID, so the `project_id` is needed to disambiguate them.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
-pub struct WorktreeId(usize);
+pub struct WorktreeId {
+    /// The local worktree identifier, typically derived from the entity ID.
+    id: usize,
+    /// The project ID this worktree belongs to. Zero for local and remote server projects.
+    project_id: u64,
+}
 
 impl From<WorktreeId> for usize {
     fn from(value: WorktreeId) -> Self {
-        value.0
+        value.id
     }
 }
 
 impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
-        Self(handle_id)
+    /// Creates a `WorktreeId` for a local worktree.
+    ///
+    /// This is a convenience constructor that sets `project_id = 0`, which is
+    /// appropriate for worktrees that are not part of a remote collaboration session.
+    pub fn local(id: usize) -> Self {
+        Self { id, project_id: 0 }
     }
 
-    pub fn from_proto(id: u64) -> Self {
-        Self(id as usize)
+    /// Creates a `WorktreeId` from a handle ID and project ID.
+    ///
+    /// Use this when you have both the local worktree ID and know which project
+    /// it belongs to. For local-only worktrees, prefer [`WorktreeId::local`].
+    pub fn from_usize(handle_id: usize, project_id: u64) -> Self {
+        Self {
+            id: handle_id,
+            project_id,
+        }
     }
 
+    /// Creates a `WorktreeId` from protobuf message fields.
+    ///
+    /// This is used when deserializing worktree IDs from RPC messages.
+    pub fn from_proto(id: u64, project_id: u64) -> Self {
+        Self {
+            id: id as usize,
+            project_id,
+        }
+    }
+
+    /// Converts the local ID to the protobuf representation.
+    ///
+    /// Note: This only returns the local `id` field, not the `project_id`.
+    /// The project ID is typically sent separately in protobuf messages.
     pub fn to_proto(self) -> u64 {
-        self.0 as u64
+        self.id as u64
     }
 
+    /// Returns the local worktree ID as a `usize`.
     pub fn to_usize(self) -> usize {
-        self.0
+        self.id
+    }
+
+    /// Returns the project ID this worktree belongs to.
+    ///
+    /// Returns `0` for local worktrees and remote server connections.
+    pub fn project_id(self) -> u64 {
+        self.project_id
     }
 }
 
 impl fmt::Display for WorktreeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
+        write!(f, "{}:{}", self.project_id, self.id)
     }
 }
 

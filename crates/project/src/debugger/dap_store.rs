@@ -856,9 +856,13 @@ impl DapStore {
 
         let worktree = this
             .update(&mut cx, |this, cx| {
-                this.worktree_store
-                    .read(cx)
-                    .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
+                this.worktree_store.read(cx).worktree_for_id(
+                    WorktreeId::from_proto(
+                        envelope.payload.worktree_id,
+                        envelope.payload.project_id,
+                    ),
+                    cx,
+                )
             })
             .context("Failed to find worktree with a given ID")?;
         let binary = this

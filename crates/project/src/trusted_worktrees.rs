@@ -201,10 +201,10 @@ impl PathTrust {
         }
     }
 
-    pub fn from_proto(proto: proto::PathTrust) -> Option<Self> {
+    pub fn from_proto(proto: proto::PathTrust, project_id: u64) -> Option<Self> {
         Some(match proto.content? {
             proto::path_trust::Content::WorktreeId(id) => {
-                Self::Worktree(WorktreeId::from_proto(id))
+                Self::Worktree(WorktreeId::from_proto(id, project_id))
             }
             proto::path_trust::Content::AbsPath(path) => Self::AbsPath(PathBuf::from(path)),
         })

@@ -72,6 +72,7 @@ impl FileSlashCommand {
                             score: 0.,
                             positions: Vec::new(),
                             worktree_id: entry.worktree_id.to_usize(),
+                            project_id: entry.worktree_id.project_id(),
                             path: full_path,
                             path_prefix: path_prefix.clone(),
                             distance_to_relative_ancestor: 0,

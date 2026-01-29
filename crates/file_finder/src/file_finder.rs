@@ -329,7 +329,7 @@ impl FileFinder {
                         }
                     }
                     Match::Search(m) => ProjectPath {
-                        worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                        worktree_id: WorktreeId::from_usize(m.0.worktree_id, m.0.project_id),
                         path: m.0.path.clone(),
                     },
                     Match::CreateNew(p) => p.clone(),
@@ -474,7 +474,10 @@ impl Match {
             Match::Search(ProjectPanelOrdMatch(path_match)) => Some(
                 project
                     .read(cx)
-                    .worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?
+                    .worktree_for_id(
+                        WorktreeId::from_usize(path_match.worktree_id, path_match.project_id),
+                        cx,
+                    )?
                     .read(cx)
                     .absolutize(&path_match.path),
             ),
@@ -576,7 +579,10 @@ impl Matches {
             .filter(|path_match| {
                 !new_history_matches.contains_key(&ProjectPath {
                     path: path_match.0.path.clone(),
-                    worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
+                    worktree_id: WorktreeId::from_usize(
+                        path_match.0.worktree_id,
+                        path_match.0.project_id,
+                    ),
                 })
             })
             .map(Match::Search)
@@ -757,6 +763,7 @@ fn matching_history_items<'a>(
             fuzzy::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
+                worktree.project_id(),
                 worktree_root_name,
                 query.path_query(),
                 false,
@@ -767,7 +774,10 @@ fn matching_history_items<'a>(
             .filter_map(|path_match| {
                 candidates_paths
                     .remove_entry(&ProjectPath {
-                        worktree_id: WorktreeId::from_usize(path_match.worktree_id),
+                        worktree_id: WorktreeId::from_usize(
+                            path_match.worktree_id,
+                            path_match.project_id,
+                        ),
                         path: Arc::clone(&path_match.path),
                     })
                     .map(|(project_path, found_path)| {
@@ -1232,10 +1242,12 @@ impl FileFinderDelegate {
             if abs_file_exists {
                 project.update(cx, |project, cx| {
                     if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                        let worktree_snapshot = worktree.read(cx);
                         path_matches.push(ProjectPanelOrdMatch(PathMatch {
                             score: 1.0,
                             positions: Vec::new(),
-                            worktree_id: worktree.read(cx).id().to_usize(),
+                            worktree_id: worktree_snapshot.id().to_usize(),
+                            project_id: worktree_snapshot.id().project_id(),
                             path: relative_path,
                             path_prefix: RelPath::empty().into(),
                             is_dir: false, // File finder doesn't support directories
@@ -1545,7 +1557,7 @@ impl PickerDelegate for FileFinderDelegate {
                     Match::Search(m) => split_or_open(
                         workspace,
                         ProjectPath {
-                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                            worktree_id: WorktreeId::from_usize(m.0.worktree_id, m.0.project_id),
                             path: m.0.path.clone(),
                         },
                         window,
