@@ -2,6 +2,10 @@
 
 This file governs automated documentation updates triggered by code changes. All automation phases must comply with these rules.
 
+## Repository Context
+
+This is the **Zed code editor** repository, a Rust-based application using the custom **GPUI** UI framework. The project is a large monorepo with ~200 crates organized under `crates/`. Documentation is built with **mdBook** and uses a custom preprocessor (`docs_preprocessor`) that handles special syntax like `{#kb action::Name}` for keybindings. The documentation source is in `docs/src/` with a table of contents in `SUMMARY.md`, and all docs must pass Prettier formatting (80 char line width). The style guide (`docs/.rules`) and agent guidelines (`docs/AGENTS.md`) provide specific conventions for documentation writing.
+
 ## Documentation System
 
 This documentation uses **mdBook** (https://rust-lang.github.io/mdBook/).
