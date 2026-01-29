@@ -2,17 +2,14 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
-use gpui::AsyncWindowContext;
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
-use settings::{DevContainerConnection, Settings as _};
+use settings::DevContainerConnection;
 use smol::{fs, process::Command};
-use workspace::MultiWorkspace;
 
-use crate::{DevContainerFeature, DevContainerSettings, DevContainerTemplate};
+use crate::{DevContainerContext, DevContainerFeature, DevContainerTemplate};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +35,11 @@ pub(crate) struct DevContainerConfiguration {
 #[derive(Debug, Deserialize)]
 pub(crate) struct DevContainerConfigurationOutput {
     configuration: DevContainerConfiguration,
+}
+
+pub(crate) struct DevContainerCli {
+    pub path: PathBuf,
+    pub found_in_path: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,93 +82,19 @@ impl Display for DevContainerError {
     }
 }
 
-pub(crate) async fn read_devcontainer_configuration_for_project(
-    cx: &mut AsyncWindowContext,
-    node_runtime: &NodeRuntime,
-) -> Result<DevContainerConfigurationOutput, DevContainerError> {
-    let (path_to_devcontainer_cli, found_in_path) = ensure_devcontainer_cli(&node_runtime).await?;
-
-    let Some(directory) = project_directory(cx) else {
-        return Err(DevContainerError::NotInValidProject);
-    };
-
-    devcontainer_read_configuration(
-        &path_to_devcontainer_cli,
-        found_in_path,
-        node_runtime,
-        &directory,
-        use_podman(cx),
-    )
-    .await
-}
-
-pub(crate) async fn apply_dev_container_template(
-    template: &DevContainerTemplate,
-    options_selected: &HashMap<String, String>,
-    features_selected: &HashSet<DevContainerFeature>,
-    cx: &mut AsyncWindowContext,
-    node_runtime: &NodeRuntime,
-) -> Result<DevContainerApply, DevContainerError> {
-    let (path_to_devcontainer_cli, found_in_path) = ensure_devcontainer_cli(&node_runtime).await?;
-
-    let Some(directory) = project_directory(cx) else {
-        return Err(DevContainerError::NotInValidProject);
-    };
-
-    devcontainer_template_apply(
-        template,
-        options_selected,
-        features_selected,
-        &path_to_devcontainer_cli,
-        found_in_path,
-        node_runtime,
-        &directory,
-        false, // devcontainer template apply does not use --docker-path option
-    )
-    .await
-}
-
-fn use_podman(cx: &mut AsyncWindowContext) -> bool {
-    cx.update(|_, cx| DevContainerSettings::get_global(cx).use_podman)
-        .unwrap_or(false)
-}
-
 pub async fn start_dev_container(
-    cx: &mut AsyncWindowContext,
-    node_runtime: NodeRuntime,
+    context: DevContainerContext,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
-    let use_podman = use_podman(cx);
-    check_for_docker(use_podman).await?;
+    check_for_docker(context.use_podman).await?;
+    let cli = ensure_devcontainer_cli(&context.node_runtime).await?;
 
-    let (path_to_devcontainer_cli, found_in_path) = ensure_devcontainer_cli(&node_runtime).await?;
-
-    let Some(directory) = project_directory(cx) else {
-        return Err(DevContainerError::NotInValidProject);
-    };
-
-    match devcontainer_up(
-        &path_to_devcontainer_cli,
-        found_in_path,
-        &node_runtime,
-        directory.clone(),
-        use_podman,
-    )
-    .await
-    {
+    match devcontainer_up(&context, &cli).await {
         Ok(DevContainerUp {
             container_id,
             remote_workspace_folder,
             ..
         }) => {
-            let project_name = match devcontainer_read_configuration(
-                &path_to_devcontainer_cli,
-                found_in_path,
-                &node_runtime,
-                &directory,
-                use_podman,
-            )
-            .await
-            {
+            let project_name = match read_devcontainer_configuration(&context, &cli).await {
                 Ok(DevContainerConfigurationOutput {
                     configuration:
                         DevContainerConfiguration {
@@ -179,7 +107,7 @@ pub async fn start_dev_container(
             let connection = DevContainerConnection {
                 name: project_name,
                 container_id: container_id,
-                use_podman,
+                use_podman: context.use_podman,
             };
 
             Ok((connection, remote_workspace_folder))
@@ -218,9 +146,9 @@ async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
     }
 }
 
-async fn ensure_devcontainer_cli(
+pub(crate) async fn ensure_devcontainer_cli(
     node_runtime: &NodeRuntime,
-) -> Result<(PathBuf, bool), DevContainerError> {
+) -> Result<DevContainerCli, DevContainerError> {
     let mut command = util::command::new_smol_command(&dev_container_cli());
     command.arg("--version");
 
@@ -258,7 +186,10 @@ async fn ensure_devcontainer_cli(
             Ok(output) => {
                 if output.status.success() {
                     log::info!("Found devcontainer CLI in Data dir");
-                    return Ok((datadir_cli_path.clone(), false));
+                    return Ok(DevContainerCli {
+                        path: datadir_cli_path.clone(),
+                        found_in_path: false,
+                    });
                 } else {
                     log::error!(
                         "Could not run devcontainer CLI from data_dir. Will try once more to install. Output: {:?}",
@@ -298,31 +229,33 @@ async fn ensure_devcontainer_cli(
             );
             Err(DevContainerError::DevContainerCliNotAvailable)
         } else {
-            Ok((datadir_cli_path, false))
+            Ok(DevContainerCli {
+                path: datadir_cli_path,
+                found_in_path: false,
+            })
         }
     } else {
         log::info!("Found devcontainer cli on $PATH, using it");
-        Ok((PathBuf::from(&dev_container_cli()), true))
+        Ok(DevContainerCli {
+            path: PathBuf::from(&dev_container_cli()),
+            found_in_path: true,
+        })
     }
 }
 
 async fn devcontainer_up(
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
-    node_runtime: &NodeRuntime,
-    path: Arc<Path>,
-    use_podman: bool,
+    context: &DevContainerContext,
+    cli: &DevContainerCli,
 ) -> Result<DevContainerUp, DevContainerError> {
-    let Ok(node_runtime_path) = node_runtime.binary_path().await else {
+    let node_runtime_path = context.node_runtime.binary_path().await.map_err(|_| {
         log::error!("Unable to find node runtime path");
-        return Err(DevContainerError::NodeRuntimeNotAvailable);
-    };
+        DevContainerError::NodeRuntimeNotAvailable
+    })?;
 
-    let mut command =
-        devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path, use_podman);
+    let mut command = devcontainer_cli_command(cli, &node_runtime_path, context.use_podman);
     command.arg("up");
     command.arg("--workspace-folder");
-    command.arg(path.display().to_string());
+    command.arg(context.project_directory.display().to_string());
 
     log::info!("Running full devcontainer up command: {:?}", command);
 
@@ -355,23 +288,19 @@ async fn devcontainer_up(
         }
     }
 }
-async fn devcontainer_read_configuration(
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
-    node_runtime: &NodeRuntime,
-    path: &Arc<Path>,
-    use_podman: bool,
+pub(crate) async fn read_devcontainer_configuration(
+    context: &DevContainerContext,
+    cli: &DevContainerCli,
 ) -> Result<DevContainerConfigurationOutput, DevContainerError> {
-    let Ok(node_runtime_path) = node_runtime.binary_path().await else {
+    let node_runtime_path = context.node_runtime.binary_path().await.map_err(|_| {
         log::error!("Unable to find node runtime path");
-        return Err(DevContainerError::NodeRuntimeNotAvailable);
-    };
+        DevContainerError::NodeRuntimeNotAvailable
+    })?;
 
-    let mut command =
-        devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path, use_podman);
+    let mut command = devcontainer_cli_command(cli, &node_runtime_path, context.use_podman);
     command.arg("read-configuration");
     command.arg("--workspace-folder");
-    command.arg(path.display().to_string());
+    command.arg(context.project_directory.display().to_string());
 
     match command.output().await {
         Ok(output) => {
@@ -402,23 +331,19 @@ async fn devcontainer_read_configuration(
     }
 }
 
-async fn devcontainer_template_apply(
+pub(crate) async fn apply_dev_container_template(
     template: &DevContainerTemplate,
     template_options: &HashMap<String, String>,
     features_selected: &HashSet<DevContainerFeature>,
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
-    node_runtime: &NodeRuntime,
-    path: &Arc<Path>,
-    use_podman: bool,
+    context: &DevContainerContext,
+    cli: &DevContainerCli,
 ) -> Result<DevContainerApply, DevContainerError> {
-    let Ok(node_runtime_path) = node_runtime.binary_path().await else {
+    let node_runtime_path = context.node_runtime.binary_path().await.map_err(|_| {
         log::error!("Unable to find node runtime path");
-        return Err(DevContainerError::NodeRuntimeNotAvailable);
-    };
+        DevContainerError::NodeRuntimeNotAvailable
+    })?;
 
-    let mut command =
-        devcontainer_cli_command(path_to_cli, found_in_path, &node_runtime_path, use_podman);
+    let mut command = devcontainer_cli_command(cli, &node_runtime_path, context.use_podman);
 
     let Ok(serialized_options) = serde_json::to_string(template_options) else {
         log::error!("Unable to serialize options for {:?}", template_options);
@@ -428,7 +353,7 @@ async fn devcontainer_template_apply(
     command.arg("templates");
     command.arg("apply");
     command.arg("--workspace-folder");
-    command.arg(path.display().to_string());
+    command.arg(context.project_directory.display().to_string());
     command.arg("--template-id");
     command.arg(format!(
         "{}/{}",
@@ -476,17 +401,16 @@ async fn devcontainer_template_apply(
 }
 
 fn devcontainer_cli_command(
-    path_to_cli: &PathBuf,
-    found_in_path: bool,
+    cli: &DevContainerCli,
     node_runtime_path: &PathBuf,
     use_podman: bool,
 ) -> Command {
-    let mut command = if found_in_path {
-        util::command::new_smol_command(path_to_cli.display().to_string())
+    let mut command = if cli.found_in_path {
+        util::command::new_smol_command(cli.path.display().to_string())
     } else {
         let mut command =
             util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(path_to_cli.display().to_string());
+        command.arg(cli.path.display().to_string());
         command
     };
 
@@ -503,24 +427,6 @@ fn get_backup_project_name(remote_workspace_folder: &str, container_id: &str) ->
         .and_then(|name| name.to_str())
         .map(|string| string.to_string())
         .unwrap_or_else(|| container_id.to_string())
-}
-
-fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
-    let Some(multi_workspace) = cx.window_handle().downcast::<MultiWorkspace>() else {
-        return None;
-    };
-
-    match multi_workspace.update(cx, |multi_workspace, _, cx| {
-        multi_workspace.workspace().update(cx, |workspace, cx| {
-            workspace.project().read(cx).active_project_directory(cx)
-        })
-    }) {
-        Ok(dir) => dir,
-        Err(e) => {
-            log::error!("Error getting project directory from workspace: {:?}", e);
-            None
-        }
-    }
 }
 
 fn template_features_to_json(features_selected: &HashSet<DevContainerFeature>) -> String {

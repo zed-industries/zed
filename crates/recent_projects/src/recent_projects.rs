@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use dev_container::start_dev_container;
+use dev_container::{DevContainerContext, start_dev_container};
 use remote::RemoteConnectionOptions;
 pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
@@ -237,23 +237,27 @@ pub fn init(cx: &mut App) {
             let app_state = workspace.app_state().clone();
             let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
+            let Some(context) = DevContainerContext::from_workspace(workspace, cx) else {
+                log::error!("No active project directory for Dev Container");
+                return;
+            };
+
             cx.spawn_in(window, async move |_, mut cx| {
-                let (connection, starting_dir) =
-                    match start_dev_container(&mut cx, app_state.node_runtime.clone()).await {
-                        Ok((c, s)) => (Connection::DevContainer(c), s),
-                        Err(e) => {
-                            log::error!("Failed to start Dev Container: {:?}", e);
-                            cx.prompt(
-                                gpui::PromptLevel::Critical,
-                                "Failed to start Dev Container",
-                                Some(&format!("{:?}", e)),
-                                &["Ok"],
-                            )
-                            .await
-                            .ok();
-                            return;
-                        }
-                    };
+                let (connection, starting_dir) = match start_dev_container(context).await {
+                    Ok((c, s)) => (Connection::DevContainer(c), s),
+                    Err(e) => {
+                        log::error!("Failed to start Dev Container: {:?}", e);
+                        cx.prompt(
+                            gpui::PromptLevel::Critical,
+                            "Failed to start Dev Container",
+                            Some(&format!("{:?}", e)),
+                            &["Ok"],
+                        )
+                        .await
+                        .ok();
+                        return;
+                    }
+                };
 
                 let result = open_remote_project(
                     connection.into(),

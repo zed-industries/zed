@@ -509,13 +509,16 @@ fn main() {
                         Ok(workspace_store
                             .workspaces()
                             .iter()
-                            .filter_map(|handle| {
-                                let handle = handle.downcast::<MultiWorkspace>()?;
-                                handle
-                                    .update(cx, |multi_workspace, _, cx| {
-                                        multi_workspace.workspace().read(cx).project().read(cx).lsp_store()
+                            .filter_map(|handle| handle.downcast::<MultiWorkspace>())
+                            .filter_map(|handle| handle.read(cx).ok())
+                            .flat_map(|multi_workspace| {
+                                multi_workspace
+                                    .workspaces()
+                                    .iter()
+                                    .map(|workspace| {
+                                        workspace.read(cx).project().read(cx).lsp_store()
                                     })
-                                    .ok()
+                                    .collect::<Vec<_>>()
                             })
                             .collect())
                     })
@@ -837,7 +840,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             OpenRequestKind::Extension { extension_id } => {
                 cx.spawn(async move |cx| {
                     let workspace =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |_, window, cx| {
                         window.dispatch_action(
                             Box::new(zed_actions::Extensions {
@@ -853,13 +856,17 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             OpenRequestKind::AgentPanel => {
                 cx.spawn(async move |cx| {
                     let multi_workspace =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+
                     multi_workspace.update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.workspace().clone().update(cx, |workspace, cx| {
-                            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                                panel.focus_handle(cx).focus(window, cx);
-                            }
-                        });
+                        multi_workspace
+                            .workspace()
+                            .clone()
+                            .update(cx, |workspace, cx| {
+                                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                    panel.focus_handle(cx).focus(window, cx);
+                                }
+                            });
                     })
                 })
                 .detach_and_log_err(cx);
@@ -867,18 +874,22 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             OpenRequestKind::SharedAgentThread { session_id } => {
                 cx.spawn(async move |cx| {
                     let multi_workspace =
-                        workspace::get_any_active_workspace(app_state.clone(), cx.clone()).await?;
+                        workspace::get_any_active_multi_workspace(app_state.clone(), cx.clone())
+                            .await?;
+
+                    let workspace =
+                        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
 
                     let (client, thread_store) =
-                        multi_workspace.update(cx, |multi_workspace, _window, cx| {
-                            multi_workspace.workspace().clone().update(cx, |workspace, cx| {
+                        multi_workspace.update(cx, |_, _window, cx| {
+                            workspace.update(cx, |workspace, cx| {
                                 let client = workspace.project().read(cx).client();
                                 let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
                                     .panel::<AgentPanel>(cx)
                                     .map(|panel| panel.read(cx).thread_store().clone());
-                                (client, thread_store)
+                                anyhow::Ok((client, thread_store))
                             })
-                        })?;
+                        })??;
 
                     let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");
@@ -911,24 +922,22 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         meta: None,
                     };
 
-                    multi_workspace.update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.workspace().clone().update(cx, |workspace, cx| {
+                    let sharer_username = response.sharer_username.clone();
+
+                    multi_workspace.update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                                 panel.update(cx, |panel, cx| {
                                     panel.open_thread(thread_metadata, window, cx);
                                 });
                                 panel.focus_handle(cx).focus(window, cx);
                             }
-                        });
-                    })?;
 
-                    multi_workspace.update(cx, |multi_workspace, _window, cx| {
-                        multi_workspace.workspace().clone().update(cx, |workspace, cx| {
                             struct ImportedThreadToast;
                             workspace.show_toast(
                                 Toast::new(
                                     NotificationId::unique::<ImportedThreadToast>(),
-                                    format!("Imported shared thread from {}", response.sharer_username),
+                                    format!("Imported shared thread from {}", sharer_username),
                                 )
                                 .autohide(),
                                 cx,
@@ -1008,7 +1017,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 // [ languages $(language) tab_size]
                 cx.spawn(async move |cx| {
                     let workspace =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
                     workspace.update(cx, |_, window, cx| match setting_path {
                         None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
@@ -1070,24 +1079,28 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     workspace
                         .update(cx, |multi_workspace, window, cx| {
-                            multi_workspace.workspace().clone().update(cx, |workspace, cx| {
-                                let Some(repo) = workspace.project().read(cx).active_repository(cx)
-                                else {
-                                    log::error!("no active repository found for commit view");
-                                    return Err(anyhow::anyhow!("no active repository found"));
-                                };
+                            multi_workspace
+                                .workspace()
+                                .clone()
+                                .update(cx, |workspace, cx| {
+                                    let Some(repo) =
+                                        workspace.project().read(cx).active_repository(cx)
+                                    else {
+                                        log::error!("no active repository found for commit view");
+                                        return Err(anyhow::anyhow!("no active repository found"));
+                                    };
 
-                                git_ui::commit_view::CommitView::open(
-                                    sha,
-                                    repo.downgrade(),
-                                    workspace.weak_handle(),
-                                    None,
-                                    None,
-                                    window,
-                                    cx,
-                                );
-                                Ok(())
-                            })
+                                    git_ui::commit_view::CommitView::open(
+                                        sha,
+                                        repo.downgrade(),
+                                        workspace.weak_handle(),
+                                        None,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                    Ok(())
+                                })
                         })
                         .log_err();
 
@@ -1163,11 +1176,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 }
 
                 let workspace_window =
-                    workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                let multi_workspace = workspace_window.entity(cx)?;
-                let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
-                    multi_workspace.workspace().clone()
-                });
+                    workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+
+                let workspace = workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
 
                 let mut promises = Vec::new();
                 for (channel_id, heading) in request.open_channel_notes {

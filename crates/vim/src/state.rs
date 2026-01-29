@@ -731,6 +731,7 @@ impl VimGlobals {
                 });
                 GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
+                    // TODO!() YOU ARE HERE IN THE REFACTOR DETAILED REVIEW, 1/3rd through :D
                     if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
                         multi_workspace
                             .update(cx, |multi_workspace, _, cx| {

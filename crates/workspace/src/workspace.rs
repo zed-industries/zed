@@ -8421,7 +8421,7 @@ pub fn join_channel(
     })
 }
 
-pub async fn get_any_active_workspace(
+pub async fn get_any_active_multi_workspace(
     app_state: Arc<AppState>,
     mut cx: AsyncApp,
 ) -> anyhow::Result<WindowHandle<MultiWorkspace>> {

@@ -1488,12 +1488,14 @@ impl SettingsWindow {
                 .read(cx)
                 .workspaces()
                 .iter()
-                .filter_map(|space| {
-                    space.downcast::<MultiWorkspace>().and_then(|handle| {
-                        handle.read(cx).ok().map(|multi_workspace| {
-                            multi_workspace.workspace().read(cx).project().clone()
-                        })
-                    })
+                .filter_map(|space| space.downcast::<MultiWorkspace>())
+                .filter_map(|handle| handle.read(cx).ok())
+                .flat_map(|multi_workspace| {
+                    multi_workspace
+                        .workspaces()
+                        .iter()
+                        .map(|workspace| workspace.read(cx).project().clone())
+                        .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>()
             {
