@@ -1070,6 +1070,7 @@ impl AcpServerView {
             }
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
+                self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
@@ -1627,6 +1628,55 @@ impl AcpServerView {
                     }),
             )
             .into_any_element()
+    }
+
+    fn emit_token_limit_telemetry_if_needed(
+        &mut self,
+        thread: &Entity<AcpThread>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_thread) = self.as_active_thread() else {
+            return;
+        };
+
+        let (ratio, agent_telemetry_id, session_id) = {
+            let thread_data = thread.read(cx);
+            let Some(token_usage) = thread_data.token_usage() else {
+                return;
+            };
+            (
+                token_usage.ratio(),
+                thread_data.connection().telemetry_id(),
+                thread_data.session_id().clone(),
+            )
+        };
+
+        let kind = match ratio {
+            acp_thread::TokenUsageRatio::Normal => {
+                active_thread.update(cx, |active, _cx| {
+                    active.token_limit_telemetry_emitted = false;
+                });
+                return;
+            }
+            acp_thread::TokenUsageRatio::Warning => "warning",
+            acp_thread::TokenUsageRatio::Exceeded => "exceeded",
+        };
+
+        let already_emitted = active_thread.read(cx).token_limit_telemetry_emitted;
+        if already_emitted {
+            return;
+        }
+
+        active_thread.update(cx, |active, _cx| {
+            active.token_limit_telemetry_emitted = true;
+        });
+
+        telemetry::event!(
+            "Agent Token Limit Warning",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = kind,
+        );
     }
 
     fn emit_load_error_telemetry(&self, error: &LoadError) {
