@@ -168,52 +168,7 @@ impl LanguageServerState {
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 if restart {
-                                    let Some(workspace) = state.read(cx).workspace.upgrade() else {
-                                        return;
-                                    };
-                                    let project = workspace.read(cx).project().clone();
-                                    let path_style = project.read(cx).path_style(cx);
-                                    let buffer_store = project.read(cx).buffer_store().clone();
-                                    let buffers = state
-                                        .read(cx)
-                                        .language_servers
-                                        .servers_per_buffer_abs_path
-                                        .iter()
-                                        .filter_map(|(abs_path, servers)| {
-                                            let worktree =
-                                                servers.worktree.as_ref()?.upgrade()?.read(cx);
-                                            let relative_path =
-                                                abs_path.strip_prefix(&worktree.abs_path()).ok()?;
-                                            let relative_path =
-                                                RelPath::new(relative_path, path_style)
-                                                    .log_err()?;
-                                            let entry = worktree.entry_for_path(&relative_path)?;
-                                            let project_path =
-                                                project.read(cx).path_for_entry(entry.id, cx)?;
-                                            buffer_store.read(cx).get_by_path(&project_path)
-                                        })
-                                        .collect();
-                                    let selectors = state
-                                        .read(cx)
-                                        .items
-                                        .iter()
-                                        // Do not try to use IDs as we have stopped all servers already, when allowing to restart them all
-                                        .flat_map(|item| match item {
-                                            LspMenuItem::Header { .. } => None,
-                                            LspMenuItem::ToggleServersButton { .. } => None,
-                                            LspMenuItem::WithHealthCheck { health, .. } => Some(
-                                                LanguageServerSelector::Name(health.name.clone()),
-                                            ),
-                                            LspMenuItem::WithBinaryStatus {
-                                                server_name, ..
-                                            } => Some(LanguageServerSelector::Name(
-                                                server_name.clone(),
-                                            )),
-                                        })
-                                        .collect();
-                                    lsp_store.restart_language_servers_for_buffers(
-                                        buffers, selectors, cx,
-                                    );
+                                    lsp_store.restart_all_language_servers(cx);
                                 } else {
                                     lsp_store.stop_all_language_servers(cx);
                                 }

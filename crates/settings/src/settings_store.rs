@@ -32,9 +32,9 @@ use util::{
 use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, UserSettingsContentExt,
-    VsCodeSettings, WorktreeId,
+    ActiveSettingsProfileName, FontFamilyName, GlobalLspSettingsContent, IconThemeName,
+    LanguageSettingsContent, LanguageToSettingsMap, LspSettings, LspSettingsMap,
+    SemanticTokenRules, ThemeName, UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
         UserSettingsContent, merge_from::MergeFrom,
@@ -150,6 +150,8 @@ pub struct SettingsStore {
 
     extension_settings: Option<Box<SettingsContent>>,
     server_settings: Option<Box<SettingsContent>>,
+
+    user_semantic_token_rules: Option<SemanticTokenRules>,
 
     merged_settings: Rc<SettingsContent>,
 
@@ -272,11 +274,32 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
+        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
+    }
+
+    pub fn new_with_semantic_tokens(
+        cx: &mut App,
+        default_settings: &str,
+        default_semantic_tokens: &str,
+    ) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: Rc<SettingsContent> =
-            SettingsContent::parse_json_with_comments(default_settings)
-                .unwrap()
-                .into();
+        let mut default_settings: SettingsContent =
+            SettingsContent::parse_json_with_comments(default_settings).unwrap();
+
+        // Merge default semantic token rules from the separate file
+        if let Ok(semantic_token_rules) =
+            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
+        {
+            let global_lsp = default_settings
+                .global_lsp_settings
+                .get_or_insert_with(Default::default);
+            let existing_rules = global_lsp
+                .semantic_token_rules
+                .get_or_insert_with(Default::default);
+            existing_rules.rules.extend(semantic_token_rules.rules);
+        }
+
+        let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
@@ -284,6 +307,7 @@ impl SettingsStore {
             server_settings: None,
             user_settings: None,
             extension_settings: None,
+            user_semantic_token_rules: None,
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
@@ -842,6 +866,26 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Sets the user semantic token rules from `~/.config/zed/semantic_token_rules.json`.
+    pub fn set_user_semantic_token_rules(&mut self, content: &str, cx: &mut App) {
+        let content = content.trim();
+        if content.is_empty() {
+            if self.user_semantic_token_rules.take().is_some() {
+                self.recompute_values(None, cx);
+            }
+            return;
+        }
+        match crate::parse_json_with_comments::<SemanticTokenRules>(content) {
+            Ok(rules) => {
+                self.user_semantic_token_rules = Some(rules);
+                self.recompute_values(None, cx);
+            }
+            Err(e) => {
+                log::error!("Failed to parse semantic token rules: {e:#}");
+            }
+        }
+    }
+
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
@@ -1102,6 +1146,16 @@ impl SettingsStore {
                 merged.merge_from_option(user_settings.for_release_channel());
                 merged.merge_from_option(user_settings.for_os());
                 merged.merge_from_option(user_settings.for_profile(cx));
+            }
+            // Merge user semantic token rules from the dedicated file (highest priority)
+            if let Some(user_semantic_token_rules) = &self.user_semantic_token_rules {
+                let global_lsp = merged
+                    .global_lsp_settings
+                    .get_or_insert_with(GlobalLspSettingsContent::default);
+                let existing_rules = global_lsp
+                    .semantic_token_rules
+                    .get_or_insert_with(SemanticTokenRules::default);
+                existing_rules.merge_from(user_semantic_token_rules);
             }
             merged.merge_from_option(self.server_settings.as_deref());
             self.merged_settings = Rc::new(merged);

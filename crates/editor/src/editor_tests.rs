@@ -27531,7 +27531,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    let ensure_result_id = |expected: Option<SharedString>, cx: &mut TestAppContext| {
+    let ensure_result_id = |expected_result_id: Option<SharedString>, cx: &mut TestAppContext| {
         project.update(cx, |project, cx| {
             let buffer_id = editor
                 .read(cx)
@@ -27545,7 +27545,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .lsp_store()
                 .read(cx)
                 .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
-            assert_eq!(expected, buffer_result_id);
+            assert_eq!(expected_result_id, buffer_result_id);
         });
     };
 
