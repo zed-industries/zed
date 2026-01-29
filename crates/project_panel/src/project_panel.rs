@@ -1949,7 +1949,6 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
-
         if let Some((worktree, expanded_dir_ids)) = self
             .project
             .read(cx)
