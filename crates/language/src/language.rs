@@ -315,7 +315,7 @@ impl CachedLspAdapter {
 
     pub async fn labels_for_symbols(
         &self,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[(String, lsp::SymbolKind, Option<String>)],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
@@ -445,12 +445,14 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[(String, lsp::SymbolKind, Option<String>)],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.iter().enumerate() {
-            let label = self.label_for_symbol(name, *kind, language).await;
+        for (ix, (name, kind, container_name)) in symbols.iter().enumerate() {
+            let label = self
+                .label_for_symbol(name, *kind, container_name.as_deref(), language)
+                .await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
@@ -461,9 +463,10 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _: &str,
-        _: lsp::SymbolKind,
-        _: &Arc<Language>,
+        _name: &str,
+        _kind: lsp::SymbolKind,
+        _container_name: Option<&str>,
+        _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
