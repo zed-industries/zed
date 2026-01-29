@@ -5399,6 +5399,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sqlez_macros",
+ "telemetry_events",
  "tempfile",
  "terminal_view",
  "toml 0.8.23",
