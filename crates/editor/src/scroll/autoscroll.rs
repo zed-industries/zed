@@ -364,4 +364,8 @@ impl Editor {
         self.autoscroll_request = Some((autoscroll, false));
         cx.notify();
     }
+
+    pub fn has_pending_autoscroll(&self) -> bool {
+        self.autoscroll_request.is_some()
+    }
 }

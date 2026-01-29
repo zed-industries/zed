@@ -4,11 +4,11 @@ use collections::HashSet;
 use file_icons::FileIcons;
 use git::status::FileStatus;
 use gpui::{
-    AbsoluteLength, Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem,
-    Context, DragMoveEvent, Element, Entity, Focusable, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, LayoutId, Length, Modifiers, MouseButton, ParentElement, Pixels,
-    StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div, linear_color_stop,
-    linear_gradient, point, px, size,
+    AbsoluteLength, Action, AnyElement, App, AvailableSpace, Bounds, ChildPrepaintOrder,
+    ClickEvent, ClipboardItem, Context, DragMoveEvent, Element, Entity, Focusable, GlobalElementId,
+    Hsla, InspectorElementId, IntoElement, LayoutId, Length, Modifiers, MouseButton, ParentElement,
+    Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
+    linear_color_stop, linear_gradient, point, px, size,
 };
 use multi_buffer::{Anchor, ExcerptId, ExcerptInfo};
 use project::Entry;
@@ -178,6 +178,7 @@ impl RenderOnce for SplitEditorView {
         let state_for_drag = self.split_state.downgrade();
         let state_for_drop = self.split_state.downgrade();
 
+        let rhs_editor_for_prepaint = rhs_editor.clone();
         let buffer_headers = SplitBufferHeadersElement::new(rhs_editor, self.style.clone());
 
         div()
@@ -186,6 +187,13 @@ impl RenderOnce for SplitEditorView {
             .relative()
             .child(
                 h_flex()
+                    .prepaint_children_in_order(move |_window, cx| {
+                        if rhs_editor_for_prepaint.read(cx).has_pending_autoscroll() {
+                            ChildPrepaintOrder::Reverse
+                        } else {
+                            ChildPrepaintOrder::Normal
+                        }
+                    })
                     .id("split-editor-view")
                     .size_full()
                     .on_drag_move::<DraggedSplitHandle>(move |event, window, cx| {

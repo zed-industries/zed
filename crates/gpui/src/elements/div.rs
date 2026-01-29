@@ -48,6 +48,16 @@ const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
+/// Specifies the order in which children should be prepainted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChildPrepaintOrder {
+    /// Prepaint children in their natural order (first to last).
+    #[default]
+    Normal,
+    /// Prepaint children in reverse order (last to first).
+    Reverse,
+}
+
 /// The styling information for a given group.
 pub struct GroupStyle {
     /// The identifier for this group.
@@ -1291,9 +1301,10 @@ pub(crate) type ActionListener =
 #[track_caller]
 pub fn div() -> Div {
     Div {
-        interactivity: Interactivity::new(),
-        children: SmallVec::default(),
+        interactivity: Interactivity::default(),
+        children: SmallVec::new(),
         prepaint_listener: None,
+        prepaint_order_callback: None,
         image_cache: None,
     }
 }
@@ -1303,6 +1314,8 @@ pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
+    prepaint_order_callback:
+        Option<Box<dyn Fn(&mut Window, &mut App) -> ChildPrepaintOrder + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
 }
 
@@ -1320,6 +1333,17 @@ impl Div {
     /// Add an image cache at the location of this div in the element tree.
     pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
         self.image_cache = Some(Box::new(cache));
+        self
+    }
+
+    /// Set a callback that determines the order in which children are prepainted.
+    /// The callback is invoked at prepaint time and should return either
+    /// `ChildPrepaintOrder::Normal` or `ChildPrepaintOrder::Reverse`.
+    pub fn prepaint_children_in_order(
+        mut self,
+        callback: impl Fn(&mut Window, &mut App) -> ChildPrepaintOrder + 'static,
+    ) -> Self {
+        self.prepaint_order_callback = Some(Box::new(callback));
         self
     }
 }
@@ -1485,9 +1509,22 @@ impl Element for Div {
                 }
 
                 window.with_image_cache(image_cache, |window| {
-                    window.with_element_offset(scroll_offset, |window| {
-                        for child in &mut self.children {
-                            child.prepaint(window, cx);
+                    let order = self
+                        .prepaint_order_callback
+                        .as_ref()
+                        .map(|cb| cb(window, cx))
+                        .unwrap_or_default();
+
+                    window.with_element_offset(scroll_offset, |window| match order {
+                        ChildPrepaintOrder::Normal => {
+                            for child in &mut self.children {
+                                child.prepaint(window, cx);
+                            }
+                        }
+                        ChildPrepaintOrder::Reverse => {
+                            for child in self.children.iter_mut().rev() {
+                                child.prepaint(window, cx);
+                            }
                         }
                     });
 
