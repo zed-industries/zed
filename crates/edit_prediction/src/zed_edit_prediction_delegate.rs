@@ -2,8 +2,11 @@ use std::{cmp, sync::Arc};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::{DataCollectionState, EditPredictionDelegate, SuggestionDisplayType};
+use edit_prediction_types::{
+    DataCollectionState, EditPredictionDelegate, EditPredictionIconSet, SuggestionDisplayType,
+};
 use gpui::{App, Entity, prelude::*};
+use icons::IconName;
 use language::{Buffer, ToPoint as _};
 use project::Project;
 
@@ -56,6 +59,20 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn icons(&self, cx: &App) -> EditPredictionIconSet {
+        match self.store.read(cx).edit_prediction_model {
+            EditPredictionModel::Sweep => EditPredictionIconSet::new(IconName::SweepAi)
+                .with_disabled(IconName::SweepAiDisabled)
+                .with_up(IconName::SweepAiUp)
+                .with_down(IconName::SweepAiDown)
+                .with_error(IconName::SweepAiError),
+            EditPredictionModel::Mercury => EditPredictionIconSet::new(IconName::Inception),
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+                EditPredictionIconSet::new(IconName::ZedPredict)
+            }
+        }
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
