@@ -8174,317 +8174,6 @@ async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_creating_sort_mode_directories_first(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root1",
-        json!({
-            ".dockerignore": "",
-            ".git": {
-                "HEAD": "",
-            },
-            "a": {},
-            "b": {},
-            "C": {}
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let panel = workspace
-        .update(cx, |workspace, window, cx| {
-            let panel = ProjectPanel::new(workspace, window, cx);
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    select_path(&panel, "root1", cx);
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1  <== selected",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-            "      .dockerignore",
-        ]
-    );
-
-    // Testing adding a file
-    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-            "      [EDITOR: '']  <== selected",
-            "      .dockerignore",
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-
-    // Testing adding a directory
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_directory(&NewDirectory, window, cx)
-    });
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "    > [EDITOR: '']  <== selected",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-            "      .dockerignore",
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-}
-
-#[gpui::test]
-async fn test_creating_sort_mode_mixed(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root1",
-        json!({
-            ".dockerignore": "",
-            ".git": {
-                "HEAD": "",
-            },
-            "a": {},
-            "b": {},
-            "C": {}
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    cx.update(|_, cx| {
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project_panel.get_or_insert_default().sort_mode =
-                    Some(settings::ProjectPanelSortMode::Mixed);
-            });
-        });
-    });
-
-    let panel = workspace
-        .update(cx, |workspace, window, cx| {
-            let panel = ProjectPanel::new(workspace, window, cx);
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    select_path(&panel, "root1", cx);
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1  <== selected",
-            "      .dockerignore",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-        ]
-    );
-
-    // Testing adding a file
-    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "      [EDITOR: '']  <== selected",
-            "      .dockerignore",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-
-    // Testing adding a directory
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_directory(&NewDirectory, window, cx)
-    });
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "    > [EDITOR: '']  <== selected",
-            "      .dockerignore",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-}
-
-#[gpui::test]
-async fn test_creating_sort_mode_files_first(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root1",
-        json!({
-            ".dockerignore": "",
-            ".git": {
-                "HEAD": "",
-            },
-            "a": {},
-            "b": {},
-            "C": {}
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    cx.update(|_, cx| {
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.project_panel.get_or_insert_default().sort_mode =
-                    Some(settings::ProjectPanelSortMode::FilesFirst);
-            });
-        });
-    });
-
-    let panel = workspace
-        .update(cx, |workspace, window, cx| {
-            let panel = ProjectPanel::new(workspace, window, cx);
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    select_path(&panel, "root1", cx);
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1  <== selected",
-            "      .dockerignore",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-        ]
-    );
-
-    // Testing adding a file
-    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "      [EDITOR: '']  <== selected",
-            "      .dockerignore",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-
-    // Testing adding a directory
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_directory(&NewDirectory, window, cx)
-    });
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "      .dockerignore",
-            "    > [EDITOR: '']  <== selected",
-            "    > .git",
-            "    > a",
-            "    > b",
-            "    > C",
-        ]
-    );
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-}
-
-#[gpui::test]
 async fn test_ensure_folding_when_creating(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -8618,7 +8307,7 @@ async fn test_ensure_folding_when_creating(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_ensure_folding_when_deleting(cx: &mut gpui::TestAppContext) {
+async fn test_ensure_temporary_folding_when_creating(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -8628,11 +8317,9 @@ async fn test_ensure_folding_when_deleting(cx: &mut gpui::TestAppContext) {
             "dir": {
                 "subdir": {
                     "nested_dir": {
-                        "file_nested.txt": "",
+                        "file.txt": ""
                     },
-                    "file_subdir.txt": "",
-                },
-                "file_dir.txt": "",
+                }
             }
         }),
     )
@@ -8661,47 +8348,59 @@ async fn test_ensure_folding_when_deleting(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+    });
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root1/dir", cx);
-    toggle_expand_dir(&panel, "root1/dir/subdir", cx);
-    toggle_expand_dir(&panel, "root1/dir/subdir/nested_dir", cx);
-    cx.run_until_parked();
+    select_folded_path_with_mark(
+        &panel,
+        "root1/dir/subdir/nested_dir",
+        "root1/dir/subdir",
+        cx,
+    );
+    panel.update(cx, |panel, _| {
+        panel.marked_entries.clear();
+    });
+    panel.update(cx, |panel, _| {
+        let leaf_entry_id = panel.state.selection.unwrap().entry_id;
+        let resolved_entry_id = panel.resolve_entry(leaf_entry_id);
+        assert_ne!(
+            resolved_entry_id, leaf_entry_id,
+            "expected a folded ancestor to be active before creating a new entry"
+        );
+    });
 
-    select_path(&panel, "root1/dir/subdir/nested_dir/file_nested.txt", cx);
-    submit_deletion(&panel, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root1", "    > dir/subdir/nested_dir  <== selected",]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
     cx.run_until_parked();
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
+        visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root1",
-            "    v dir",
-            "        v subdir",
-            "            v nested_dir  <== selected",
-            "              file_subdir.txt",
-            "          file_dir.txt",
+            "    v dir/subdir",
+            "        > nested_dir",
+            "          [EDITOR: '']  <== selected",
         ]
     );
 
-    select_path(&panel, "root1/dir/subdir/file_subdir.txt", cx);
-    submit_deletion(&panel, cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&Cancel, window, cx);
+    });
     cx.run_until_parked();
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root1",
-            "    v dir",
-            "        v subdir/nested_dir  <== selected",
-            "          file_dir.txt",
-        ]
-    );
-
-    select_path(&panel, "root1/dir/file_dir.txt", cx);
-    submit_deletion(&panel, cx);
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &["v root1", "    v dir/subdir/nested_dir",]
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root1", "    > dir/subdir/nested_dir  <== selected",]
     );
 }
 
