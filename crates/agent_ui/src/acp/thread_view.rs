@@ -6728,10 +6728,10 @@ impl AcpThreadView {
                         .disabled(!has_selection)
                         .handler({
                             move |window, cx| {
-                                message_editor.focus_handle(cx).focus(window, cx);
-                                message_editor.update(cx, |editor, cx| {
-                                    editor.insert_selections(window, cx);
-                                });
+                                window.dispatch_action(
+                                    zed_actions::agent::AddSelectionToThread.boxed_clone(),
+                                    cx,
+                                );
                             }
                         }),
                 )
