@@ -503,7 +503,7 @@ impl SplittableEditor {
                 .collect()
         };
 
-        let primary_folded_buffers = primary_display_map.read(cx).folded_buffers().clone();
+        let primary_folded_buffers = primary_display_map.read(cx).folded_buffers(cx);
 
         let mut companion = Companion::new(
             rhs_display_map_id,

@@ -2344,7 +2344,7 @@ impl EditorElement {
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
         let folded_buffers = self.editor.read(cx).folded_buffers(cx);
         let mut display_hunks = snapshot
-            .display_diff_hunks_for_rows(display_rows, folded_buffers)
+            .display_diff_hunks_for_rows(display_rows, &folded_buffers)
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
         let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;

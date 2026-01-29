@@ -20106,11 +20106,11 @@ impl Editor {
     }
 
     pub fn is_buffer_folded(&self, buffer: BufferId, cx: &App) -> bool {
-        self.display_map.read(cx).is_buffer_folded(buffer)
+        self.display_map.read(cx).is_buffer_folded(buffer, cx)
     }
 
-    pub fn folded_buffers<'a>(&self, cx: &'a App) -> &'a HashSet<BufferId> {
-        self.display_map.read(cx).folded_buffers()
+    pub fn folded_buffers(&self, cx: &App) -> HashSet<BufferId> {
+        self.display_map.read(cx).folded_buffers(cx)
     }
 
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
@@ -20604,8 +20604,9 @@ impl Editor {
         autoscroll: Option<Autoscroll>,
         cx: &mut Context<Self>,
     ) {
-        self.display_map
-            .update(cx, |display_map, _cx| display_map.replace_blocks(renderers));
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.replace_blocks(renderers, cx)
+        });
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
