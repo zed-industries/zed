@@ -161,17 +161,7 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => cmd.args([
-            "-NonInteractive",
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "Set-Location '{}'; & '{}' --printenv",
-                directory.display(),
-                zed_path.display()
-            ),
-        ]),
-        None => cmd.args([
+        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) | None => cmd.args([
             "-NonInteractive",
             "-NoProfile",
             "-Command",
