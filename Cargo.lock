@@ -15200,6 +15200,7 @@ dependencies = [
  "bm25",
  "client",
  "component",
+ "copilot",
  "copilot_ui",
  "edit_prediction",
  "editor",

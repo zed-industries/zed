@@ -6,8 +6,8 @@ use edit_prediction::{
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
-use project::Project;
 use ui::{ButtonLink, ConfiguredApiCard, prelude::*};
+use workspace::AppState;
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -20,15 +20,8 @@ pub(crate) fn render_edit_prediction_setup_page(
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let project = settings_window.original_window.as_ref().and_then(|window| {
-        window
-            .read_with(cx, |workspace, _| workspace.project().clone())
-            .ok()
-    });
     let providers = [
-        project.and_then(|project| {
-            render_github_copilot_provider(project, window, cx).map(IntoElement::into_any_element)
-        }),
+        render_github_copilot_provider(window, cx).map(IntoElement::into_any_element),
         cx.has_flag::<MercuryFeatureFlag>().then(|| {
             render_api_key_provider(
                 IconName::Inception,
@@ -330,20 +323,16 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
     ])
 }
 
-fn render_github_copilot_provider(
-    project: Entity<Project>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<impl IntoElement> {
-    let copilot = EditPredictionStore::try_global(cx)?
-        .read(cx)
-        .copilot_for_project(&project);
+fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
             move |cx| {
-                copilot
-                    .as_ref()
-                    .is_some_and(|copilot| copilot.read(cx).is_authenticated())
+                if let Some(app_state) = AppState::global(cx).upgrade() {
+                    let copilot = copilot::GlobalCopilotAuth::get_or_init(app_state, cx);
+                    copilot.0.read(cx).is_authenticated()
+                } else {
+                    false
+                }
             },
             copilot_ui::ConfigurationMode::EditPrediction,
             cx,
