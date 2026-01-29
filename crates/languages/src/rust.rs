@@ -1851,7 +1851,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("Variant", lsp::SymbolKind::ENUM_MEMBER, &language)
+                .label_for_symbol("Variant", lsp::SymbolKind::ENUM_MEMBER, None, &language)
                 .await,
             Some(CodeLabel::new(
                 "Variant".to_string(),
