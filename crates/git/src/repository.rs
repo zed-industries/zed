@@ -6,6 +6,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
+use futures::future::try_join;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use git2::{BranchType, ErrorCode};
@@ -341,9 +342,9 @@ pub struct FileHistory {
     /// Currently loaded history entries.
     pub entries: Vec<FileHistoryEntry>,
     pub path: RepoPath,
-    /// Optionally keeps track of the total number of commits. When all entries
-    /// are loaded, this should match `entries.len()`.
-    pub count: Option<usize>,
+    /// Total number of commits in the file's history. When all entries are
+    /// loaded, this should match `entries.len()`.
+    pub total_count: usize,
 }
 
 #[derive(Debug)]
@@ -663,10 +664,6 @@ pub trait GitRepository: Send + Sync {
         skip: usize,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
-
-    /// Returns the total number of commits in the file history for the provided
-    /// `path`.
-    fn file_history_count(&self, path: RepoPath) -> BoxFuture<'_, Result<usize>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1782,12 +1779,31 @@ impl GitRepository for RealGitRepository {
 
                 args.push("--");
 
-                let output = new_smol_command(&git_binary_path)
+                // TODO!: Eventually add the `--follow` flag here so that, at
+                // the end, the total number of loaded commits in the
+                // `FileHistory` does match the count.
+                let count_command = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(vec!["log", "--oneline", "--", path.as_unix_str()])
+                    .output();
+
+                let log_command = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(&args)
                     .arg(path.as_unix_str())
-                    .output()
-                    .await?;
+                    .output();
+
+                let (count_output, output) = try_join(count_command, log_command).await?;
+
+                // Calculate the total number of commits. Since `--oneline` is
+                // used, the number of commits is simply the number of lines in
+                // the command's output.
+                if !count_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&count_output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+                let stdout = std::str::from_utf8(&count_output.stdout)?;
+                let total_count = stdout.lines().count();
 
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1826,38 +1842,8 @@ impl GitRepository for RealGitRepository {
                 Ok(FileHistory {
                     entries,
                     path,
-                    count: None,
+                    total_count,
                 })
-            })
-            .boxed()
-    }
-
-    fn file_history_count(&self, path: RepoPath) -> BoxFuture<'_, Result<usize>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.any_git_binary_path.clone();
-
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let args = vec!["--no-optional-locks", "log", "--follow", "--oneline", "--"];
-                let output = new_smol_command(&git_binary_path)
-                    .current_dir(&working_directory)
-                    .args(&args)
-                    .arg(path.as_unix_str())
-                    .output()
-                    .await?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    bail!("git log failed: {stderr}");
-                }
-
-                // Since `--oneline` was used, the number of commits is simply
-                // the number of lines returned by the command.
-                let stdout = std::str::from_utf8(&output.stdout)?;
-                let count = stdout.lines().count();
-
-                Ok(count)
             })
             .boxed()
     }

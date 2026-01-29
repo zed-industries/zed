@@ -483,13 +483,10 @@ impl GitRepository for FakeGitRepository {
             Ok(git::repository::FileHistory {
                 entries: Vec::new(),
                 path,
-                count: None,
+                total_count: 0,
             })
         }
         .boxed()
-    }
-    fn file_history_count(&self, _path: RepoPath) -> BoxFuture<'_, Result<usize>> {
-        async move { Ok(0) }.boxed()
     }
 
     fn stage_paths(
