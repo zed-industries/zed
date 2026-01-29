@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 
 use crate::shell::get_system_shell;
-use crate::shell::{Shell, ShellKind};
+use crate::shell::{
+    Shell, ShellKind, args_for_shell_option, to_shell_variable_option, try_quote_option,
+    try_quote_prefix_aware_option,
+};
 
 const POSIX_STDIN_REDIRECT_PREFIX: char = '(';
 const POSIX_STDIN_REDIRECT_SUFFIX: &str = ") </dev/null";
@@ -92,36 +95,6 @@ impl ShellBuilder {
         self
     }
 
-    fn try_quote_prefix_aware<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
-        match self.kind {
-            Some(ref kind) => kind.try_quote_prefix_aware(arg),
-            #[cfg(windows)]
-            None => Some(ShellKind::quote_powershell(arg)),
-            #[cfg(unix)]
-            None => shlex::try_quote(arg).ok(),
-        }
-    }
-
-    fn to_shell_variable(&self, input: &str) -> String {
-        match self.kind {
-            Some(ref kind) => kind.to_shell_variable(input),
-            #[cfg(windows)]
-            None => ShellKind::to_powershell_variable(input),
-            #[cfg(unix)]
-            None => input.to_owned(),
-        }
-    }
-
-    fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
-        match self.kind {
-            Some(ref kind) => kind.try_quote(arg),
-            #[cfg(windows)]
-            None => Some(ShellKind::quote_powershell(arg)),
-            #[cfg(unix)]
-            None => shlex::try_quote(arg).ok(),
-        }
-    }
-
     fn apply_stdin_redirect(&self, combined_command: &mut String) {
         match self.kind {
             Some(ShellKind::Fish) => {
@@ -160,20 +133,6 @@ impl ShellBuilder {
         }
     }
 
-    fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
-        match self.kind {
-            Some(ref kind) => kind.args_for_shell(interactive, combined_command),
-            #[cfg(windows)]
-            None => vec!["-C".to_owned(), combined_command],
-            #[cfg(unix)]
-            None => interactive
-                .then(|| "-i".to_owned())
-                .into_iter()
-                .chain(["-c".to_owned(), combined_command])
-                .collect(),
-        }
-    }
-
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(
         mut self,
@@ -182,7 +141,7 @@ impl ShellBuilder {
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
             let task_command = if !task_args.is_empty() {
-                match self.try_quote_prefix_aware(&task_command) {
+                match try_quote_prefix_aware_option(self.kind, &task_command) {
                     Some(task_command) => task_command.into_owned(),
                     None => task_command,
                 }
@@ -191,8 +150,8 @@ impl ShellBuilder {
             };
             let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
-                let shell_variable = self.to_shell_variable(arg);
-                command.push_str(&match self.try_quote(&shell_variable) {
+                let shell_variable = to_shell_variable_option(self.kind, arg);
+                command.push_str(&match try_quote_option(self.kind, &shell_variable) {
                     Some(shell_variable) => shell_variable,
                     None => Cow::Owned(shell_variable),
                 });
@@ -202,8 +161,11 @@ impl ShellBuilder {
                 self.apply_stdin_redirect(&mut combined_command);
             }
 
-            self.args
-                .extend(self.args_for_shell(self.interactive, combined_command));
+            self.args.extend(args_for_shell_option(
+                self.kind,
+                self.interactive,
+                combined_command,
+            ));
         }
 
         (self.program, self.args)
@@ -219,15 +181,18 @@ impl ShellBuilder {
         if let Some(task_command) = task_command {
             let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&self.to_shell_variable(arg));
+                command.push_str(&to_shell_variable_option(self.kind, arg));
                 command
             });
             if self.redirect_stdin {
                 self.apply_stdin_redirect(&mut combined_command);
             }
 
-            self.args
-                .extend(self.args_for_shell(self.interactive, combined_command));
+            self.args.extend(args_for_shell_option(
+                self.kind,
+                self.interactive,
+                combined_command,
+            ));
         }
 
         (self.program, self.args)
@@ -259,7 +224,7 @@ impl ShellBuilder {
         if task_args.is_empty() {
             task_command = task_command
                 .as_ref()
-                .map(|cmd| self.try_quote_prefix_aware(cmd).map(Cow::into_owned))
+                .map(|cmd| try_quote_prefix_aware_option(self.kind, cmd).map(Cow::into_owned))
                 .unwrap_or(task_command);
         }
         let (program, args) = self.build(task_command, task_args);

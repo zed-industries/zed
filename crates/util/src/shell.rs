@@ -825,6 +825,109 @@ impl ShellKind {
     }
 }
 
+/// Helper functions for `Option<ShellKind>` that provide platform-specific defaults for unknown shells.
+/// These should be used when you have an `Option<ShellKind>` and need to handle the `None` case
+/// with appropriate fallback behavior (POSIX-like on Unix, PowerShell-like on Windows).
+
+/// Quote an argument for the shell, with platform-specific fallback for unknown shells.
+pub fn try_quote_option(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
+    match shell_kind {
+        Some(kind) => kind.try_quote(arg),
+        #[cfg(windows)]
+        None => Some(ShellKind::quote_powershell(arg)),
+        #[cfg(unix)]
+        None => shlex::try_quote(arg).ok(),
+    }
+}
+
+/// Quote an argument for the shell (prefix-aware), with platform-specific fallback for unknown shells.
+pub fn try_quote_prefix_aware_option(
+    shell_kind: Option<ShellKind>,
+    arg: &str,
+) -> Option<Cow<'_, str>> {
+    match shell_kind {
+        Some(kind) => kind.try_quote_prefix_aware(arg),
+        #[cfg(windows)]
+        None => Some(ShellKind::quote_powershell(arg)),
+        #[cfg(unix)]
+        None => shlex::try_quote(arg).ok(),
+    }
+}
+
+/// Get the command prefix for the shell, with platform-specific fallback for unknown shells.
+pub fn command_prefix_option(shell_kind: Option<ShellKind>) -> Option<char> {
+    match shell_kind {
+        Some(kind) => kind.command_prefix(),
+        #[cfg(windows)]
+        None => Some('&'),
+        #[cfg(unix)]
+        None => None,
+    }
+}
+
+/// Prepend the command prefix if needed, with platform-specific fallback for unknown shells.
+pub fn prepend_command_prefix_option<'a>(
+    shell_kind: Option<ShellKind>,
+    command: &'a str,
+) -> Cow<'a, str> {
+    match command_prefix_option(shell_kind) {
+        Some(prefix) if !command.starts_with(prefix) => Cow::Owned(format!("{prefix}{command}")),
+        _ => Cow::Borrowed(command),
+    }
+}
+
+/// Get the sequential commands separator, with platform-specific fallback for unknown shells.
+pub fn sequential_commands_separator_option(shell_kind: Option<ShellKind>) -> char {
+    match shell_kind {
+        Some(kind) => kind.sequential_commands_separator(),
+        #[cfg(windows)]
+        None => ';',
+        #[cfg(unix)]
+        None => ';',
+    }
+}
+
+/// Get the sequential-and commands separator, with platform-specific fallback for unknown shells.
+pub fn sequential_and_commands_separator_option(shell_kind: Option<ShellKind>) -> &'static str {
+    match shell_kind {
+        Some(kind) => kind.sequential_and_commands_separator(),
+        #[cfg(windows)]
+        None => ";",
+        #[cfg(unix)]
+        None => ";",
+    }
+}
+
+/// Get shell arguments for running a command, with platform-specific fallback for unknown shells.
+pub fn args_for_shell_option(
+    shell_kind: Option<ShellKind>,
+    interactive: bool,
+    combined_command: String,
+) -> Vec<String> {
+    match shell_kind {
+        Some(kind) => kind.args_for_shell(interactive, combined_command),
+        #[cfg(windows)]
+        None => vec!["-C".to_owned(), combined_command],
+        #[cfg(unix)]
+        None => interactive
+            .then(|| "-i".to_owned())
+            .into_iter()
+            .chain(["-c".to_owned(), combined_command])
+            .collect(),
+    }
+}
+
+/// Convert a variable to shell syntax, with platform-specific fallback for unknown shells.
+pub fn to_shell_variable_option(shell_kind: Option<ShellKind>, input: &str) -> String {
+    match shell_kind {
+        Some(kind) => kind.to_shell_variable(input),
+        #[cfg(windows)]
+        None => ShellKind::to_powershell_variable(input),
+        #[cfg(unix)]
+        None => input.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

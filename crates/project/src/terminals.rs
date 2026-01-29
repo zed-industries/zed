@@ -9,77 +9,15 @@ use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
-
-fn prepend_command_prefix<'a>(shell_kind: Option<ShellKind>, command: &'a str) -> Cow<'a, str> {
-    let prefix = match shell_kind {
-        Some(kind) => kind.command_prefix(),
-        #[cfg(windows)]
-        None => Some('&'),
-        #[cfg(unix)]
-        None => None,
-    };
-    match prefix {
-        Some(prefix) if !command.starts_with(prefix) => Cow::Owned(format!("{prefix}{command}")),
-        _ => Cow::Borrowed(command),
-    }
-}
-
-fn try_quote(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
-    match shell_kind {
-        Some(kind) => kind.try_quote(arg),
-        #[cfg(windows)]
-        None => Some(ShellKind::quote_powershell(arg)),
-        #[cfg(unix)]
-        None => shlex::try_quote(arg).ok(),
-    }
-}
-
-fn try_quote_prefix_aware(shell_kind: Option<ShellKind>, arg: &str) -> Option<Cow<'_, str>> {
-    match shell_kind {
-        Some(kind) => kind.try_quote_prefix_aware(arg),
-        #[cfg(windows)]
-        None => Some(ShellKind::quote_powershell(arg)),
-        #[cfg(unix)]
-        None => shlex::try_quote(arg).ok(),
-    }
-}
-
-fn sequential_commands_separator(shell_kind: Option<ShellKind>) -> char {
-    match shell_kind {
-        Some(kind) => kind.sequential_commands_separator(),
-        #[cfg(windows)]
-        None => ';',
-        #[cfg(unix)]
-        None => ';',
-    }
-}
-
-fn args_for_shell(
-    shell_kind: Option<ShellKind>,
-    interactive: bool,
-    combined_command: String,
-) -> Vec<String> {
-    match shell_kind {
-        Some(kind) => kind.args_for_shell(interactive, combined_command),
-        #[cfg(windows)]
-        None => vec!["-C".to_owned(), combined_command],
-        #[cfg(unix)]
-        None => interactive
-            .then(|| "-i".to_owned())
-            .into_iter()
-            .chain(["-c".to_owned(), combined_command])
-            .collect(),
-    }
-}
+use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
+use util::shell::ShellKind;
 use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
@@ -205,12 +143,14 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let format_to_run = || {
                         if let Some(command) = &spawn_task.command {
-                            let command = prepend_command_prefix(shell_kind, command);
-                            let command = try_quote_prefix_aware(shell_kind, &command);
+                            let command =
+                                util::shell::prepend_command_prefix_option(shell_kind, command);
+                            let command =
+                                util::shell::try_quote_prefix_aware_option(shell_kind, &command);
                             let args = spawn_task
                                 .args
                                 .iter()
-                                .filter_map(|arg| try_quote(shell_kind, arg));
+                                .filter_map(|arg| util::shell::try_quote_option(shell_kind, arg));
 
                             command.into_iter().chain(args).join(" ")
                         } else {
@@ -224,13 +164,17 @@ impl Project {
                         match remote_client {
                             Some(remote_client) => match activation_script.clone() {
                                 activation_script if !activation_script.is_empty() => {
-                                    let separator = sequential_commands_separator(shell_kind);
+                                    let separator =
+                                        util::shell::sequential_commands_separator_option(
+                                            shell_kind,
+                                        );
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = args_for_shell(shell_kind, false, arg);
+                                    let args =
+                                        util::shell::args_for_shell_option(shell_kind, false, arg);
                                     let shell = remote_client
                                         .read(cx)
                                         .shell()
@@ -257,13 +201,17 @@ impl Project {
                             },
                             None => match activation_script.clone() {
                                 activation_script if !activation_script.is_empty() => {
-                                    let separator = sequential_commands_separator(shell_kind);
+                                    let separator =
+                                        util::shell::sequential_commands_separator_option(
+                                            shell_kind,
+                                        );
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = args_for_shell(shell_kind, false, arg);
+                                    let args =
+                                        util::shell::args_for_shell_option(shell_kind, false, arg);
 
                                     (
                                         Shell::WithArguments {
