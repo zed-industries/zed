@@ -57,7 +57,6 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Color, ContextMenu, ContextMenuItem, DecoratedIcon, Divider, Icon, IconDecoration,
     IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
@@ -1278,7 +1277,6 @@ impl ProjectPanel {
         }
 
         if let Some(selection) = &self.state.selection {
-            let titlebar_height = PlatformTitleBar::height(window);
             let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
 
             let mut separators = 0;
@@ -1305,11 +1303,12 @@ impl ProjectPanel {
             let (_, entry_ix, _) = self.index_for_selection(*selection).unwrap_or_default();
 
             let offset_y = self.scroll_handle.offset().y.to_f64();
+            let viewport = self.scroll_handle.viewport();
             let viewport_height = window.viewport_size().height;
 
             let entry_height = ui_font_size + 10.0;
             let mut entry_y =
-                (((entry_ix + 1) as f64) * entry_height + titlebar_height.to_f64()) + offset_y;
+                (((entry_ix + 1) as f64) * entry_height + viewport.top().to_f64()) + offset_y;
 
             let space_below = viewport_height.to_f64() - entry_y;
             let should_be_snapped = total_menu_height > space_below;
