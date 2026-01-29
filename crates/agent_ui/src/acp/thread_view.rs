@@ -436,7 +436,11 @@ impl AcpThreadView {
                         editor.insert_thread_summary(entry, window, cx);
                     }
                     ExternalAgentInitialContent::Text(prompt) => {
-                        // editor.set_text(&prompt, window, cx); // check why
+                        editor.set_message(
+                            vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                            window,
+                            cx,
+                        );
                     }
                 }
             }
