@@ -49,7 +49,7 @@ body:
       description: |
         Open the command palette in Zed, then type `zed: open log` to see the last 1000 lines. Or type `zed: reveal log in file manager` in the command palette to reveal the log file itself.
 
-        ⚠️ **Please review your log file for secrets (API keys, tokens, etc.) before posting.**
+        ⚠️ **Please review your log file for secrets (API keys, tokens, etc.) and partially or fully redact them before posting.**
       value: |
         <details><summary>Zed.log</summary>
 
@@ -67,7 +67,7 @@ body:
       description: |
         Open the command palette in Zed, then type “zed: open settings file” and copy/paste any relevant (e.g., LSP-specific) settings.
 
-        ⚠️ **Please remove any secrets (API keys, tokens, etc.) from your settings before posting.**
+        ⚠️ **Please review your settings file for secrets (API keys, tokens, etc.) and partially or fully redact them before posting.**
       value: |
         <details><summary>settings.json</summary>
 
