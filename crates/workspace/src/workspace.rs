@@ -3288,6 +3288,8 @@ impl Workspace {
             },
         )?;
 
+        let root = window_handle.read_with(cx, |satellite, _| satellite.root())?;
+
         cx.subscribe_in(
             &window_handle.entity(cx)?,
             window,
@@ -3296,6 +3298,10 @@ impl Workspace {
         .detach();
 
         self.satellites.push(window_handle);
+        self.set_active_pane(&root, window, cx);
+        self.panes.push(root.clone());
+
+        cx.emit(Event::PaneAdded(root));
 
         Ok(window_handle)
     }
@@ -3313,13 +3319,17 @@ impl Workspace {
             .ok_or_else(|| anyhow::anyhow!("Item not found in any pane"))?;
 
         let satellite = self.create_satellite(window, cx)?;
-        let root = satellite.update(cx, |satellite, window, cx| {
-            let root = satellite.root();
-            move_item(&source_pane, &root, item_to_detach, 0, true, window, cx);
-            root
+        satellite.update(cx, |satellite, window, cx| {
+            move_item(
+                &source_pane,
+                &satellite.root(),
+                item_to_detach,
+                0,
+                true,
+                window,
+                cx,
+            );
         })?;
-
-        self.panes.push(root);
 
         cx.notify();
         Ok(satellite)
@@ -3763,7 +3773,17 @@ impl Workspace {
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
         let pane = self.create_pane(window, cx);
+        self.register_pane(pane.clone(), window, cx);
 
+        pane
+    }
+
+    fn register_pane(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
         cx.subscribe_in(&pane, window, Self::handle_pane_event)
             .detach();
         self.panes.push(pane.clone());
@@ -3771,6 +3791,7 @@ impl Workspace {
         window.focus(&pane.focus_handle(cx), cx);
 
         cx.emit(Event::PaneAdded(pane.clone()));
+
         pane
     }
 
