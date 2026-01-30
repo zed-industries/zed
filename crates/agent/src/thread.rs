@@ -1888,6 +1888,7 @@ impl Thread {
                         tool_name,
                         raw_input,
                         json_parse_error,
+                        event_stream,
                     ),
                 )));
             }
@@ -2074,7 +2075,40 @@ impl Thread {
         tool_name: Arc<str>,
         raw_input: Arc<str>,
         json_parse_error: String,
+        event_stream: &ThreadEventStream,
     ) -> LanguageModelToolResult {
+        // Add ToolUse to content so it can be paired with the error result.
+        // Parse raw_input as JSON (falling back to empty object) since the API requires input to be an object.
+        let input = serde_json::from_str::<serde_json::Value>(&raw_input)
+            .unwrap_or(serde_json::json!({}));
+
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.clone(),
+            raw_input: raw_input.to_string(),
+            input,
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let last_message = self.pending_message();
+        let push_new_tool_use = last_message.content.last().is_none_or(|content| {
+            !matches!(content, AgentMessageContent::ToolUse(last_tool_use) if last_tool_use.id == tool_use.id)
+        });
+
+        if push_new_tool_use {
+            event_stream.send_tool_call(
+                &tool_use.id,
+                &tool_use.name,
+                SharedString::from(&tool_use.name),
+                acp::ToolKind::Other,
+                tool_use.input.clone(),
+            );
+            last_message
+                .content
+                .push(AgentMessageContent::ToolUse(tool_use));
+        }
+
         let tool_output = format!("Error parsing input JSON: {json_parse_error}");
         LanguageModelToolResult {
             tool_use_id,
@@ -3441,5 +3475,208 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
         size: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use language_model::{LanguageModelToolUse, LanguageModelToolUseId};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    async fn setup_thread_for_test(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Thread>, ThreadEventStream) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        cx.update(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry = cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+
+            let thread = cx.new(|cx| {
+                Thread::new(
+                    project,
+                    project_context,
+                    context_server_registry,
+                    templates,
+                    None,
+                    cx,
+                )
+            });
+
+            let (event_tx, _event_rx) = mpsc::unbounded();
+            let event_stream = ThreadEventStream(event_tx);
+
+            (thread, event_stream)
+        })
+    }
+
+    #[gpui::test]
+    async fn test_handle_tool_use_json_parse_error_adds_tool_use_to_content(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
+                let tool_name: Arc<str> = Arc::from("test_tool");
+                let raw_input: Arc<str> = Arc::from("{invalid json");
+                let json_parse_error = "expected value at line 1 column 1".to_string();
+
+                // Call the function under test
+                let result = thread.handle_tool_use_json_parse_error_event(
+                    tool_use_id.clone(),
+                    tool_name.clone(),
+                    raw_input.clone(),
+                    json_parse_error.clone(),
+                    &event_stream,
+                );
+
+                // Verify the result is an error
+                assert!(result.is_error);
+                assert_eq!(result.tool_use_id, tool_use_id);
+                assert_eq!(result.tool_name, tool_name);
+                assert!(matches!(
+                    result.content,
+                    LanguageModelToolResultContent::Text(_)
+                ));
+
+                // Verify the tool use was added to the message content
+                {
+                    let last_message = thread.pending_message();
+                    assert_eq!(last_message.content.len(), 1, "Should have one tool_use in content");
+
+                    match &last_message.content[0] {
+                        AgentMessageContent::ToolUse(tool_use) => {
+                            assert_eq!(tool_use.id, tool_use_id);
+                            assert_eq!(tool_use.name, tool_name);
+                            assert_eq!(tool_use.raw_input, raw_input.to_string());
+                            assert!(tool_use.is_input_complete);
+                            // Should fall back to empty object for invalid JSON
+                            assert_eq!(tool_use.input, json!({}));
+                        }
+                        _ => panic!("Expected ToolUse content"),
+                    }
+                }
+
+                // Insert the tool result (simulating what the caller does)
+                thread.pending_message()
+                    .tool_results
+                    .insert(result.tool_use_id.clone(), result);
+
+                // Verify the tool result was added
+                let last_message = thread.pending_message();
+                assert_eq!(last_message.tool_results.len(), 1, "Should have one tool_result");
+                assert!(last_message.tool_results.contains_key(&tool_use_id));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_handle_tool_use_json_parse_error_does_not_duplicate_tool_use(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
+                let tool_name: Arc<str> = Arc::from("test_tool");
+                let raw_input: Arc<str> = Arc::from("{invalid json");
+
+                // Manually add a tool use to the content first (simulating it was already added)
+                let existing_tool_use = LanguageModelToolUse {
+                    id: tool_use_id.clone(),
+                    name: tool_name.clone(),
+                    raw_input: raw_input.to_string(),
+                    input: json!({}),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+
+                thread
+                    .pending_message()
+                    .content
+                    .push(AgentMessageContent::ToolUse(existing_tool_use));
+
+                // Now call handle_tool_use_json_parse_error_event
+                let result = thread.handle_tool_use_json_parse_error_event(
+                    tool_use_id.clone(),
+                    tool_name,
+                    raw_input,
+                    "parse error".to_string(),
+                    &event_stream,
+                );
+
+                // Verify no duplicate was added
+                {
+                    let last_message = thread.pending_message();
+                    assert_eq!(
+                        last_message.content.len(),
+                        1,
+                        "Tool use should not be duplicated"
+                    );
+                }
+
+                // Insert the tool result (simulating what the caller does)
+                thread.pending_message()
+                    .tool_results
+                    .insert(result.tool_use_id.clone(), result);
+
+                // Should still have the tool result though
+                let last_message = thread.pending_message();
+                assert_eq!(last_message.tool_results.len(), 1);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_handle_tool_use_json_parse_error_parses_valid_json(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
+                let tool_name: Arc<str> = Arc::from("test_tool");
+                let raw_input: Arc<str> = Arc::from(r#"{"key": "value"}"#);
+
+                let result = thread.handle_tool_use_json_parse_error_event(
+                    tool_use_id.clone(),
+                    tool_name,
+                    raw_input,
+                    "some error".to_string(),
+                    &event_stream,
+                );
+
+                // Verify the tool use was added with parsed JSON input
+                let last_message = thread.pending_message();
+                assert_eq!(last_message.content.len(), 1);
+
+                match &last_message.content[0] {
+                    AgentMessageContent::ToolUse(tool_use) => {
+                        assert_eq!(tool_use.input, json!({"key": "value"}));
+                    }
+                    _ => panic!("Expected ToolUse content"),
+                }
+
+                // Insert the tool result (simulating what the caller does)
+                thread.pending_message()
+                    .tool_results
+                    .insert(result.tool_use_id.clone(), result);
+            });
+        });
     }
 }
