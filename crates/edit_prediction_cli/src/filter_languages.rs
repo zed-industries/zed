@@ -24,7 +24,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "embedded_prompts")]
+#[cfg(not(feature = "dynamic_prompts"))]
 mod language_configs_embedded {
     use rust_embed::RustEmbed;
 
@@ -34,7 +34,7 @@ mod language_configs_embedded {
     pub struct LanguageConfigs;
 }
 
-#[cfg(feature = "embedded_prompts")]
+#[cfg(not(feature = "dynamic_prompts"))]
 use language_configs_embedded::LanguageConfigs;
 
 #[derive(Debug, Deserialize)]
@@ -96,7 +96,7 @@ pub struct FilterLanguagesArgs {
     pub show_top_excluded: Option<usize>,
 }
 
-#[cfg(feature = "embedded_prompts")]
+#[cfg(not(feature = "dynamic_prompts"))]
 fn build_extension_to_language_map() -> HashMap<String, String> {
     let mut map = HashMap::default();
 
@@ -121,7 +121,7 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
     map
 }
 
-#[cfg(not(feature = "embedded_prompts"))]
+#[cfg(feature = "dynamic_prompts")]
 fn build_extension_to_language_map() -> HashMap<String, String> {
     const LANGUAGES_SRC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../languages/src");
 

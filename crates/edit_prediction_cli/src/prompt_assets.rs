@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-#[cfg(not(feature = "embedded_prompts"))]
+#[cfg(feature = "dynamic_prompts")]
 pub fn get_prompt(name: &'static str) -> Cow<'static, str> {
     use anyhow::Context;
     use std::collections::HashMap;
@@ -24,7 +24,7 @@ pub fn get_prompt(name: &'static str) -> Cow<'static, str> {
     return Cow::Borrowed(leaked);
 }
 
-#[cfg(feature = "embedded_prompts")]
+#[cfg(not(feature = "dynamic_prompts"))]
 pub fn get_prompt(name: &'static str) -> Cow<'static, str> {
     use rust_embed::RustEmbed;
 
