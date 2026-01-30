@@ -1327,7 +1327,7 @@ impl AgentDiff {
             Self::register_review_action::<Keep>(workspace, Self::keep, &agent_diff);
             Self::register_review_action::<Reject>(workspace, Self::reject, &agent_diff);
             Self::register_review_action::<KeepAll>(workspace, Self::keep_all, &agent_diff);
-            Self::register_review_action::<RejectAll>(workspace, Self::reject_all, &agent_diff);
+            Self::register_reject_all_action(workspace, &agent_diff);
 
             workspace.items_of_type(cx).collect::<Vec<_>>()
         });
@@ -1361,6 +1361,109 @@ impl AgentDiff {
             } else {
                 cx.propagate();
             }
+        });
+    }
+
+    fn register_reject_all_action(workspace: &mut Workspace, this: &Entity<AgentDiff>) {
+        let this = this.clone();
+        workspace.register_action(move |workspace, _: &RejectAll, window, cx| {
+            // Check if there's an active editor in review mode
+            let Some(active_item) = workspace.active_item(cx) else {
+                cx.propagate();
+                return;
+            };
+            let Some(editor) = active_item.act_as::<Editor>(cx) else {
+                cx.propagate();
+                return;
+            };
+
+            let is_reviewing = this
+                .read(cx)
+                .editor_state(&editor.downgrade())
+                == EditorState::Reviewing;
+
+            if !is_reviewing {
+                cx.propagate();
+                return;
+            }
+
+            // If the user has already dismissed the confirmation, proceed directly
+            if RejectAllConfirmation::dismissed() {
+                let task = this.update(cx, |this, cx| {
+                    this.review_in_active_editor(workspace, Self::reject_all, window, cx)
+                });
+                if let Some(task) = task {
+                    task.detach_and_log_err(cx);
+                }
+                return;
+            }
+
+            // Show confirmation dialog
+            let this = this.clone();
+            let workspace_handle = workspace.weak_handle();
+            window
+                .spawn(cx, async move |cx| {
+                    let response = cx.prompt(
+                        gpui::PromptLevel::Warning,
+                        "Reject all changes?",
+                        Some("This will discard all agent edits. You can undo individual file changes with the regular undo command, but the agent review UI will be cleared."),
+                        &["Reject All", "Don't Ask Again", "Cancel"],
+                    );
+
+                    match response.await {
+                        Ok(0) => {
+                            // "Reject All" - proceed without setting dismissed
+                            cx.update(|window, cx| {
+                                if let Some(workspace) = workspace_handle.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        let task = this.update(cx, |this, cx| {
+                                            this.review_in_active_editor(
+                                                workspace,
+                                                Self::reject_all,
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                        if let Some(task) = task {
+                                            task.detach_and_log_err(cx);
+                                        }
+                                    });
+                                }
+                            })
+                            .ok();
+                        }
+                        Ok(1) => {
+                            // "Don't Ask Again" - set dismissed and proceed
+                            cx.update(|_, cx| {
+                                RejectAllConfirmation::set_dismissed(true, cx);
+                            })
+                            .ok();
+                            cx.update(|window, cx| {
+                                if let Some(workspace) = workspace_handle.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        let task = this.update(cx, |this, cx| {
+                                            this.review_in_active_editor(
+                                                workspace,
+                                                Self::reject_all,
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                        if let Some(task) = task {
+                                            task.detach_and_log_err(cx);
+                                        }
+                                    });
+                                }
+                            })
+                            .ok();
+                        }
+                        _ => {
+                            // "Cancel" or dialog closed - do nothing
+                        }
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
         });
     }
 
