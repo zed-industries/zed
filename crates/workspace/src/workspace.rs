@@ -4584,6 +4584,7 @@ impl Workspace {
     ) {
         match event {
             workspace_satellite::Event::Closing => {
+                // TODO: we probably want to transfer back all items
                 let root = satellite.read(cx).root();
                 self.remove_pane(root, Some(self.active_pane().clone()), window, cx);
             }
