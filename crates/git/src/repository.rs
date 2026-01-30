@@ -3491,7 +3491,7 @@ mod tests {
                     sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
                     subject: "generated protobuf".into(),
                     commit_timestamp: 1733187470,
-                    author_name: SharedString::new("John Doe"),
+                    author_name: SharedString::new_static("John Doe"),
                     has_parent: false,
                 })
             }]
@@ -3516,7 +3516,7 @@ mod tests {
                         sha: "eb0cae33272689bd11030822939dd2701c52f81e".into(),
                         subject: "Add feature".into(),
                         commit_timestamp: 1762948725,
-                        author_name: SharedString::new("Zed"),
+                        author_name: SharedString::new_static("Zed"),
                         has_parent: true,
                     })
                 },
@@ -3528,7 +3528,7 @@ mod tests {
                         sha: "895951d681e5561478c0acdd6905e8aacdfd2249".into(),
                         subject: "Initial commit".into(),
                         commit_timestamp: 1762948695,
-                        author_name: SharedString::new("Zed"),
+                        author_name: SharedString::new_static("Zed"),
                         has_parent: false,
                     })
                 }

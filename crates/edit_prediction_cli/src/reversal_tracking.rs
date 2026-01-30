@@ -57,6 +57,7 @@ struct HistoryAdditionRange {
 #[derive(Debug, Clone)]
 struct HistoryDeletionRange {
     deleted_text: String,
+    position_in_current: usize,
 }
 
 fn compute_history_addition_ranges(history_edits: &[GranularEdit]) -> Vec<HistoryAdditionRange> {
@@ -79,13 +80,22 @@ fn compute_history_addition_ranges(history_edits: &[GranularEdit]) -> Vec<Histor
 }
 
 fn compute_history_deletion_ranges(history_edits: &[GranularEdit]) -> Vec<HistoryDeletionRange> {
-    history_edits
-        .iter()
-        .filter(|edit| !edit.old_text.is_empty())
-        .map(|edit| HistoryDeletionRange {
-            deleted_text: edit.old_text.clone(),
-        })
-        .collect()
+    let mut result = Vec::new();
+    let mut offset_delta: isize = 0;
+
+    for edit in history_edits {
+        if !edit.old_text.is_empty() {
+            let position_in_current = (edit.range.start as isize + offset_delta) as usize;
+            result.push(HistoryDeletionRange {
+                deleted_text: edit.old_text.clone(),
+                position_in_current,
+            });
+        }
+
+        offset_delta += edit.new_text.len() as isize - edit.old_text.len() as isize;
+    }
+
+    result
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -115,16 +125,22 @@ fn is_subsequence(needle: &str, haystack: &str) -> bool {
     needle_chars.peek().is_none()
 }
 
-/// Normalize edits where `old_text` appears as a subsequence within `new_text`.
-/// When the user's text is preserved (in order) within the prediction, we only
-/// count the newly inserted characters, not the preserved ones.
+/// Normalize edits where `old_text` appears as a subsequence within `new_text` (extension),
+/// or where `new_text` appears as a subsequence within `old_text` (reduction).
+///
+/// For extensions: when the user's text is preserved (in order) within the prediction,
+/// we only count the newly inserted characters, not the preserved ones.
 /// E.g., "epr" → "eprintln!()" becomes 8 inserted chars ("intln!()")
 /// E.g., "test_my_function" → "a_test_for_my_special_function_plz" becomes 18 inserted chars
+///
+/// For reductions: when the prediction's text is preserved (in order) within the original,
+/// we only count the deleted characters, not the preserved ones.
+/// E.g., "ifrom" → "from" becomes 1 deleted char ("i")
 fn normalize_extension_edits(edits: Vec<GranularEdit>) -> Vec<GranularEdit> {
     edits
         .into_iter()
         .map(|edit| {
-            if edit.old_text.is_empty() {
+            if edit.old_text.is_empty() || edit.new_text.is_empty() {
                 return edit;
             }
 
@@ -134,6 +150,13 @@ fn normalize_extension_edits(edits: Vec<GranularEdit>) -> Vec<GranularEdit> {
                     range: edit.range.start..edit.range.start,
                     old_text: String::new(),
                     new_text: edit.new_text.chars().take(inserted_len).collect(),
+                }
+            } else if is_subsequence(&edit.new_text, &edit.old_text) {
+                let deleted_len = edit.old_text.len() - edit.new_text.len();
+                GranularEdit {
+                    range: edit.range.start..edit.range.start + deleted_len,
+                    old_text: edit.old_text.chars().take(deleted_len).collect(),
+                    new_text: String::new(),
                 }
             } else {
                 edit
@@ -147,7 +170,8 @@ fn compute_reversal_overlap(
     current_content: &str,
     predicted_content: &str,
 ) -> ReversalOverlap {
-    let history_edits = compute_granular_edits(original_content, current_content);
+    let history_edits =
+        normalize_extension_edits(compute_granular_edits(original_content, current_content));
     let prediction_edits =
         normalize_extension_edits(compute_granular_edits(current_content, predicted_content));
 
@@ -200,17 +224,23 @@ fn compute_restored_deletions(
     history_deletion_ranges: &[HistoryDeletionRange],
     prediction_edits: &[GranularEdit],
 ) -> usize {
-    let history_deleted_text: String = history_deletion_ranges
-        .iter()
-        .map(|r| r.deleted_text.as_str())
-        .collect();
+    let mut restored = 0;
 
-    let prediction_added_text: String = prediction_edits
-        .iter()
-        .map(|e| e.new_text.as_str())
-        .collect();
+    for pred_edit in prediction_edits {
+        if pred_edit.new_text.is_empty() {
+            continue;
+        }
 
-    compute_lcs_length(&history_deleted_text, &prediction_added_text)
+        for deletion in history_deletion_ranges {
+            if pred_edit.range.contains(&deletion.position_in_current)
+                || deletion.position_in_current == pred_edit.range.start
+            {
+                restored += compute_lcs_length(&deletion.deleted_text, &pred_edit.new_text);
+            }
+        }
+    }
+
+    restored
 }
 
 fn compute_lcs_length(a: &str, b: &str) -> usize {
@@ -482,6 +512,41 @@ mod tests {
                 predicted: "",
                 expected_reversal_chars: 7,
                 expected_total_chars: 7,
+            },
+            Case {
+                name: "fixing typo is not reversal",
+                original: "",
+                current: "<dv",
+                predicted: "<div>",
+                expected_reversal_chars: 0,
+                expected_total_chars: 2,
+            },
+            Case {
+                name: "infix insertion not reversal",
+                original: "from my_project import Foo\n",
+                current: "ifrom my_project import Foo\n",
+                predicted: indoc::indoc! {"
+                    import
+                    from my_project import Foo
+                "},
+                expected_reversal_chars: 0,
+                expected_total_chars: 6,
+            },
+            Case {
+                name: "non-word based reversal",
+                original: "from",
+                current: "ifrom",
+                predicted: "from",
+                expected_reversal_chars: 1,
+                expected_total_chars: 1,
+            },
+            Case {
+                name: "multiple insertions no reversal",
+                original: "print(\"Hello, World!\")",
+                current: "sys.(\"Hello, World!\")",
+                predicted: "sys.stdout.write(\"Hello, World!\n\")",
+                expected_reversal_chars: 0,
+                expected_total_chars: 13,
             },
         ];
 

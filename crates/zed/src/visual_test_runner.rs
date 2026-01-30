@@ -1806,7 +1806,12 @@ fn run_subagent_visual_tests(
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = cx
-        .read(|cx| thread_view.read(cx).thread().cloned())
+        .read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|active| active.thread.clone())
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the subagent response
@@ -2211,7 +2216,12 @@ fn run_agent_thread_view_test(
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = cx
-        .read(|cx| thread_view.read(cx).thread().cloned())
+        .read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|active| active.thread.clone())
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the image response

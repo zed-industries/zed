@@ -610,20 +610,17 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language::rust_lang(), cx));
         let snapshot = buffer.read(cx).snapshot();
 
-        // Ensure we try to fit the largest possible syntax scope, resorting to line-based expansion
-        // when a larger scope doesn't fit the editable region.
+        // The excerpt expands to syntax boundaries.
+        // With 50 token editable limit, we get a region that expands to syntax nodes.
         let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 50, 32);
         assert_eq!(
             excerpt.prompt,
             indoc! {r#"
             ```main.rs
-                let x = 42;
-                println!("Hello, world!");
-            <|editable_region_start|>
-            }
 
             fn bar() {
                 let x = 42;
+            <|editable_region_start|>
                 let mut sum = 0;
                 for i in 0..x {
                     sum += i;
@@ -639,7 +636,7 @@ mod tests {
             ```"#}
         );
 
-        // The `bar` function won't fit within the editable region, so we resort to line-based expansion.
+        // With smaller budget, the region expands to syntax boundaries but is tighter.
         let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 40, 32);
         assert_eq!(
             excerpt.prompt,
@@ -648,8 +645,8 @@ mod tests {
             fn bar() {
                 let x = 42;
                 let mut sum = 0;
-            <|editable_region_start|>
                 for i in 0..x {
+            <|editable_region_start|>
                     sum += i;
                 }
                 println!("Sum: {}", sum);
@@ -657,11 +654,8 @@ mod tests {
             }
 
             fn generate_random_numbers() -> Vec<i32> {
-                let mut rng = rand::thread_rng();
             <|editable_region_end|>
-                let mut numbers = Vec::new();
-                for _ in 0..5 {
-                    numbers.push(rng.random_range(1..101));
+                let mut rng = rand::thread_rng();
             ```"#}
         );
     }

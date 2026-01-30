@@ -516,7 +516,7 @@ impl TerminalBuilder {
             // the compilation target. This is fine right now due to the restricted
             // way we use the return value, but would become incorrect if we
             // supported remoting into windows.
-            let shell_kind = shell.shell_kind(cfg!(windows));
+            let shell_kind = shell.shell_kind();
 
             let pty_options = {
                 let alac_shell = shell_params.as_ref().map(|params| {
@@ -532,7 +532,7 @@ impl TerminalBuilder {
                     drain_on_exit: true,
                     env: env.clone().into_iter().collect(),
                     #[cfg(windows)]
-                    escape_args: shell_kind.tty_escape_args(),
+                    escape_args: shell_kind.map(|k| k.tty_escape_args()).unwrap_or(true),
                 }
             };
 
@@ -604,7 +604,7 @@ impl TerminalBuilder {
                 task,
                 terminal_type: TerminalType::Pty {
                     pty_tx: Notifier(pty_tx),
-                    info: pty_info,
+                    info: Arc::new(pty_info),
                 },
                 completion_tx,
                 term,
@@ -664,7 +664,10 @@ impl TerminalBuilder {
                 // and while we have sent the activation script to the pty, it will be executed asynchronously.
                 // Therefore, we somehow need to wait for the activation script to finish executing before we
                 // can proceed with clearing the screen.
-                terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
+                let clear_cmd = shell_kind
+                    .map(|k| k.clear_screen_command())
+                    .unwrap_or("clear");
+                terminal.write_to_pty(clear_cmd.as_bytes());
                 // Simulate enter key press
                 terminal.write_to_pty(b"\x0d");
             }
@@ -833,7 +836,7 @@ pub enum SelectionPhase {
 enum TerminalType {
     Pty {
         pty_tx: Notifier,
-        info: PtyProcessInfo,
+        info: Arc<PtyProcessInfo>,
     },
     DisplayOnly,
 }
@@ -975,10 +978,8 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
-                    if info.has_changed() {
-                        cx.emit(Event::TitleChanged);
-                    }
+                if let TerminalType::Pty { info, .. } = &self.terminal_type {
+                    info.emit_title_changed_if_changed(cx);
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -2101,9 +2102,11 @@ impl Terminal {
     /// remote host, in case Zed is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
         match &self.terminal_type {
-            TerminalType::Pty { info, .. } => {
-                info.current.as_ref().map(|process| process.cwd.clone())
-            }
+            TerminalType::Pty { info, .. } => info
+                .current
+                .read()
+                .as_ref()
+                .map(|process| process.cwd.clone()),
             TerminalType::DisplayOnly => None,
         }
     }
@@ -2125,6 +2128,7 @@ impl Terminal {
                 .unwrap_or_else(|| match &self.terminal_type {
                     TerminalType::Pty { info, .. } => info
                         .current
+                        .read()
                         .as_ref()
                         .map(|fpi| {
                             let process_file = fpi
@@ -2163,7 +2167,7 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+            if let TerminalType::Pty { info, .. } = &self.terminal_type {
                 // First kill the foreground process group (the command running in the shell)
                 info.kill_current_process();
                 // Then kill the shell itself so that the terminal exits properly
@@ -2385,7 +2389,7 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, mut info } =
+        if let TerminalType::Pty { pty_tx, info } =
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
             pty_tx.0.send(Msg::Shutdown).ok();
@@ -2558,7 +2562,7 @@ mod tests {
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
-            ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
+            ShellBuilder::new(&Shell::System).build(Some(command.to_owned()), &args);
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2779,7 +2783,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System, false)
+        let (program, args) = ShellBuilder::new(&Shell::System)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
             .update(|cx| {
