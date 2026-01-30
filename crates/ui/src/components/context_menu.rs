@@ -482,6 +482,11 @@ impl ContextMenu {
         self
     }
 
+    pub fn context_self(mut self) -> Self {
+        self.action_context = Some(self.focus_handle.clone());
+        self
+    }
+
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Header(title.into()));
         self
@@ -1917,8 +1922,11 @@ impl ContextMenu {
                             .child(label_element)
                             .debug_selector(|| format!("MENU_ITEM-{}", label))
                             .children(action.as_ref().map(|action| {
-                                let binding =
-                                    KeyBinding::for_action_in(&**action, &self.focus_handle, cx);
+                                let binding = self
+                                    .action_context
+                                    .as_ref()
+                                    .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                                    .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
 
                                 div()
                                     .ml_4()
