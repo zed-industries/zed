@@ -292,14 +292,22 @@ pub(crate) fn push_release_update_notification(
             RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
             if [ "$UPLOAD_RESULT" == "failure" ]; then
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
-            elif [ "$UPLOAD_RESULT" == "cancelled" ]; then
+            elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
                 FAILED_JOBS=""
                 {failure_checks}
                 FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
-                if [ -n "$FAILED_JOBS" ]; then
-                    echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
+                if [ "$UPLOAD_RESULT" == "cancelled" ]; then
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Release job for $TAG was cancelled, most likely because tests \`$FAILED_JOBS\` failed: $RUN_URL"
+                    else
+                        echo "❌ Release job for $TAG was cancelled: $RUN_URL"
+                    fi
                 else
-                    echo "❌ Tests for $TAG failed: $RUN_URL"
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
+                    else
+                        echo "❌ Tests for $TAG failed: $RUN_URL"
+                    fi
                 fi
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
                 echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
