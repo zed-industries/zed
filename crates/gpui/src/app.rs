@@ -1529,7 +1529,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Spawns the future returned by the given function on the main thread with
@@ -1547,7 +1547,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn_with_priority(priority, async move { f(&mut cx).await })
+            .spawn_with_priority(priority, async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
