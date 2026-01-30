@@ -662,6 +662,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
+        encoding_selector::init(cx);
         language_selector::init(cx);
         line_ending_selector::init(cx);
         toolchain_selector::init(cx);
@@ -845,13 +846,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
-            OpenRequestKind::AgentPanel => {
+            OpenRequestKind::AgentPanel { initial_prompt } => {
                 cx.spawn(async move |cx| {
                     let workspace =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
-                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window, cx);
+                        if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.new_external_thread_with_text(initial_prompt, window, cx);
+                            });
                         }
                     })
                 })

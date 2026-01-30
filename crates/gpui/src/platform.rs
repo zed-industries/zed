@@ -132,9 +132,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(
-        WindowsPlatform::new()
+        WindowsPlatform::new(headless)
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )

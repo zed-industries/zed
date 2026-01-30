@@ -1,3 +1,5 @@
+use crate::git_status_icon;
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
@@ -38,7 +40,12 @@ impl RepositorySelector {
         let repository_entries = git_store.update(cx, |git_store, _cx| {
             let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
 
-            repos.sort_by_key(|a| a.read(_cx).display_name());
+            repos.sort_by(|a, b| {
+                a.read(_cx)
+                    .display_name()
+                    .to_lowercase()
+                    .cmp(&b.read(_cx).display_name().to_lowercase())
+            });
 
             repos
         });
@@ -51,17 +58,24 @@ impl RepositorySelector {
                 .cmp(&b.read(cx).display_name().len())
         });
 
+        let active_repository = git_store.read(cx).active_repository();
+        let selected_index = active_repository
+            .as_ref()
+            .and_then(|active| filtered_repositories.iter().position(|repo| repo == active))
+            .unwrap_or(0);
         let delegate = RepositorySelectorDelegate {
             repository_selector: cx.entity().downgrade(),
             repository_entries,
             filtered_repositories,
-            selected_index: 0,
+            active_repository,
+            selected_index,
         };
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .widest_item(widest_item_ix)
                 .max_height(Some(rems(20.).into()))
+                .show_scrollbar(true)
         });
 
         RepositorySelector { picker, width }
@@ -122,6 +136,7 @@ pub struct RepositorySelectorDelegate {
     repository_selector: WeakEntity<RepositorySelector>,
     repository_entries: Vec<Entity<Repository>>,
     filtered_repositories: Vec<Entity<Repository>>,
+    active_repository: Option<Entity<Repository>>,
     selected_index: usize,
 }
 
@@ -129,7 +144,15 @@ impl RepositorySelectorDelegate {
     pub fn update_repository_entries(&mut self, all_repositories: Vec<Entity<Repository>>) {
         self.repository_entries = all_repositories.clone();
         self.filtered_repositories = all_repositories;
-        self.selected_index = 0;
+        self.selected_index = self
+            .active_repository
+            .as_ref()
+            .and_then(|active| {
+                self.filtered_repositories
+                    .iter()
+                    .position(|repo| repo == active)
+            })
+            .unwrap_or(0);
     }
 }
 
@@ -193,9 +216,20 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
             this.update_in(cx, |this, window, cx| {
                 let mut sorted_repositories = filtered_repositories;
-                sorted_repositories.sort_by_key(|a| a.read(cx).display_name());
+                sorted_repositories.sort_by(|a, b| {
+                    a.read(cx)
+                        .display_name()
+                        .to_lowercase()
+                        .cmp(&b.read(cx).display_name().to_lowercase())
+                });
+                let selected_index = this
+                    .delegate
+                    .active_repository
+                    .as_ref()
+                    .and_then(|active| sorted_repositories.iter().position(|repo| repo == active))
+                    .unwrap_or(0);
                 this.delegate.filtered_repositories = sorted_repositories;
-                this.delegate.set_selected_index(0, window, cx);
+                this.delegate.set_selected_index(selected_index, window, cx);
                 cx.notify();
             })
             .ok();
@@ -226,13 +260,56 @@ impl PickerDelegate for RepositorySelectorDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let repo_info = self.filtered_repositories.get(ix)?;
-        let display_name = repo_info.read(cx).display_name();
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(Label::new(display_name)),
-        )
+        let repo = repo_info.read(cx);
+        let display_name = repo.display_name();
+        let summary = repo.status_summary();
+        let is_active = self
+            .active_repository
+            .as_ref()
+            .is_some_and(|active| active == repo_info);
+
+        let mut item = ListItem::new(ix)
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(Label::new(display_name))
+                    .when(is_active, |this| {
+                        this.child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Accent),
+                        )
+                    }),
+            );
+
+        if summary.count > 0 {
+            let status = if summary.conflict > 0 {
+                FileStatus::Unmerged(UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                })
+            } else if summary.worktree.deleted > 0 || summary.index.deleted > 0 {
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Deleted,
+                    worktree_status: StatusCode::Unmodified,
+                })
+            } else if summary.worktree.modified > 0 || summary.index.modified > 0 {
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Unmodified,
+                })
+            } else {
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: StatusCode::Unmodified,
+                })
+            };
+            item = item.end_slot(div().pr_2().child(git_status_icon(status)));
+        }
+
+        Some(item)
     }
 }

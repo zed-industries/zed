@@ -3,10 +3,14 @@ mod path_range;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
+use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
+use gpui::UnderlineStyle;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use settings::Settings as _;
+use theme::ThemeSettings;
 use ui::Checkbox;
 use ui::CopyButton;
 
@@ -27,7 +31,7 @@ use gpui::{
     MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
     Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
-use language::{Language, LanguageRegistry, Rope};
+use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
@@ -95,6 +99,133 @@ impl Default for MarkdownStyle {
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
         }
+    }
+}
+
+pub enum MarkdownFont {
+    Agent,
+    Editor,
+}
+
+impl MarkdownStyle {
+    pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let colors = cx.theme().colors();
+
+        let (buffer_font_size, ui_font_size) = match font {
+            MarkdownFont::Agent => (
+                theme_settings.agent_buffer_font_size(cx),
+                theme_settings.agent_ui_font_size(cx),
+            ),
+            MarkdownFont::Editor => (
+                theme_settings.buffer_font_size(cx),
+                theme_settings.ui_font_size(cx),
+            ),
+        };
+
+        let text_color = colors.text;
+
+        let mut text_style = window.text_style();
+        let line_height = buffer_font_size * 1.75;
+
+        text_style.refine(&TextStyleRefinement {
+            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            font_features: Some(theme_settings.ui_font.features.clone()),
+            font_size: Some(ui_font_size.into()),
+            line_height: Some(line_height.into()),
+            color: Some(text_color),
+            ..Default::default()
+        });
+
+        MarkdownStyle {
+            base_text_style: text_style.clone(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: colors.element_selection_background,
+            code_block_overflow_x_scroll: true,
+            heading_level_styles: Some(HeadingLevelStyles {
+                h1: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.15).into()),
+                    ..Default::default()
+                }),
+                h2: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.1).into()),
+                    ..Default::default()
+                }),
+                h3: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.05).into()),
+                    ..Default::default()
+                }),
+                h4: Some(TextStyleRefinement {
+                    font_size: Some(rems(1.).into()),
+                    ..Default::default()
+                }),
+                h5: Some(TextStyleRefinement {
+                    font_size: Some(rems(0.95).into()),
+                    ..Default::default()
+                }),
+                h6: Some(TextStyleRefinement {
+                    font_size: Some(rems(0.875).into()),
+                    ..Default::default()
+                }),
+            }),
+            code_block: StyleRefinement {
+                padding: EdgesRefinement {
+                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                },
+                margin: EdgesRefinement {
+                    top: Some(Length::Definite(px(8.).into())),
+                    left: Some(Length::Definite(px(0.).into())),
+                    right: Some(Length::Definite(px(0.).into())),
+                    bottom: Some(Length::Definite(px(12.).into())),
+                },
+                border_style: Some(BorderStyle::Solid),
+                border_widths: EdgesRefinement {
+                    top: Some(AbsoluteLength::Pixels(px(1.))),
+                    left: Some(AbsoluteLength::Pixels(px(1.))),
+                    right: Some(AbsoluteLength::Pixels(px(1.))),
+                    bottom: Some(AbsoluteLength::Pixels(px(1.))),
+                },
+                border_color: Some(colors.border_variant),
+                background: Some(colors.editor_background.into()),
+                text: TextStyleRefinement {
+                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                    font_features: Some(theme_settings.buffer_font.features.clone()),
+                    font_size: Some(buffer_font_size.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            inline_code: TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
+                font_size: Some(buffer_font_size.into()),
+                background_color: Some(colors.editor_foreground.opacity(0.08)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                color: Some(colors.text_accent),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn with_muted_text(mut self, cx: &App) -> Self {
+        let colors = cx.theme().colors();
+        self.base_text_style.color = colors.text_muted;
+        self
     }
 }
 
@@ -1775,6 +1906,7 @@ impl MarkdownElementBuilder {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
+            language: self.code_block_stack.last().cloned().flatten(),
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
@@ -1796,6 +1928,7 @@ struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
+    language: Option<Arc<Language>>,
 }
 
 impl RenderedLine {
@@ -1957,19 +2090,38 @@ impl RenderedText {
             let rendered_index_in_line =
                 line.rendered_index_for_source_index(source_index) - line_rendered_start;
             let text = line.layout.text();
-            let previous_space = if let Some(idx) = text[0..rendered_index_in_line].rfind(' ') {
-                idx + ' '.len_utf8()
-            } else {
-                0
-            };
-            let next_space = if let Some(idx) = text[rendered_index_in_line..].find(' ') {
-                rendered_index_in_line + idx
-            } else {
-                text.len()
-            };
 
-            return line.source_index_for_rendered_index(line_rendered_start + previous_space)
-                ..line.source_index_for_exclusive_rendered_end(line_rendered_start + next_space);
+            let scope = line.language.as_ref().map(|l| l.default_scope());
+            let classifier = CharClassifier::new(scope);
+
+            let mut prev_chars = text[..rendered_index_in_line].chars().rev().peekable();
+            let mut next_chars = text[rendered_index_in_line..].chars().peekable();
+
+            let word_kind = std::cmp::max(
+                prev_chars.peek().map(|&c| classifier.kind(c)),
+                next_chars.peek().map(|&c| classifier.kind(c)),
+            );
+
+            let mut start = rendered_index_in_line;
+            for c in prev_chars {
+                if Some(classifier.kind(c)) == word_kind {
+                    start -= c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            let mut end = rendered_index_in_line;
+            for c in next_chars {
+                if Some(classifier.kind(c)) == word_kind {
+                    end += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+
+            return line.source_index_for_rendered_index(line_rendered_start + start)
+                ..line.source_index_for_exclusive_rendered_end(line_rendered_start + end);
         }
 
         source_index..source_index
@@ -2033,6 +2185,8 @@ impl RenderedText {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, size};
+    use language::{Language, LanguageConfig, LanguageMatcher};
+    use std::sync::Arc;
 
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
@@ -2086,6 +2240,14 @@ mod tests {
     }
 
     fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
+        render_markdown_with_language_registry(markdown, None, cx)
+    }
+
+    fn render_markdown_with_language_registry(
+        markdown: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
         struct TestWindow;
 
         impl Render for TestWindow {
@@ -2095,12 +2257,21 @@ mod tests {
         }
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        let markdown =
+            cx.new(|cx| Markdown::new(markdown.to_string().into(), language_registry, None, cx));
         cx.run_until_parked();
         let (rendered, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
-            |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button: false,
+                        copy_button_on_hover: false,
+                        border: false,
+                    },
+                )
+            },
         );
         rendered.text
     }
@@ -2265,6 +2436,57 @@ mod tests {
         // which extract directly from the source. With the bug, this would be 5..10
         // which includes the closing backtick at position 9.
         assert_eq!(word_range, 5..9);
+    }
+
+    #[gpui::test]
+    fn test_surrounding_word_range_respects_word_characters(cx: &mut TestAppContext) {
+        let rendered = render_markdown("foo.bar() baz", cx);
+
+        // Double clicking on 'f' in "foo" - should select just "foo"
+        let word_range = rendered.surrounding_word_range(0);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "foo");
+
+        // Double clicking on 'b' in "bar" - should select just "bar"
+        let word_range = rendered.surrounding_word_range(4);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "bar");
+
+        // Double clicking on 'b' in "baz" - should select "baz"
+        let word_range = rendered.surrounding_word_range(10);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "baz");
+
+        // Double clicking selects word characters in code blocks
+        let javascript_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".to_string()],
+                    ..Default::default()
+                },
+                word_characters: ['$', '#'].into_iter().collect(),
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(javascript_language);
+
+        let rendered = render_markdown_with_language_registry(
+            "```javascript\n$foo #bar\n```",
+            Some(language_registry),
+            cx,
+        );
+
+        let word_range = rendered.surrounding_word_range(14);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "$foo");
+
+        let word_range = rendered.surrounding_word_range(19);
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "#bar");
     }
 
     #[gpui::test]

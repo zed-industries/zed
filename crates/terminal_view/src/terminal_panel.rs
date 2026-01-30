@@ -141,7 +141,14 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
-                if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
+                let has_focused_rename_editor = pane
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
+                    .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
+                if !pane.has_focus(window, cx)
+                    && !pane.context_menu_focused(window, cx)
+                    && !has_focused_rename_editor
+                {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
@@ -555,7 +562,6 @@ impl TerminalPanel {
         }
 
         let remote_client = project.remote_client();
-        let is_windows = project.path_style(cx).is_windows();
         let remote_shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
@@ -568,7 +574,7 @@ impl TerminalPanel {
             task.shell.clone()
         };
 
-        let task = prepare_task_for_spawn(task, &shell, is_windows);
+        let task = prepare_task_for_spawn(task, &shell);
 
         if task.allow_concurrent_runs && task.use_new_terminal {
             return self.spawn_in_new_terminal(task, window, cx);
@@ -1078,6 +1084,32 @@ impl TerminalPanel {
         self.assistant_enabled
     }
 
+    /// Returns all panes in the terminal panel.
+    pub fn panes(&self) -> Vec<&Entity<Pane>> {
+        self.center.panes()
+    }
+
+    /// Returns all non-empty terminal selections from all terminal views in all panes.
+    pub fn terminal_selections(&self, cx: &App) -> Vec<String> {
+        self.center
+            .panes()
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx).items().filter_map(|item| {
+                    let terminal_view = item.downcast::<crate::TerminalView>()?;
+                    terminal_view
+                        .read(cx)
+                        .terminal()
+                        .read(cx)
+                        .last_content
+                        .selection_text
+                        .clone()
+                        .filter(|text| !text.is_empty())
+                })
+            })
+            .collect()
+    }
+
     fn is_enabled(&self, cx: &App) -> bool {
         self.workspace
             .upgrade()
@@ -1129,12 +1161,8 @@ impl TerminalPanel {
 /// Prepares a `SpawnInTerminal` by computing the command, args, and command_label
 /// based on the shell configuration. This is a pure function that can be tested
 /// without spawning actual terminals.
-pub fn prepare_task_for_spawn(
-    task: &SpawnInTerminal,
-    shell: &Shell,
-    is_windows: bool,
-) -> SpawnInTerminal {
-    let builder = ShellBuilder::new(shell, is_windows);
+pub fn prepare_task_for_spawn(task: &SpawnInTerminal, shell: &Shell) -> SpawnInTerminal {
+    let builder = ShellBuilder::new(shell);
     let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
     let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
 
@@ -1826,7 +1854,7 @@ mod tests {
         let input = SpawnInTerminal::default();
         let shell = Shell::System;
 
-        let result = prepare_task_for_spawn(&input, &shell, false);
+        let result = prepare_task_for_spawn(&input, &shell);
 
         let expected_shell = util::get_system_shell();
         assert_eq!(result.env, HashMap::default());
@@ -1898,7 +1926,7 @@ mod tests {
         };
         let shell = Shell::System;
 
-        let result = prepare_task_for_spawn(&input, &shell, false);
+        let result = prepare_task_for_spawn(&input, &shell);
 
         let system_shell = util::get_system_shell();
         assert_eq!(result.env, HashMap::default());
@@ -1929,7 +1957,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.terminal.get_or_insert_default().project.shell =
-                        Some(settings::Shell::Program("asdf".to_owned()));
+                        Some(settings::Shell::Program("__nonexistent_shell__".to_owned()));
                 });
             });
         });

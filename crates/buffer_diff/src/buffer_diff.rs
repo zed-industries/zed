@@ -1070,7 +1070,7 @@ fn compare_hunks(
                         start.get_or_insert(new_hunk.buffer_range.start);
                         base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                         end.replace(new_hunk.buffer_range.end);
-                        base_text_end.replace(new_hunk.diff_base_byte_range.end);
+                        base_text_end = base_text_end.max(Some(new_hunk.diff_base_byte_range.end));
                         new_cursor.next();
                     }
                     Ordering::Equal => {
@@ -1113,7 +1113,7 @@ fn compare_hunks(
                         start.get_or_insert(old_hunk.buffer_range.start);
                         base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
                         end.replace(old_hunk.buffer_range.end);
-                        base_text_end.replace(old_hunk.diff_base_byte_range.end);
+                        base_text_end = base_text_end.max(Some(old_hunk.diff_base_byte_range.end));
                         old_cursor.next();
                     }
                 }
@@ -2755,7 +2755,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+        let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text.clone(), cx);
         let DiffChanged {
             changed_range,
             base_text_changed_range,
@@ -2767,6 +2767,59 @@ mod tests {
         assert_eq!(
             base_text_range.to_point(diff_6.base_text()),
             Point::new(9, 0)..Point::new(10, 0)
+        );
+
+        buffer.edit_via_marked_text(
+            &"
+                one
+                THREE
+                four«»
+                five
+                seven
+                eight
+                «NINE»
+            "
+            .unindent(),
+        );
+
+        let diff_7 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text.clone(), cx);
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_7.inner.hunks, &diff_6.inner.hunks, &buffer, &buffer);
+        let range = changed_range.unwrap();
+        assert_eq!(range.to_point(&buffer), Point::new(2, 4)..Point::new(7, 0));
+        let base_text_range = base_text_changed_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_7.base_text()),
+            Point::new(5, 0)..Point::new(10, 0)
+        );
+
+        buffer.edit_via_marked_text(
+            &"
+                one
+                THREE
+                four
+                five«»seven
+                eight
+                NINE
+            "
+            .unindent(),
+        );
+
+        let diff_8 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
+        let DiffChanged {
+            changed_range,
+            base_text_changed_range,
+            extended_range: _,
+        } = compare_hunks(&diff_8.inner.hunks, &diff_7.inner.hunks, &buffer, &buffer);
+        let range = changed_range.unwrap();
+        assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(3, 4));
+        let base_text_range = base_text_changed_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_8.base_text()),
+            Point::new(5, 0)..Point::new(8, 0)
         );
     }
 
