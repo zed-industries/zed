@@ -489,11 +489,9 @@ fn compute_reversal_overlap(
     let restored_deletions =
         compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
 
-    // Note: These counts are in bytes, not Unicode characters, for consistency
-    // with the byte-based range overlap calculations used throughout.
     let total_chars_in_prediction: usize = prediction_edits
         .iter()
-        .map(|e| e.new_text.len() + e.old_text.len())
+        .map(|e| e.new_text.chars().count() + e.old_text.chars().count())
         .sum();
 
     ReversalOverlap {
@@ -520,7 +518,10 @@ fn compute_reversed_additions(
                 .min(history_addition.range_in_current.end);
 
             if overlap_start < overlap_end {
-                reversed_chars += overlap_end - overlap_start;
+                let relative_start = overlap_start - pred_edit.range.start;
+                let relative_end = overlap_end - pred_edit.range.start;
+                let overlap_text = &pred_edit.old_text[relative_start..relative_end];
+                reversed_chars += overlap_text.chars().count();
             }
         }
     }
@@ -1283,80 +1284,77 @@ mod tests {
 
     #[test]
     fn test_unicode_reversal_overlap() {
-        // Note: The reversal tracking uses byte counts (not character counts) for consistency
-        // with byte-based range calculations. Test expectations reflect this.
         struct Case {
             name: &'static str,
             original: &'static str,
             current: &'static str,
             predicted: &'static str,
-            expected_reversal_bytes: usize,
-            expected_total_bytes: usize,
+            expected_reversal_chars: usize,
+            expected_total_chars: usize,
         }
 
         let cases = [
             Case {
                 name: "unicode_extension_cjk",
                 original: "",
-                current: "日",       // 3 bytes
-                predicted: "日本語", // 9 bytes, adds 6 bytes
-                expected_reversal_bytes: 0,
-                expected_total_bytes: 6, // "本語" = 6 bytes added
+                current: "日",       // 1 char
+                predicted: "日本語", // 3 chars, adds 2 chars
+                expected_reversal_chars: 0,
+                expected_total_chars: 2, // "本語" = 2 chars added
             },
             Case {
                 name: "unicode_extension_emoji",
                 original: "",
-                current: "🎉",       // 4 bytes
-                predicted: "🎉🎊🎈", // 12 bytes, adds 8 bytes
-                expected_reversal_bytes: 0,
-                expected_total_bytes: 8, // "🎊🎈" = 8 bytes added
+                current: "🎉",       // 1 char
+                predicted: "🎉🎊🎈", // 3 chars, adds 2 chars
+                expected_reversal_chars: 0,
+                expected_total_chars: 2, // "🎊🎈" = 2 chars added
             },
             Case {
                 name: "unicode_deletion_restored",
-                original: "héllo wörld", // 13 bytes (é and ö are 2 bytes each)
-                current: "héllo",        // 6 bytes
-                predicted: "héllo wörld", // restores " wörld" = 7 bytes, 6 chars
-                expected_reversal_bytes: 6, // LCS counts characters, not bytes: " wörld" = 6 chars
-                expected_total_bytes: 7, // total uses byte length
+                original: "héllo wörld",    // 11 chars
+                current: "héllo",           // 5 chars
+                predicted: "héllo wörld",   // restores " wörld" = 6 chars
+                expected_reversal_chars: 6, // LCS(" wörld", " wörld") = 6 chars
+                expected_total_chars: 6,
             },
             Case {
                 name: "unicode_addition_reversed",
-                original: "café",           // 5 bytes
-                current: "café latté",      // 12 bytes, added " latté" = 7 bytes
+                original: "café",           // 4 chars
+                current: "café latté",      // 10 chars, added " latté" = 6 chars
                 predicted: "café",          // removes " latté"
-                expected_reversal_bytes: 7, // 7 bytes removed
-                expected_total_bytes: 7,
+                expected_reversal_chars: 6, // 6 chars removed
+                expected_total_chars: 6,
             },
             Case {
                 name: "mixed_ascii_unicode",
                 original: "",
-                current: "test日本",         // 4 + 6 = 10 bytes
-                predicted: "test日本語です", // 4 + 12 = 16 bytes
-                expected_reversal_bytes: 0,
-                // After normalization (subsequence detection), only the net insertion is counted
-                expected_total_bytes: 3,
+                current: "test日本",         // 6 chars
+                predicted: "test日本語です", // 9 chars
+                expected_reversal_chars: 0,
+                expected_total_chars: 3, // 3 new chars after subsequence normalization
             },
             Case {
                 name: "unicode_replacement_not_subsequence",
                 original: "",
-                current: "日本",            // 6 bytes
-                predicted: "中国",          // 6 bytes, different chars
-                expected_reversal_bytes: 6, // removes "日本" = 6 bytes
-                expected_total_bytes: 12,   // 6 removed + 6 added
+                current: "日本",            // 2 chars
+                predicted: "中国",          // 2 chars, different
+                expected_reversal_chars: 2, // removes "日本" = 2 chars
+                expected_total_chars: 4,    // 2 removed + 2 added
             },
         ];
 
         for case in &cases {
             let overlap = compute_reversal_overlap(case.original, case.current, case.predicted);
             assert_eq!(
-                overlap.chars_reversing_user_edits, case.expected_reversal_bytes,
-                "Test '{}': expected {} reversal bytes, got {}",
-                case.name, case.expected_reversal_bytes, overlap.chars_reversing_user_edits
+                overlap.chars_reversing_user_edits, case.expected_reversal_chars,
+                "Test '{}': expected {} reversal chars, got {}",
+                case.name, case.expected_reversal_chars, overlap.chars_reversing_user_edits
             );
             assert_eq!(
-                overlap.total_chars_in_prediction, case.expected_total_bytes,
-                "Test '{}': expected {} total bytes, got {}",
-                case.name, case.expected_total_bytes, overlap.total_chars_in_prediction
+                overlap.total_chars_in_prediction, case.expected_total_chars,
+                "Test '{}': expected {} total chars, got {}",
+                case.name, case.expected_total_chars, overlap.total_chars_in_prediction
             );
         }
     }
