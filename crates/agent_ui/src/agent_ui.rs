@@ -217,6 +217,12 @@ impl ExternalAgent {
     }
 }
 
+/// Content to initialize new external agent with.
+pub enum ExternalAgentInitialContent {
+    ThreadSummary(acp_thread::AgentSessionInfo),
+    Text(String),
+}
+
 /// Opens the profile management interface for configuring agent tools and settings.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]

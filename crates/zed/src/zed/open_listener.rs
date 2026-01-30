@@ -48,7 +48,9 @@ pub enum OpenRequestKind {
     Extension {
         extension_id: String,
     },
-    AgentPanel,
+    AgentPanel {
+        initial_prompt: Option<String>,
+    },
     SharedAgentThread {
         session_id: String,
     },
@@ -108,8 +110,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if url == "zed://agent" {
-                this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {
@@ -158,6 +160,17 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_agent_url(&mut self, agent_path: &str) {
+        // Format: "" or "?prompt=<text>"
+        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find_map(|(key, value)| (key == "prompt").then_some(value))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.into_owned())
+        });
+        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {

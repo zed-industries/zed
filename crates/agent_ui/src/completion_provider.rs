@@ -636,7 +636,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     };
                                     let offset = start.to_offset(&snapshot);
 
-                                    let mention_uri = MentionUri::TerminalSelection;
+                                    let line_count = terminal_text.lines().count() as u32;
+                                    let mention_uri = MentionUri::TerminalSelection { line_count };
                                     let range = snapshot.anchor_after(offset + terminal_range.start)
                                         ..snapshot.anchor_after(offset + terminal_range.end);
 

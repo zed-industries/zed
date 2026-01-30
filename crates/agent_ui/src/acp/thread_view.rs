@@ -78,10 +78,10 @@ use crate::user_slash_command::{
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor, Follow,
-    KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
-    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleProfileSelector, ToggleThinkingMode,
+    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
+    ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
+    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
+    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -388,7 +388,7 @@ impl AcpThreadView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        summarize_thread: Option<AgentSessionInfo>,
+        initial_content: Option<ExternalAgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
@@ -430,8 +430,19 @@ impl AcpThreadView {
                 window,
                 cx,
             );
-            if let Some(entry) = summarize_thread {
-                editor.insert_thread_summary(entry, window, cx);
+            if let Some(content) = initial_content {
+                match content {
+                    ExternalAgentInitialContent::ThreadSummary(entry) => {
+                        editor.insert_thread_summary(entry, window, cx);
+                    }
+                    ExternalAgentInitialContent::Text(prompt) => {
+                        editor.set_message(
+                            vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                            window,
+                            cx,
+                        );
+                    }
+                }
             }
             editor
         });
@@ -6621,7 +6632,7 @@ impl AcpThreadView {
             .map(|active| active.prompt_capabilities.borrow().image)
             .unwrap_or_default();
 
-        let has_selection = workspace
+        let has_editor_selection = workspace
             .upgrade()
             .and_then(|ws| {
                 ws.read(cx)
@@ -6633,6 +6644,13 @@ impl AcpThreadView {
                     editor.has_non_empty_selection(&editor.display_snapshot(cx))
                 })
             });
+
+        let has_terminal_selection = workspace
+            .upgrade()
+            .and_then(|ws| ws.read(cx).panel::<TerminalPanel>(cx))
+            .is_some_and(|panel| !panel.read(cx).terminal_selections(cx).is_empty());
+
+        let has_selection = has_editor_selection || has_terminal_selection;
 
         ContextMenu::build(window, cx, move |menu, _window, _cx| {
             menu.key_context("AddContextMenu")
@@ -6721,10 +6739,10 @@ impl AcpThreadView {
                         .disabled(!has_selection)
                         .handler({
                             move |window, cx| {
-                                message_editor.focus_handle(cx).focus(window, cx);
-                                message_editor.update(cx, |editor, cx| {
-                                    editor.insert_selections(window, cx);
-                                });
+                                window.dispatch_action(
+                                    zed_actions::agent::AddSelectionToThread.boxed_clone(),
+                                    cx,
+                                );
                             }
                         }),
                 )
@@ -6870,7 +6888,7 @@ impl AcpThreadView {
                     cx.open_url(url.as_str());
                 }
                 MentionUri::Diagnostics { .. } => {}
-                MentionUri::TerminalSelection => {}
+                MentionUri::TerminalSelection { .. } => {}
             })
         } else {
             cx.open_url(&url);
