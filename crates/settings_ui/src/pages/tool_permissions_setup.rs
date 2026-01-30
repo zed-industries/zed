@@ -310,17 +310,23 @@ fn render_verification_section(
                             .color(Color::Warning),
                     )
                     .child(
-                        Button::new("always-allow-link", "Always allow tool actions")
-                            .style(ButtonStyle::Transparent)
-                            .color(Color::Warning)
-                            .label_size(LabelSize::Small)
+                        div()
+                            .id("always-allow-link")
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(Color::Default.color(cx)))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.navigate_to_setting(
                                     "agent.always_allow_tool_actions",
                                     window,
                                     cx,
                                 );
-                            })),
+                            }))
+                            .child(
+                                Label::new("Always allow tool actions")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Warning)
+                                    .underline(),
+                            ),
                     )
                     .child(
                         Label::new(
