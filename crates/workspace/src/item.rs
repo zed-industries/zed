@@ -12,8 +12,8 @@ use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
-    SharedString, Task, WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, PromptLevel,
+    Render, SharedString, Task, WeakEntity, Window,
 };
 use language::Capability;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -41,6 +41,15 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct SaveOptions {
     pub format: bool,
     pub autosave: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloseConfirmation {
+    pub level: PromptLevel,
+    pub message: SharedString,
+    pub detail: Option<SharedString>,
+    pub confirm_button: SharedString,
+    pub cancel_button: SharedString,
 }
 
 impl Default for SaveOptions {
@@ -218,6 +227,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
+    fn close_confirmation(&self, _cx: &App) -> Option<CloseConfirmation> {
+        None
+    }
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn navigate(
         &mut self,
@@ -461,6 +473,7 @@ pub trait ItemHandle: 'static + Send {
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
     fn telemetry_event_text(&self, cx: &App) -> Option<&'static str>;
+    fn close_confirmation(&self, cx: &App) -> Option<CloseConfirmation>;
     fn dragged_tab_content(
         &self,
         params: TabContentParams,
@@ -613,6 +626,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
+    }
+
+    fn close_confirmation(&self, cx: &App) -> Option<CloseConfirmation> {
+        self.read(cx).close_confirmation(cx)
     }
 
     fn dragged_tab_content(

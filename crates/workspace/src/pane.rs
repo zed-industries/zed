@@ -21,9 +21,9 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
-    deferred, prelude::*,
+    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptButton,
+    PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -1944,6 +1944,32 @@ impl Pane {
             for item_to_close in items_to_close {
                 let mut should_close = true;
                 let mut should_save = true;
+                let confirmation =
+                    pane.update_in(cx, |_, _, cx| item_to_close.close_confirmation(cx))?;
+                if let Some(confirmation) = confirmation {
+                    let confirmation_level = confirmation.level;
+                    let confirmation_message = confirmation.message.clone();
+                    let confirmation_detail = confirmation.detail.clone();
+                    let confirm_button = confirmation.confirm_button.clone();
+                    let cancel_button = confirmation.cancel_button.clone();
+                    let answer = pane.update_in(cx, |_, window, cx| {
+                        let buttons = [
+                            PromptButton::ok(confirm_button),
+                            PromptButton::cancel(cancel_button),
+                        ];
+                        window.prompt(
+                            confirmation_level,
+                            confirmation_message.as_ref(),
+                            confirmation_detail.as_ref().map(|detail| detail.as_ref()),
+                            &buttons,
+                            cx,
+                        )
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        Ok(1..) | Err(_) => return Ok(()),
+                    }
+                }
                 if save_intent == SaveIntent::Close {
                     workspace.update(cx, |workspace, cx| {
                         if Self::skip_save_on_close(item_to_close.as_ref(), workspace, cx) {
