@@ -211,12 +211,12 @@ jobs:
           {
             "model": "claude-sonnet-4-5-20250929",
             "max_tokens": 256,
-            "messages": [{"role": "user", "content": $(cat /tmp/area_prompt_final.txt | jq -Rs .)}]
+            "messages": [{"role": "user", "content": $(jq -Rs . < /tmp/area_prompt_final.txt)}]
           }
           EOF
           )
 
-          RESPONSE=$(cat /tmp/area_response.json)
+          RESPONSE=$(< /tmp/area_response.json)
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
             echo "HTTP Error: $HTTP_CODE"
@@ -245,7 +245,7 @@ jobs:
           AREAS=$(echo "$CLEAN_JSON" | jq -r '.areas // [] | join(",")')
           echo "Detected areas: $AREAS"
 
-          echo "detected_areas=$AREAS" >> $GITHUB_OUTPUT
+          echo "detected_areas=$AREAS" >> "$GITHUB_OUTPUT"
 
           INPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.input_tokens')
           OUTPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.output_tokens')
@@ -542,12 +542,12 @@ jobs:
           {
             "model": "claude-sonnet-4-5-20250929",
             "max_tokens": 1024,
-            "messages": [{"role": "user", "content": $(cat /tmp/prompt_final.txt | jq -Rs .)}]
+            "messages": [{"role": "user", "content": $(jq -Rs . < /tmp/prompt_final.txt)}]
           }
           EOF
           )
 
-          RESPONSE=$(cat /tmp/response.json)
+          RESPONSE=$(< /tmp/response.json)
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
             echo "HTTP Error: $HTTP_CODE"
@@ -573,7 +573,7 @@ jobs:
             echo "analysis<<ANALYSIS_EOF"
             echo "$ANALYSIS"
             echo "ANALYSIS_EOF"
-          } >> $GITHUB_OUTPUT
+          } >> "$GITHUB_OUTPUT"
 
           INPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.input_tokens')
           OUTPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.output_tokens')
