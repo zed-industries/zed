@@ -2195,6 +2195,24 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    pub fn has_running_process(&self) -> bool {
+        if self
+            .task()
+            .is_some_and(|task| task.status == TaskStatus::Running)
+        {
+            return true;
+        }
+
+        let Some(process_id_getter) = self.pid_getter() else {
+            return false;
+        };
+        let Some(process_id) = self.pid() else {
+            return false;
+        };
+
+        process_id != process_id_getter.fallback_pid()
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
