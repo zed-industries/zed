@@ -309,11 +309,14 @@ fn render_verification_section(
                             .size(IconSize::Small)
                             .color(Color::Warning),
                     )
-                    .child(
+                    .child({
+                        let warning_color = Color::Warning.color(cx);
+                        let hover_color = Color::Default.color(cx);
                         div()
                             .id("always-allow-link")
                             .cursor_pointer()
-                            .hover(|style| style.text_color(Color::Default.color(cx)))
+                            .text_color(warning_color)
+                            .hover(|style| style.text_color(hover_color))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.navigate_to_setting(
                                     "agent.always_allow_tool_actions",
@@ -324,10 +327,9 @@ fn render_verification_section(
                             .child(
                                 Label::new("Always allow tool actions")
                                     .size(LabelSize::Small)
-                                    .color(Color::Warning)
                                     .underline(),
-                            ),
-                    )
+                            )
+                    })
                     .child(
                         Label::new(
                             "is enabled — all tools will be allowed regardless of these rules.",
