@@ -912,15 +912,15 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
         PathStyle::Windows => {
             let last_sep = query.rfind('\\').into_iter().chain(query.rfind('/')).max();
             let (mut dir, suffix) = if let Some(index) = last_sep {
-                (query[..index].to_string(), query[index + 1..].to_string())
+                (
+                    query[..index + 1].to_string(),
+                    query[index + 1..].to_string(),
+                )
             } else {
                 (query, String::new())
             };
             if dir.len() < 3 {
                 dir = "C:\\".to_string();
-            }
-            if !dir.ends_with('\\') && !dir.ends_with('/') {
-                dir.push('\\');
             }
             (dir, suffix)
         }
@@ -976,6 +976,22 @@ mod tests {
 
         let (dir, suffix) = get_dir_and_suffix("C:\\root\\.hidden".into(), PathStyle::Windows);
         assert_eq!(dir, "C:\\root\\");
+        assert_eq!(suffix, ".hidden");
+
+        let (dir, suffix) = get_dir_and_suffix("C:/root/".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:/root/");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("C:/root/Use".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:/root/");
+        assert_eq!(suffix, "Use");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\root/Use".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:\\root/");
+        assert_eq!(suffix, "Use");
+
+        let (dir, suffix) = get_dir_and_suffix("C:/root\\.hidden".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:/root\\");
         assert_eq!(suffix, ".hidden");
     }
 
