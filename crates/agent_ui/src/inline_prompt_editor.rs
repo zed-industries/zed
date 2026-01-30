@@ -1,4 +1,5 @@
 use crate::acp::AcpThreadHistory;
+use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use collections::{HashMap, VecDeque};
@@ -1592,6 +1593,7 @@ struct MessageCrease {
     range: Range<MultiBufferOffset>,
     icon_path: SharedString,
     label: SharedString,
+    mention: MentionUri,
 }
 
 fn extract_message_creases(
@@ -1606,12 +1608,14 @@ fn extract_message_creases(
         .crease_snapshot
         .creases()
         .filter(|(id, _)| creases.contains(id))
-        .filter_map(|(_, crease)| {
+        .filter_map(|(id, crease)| {
             let metadata = crease.metadata()?.clone();
+            let mention = mention_set.read(cx).mention_for_crease(&id)?;
             Some(MessageCrease {
                 range: crease.range().to_offset(snapshot.buffer()),
                 label: metadata.label,
                 icon_path: metadata.icon_path,
+                mention,
             })
         })
         .collect()
@@ -1633,6 +1637,7 @@ fn insert_message_creases(
                 crease.label.clone(),
                 crease.icon_path.clone(),
                 start..end,
+                crease.mention.clone(),
                 cx.weak_entity(),
             )
         })
