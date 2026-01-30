@@ -10,7 +10,8 @@ pub use settings::AlternateScroll;
 
 use settings::{
     IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
-    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
+    TerminalConfirmOnClose, TerminalDockPosition, TerminalLineHeight, VenvSettings,
+    WorkingDirectory,
     merge_from::MergeFrom,
 };
 use task::Shell;
@@ -37,7 +38,7 @@ pub struct TerminalSettings {
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
-    pub confirm_close_running_process: bool,
+    pub confirm_on_close: TerminalConfirmOnClose,
     pub keep_selection_on_copy: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
@@ -105,7 +106,7 @@ impl settings::Settings for TerminalSettings {
             alternate_scroll: user_content.alternate_scroll.unwrap(),
             option_as_meta: user_content.option_as_meta.unwrap(),
             copy_on_select: user_content.copy_on_select.unwrap(),
-            confirm_close_running_process: user_content.confirm_close_running_process.unwrap(),
+            confirm_on_close: user_content.confirm_on_close.unwrap(),
             keep_selection_on_copy: user_content.keep_selection_on_copy.unwrap(),
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),

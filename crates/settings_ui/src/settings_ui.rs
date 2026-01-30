@@ -464,6 +464,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ClosePosition>(render_dropdown)
         .add_basic_renderer::<settings::DockSide>(render_dropdown)
         .add_basic_renderer::<settings::TerminalDockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::TerminalConfirmOnClose>(render_dropdown)
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)

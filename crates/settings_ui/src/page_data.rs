@@ -6127,22 +6127,22 @@ fn terminal_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Confirm Close Running Process",
-                description: "Whether to confirm before closing a terminal tab with a running process.",
+                title: "Confirm On Close",
+                description: "Whether to confirm before closing a terminal tab.",
                 field: Box::new(SettingField {
-                    json_path: Some("terminal.confirm_close_running_process"),
+                    json_path: Some("terminal.confirm_on_close"),
                     pick: |settings_content| {
                         settings_content
                             .terminal
                             .as_ref()?
-                            .confirm_close_running_process
+                            .confirm_on_close
                             .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
-                            .confirm_close_running_process = value;
+                            .confirm_on_close = value;
                     },
                 }),
                 metadata: None,

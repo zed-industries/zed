@@ -730,7 +730,7 @@ impl VsCodeSettings {
                 }),
             button: None,
             copy_on_select: self.read_bool("terminal.integrated.copyOnSelection"),
-            confirm_close_running_process: None,
+            confirm_on_close: None,
             cursor_shape: self.read_enum("terminal.integrated.cursorStyle", |s| match s {
                 "block" => Some(CursorShapeContent::Block),
                 "line" => Some(CursorShapeContent::Bar),

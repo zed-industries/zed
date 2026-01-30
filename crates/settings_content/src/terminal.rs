@@ -120,10 +120,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub copy_on_select: Option<bool>,
-    /// Whether to confirm before closing a terminal tab with a running process.
+    /// Whether to confirm before closing a terminal tab.
     ///
-    /// Default: false
-    pub confirm_close_running_process: Option<bool>,
+    /// Default: never
+    pub confirm_on_close: Option<TerminalConfirmOnClose>,
     /// Whether to keep the text selection after copying it to the clipboard.
     ///
     /// Default: true
@@ -473,6 +473,28 @@ pub enum TerminalDockPosition {
     Left,
     Bottom,
     Right,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalConfirmOnClose {
+    #[default]
+    Never,
+    Always,
+    HasChildProcess,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
