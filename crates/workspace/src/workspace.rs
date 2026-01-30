@@ -5011,7 +5011,9 @@ impl Workspace {
             title = "empty project".to_string();
         }
 
-        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
+        let active_project_path = self.active_item(cx).and_then(|item| item.project_path(cx));
+
+        if let Some(path) = active_project_path.as_ref() {
             let filename = path.path.file_name().or_else(|| {
                 Some(
                     project
@@ -5032,6 +5034,11 @@ impl Workspace {
         } else if project.is_shared() {
             title.push_str(" ↗");
         }
+
+        let document_path = active_project_path
+            .as_ref()
+            .and_then(|path| project.absolute_path(path, cx));
+        window.set_document_path(document_path.as_deref());
 
         if let Some(last_title) = self.last_window_title.as_ref()
             && &title == last_title
@@ -9331,7 +9338,7 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
-    use project::{Project, ProjectEntryId};
+    use project::{Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
     use settings::SettingsStore;
     use util::rel_path::rel_path;
@@ -9477,6 +9484,78 @@ mod tests {
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_document_path_updates_with_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let item1 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_project_items(&[new_test_project_item(1, "one.txt", worktree_id, cx)])
+        });
+        let item2 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_project_items(&[new_test_project_item(2, "two.txt", worktree_id, cx)])
+        });
+
+        // Initially no document path
+        assert_eq!(cx.document_path(), None);
+
+        // Add an item - document path should be set
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item1), None, true, window, cx)
+        });
+        assert_eq!(
+            cx.document_path(),
+            Some(std::path::PathBuf::from("root/one.txt"))
+        );
+
+        // Add a second item - document path should update
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item2), None, true, window, cx)
+        });
+        assert_eq!(
+            cx.document_path(),
+            Some(std::path::PathBuf::from("root/two.txt"))
+        );
+
+        // Close the active item - document path should revert to first item
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&Default::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            cx.document_path(),
+            Some(std::path::PathBuf::from("root/one.txt"))
+        );
+
+        // Close all items - document path should be cleared
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&Default::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.document_path(), None);
     }
 
     #[gpui::test]
@@ -12377,6 +12456,21 @@ mod tests {
         let item = TestProjectItem::new(id, path, cx);
         item.update(cx, |item, _| {
             item.is_dirty = true;
+        });
+        item
+    }
+
+    fn new_test_project_item(
+        id: u64,
+        path: &str,
+        worktree_id: WorktreeId,
+        cx: &mut App,
+    ) -> Entity<TestProjectItem> {
+        let item = TestProjectItem::new(id, path, cx);
+        item.update(cx, |item, _| {
+            if let Some(ref mut project_path) = item.project_path {
+                project_path.worktree_id = worktree_id;
+            }
         });
         item
     }
