@@ -192,11 +192,11 @@ fn conflicts_updated(
         match buffer_conflicts.block_ids.get(event.old_range.clone()) {
             Some(_) => Some(event.old_range.clone()),
             None => {
-                debug_panic!(
-                    "conflicts updated event old range is invalid for buffer conflicts view (block_ids len is {:?}, old_range is {:?})",
-                    buffer_conflicts.block_ids.len(),
-                    event.old_range,
-                );
+                // debug_panic!(
+                //     "conflicts updated event old range is invalid for buffer conflicts view (block_ids len is {:?}, old_range is {:?})",
+                //     buffer_conflicts.block_ids.len(),
+                //     event.old_range,
+                // );
                 if event.old_range.start <= event.old_range.end {
                     Some(
                         event.old_range.start.min(buffer_conflicts.block_ids.len())
@@ -297,6 +297,7 @@ fn conflicts_updated(
             priority: 0,
         })
     }
+    log::debug!("conflict blocks = {blocks:?}");
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
 
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();

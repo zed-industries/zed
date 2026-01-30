@@ -1,4 +1,4 @@
-//! This module defines where the text should be displayed in an [`Editor`][Editor].
+//! This module defines where the text should be dsplayed in an [`Editor`][Editor].
 //!
 //! Not literally though - rendering, layout and all that jazz is a responsibility of [`EditorElement`][EditorElement].
 //! Instead, [`DisplayMap`] decides where Inlays/Inlay hints are displayed, when
@@ -351,7 +351,7 @@ impl DisplayMap {
         companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
-        if let Some((_, ref companion_entity)) = companion {
+        if let Some((_, companion_entity)) = companion.as_ref() {
             let c = companion_entity.read(cx);
             if self.entity_id != c.rhs_display_map_id {
                 let buffer_mapping = c.buffer_to_companion_buffer(c.rhs_display_map_id);
@@ -391,30 +391,141 @@ impl DisplayMap {
                 .ok()
         });
 
+        {
+            let reader =
+                self.block_map
+                    .read(cx)
+                    .read(snapshot.clone(), Patch::default(), None, None);
+            let all_blocks = reader
+                .snapshot
+                .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
+                .collect::<Vec<_>>();
+            log::debug!("BEFORE all_blocks = {all_blocks:#?}");
+        }
+
+        if let Some((companion_dm, companion_entity)) = &self.companion {
+            let c = companion_entity.read(cx);
+            if self.entity_id != c.rhs_display_map_id
+                && let Some((companion_snapshot, _)) = &companion_wrap_data
+            {
+                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
+
+                // Sync custom blocks
+                if let Some(companion_dm) = companion_dm.upgrade() {
+                    let custom_blocks: Vec<_> = companion_dm
+                        .read(cx)
+                        .block_map
+                        .read(cx)
+                        .read(companion_snapshot.clone(), Patch::default(), None, None)
+                        .blocks
+                        .iter()
+                        .cloned()
+                        .collect();
+                    log::debug!("custom_blocks = {custom_blocks:#?}");
+
+                    let new_custom_blocks: Vec<_> = {
+                        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+                        custom_blocks
+                            .into_iter()
+                            .map(|block| {
+                                let their_anchor = block.placement.start();
+                                let their_point =
+                                    their_anchor.to_point(companion_snapshot.buffer_snapshot());
+                                let my_point = c
+                                    .convert_rows_from_companion(
+                                        self.entity_id,
+                                        &buffer_snapshot,
+                                        companion_snapshot.buffer_snapshot(),
+                                        (
+                                            Bound::Included(their_point),
+                                            Bound::Included(their_point),
+                                        ),
+                                    )
+                                    .first()
+                                    .unwrap()
+                                    .boundaries
+                                    .first()
+                                    .unwrap()
+                                    .1
+                                    .start;
+                                let anchor = buffer_snapshot.anchor_before(my_point);
+                                let height = block.height.unwrap_or(1);
+                                let new_block = BlockProperties {
+                                    placement: BlockPlacement::Above(anchor),
+                                    height: Some(height),
+                                    style: BlockStyle::Sticky,
+                                    render: Arc::new(move |cx| {
+                                        div()
+                                            .id(cx.block_id)
+                                            .size_full()
+                                            .h(Pixels::from(cx.line_height * height as f32))
+                                            .bg(pattern_slash(white(), 8.0, 8.0))
+                                            .into_any()
+                                    }),
+                                    priority: 0,
+                                };
+                                log::debug!("  new_block = {new_block:?}");
+                                new_block
+                            })
+                            .collect()
+                    };
+                    self.block_map.update(cx, |block_map, _| {
+                        block_map
+                            .write(snapshot.clone(), Patch::default(), None, None, None)
+                            .insert(new_custom_blocks)
+                    });
+                }
+            }
+        }
+
+        {
+            let reader =
+                self.block_map
+                    .read(cx)
+                    .read(snapshot.clone(), Patch::default(), None, None);
+            {
+                let all_blocks = reader
+                    .snapshot
+                    .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
+                    .collect::<Vec<_>>();
+                log::debug!("MID-UPDATE all_blocks = {all_blocks:#?}");
+            }
+        }
+
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
             .map(|(snapshot, edits)| (snapshot, edits));
+
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
 
-        self.block_map.read(cx).read(
+        let reader = self.block_map.read(cx).read(
             snapshot.clone(),
             edits.clone(),
             companion_wrap_edits,
             companion_ref.map(|c| (c, self.entity_id)),
         );
+        {
+            let all_blocks = reader
+                .snapshot
+                .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
+                .collect::<Vec<_>>();
+            log::debug!("AFTER all_blocks = {all_blocks:#?}");
+        }
 
         if let Some((companion_dm, _)) = &self.companion {
-            let _ = companion_dm.update(cx, |dm, cx| {
-                if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
-                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(cx));
-                    dm.block_map.read(cx).read(
-                        companion_snapshot,
-                        companion_edits,
-                        Some((&snapshot, &edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
-                    );
-                }
-            });
+            companion_dm
+                .update(cx, |dm, cx| {
+                    if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
+                        let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(cx));
+                        dm.block_map.read(cx).read(
+                            companion_snapshot.clone(),
+                            companion_edits,
+                            Some((&snapshot, &edits)),
+                            their_companion_ref.map(|c| (c, dm.entity_id)),
+                        );
+                    }
+                })
+                .ok();
         }
     }
 
@@ -1093,7 +1204,11 @@ impl DisplayMap {
             .companion
             .as_ref()
             .and_then(|(companion_dm, _)| companion_dm.upgrade())
-            .map(|dm| dm.read(cx).block_map.downgrade());
+            .map(|dm| {
+                log::debug!("is DisplayMap strong?");
+                dm.read(cx).block_map.downgrade()
+            });
+        log::debug!("in insert_blocks() : {companion_block_map:?}");
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()

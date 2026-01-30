@@ -529,12 +529,14 @@ impl SplittableEditor {
 
         let companion = cx.new(|_| companion);
 
+        log::debug!("setting companion for primary");
         primary_display_map.update(cx, |dm, cx| {
             dm.set_companion(
                 Some((secondary_display_map.downgrade(), companion.clone())),
                 cx,
             );
         });
+        log::debug!("setting companion for secondary");
         secondary_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((primary_display_map.downgrade(), companion)), cx);
         });
@@ -870,6 +872,7 @@ impl SplittableEditor {
                 buffer.set_show_deleted_hunks(true, cx);
                 buffer.set_use_extended_diff_range(false, cx);
             });
+            log::debug!("removing companion for primary");
             primary.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
