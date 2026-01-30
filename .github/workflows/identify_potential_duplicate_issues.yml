@@ -116,62 +116,66 @@ jobs:
           ## Issue Body
           ISSUE_BODY_PLACEHOLDER
 
-          ## Available Area Labels (hierarchical)
+          ## Available Area Labels
+          (descriptions provided only where the label name isn't self-explanatory)
+
           accessibility
-          ai, ai/acp, ai/agent thread, ai/anthropic, ai/assistant, ai/bedrock, ai/codex, ai/copilot, ai/deepseek, ai/edit prediction, ai/gemini, ai/inline assistant, ai/lmstudio, ai/mcp, ai/mistral, ai/ollama, ai/openai, ai/openai compatible, ai/openrouter, ai/qwen, ai/supermaven, ai/text thread, ai/zeta
+          ai, ai/acp (Agent Communication Protocol), ai/agent thread, ai/anthropic, ai/assistant, ai/bedrock, ai/codex, ai/copilot, ai/deepseek, ai/edit prediction, ai/gemini, ai/inline assistant, ai/lmstudio, ai/mcp (Model Context Protocol), ai/mistral, ai/ollama, ai/openai, ai/openai compatible, ai/openrouter, ai/qwen, ai/supermaven, ai/text thread, ai/zeta
           auth
           autocompletions
           billing
           cli
           code actions
           code folding
-          collab, collab/audio, collab/chat
+          collab - real-time collaboration with other Zed users (screen sharing, shared editing). NOT for remote development over SSH.
+          collab/audio, collab/chat
           command palette
           controls/ime, controls/keybinds, controls/mouse
           debugger, debugger/dap/CodeLLDB, debugger/dap/debugpy, debugger/dap/gdb, debugger/dap/javascript
-          design papercut
-          dev containers
-          diagnostics
+          design papercut - small UI/UX polish issues
+          dev containers - Docker-based development environments
+          diagnostics - LSP errors/warnings display
           discoverability
           editor, editor/brackets, editor/linked edits
           extensions/infrastructure
-          file finder
-          gpui
-          inlay hints
+          file finder - fuzzy file search (Cmd/Ctrl+P)
+          gpui - Zed's internal UI rendering framework
+          inlay hints - inline hints from LSP (type annotations, parameter names)
           installer-updater
-          integrations/environment, integrations/git, integrations/git/blame, integrations/terminal
+          integrations/environment - shell environment, PATH, env vars
+          integrations/git, integrations/git/blame, integrations/terminal
           internationalization, internationalization/rtl support
           keymap editor
           language server, language server/server failure
-          languages, languages/astro, languages/bash, languages/c, languages/c#, languages/c++, languages/clojure, languages/css, languages/dart, languages/elixir, languages/elm, languages/f#, languages/gleam, languages/glsl, languages/go, languages/heex, languages/html, languages/java, languages/javascript, languages/json, languages/jsx, languages/julia, languages/lua, languages/markdown, languages/obj-c, languages/ocaml, languages/php, languages/prisma, languages/proto, languages/python, languages/ruby, languages/rust, languages/svelte, languages/swift, languages/tailwind css, languages/toml, languages/tsx, languages/typescript, languages/unsupported, languages/vue, languages/yaml, languages/zig
+          languages/* - language-specific syntax, grammar, or LSP issues (e.g., languages/python, languages/rust, languages/typescript)
           legal
           logging
-          multi-buffer
+          multi-buffer - viewing multiple files or search results in a single editor pane
           multi-cursor
-          navigation
-          network
+          navigation - go to definition, find references, symbol search
+          network - proxy settings, connectivity, SSL certificates. NOT for collab.
           onboarding
-          outline
-          parity/emacs, parity/helix, parity/jetbrains, parity/vim, parity/vscode
+          outline - document symbols/structure sidebar
+          parity/* - feature parity requests comparing to other editors (parity/vscode, parity/vim, parity/emacs, parity/jetbrains, parity/helix)
           performance, performance/memory leak
           permissions
-          popovers
+          popovers - hover cards, tooltips, autocomplete dropdowns
           preview/images, preview/markdown
-          project panel
+          project panel - file tree sidebar
           release notes
           repl
-          search
+          search - project-wide search, find/replace
           security & privacy, security & privacy/workspace trust
-          serialization
+          serialization - saving/restoring workspace state, undo history, folding state across restarts
           settings, settings/ui
           snippets
           status bar
-          tasks
+          tasks - task runner integration
           telemetry
-          tooling, tooling/emmet, tooling/eslint, tooling/flatpak, tooling/nix, tooling/prettier
-          tree-sitter
+          tooling/* - external tool integrations (tooling/emmet, tooling/eslint, tooling/prettier, tooling/flatpak, tooling/nix)
+          tree-sitter - syntax parsing and highlighting engine
           ui/animations, ui/dock, ui/file icons, ui/font, ui/menus, ui/minimap, ui/panel, ui/scaling, ui/scrolling, ui/tabs, ui/themes
-          workspace
+          workspace - window management, pane layout, project handling
           zed account
           zed.dev
 
