@@ -37,7 +37,7 @@ You will be provided with:
 - Briefly explain the user's current intent based on the edit history and their current cursor location.
 - Output a markdown codeblock containing **only** the editable region with your predicted edits applied. The codeblock must start with `<|editable_region_start|>` and end with `<|editable_region_end|>`. Do not include any content before or after these tags.
 - If the next edit has some uncertainty, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
-  -e.g. if a user is typing `func<|user_cursor|>`, but you don't know what the function name should be, you can predict `function <|user_cursor|>() {}`
+  - e.g. if a user is typing `func<|user_cursor|>`, but you don't know what the function name should be, you can predict `function <|user_cursor|>() {}`
 
 ## Example 1
 
@@ -133,6 +133,7 @@ The user is clearly starting to type `eprintln!()`, however, what they intend to
 fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
     modal_state.close();
     eprintln!("<|user_cursor|>");
+    modal_state.dismiss();
 <|editable_region_end|>
 `````
 
