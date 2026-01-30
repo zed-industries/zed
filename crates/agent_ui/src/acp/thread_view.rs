@@ -4122,30 +4122,32 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .child(
                 self.render_tool_call_label(
-                    entry_ix,
-                    tool_call,
-                    is_edit,
-                    false, // has_failed
+                    entry_ix, tool_call, is_edit, false, // has_failed
                     false, // has_revealed_diff
                     true,  // use_card_layout
-                    window,
-                    cx,
+                    window, cx,
                 )
                 .py_1(),
             )
-            .children(tool_call.content.iter().enumerate().map(|(content_ix, content)| {
-                self.render_tool_call_content(
-                    entry_ix,
-                    content,
-                    content_ix,
-                    tool_call,
-                    true, // card_layout
-                    has_image_content,
-                    false, // has_failed
-                    window,
-                    cx,
-                )
-            }))
+            .children(
+                tool_call
+                    .content
+                    .iter()
+                    .enumerate()
+                    .map(|(content_ix, content)| {
+                        self.render_tool_call_content(
+                            entry_ix,
+                            content,
+                            content_ix,
+                            tool_call,
+                            true, // card_layout
+                            has_image_content,
+                            false, // has_failed
+                            window,
+                            cx,
+                        )
+                    }),
+            )
             .child(self.render_subagent_permission_buttons(
                 entry_ix,
                 context_ix,
@@ -4203,41 +4205,41 @@ impl AcpThreadView {
             .v_flex()
             .gap_0p5()
             .children(options.iter().map(move |option| {
-                    let option_id = SharedString::from(format!(
-                        "subagent-{}-{}-{}",
-                        entry_ix, context_ix, option.option_id.0
-                    ));
-                    Button::new((option_id, entry_ix), option.name.clone())
-                        .map(|this| match option.kind {
-                            acp::PermissionOptionKind::AllowOnce => {
-                                this.icon(IconName::Check).icon_color(Color::Success)
-                            }
-                            acp::PermissionOptionKind::AllowAlways => {
-                                this.icon(IconName::CheckDouble).icon_color(Color::Success)
-                            }
-                            acp::PermissionOptionKind::RejectOnce
-                            | acp::PermissionOptionKind::RejectAlways
-                            | _ => this.icon(IconName::Close).icon_color(Color::Error),
-                        })
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .label_size(LabelSize::Small)
-                        .on_click(cx.listener({
-                            let subagent_thread = subagent_thread.clone();
-                            let tool_call_id = tool_call_id.clone();
-                            let option_id = option.option_id.clone();
-                            let option_kind = option.kind;
-                            move |this, _, window, cx| {
-                                this.authorize_subagent_tool_call(
-                                    subagent_thread.clone(),
-                                    tool_call_id.clone(),
-                                    option_id.clone(),
-                                    option_kind,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        }))
+                let option_id = SharedString::from(format!(
+                    "subagent-{}-{}-{}",
+                    entry_ix, context_ix, option.option_id.0
+                ));
+                Button::new((option_id, entry_ix), option.name.clone())
+                    .map(|this| match option.kind {
+                        acp::PermissionOptionKind::AllowOnce => {
+                            this.icon(IconName::Check).icon_color(Color::Success)
+                        }
+                        acp::PermissionOptionKind::AllowAlways => {
+                            this.icon(IconName::CheckDouble).icon_color(Color::Success)
+                        }
+                        acp::PermissionOptionKind::RejectOnce
+                        | acp::PermissionOptionKind::RejectAlways
+                        | _ => this.icon(IconName::Close).icon_color(Color::Error),
+                    })
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener({
+                        let subagent_thread = subagent_thread.clone();
+                        let tool_call_id = tool_call_id.clone();
+                        let option_id = option.option_id.clone();
+                        let option_kind = option.kind;
+                        move |this, _, window, cx| {
+                            this.authorize_subagent_tool_call(
+                                subagent_thread.clone(),
+                                tool_call_id.clone(),
+                                option_id.clone(),
+                                option_kind,
+                                window,
+                                cx,
+                            );
+                        }
+                    }))
             }))
     }
 
