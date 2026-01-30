@@ -61,6 +61,8 @@ pub struct CapturedPromptInput {
     pub cursor_offset: usize,
     pub cursor_row: u32,
     pub cursor_column: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_start_row: Option<u32>,
     pub events: Vec<CapturedEvent>,
     pub related_files: Vec<CapturedRelatedFile>,
 }

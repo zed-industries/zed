@@ -97,6 +97,7 @@ pub async fn run_format_prompt(
                 cursor_excerpt: prompt_inputs.content[context_range].to_string().into(),
                 editable_range_in_excerpt,
                 cursor_offset_in_excerpt,
+                excerpt_start_row: prompt_inputs.excerpt_start_row,
                 events: prompt_inputs.edit_history.clone(),
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
             };
