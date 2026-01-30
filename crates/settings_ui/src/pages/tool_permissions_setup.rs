@@ -14,41 +14,49 @@ const TOOLS: &[ToolInfo] = &[
         id: "terminal",
         name: "Terminal",
         description: "Commands executed in the terminal",
+        regex_explanation: "Patterns are matched against each command in the input. Commands chained with &&, ||, ;, or pipes are split and checked individually.",
     },
     ToolInfo {
         id: "edit_file",
         name: "Edit File",
         description: "File editing operations",
+        regex_explanation: "Patterns are matched against the file path being edited.",
     },
     ToolInfo {
         id: "delete_path",
         name: "Delete Path",
         description: "File and directory deletion",
+        regex_explanation: "Patterns are matched against the path being deleted.",
     },
     ToolInfo {
         id: "move_path",
         name: "Move Path",
         description: "File and directory moves/renames",
+        regex_explanation: "Patterns are matched against both the source and destination paths.",
     },
     ToolInfo {
         id: "create_directory",
         name: "Create Directory",
         description: "Directory creation",
+        regex_explanation: "Patterns are matched against the directory path being created.",
     },
     ToolInfo {
         id: "save_file",
         name: "Save File",
         description: "File saving operations",
+        regex_explanation: "Patterns are matched against the file path being saved.",
     },
     ToolInfo {
         id: "fetch",
         name: "Fetch",
         description: "HTTP requests to URLs",
+        regex_explanation: "Patterns are matched against the URL being fetched.",
     },
     ToolInfo {
         id: "web_search",
         name: "Web Search",
         description: "Web search queries",
+        regex_explanation: "Patterns are matched against the search query.",
     },
 ];
 
@@ -56,6 +64,7 @@ struct ToolInfo {
     id: &'static str,
     name: &'static str,
     description: &'static str,
+    regex_explanation: &'static str,
 }
 
 /// Renders the main tool permissions setup page showing a list of tools
@@ -203,6 +212,11 @@ pub(crate) fn render_tool_config_page(
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
         .child(Label::new(page_title).size(LabelSize::Large))
+        .child(
+            Label::new(tool.regex_explanation)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
         .child(render_verification_section(tool_id, window, cx))
         .child(
             v_flex()
@@ -222,7 +236,7 @@ pub(crate) fn render_tool_config_page(
                 .child(render_rule_section(
                     tool_id,
                     "Always Allow",
-                    "Patterns that auto-approve without prompting.",
+                    "If any of these regexes match, the tool action will be approved—unless an Always Confirm or Always Deny regex matches.",
                     RuleType::Allow,
                     &rules.always_allow,
                     cx,
@@ -231,7 +245,7 @@ pub(crate) fn render_tool_config_page(
                 .child(render_rule_section(
                     tool_id,
                     "Always Confirm",
-                    "Patterns that always require confirmation.",
+                    "If any of these regexes match, a confirmation will be shown unless an Always Deny regex matches.",
                     RuleType::Confirm,
                     &rules.always_confirm,
                     cx,
