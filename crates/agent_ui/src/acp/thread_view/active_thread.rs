@@ -365,10 +365,13 @@ impl AcpThreadView {
         let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
-            if let ServerState::Connected{current: AcpThreadView {
-                is_loading_contents,
-                ..
-            }} = &mut this.server_state
+            if let ServerState::Connected {
+                current:
+                    AcpThreadView {
+                        is_loading_contents,
+                        ..
+                    },
+            } = &mut this.server_state
             {
                 *is_loading_contents = false;
             }
@@ -448,10 +451,13 @@ impl AcpThreadView {
                 .ok();
             } else {
                 this.update(cx, |this, cx| {
-                    if let ServerState::Connected{current: AcpThreadView {
-                        should_be_following,
-                        ..
-                    }} = &mut this.server_state
+                    if let ServerState::Connected {
+                        current:
+                            AcpThreadView {
+                                should_be_following,
+                                ..
+                            },
+                    } = &mut this.server_state
                     {
                         *should_be_following = this
                             .workspace
@@ -976,11 +982,8 @@ impl AcpThreadView {
             };
 
             this.update_in(cx, |this, window, cx| {
-                if let ServerState::Connected{current: AcpThreadView {
-                    resume_thread_metadata,
-                    ..
-                }} = &mut this.server_state
-                {
+                if let Some(thread) = this.as_active_thread_mut() {
+                    let resume_thread_metadata = &mut thread.resume_thread_metadata;
                     *resume_thread_metadata = Some(thread_metadata);
                 }
                 this.reset(window, cx);

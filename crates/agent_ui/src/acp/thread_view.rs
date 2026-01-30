@@ -352,14 +352,28 @@ pub struct AcpServerView {
 impl AcpServerView {
     pub fn as_active_thread(&self) -> Option<&AcpThreadView> {
         match &self.server_state {
-            ServerState::Connected { current } => Some(current),
+            ServerState::Connected(connected) => Some(&connected.current),
             _ => None,
         }
     }
 
     pub fn as_active_thread_mut(&mut self) -> Option<&mut AcpThreadView> {
         match &mut self.server_state {
-            ServerState::Connected { current } => Some(current),
+            ServerState::Connected(connected) => Some(&mut connected.current),
+            _ => None,
+        }
+    }
+
+    pub fn as_connected(&self) -> Option<&ConnectedServerState> {
+        match &self.server_state {
+            ServerState::Connected(connected) => Some(connected),
+            _ => None,
+        }
+    }
+
+    pub fn as_connected_mut(&mut self) -> Option<&mut ConnectedServerState> {
+        match &mut self.server_state {
+            ServerState::Connected(connected) => Some(connected),
             _ => None,
         }
     }
@@ -368,11 +382,18 @@ impl AcpServerView {
 enum ServerState {
     Loading(Entity<LoadingView>),
     LoadError(LoadError),
-    Connected {
-        current: AcpThreadView,
-    },
+    Connected(ConnectedServerState),
+}
+
+struct ConnectedServerState {
+    auth_state: AuthState,
+    current: AcpThreadView,
+    connection: Rc<dyn AgentConnection>,
+}
+
+enum AuthState {
+    Ok,
     Unauthenticated {
-        connection: Rc<dyn AgentConnection>,
         description: Option<Entity<Markdown>>,
         configuration_view: Option<AnyView>,
         pending_auth_method: Option<acp::AuthMethodId>,
@@ -562,18 +583,9 @@ impl AcpServerView {
         let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
         let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
 
-        let resume_thread_metadata = if let ServerState::Connected {
-            current:
-                AcpThreadView {
-                    resume_thread_metadata,
-                    ..
-                },
-        } = &self.server_state
-        {
-            resume_thread_metadata.clone()
-        } else {
-            None
-        };
+        let resume_thread_metadata = self
+            .as_active_thread()
+            .and_then(|thread| thread.resume_thread_metadata.clone());
 
         self.message_editor.update(cx, |editor, cx| {
             editor.set_command_state(
@@ -874,7 +886,9 @@ impl AcpServerView {
                                 })
                             });
 
-                        this.server_state = ServerState::Connected {
+                        this.server_state = ServerState::Connected(ConnectedServerState {
+                            connection,
+                            auth_state: AuthState::Ok,
                             current: AcpThreadView::new(
                                 thread,
                                 workspace.clone(),
@@ -894,7 +908,7 @@ impl AcpServerView {
                                 subscriptions,
                                 cx,
                             ),
-                        };
+                        });
 
                         if this.focus_handle.contains_focused(window, cx) {
                             this.message_editor.focus_handle(cx).focus(window, cx);
@@ -914,15 +928,8 @@ impl AcpServerView {
             while let Ok(new_version) = new_version_available_rx.recv().await {
                 if let Some(new_version) = new_version {
                     this.update(cx, |this, cx| {
-                        if let ServerState::Connected {
-                            current:
-                                AcpThreadView {
-                                    new_server_version_available,
-                                    ..
-                                },
-                        } = &mut this.server_state
-                        {
-                            *new_server_version_available = Some(new_version.into());
+                        if let Some(thread) = this.as_active_thread_mut() {
+                            thread.new_server_version_available = Some(new_version.into());
                         }
                         cx.notify();
                     })
@@ -998,15 +1005,18 @@ impl AcpServerView {
         };
 
         this.update(cx, |this, cx| {
-            this.server_state = ServerState::Unauthenticated {
-                pending_auth_method: None,
-                connection,
-                configuration_view,
-                description: err
+            if let Some(connected) = this.as_connected_mut() {
+                let description = err
                     .description
-                    .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx))),
-                _subscription: subscription,
-            };
+                    .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx)));
+
+                connected.auth_state = AuthState::Unauthenticated {
+                    pending_auth_method: None,
+                    configuration_view,
+                    description,
+                    _subscription: subscription,
+                };
+            }
             if this.message_editor.focus_handle(cx).is_focused(window) {
                 this.focus_handle.focus(window, cx)
             }
@@ -1045,13 +1055,15 @@ impl AcpServerView {
         // This handles the case where a thread is restored before authentication completes.
         let should_retry = match &self.server_state {
             ServerState::LoadError(_)
-            | ServerState::Connected {
+            | ServerState::Connected(ConnectedServerState {
+                auth_state: AuthState::Ok,
                 current:
                     AcpThreadView {
                         thread_error: Some(_),
                         ..
                     },
-            } => true,
+                ..
+            }) => true,
             _ => false,
         };
 
@@ -1070,10 +1082,7 @@ impl AcpServerView {
 
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.server_state {
-            ServerState::Connected {
-                current: AcpThreadView { .. },
-            }
-            | ServerState::Unauthenticated { .. } => "New Thread".into(),
+            ServerState::Connected(_) => "New Thread".into(),
             ServerState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ServerState::LoadError(error) => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
@@ -1405,34 +1414,16 @@ impl AcpServerView {
             )
         });
 
-        if let ServerState::Connected {
-            current:
-                AcpThreadView {
-                    thread_error,
-                    thread_feedback,
-                    editing_message,
-                    ..
-                },
-        } = &mut self.server_state
-        {
-            thread_error.take();
-            thread_feedback.clear();
-            editing_message.take();
-        }
+        if let Some(thread) = self.as_active_thread_mut() {
+            thread.thread_error.take();
+            thread.thread_feedback.clear();
+            thread.editing_message.take();
 
-        if let ServerState::Connected {
-            current:
-                AcpThreadView {
-                    should_be_following: true,
-                    ..
-                },
-        } = &self.server_state
-        {
-            self.workspace
-                .update(cx, |workspace, cx| {
+            if thread.should_be_following {
+                let _ = self.workspace.update(cx, |workspace, cx| {
                     workspace.follow(CollaboratorId::Agent, window, cx);
-                })
-                .ok();
+                });
+            }
         }
 
         let contents_task = cx.spawn_in(window, async move |this, cx| {
@@ -1516,11 +1507,8 @@ impl AcpServerView {
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
         let error = ThreadError::from_err(error, &self.agent);
         self.emit_thread_error_telemetry(&error, cx);
-        if let ServerState::Connected {
-            current: AcpThreadView { thread_error, .. },
-        } = &mut self.server_state
-        {
-            *thread_error = Some(error);
+        if let Some(thread) = self.as_active_thread_mut() {
+            thread.thread_error = Some(error);
         }
         cx.notify();
     }
@@ -2305,7 +2293,7 @@ impl AcpServerView {
                                     .bg(cx.theme().colors().editor_background)
                                     .overflow_hidden();
 
-                                let is_loading_contents = matches!(&self.server_state, ServerState::Connected { current: AcpThreadView { is_loading_contents: true, .. }});
+                                let is_loading_contents = matches!(&self.server_state, ServerState::Connected(ConnectedServerState { current: AcpThreadView { is_loading_contents: true, .. }, ..}));
                                 if message.id.is_some() {
                                     this.child(
                                         base_container
@@ -2656,7 +2644,7 @@ impl AcpServerView {
 
         let key = (entry_ix, chunk_ix);
 
-        let is_open = matches!(&self.server_state, ServerState::Connected{current: AcpThreadView { expanded_thinking_blocks, .. }} if expanded_thinking_blocks.contains(&key));
+        let is_open = matches!(&self.server_state, ServerState::Connected(ConnectedServerState {current: AcpThreadView { expanded_thinking_blocks, .. }, ..}) if expanded_thinking_blocks.contains(&key));
 
         let scroll_handle = self
             .as_active_thread()
@@ -2801,8 +2789,14 @@ impl AcpServerView {
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let is_open = needs_confirmation
-            || matches!(&self.server_state, ServerState::Connected{current: AcpThreadView { expanded_tool_calls, .. }} if expanded_tool_calls.contains(&tool_call.id));
+        let mut is_open = match &self.server_state {
+            ServerState::Connected(ConnectedServerState { current, .. }) => {
+                current.expanded_tool_calls.contains(&tool_call.id)
+            }
+            _ => false,
+        };
+
+        is_open |= needs_confirmation;
 
         let should_show_raw_input = !is_terminal_tool && !is_edit && !has_image_content;
 
@@ -2840,7 +2834,7 @@ impl AcpServerView {
                     )
                     .when(should_show_raw_input, |this| {
                         let is_raw_input_expanded =
-                            matches!(&self.server_state, ServerState::Connected{current: AcpThreadView { expanded_tool_call_raw_inputs, .. }} if expanded_tool_call_raw_inputs.contains(&tool_call.id));
+                            matches!(&self.server_state, ServerState::Connected(ConnectedServerState {current: AcpThreadView { expanded_tool_call_raw_inputs, .. }, ..}) if expanded_tool_call_raw_inputs.contains(&tool_call.id));
 
                         let input_header = if is_raw_input_expanded {
                             "Raw Input:"
