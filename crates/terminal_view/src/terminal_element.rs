@@ -501,10 +501,7 @@ impl TerminalElement {
     }
 
     /// Computes the cursor position based on the cursor point and terminal dimensions.
-    fn cursor_position(
-        cursor_point: DisplayCursor,
-        size: TerminalBounds,
-    ) -> Option<Point<Pixels>> {
+    fn cursor_position(cursor_point: DisplayCursor, size: TerminalBounds) -> Option<Point<Pixels>> {
         if cursor_point.line() < size.total_lines() as i32 {
             // When on pixel boundaries round the origin down
             Some(point(
@@ -1146,13 +1143,11 @@ impl Element for TerminalElement {
                     cursor_text.width.max(dimensions.cell_width())
                 };
 
-                let ime_cursor_bounds =
-                    TerminalElement::cursor_position(cursor_point, dimensions).map(
-                        |cursor_position| Bounds {
-                            origin: cursor_position,
-                            size: size(cursor_width.ceil(), dimensions.line_height),
-                        },
-                    );
+                let ime_cursor_bounds = TerminalElement::cursor_position(cursor_point, dimensions)
+                    .map(|cursor_position| Bounds {
+                        origin: cursor_position,
+                        size: size(cursor_width.ceil(), dimensions.line_height),
+                    });
 
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
