@@ -2,7 +2,7 @@ use agent_settings::AgentSettings;
 use gpui::{FontWeight, ReadGlobal, ScrollHandle, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
-use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
+use ui::{ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
 
 use crate::{
     SettingsWindow,
@@ -89,7 +89,17 @@ pub(crate) fn render_tool_permissions_setup_page(
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
-        .child(v_flex().mt_4().children(tool_items))
+        .child(
+            v_flex()
+                .mt_4()
+                .children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
+                    let mut elements: Vec<AnyElement> = vec![item];
+                    if i + 1 < TOOLS.len() {
+                        elements.push(Divider::horizontal().into_any_element());
+                    }
+                    elements
+                })),
+        )
         .into_any_element()
 }
 
@@ -111,73 +121,48 @@ fn render_tool_list_item(
 
     let render_fn = get_tool_render_fn(tool.id);
 
-    v_flex()
+    h_flex()
         .w_full()
-        .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
+        .py_3()
+        .justify_between()
         .child(
-            h_flex()
-                .id(tool.id)
-                .w_full()
-                .py_3()
-                .gap_2()
-                .cursor_pointer()
-                .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                .on_click({
-                    let tool_name = tool.name;
-                    cx.listener(move |this, _, window, cx| {
-                        this.push_dynamic_sub_page(
-                            tool_name,
-                            "Configure Tool Rules",
-                            None,
-                            render_fn,
-                            window,
-                            cx,
-                        );
-                    })
-                })
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Label::new(tool.name).weight(FontWeight::MEDIUM))
-                                .when_some(rule_summary, |this, summary| {
-                                    this.child(
-                                        Label::new(summary)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                }),
-                        )
-                        .child(
-                            Label::new(tool.description)
+            v_flex()
+                .child(h_flex().gap_1().child(Label::new(tool.name)).when_some(
+                    rule_summary,
+                    |this, summary| {
+                        this.child(
+                            Label::new(summary)
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
-                        ),
-                )
-                .child({
-                    let tool_name = tool.name;
-                    Button::new(format!("configure-{}", tool.id), "Configure")
-                        .icon(IconName::ChevronRight)
-                        .icon_position(IconPosition::End)
-                        .icon_color(Color::Muted)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::OutlinedGhost)
-                        .size(ButtonSize::Medium)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.push_dynamic_sub_page(
-                                tool_name,
-                                "Configure Tool Rules",
-                                None,
-                                render_fn,
-                                window,
-                                cx,
-                            );
-                        }))
-                }),
+                        )
+                    },
+                ))
+                .child(
+                    Label::new(tool.description)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
+        .child({
+            let tool_name = tool.name;
+            Button::new(format!("configure-{}", tool.id), "Configure")
+                .style(ButtonStyle::OutlinedGhost)
+                .size(ButtonSize::Medium)
+                .icon(IconName::ChevronRight)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.push_dynamic_sub_page(
+                        tool_name,
+                        "Configure Tool Rules",
+                        None,
+                        render_fn,
+                        window,
+                        cx,
+                    );
+                }))
+        })
         .into_any_element()
 }
 
