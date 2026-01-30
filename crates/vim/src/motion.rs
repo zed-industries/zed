@@ -1039,12 +1039,9 @@ impl Motion {
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
-            StartOfParagraph => (
-                movement::start_of_paragraph(map, point, times),
-                SelectionGoal::None,
-            ),
+            StartOfParagraph => (paragraph_backwards(map, point, times), SelectionGoal::None),
             EndOfParagraph => (
-                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
+                map.clip_at_line_end(paragraph_forwards(map, point, times)),
                 SelectionGoal::None,
             ),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
@@ -2234,6 +2231,66 @@ pub(crate) fn sentence_forwards(
         }
 
         was_newline = ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n');
+    }
+
+    map.max_point()
+}
+
+/// Returns a position of the start of the current paragraph for vim motions,
+/// where a paragraph is defined as a run of non-empty lines (per vim's :help paragraph).
+/// This differs from the editor's paragraph function which uses blank (whitespace-only) lines.
+pub(crate) fn paragraph_backwards(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    mut count: usize,
+) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == 0 {
+        return DisplayPoint::zero();
+    }
+
+    let mut found_non_empty_line = false;
+    for row in (0..point.row + 1).rev() {
+        let empty = map.buffer_snapshot().line_len(MultiBufferRow(row)) == 0;
+        if found_non_empty_line && empty {
+            if count <= 1 {
+                return Point::new(row, 0).to_display_point(map);
+            }
+            count -= 1;
+            found_non_empty_line = false;
+        }
+
+        found_non_empty_line |= !empty;
+    }
+
+    DisplayPoint::zero()
+}
+
+/// Returns a position of the end of the current paragraph for vim motions,
+/// where a paragraph is defined as a run of non-empty lines (per vim's :help paragraph).
+/// This differs from the editor's paragraph function which uses blank (whitespace-only) lines.
+pub(crate) fn paragraph_forwards(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    mut count: usize,
+) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == map.buffer_snapshot().max_row().0 {
+        return map.max_point();
+    }
+
+    let mut found_non_empty_line = false;
+    for row in point.row..=map.buffer_snapshot().max_row().0 {
+        let empty = map.buffer_snapshot().line_len(MultiBufferRow(row)) == 0;
+        if found_non_empty_line && empty {
+            if count <= 1 {
+                return Point::new(row, 0).to_display_point(map);
+            }
+            count -= 1;
+            found_non_empty_line = false;
+        }
+
+        found_non_empty_line |= !empty;
     }
 
     map.max_point()
