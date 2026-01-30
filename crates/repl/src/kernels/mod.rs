@@ -266,25 +266,26 @@ pub fn python_env_kernel_specifications(
         if kernel_specs.is_empty() && !is_remote {
             if let Some(root_path) = worktree_root_path {
                 let root_path_str: std::borrow::Cow<str> = root_path.to_string_lossy();
-                let (distro, internal_path) = if root_path_str.starts_with(r"\\wsl$\") {
-                    let path_without_prefix = &root_path_str[r"\\wsl$\".len()..];
-                    if let Some((distro, path)) = path_without_prefix.split_once('\\') {
-                        let replaced_path: String = path.replace('\\', "/");
-                        (Some(distro), Some(format!("/{}", replaced_path)))
+                let (distro, internal_path) =
+                    if let Some(path_without_prefix) = root_path_str.strip_prefix(r"\\wsl$\") {
+                        if let Some((distro, path)) = path_without_prefix.split_once('\\') {
+                            let replaced_path: String = path.replace('\\', "/");
+                            (Some(distro), Some(format!("/{}", replaced_path)))
+                        } else {
+                            (Some(path_without_prefix), Some("/".to_string()))
+                        }
+                    } else if let Some(path_without_prefix) =
+                        root_path_str.strip_prefix(r"\\wsl.localhost\")
+                    {
+                        if let Some((distro, path)) = path_without_prefix.split_once('\\') {
+                            let replaced_path: String = path.replace('\\', "/");
+                            (Some(distro), Some(format!("/{}", replaced_path)))
+                        } else {
+                            (Some(path_without_prefix), Some("/".to_string()))
+                        }
                     } else {
-                        (Some(path_without_prefix), Some("/".to_string()))
-                    }
-                } else if root_path_str.starts_with(r"\\wsl.localhost\") {
-                    let path_without_prefix = &root_path_str[r"\\wsl.localhost\".len()..];
-                    if let Some((distro, path)) = path_without_prefix.split_once('\\') {
-                        let replaced_path: String = path.replace('\\', "/");
-                        (Some(distro), Some(format!("/{}", replaced_path)))
-                    } else {
-                        (Some(path_without_prefix), Some("/".to_string()))
-                    }
-                } else {
-                    (None, None)
-                };
+                        (None, None)
+                    };
 
                 if let (Some(distro), Some(internal_path)) = (distro, internal_path) {
                     let python_path = format!("{}/.venv/bin/python", internal_path);
