@@ -363,6 +363,7 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
 
     let (picker, cx) = build_open_path_prompt(project, false, true, cx);
 
+    #[cfg(not(windows))]
     let expected_separator = "./";
     #[cfg(windows)]
     let expected_separator = ".\\";
