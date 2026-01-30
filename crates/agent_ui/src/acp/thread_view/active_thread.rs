@@ -1,6 +1,7 @@
 use super::*;
 
 pub struct AcpThreadView {
+    pub id: acp::SessionId,
     pub thread: Entity<AcpThread>,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -84,8 +85,11 @@ impl AcpThreadView {
         resumed_without_history: bool,
         resume_thread_metadata: Option<AgentSessionInfo>,
         subscriptions: Vec<Subscription>,
+        cx: &App,
     ) -> Self {
+        let id = thread.read(cx).session_id().clone();
         Self {
+            id,
             thread,
             workspace,
             entry_view_state,
@@ -361,10 +365,10 @@ impl AcpThreadView {
         let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
-            if let ThreadState::Active(AcpThreadView {
+            if let ServerState::Connected{current: AcpThreadView {
                 is_loading_contents,
                 ..
-            }) = &mut this.thread_state
+            }} = &mut this.server_state
             {
                 *is_loading_contents = false;
             }
@@ -444,10 +448,10 @@ impl AcpThreadView {
                 .ok();
             } else {
                 this.update(cx, |this, cx| {
-                    if let ThreadState::Active(AcpThreadView {
+                    if let ServerState::Connected{current: AcpThreadView {
                         should_be_following,
                         ..
-                    }) = &mut this.thread_state
+                    }} = &mut this.server_state
                     {
                         *should_be_following = this
                             .workspace
@@ -972,10 +976,10 @@ impl AcpThreadView {
             };
 
             this.update_in(cx, |this, window, cx| {
-                if let ThreadState::Active(AcpThreadView {
+                if let ServerState::Connected{current: AcpThreadView {
                     resume_thread_metadata,
                     ..
-                }) = &mut this.thread_state
+                }} = &mut this.server_state
                 {
                     *resume_thread_metadata = Some(thread_metadata);
                 }
