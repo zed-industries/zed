@@ -250,6 +250,9 @@ fn render_verification_section(
     let result_id_for_callback = result_id.clone();
     let entity_id = cx.entity_id();
 
+    let settings = AgentSettings::get_global(cx);
+    let always_allow_enabled = settings.always_allow_tool_actions;
+
     v_flex()
         .id(format!("{}-verification-section", tool_id))
         .mt_4()
@@ -289,6 +292,24 @@ fn render_verification_section(
                 )
                 .child(render_verification_result(&result_id, cx)),
         )
+        .when(always_allow_enabled, |this| {
+            this.child(
+                h_flex()
+                    .mt_2()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .child(
+                        Label::new("\"Always allow tool actions\" is enabled — all tools will be allowed regardless of these rules.")
+                            .size(LabelSize::Small)
+                            .color(Color::Warning),
+                    ),
+            )
+        })
         .into_any_element()
 }
 
