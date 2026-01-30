@@ -20,7 +20,11 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use util::{ResultExt as _, debug_panic, maybe, paths::PathExt, shell::ShellKind};
+use util::{
+    ResultExt as _, debug_panic, maybe,
+    paths::PathExt,
+    shell::{PosixShell, ShellKind},
+};
 
 /// Path to the program used for askpass
 ///
@@ -208,7 +212,8 @@ impl PasswordProxy {
         let shell_kind = if cfg!(windows) {
             ShellKind::PowerShell
         } else {
-            ShellKind::Posix
+            // TODO: Consider using the user's actual shell instead of hardcoding "sh"
+            ShellKind::Posix(PosixShell::Sh)
         };
         let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
         // Create an askpass script that communicates back to this process.
@@ -354,7 +359,7 @@ fn generate_askpass_script(
         .try_quote_prefix_aware(&askpass_program)
         .context("Failed to shell-escape Askpass program path")?;
     let askpass_socket = askpass_socket
-        .try_shell_safe(shell_kind)
+        .try_shell_safe(Some(&shell_kind))
         .context("Failed to shell-escape Askpass socket path")?;
     let print_args = "printf '%s\\0' \"$@\"";
     let shebang = "#!/bin/sh";
@@ -379,7 +384,7 @@ fn generate_askpass_script(
         .try_quote_prefix_aware(&askpass_program)
         .context("Failed to shell-escape Askpass program path")?;
     let askpass_socket = askpass_socket
-        .try_shell_safe(shell_kind)
+        .try_shell_safe(Some(&shell_kind))
         .context("Failed to shell-escape Askpass socket path")?;
     Ok(format!(
         r#"
