@@ -39,6 +39,14 @@ impl WorkspaceSatellite {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(event, pane::Event::Remove { .. })
+            && self.center.first_pane() == self.center.last_pane()
+        {
+            window.remove_window();
+            cx.emit(WorkspaceSatelliteEvent::Closing);
+            return;
+        }
+
         self.workspace.update(cx, move |workspace, cx| {
             workspace.handle_pane_event(pane, event, window, cx)
         })

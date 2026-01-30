@@ -3259,18 +3259,11 @@ impl Workspace {
         })
     }
 
-    pub fn detach_item(
+    pub fn create_satellite(
         &mut self,
-        item_to_detach: EntityId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<WindowHandle<WorkspaceSatellite>> {
-        let source_pane = self
-            .panes_by_item
-            .get(&item_to_detach)
-            .and_then(|weak| weak.upgrade())
-            .ok_or_else(|| anyhow::anyhow!("Item not found in any pane"))?;
-
         let current_bounds = window.bounds();
         let new_bounds = gpui::Bounds {
             origin: current_bounds.origin,
@@ -3287,40 +3280,42 @@ impl Workspace {
                 ..Default::default()
             },
             {
-                let project = self.project.clone();
-                let pane_history_timestamp = self.pane_history_timestamp.clone();
-                move |window, cx| {
-                    let root = cx.new(|cx| {
-                        Pane::new(
-                            workspace.downgrade(),
-                            project,
-                            pane_history_timestamp,
-                            None,
-                            NewFile.boxed_clone(),
-                            true,
-                            window,
-                            cx,
-                        )
-                    });
-
-                    cx.new(|cx| WorkspaceSatellite::new(root, workspace, window, cx))
+                |window, cx| {
+                    cx.new(|cx| {
+                        WorkspaceSatellite::new(self.create_pane(window, cx), workspace, window, cx)
+                    })
                 }
             },
         )?;
 
-        let root = window_handle.update(cx, |satellite, window, cx| {
+        self.satellites.push(window_handle);
+
+        Ok(window_handle)
+    }
+
+    pub fn detach_item(
+        &mut self,
+        item_to_detach: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<WindowHandle<WorkspaceSatellite>> {
+        let source_pane = self
+            .panes_by_item
+            .get(&item_to_detach)
+            .and_then(|weak| weak.upgrade())
+            .ok_or_else(|| anyhow::anyhow!("Item not found in any pane"))?;
+
+        let satellite = self.create_satellite(window, cx)?;
+        let root = satellite.update(cx, |satellite, window, cx| {
             let root = satellite.center.first_pane();
-
             move_item(&source_pane, &root, item_to_detach, 0, true, window, cx);
-
             root
         })?;
 
         self.panes.push(root);
-        self.satellites.push(window_handle);
 
         cx.notify();
-        Ok(window_handle)
+        Ok(satellite)
     }
 
     pub fn detach_active_item(
@@ -3760,7 +3755,20 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
-        let pane = cx.new(|cx| {
+        let pane = self.create_pane(window, cx);
+
+        cx.subscribe_in(&pane, window, Self::handle_pane_event)
+            .detach();
+        self.panes.push(pane.clone());
+
+        window.focus(&pane.focus_handle(cx), cx);
+
+        cx.emit(Event::PaneAdded(pane.clone()));
+        pane
+    }
+
+    fn create_pane(&mut self, window: &mut Window, cx: &mut App) -> Entity<Pane> {
+        cx.new(|cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
@@ -3773,15 +3781,7 @@ impl Workspace {
             );
             pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane
-        });
-        cx.subscribe_in(&pane, window, Self::handle_pane_event)
-            .detach();
-        self.panes.push(pane.clone());
-
-        window.focus(&pane.focus_handle(cx), cx);
-
-        cx.emit(Event::PaneAdded(pane.clone()));
-        pane
+        })
     }
 
     pub fn add_item_to_center(
