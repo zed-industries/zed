@@ -402,12 +402,13 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
-            let mut max_id = 0;
+            let max_id = new_entries
+                .iter()
+                .map(|entry| entry.path.id)
+                .max()
+                .unwrap_or(0);
             if !suffix.starts_with('.') && !hidden_entries {
-                new_entries.retain(|entry| {
-                    max_id = max_id.max(entry.path.id);
-                    !entry.path.string.starts_with('.')
-                });
+                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
             }
 
             if suffix.is_empty() {

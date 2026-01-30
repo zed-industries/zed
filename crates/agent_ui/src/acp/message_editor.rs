@@ -1017,7 +1017,8 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mention_uri = MentionUri::TerminalSelection;
+        let line_count = text.lines().count() as u32;
+        let mention_uri = MentionUri::TerminalSelection { line_count };
         let mention_text = mention_uri.as_link().to_string();
 
         let (excerpt_id, text_anchor, content_len) = self.editor.update(cx, |editor, cx| {

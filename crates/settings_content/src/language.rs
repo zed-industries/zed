@@ -167,6 +167,25 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Experimental(_) => false,
         }
     }
+
+    pub fn display_name(&self) -> Option<&'static str> {
+        match self {
+            EditPredictionProvider::Zed => Some("Zed AI"),
+            EditPredictionProvider::Copilot => Some("GitHub Copilot"),
+            EditPredictionProvider::Supermaven => Some("Supermaven"),
+            EditPredictionProvider::Codestral => Some("Codestral"),
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => Some("Sweep"),
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => Some("Mercury"),
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => Some("Zeta2"),
+            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+        }
+    }
 }
 
 /// The contents of the edit prediction settings.
