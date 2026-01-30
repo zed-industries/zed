@@ -1,4 +1,4 @@
-use gpui::{App, Entity, EventEmitter, Focusable, Window, prelude::*};
+use gpui::{Entity, EventEmitter, Focusable, Window, prelude::*};
 use ui::{ParentElement, Render, Styled, div};
 
 use crate::{ActivePaneDecorator, Pane, PaneGroup, Workspace, client_side_decorations, pane};
@@ -32,6 +32,10 @@ impl WorkspaceSatellite {
         }
     }
 
+    pub fn root(&self) -> Entity<Pane> {
+        self.center.first_pane()
+    }
+
     fn handle_pane_event(
         &mut self,
         pane: &Entity<Pane>,
@@ -43,7 +47,7 @@ impl WorkspaceSatellite {
             && self.center.first_pane() == self.center.last_pane()
         {
             window.remove_window();
-            cx.emit(WorkspaceSatelliteEvent::Closing);
+            cx.emit(Event::Closing);
             return;
         }
 
@@ -53,11 +57,11 @@ impl WorkspaceSatellite {
     }
 }
 
-pub enum WorkspaceSatelliteEvent {
+pub enum Event {
     Closing,
 }
 
-impl EventEmitter<WorkspaceSatelliteEvent> for WorkspaceSatellite {}
+impl EventEmitter<Event> for WorkspaceSatellite {}
 
 impl Render for WorkspaceSatellite {
     fn render(

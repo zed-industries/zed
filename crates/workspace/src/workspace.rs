@@ -3288,6 +3288,13 @@ impl Workspace {
             },
         )?;
 
+        cx.subscribe_in(
+            &window_handle.entity(cx)?,
+            window,
+            Self::handle_satellite_event,
+        )
+        .detach();
+
         self.satellites.push(window_handle);
 
         Ok(window_handle)
@@ -3307,7 +3314,7 @@ impl Workspace {
 
         let satellite = self.create_satellite(window, cx)?;
         let root = satellite.update(cx, |satellite, window, cx| {
-            let root = satellite.center.first_pane();
+            let root = satellite.root();
             move_item(&source_pane, &root, item_to_detach, 0, true, window, cx);
             root
         })?;
@@ -4545,6 +4552,21 @@ impl Workspace {
         self.active_pane = pane.clone();
         self.active_item_path_changed(true, window, cx);
         self.last_active_center_pane = Some(pane.downgrade());
+    }
+
+    fn handle_satellite_event(
+        &mut self,
+        satellite: &Entity<WorkspaceSatellite>,
+        event: &workspace_satellite::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            workspace_satellite::Event::Closing => {
+                let root = satellite.read(cx).root();
+                self.remove_pane(root, Some(self.active_pane().clone()), window, cx);
+            }
+        }
     }
 
     fn handle_panel_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
