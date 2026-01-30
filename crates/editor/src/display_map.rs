@@ -525,6 +525,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -613,6 +618,7 @@ impl DisplayMap {
                 self_new_wrap_snapshot,
                 self_new_wrap_edits,
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.insert(blocks);
@@ -650,6 +656,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -691,6 +702,7 @@ impl DisplayMap {
                 self_new_wrap_snapshot,
                 self_new_wrap_edits,
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
         });
@@ -731,6 +743,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -773,6 +790,7 @@ impl DisplayMap {
                 self_new_wrap_snapshot,
                 self_new_wrap_edits,
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.remove_intersecting_replace_blocks(offset_ranges, inclusive);
@@ -802,6 +820,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -815,6 +838,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.disable_header_for_buffer(buffer_id);
@@ -865,6 +889,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -880,6 +909,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.fold_buffers(buffer_ids.iter().copied(), multi_buffer, cx);
@@ -897,6 +927,7 @@ impl DisplayMap {
             let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
                     let their_companion_entity = dm.companion.as_ref().map(|(_, c)| c.clone());
+                    let their_companion_block_map = dm.block_map.downgrade();
                     let their_entity_id = dm.entity_id;
                     let their_buffer_entity = dm.buffer.clone();
                     dm.block_map.update(cx, |block_map, cx| {
@@ -907,6 +938,7 @@ impl DisplayMap {
                             companion_snapshot,
                             companion_edits,
                             Some((&self_wrap_snapshot, &self_wrap_edits)),
+                            Some(their_companion_block_map),
                             their_companion_ref.map(|c| (c, their_entity_id)),
                         );
                         if !their_buffer_ids.is_empty() {
@@ -949,6 +981,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -964,6 +1001,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.unfold_buffers(buffer_ids.iter().copied(), multi_buffer, cx);
@@ -981,6 +1019,7 @@ impl DisplayMap {
             let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
                     let their_companion_entity = dm.companion.as_ref().map(|(_, c)| c.clone());
+                    let their_companion_block_map = dm.block_map.downgrade();
                     let their_entity_id = dm.entity_id;
                     let their_buffer_entity = dm.buffer.clone();
                     dm.block_map.update(cx, |block_map, cx| {
@@ -991,6 +1030,7 @@ impl DisplayMap {
                             companion_snapshot,
                             companion_edits,
                             Some((&self_wrap_snapshot, &self_wrap_edits)),
+                            Some(their_companion_block_map),
                             their_companion_ref.map(|c| (c, their_entity_id)),
                         );
                         if !their_buffer_ids.is_empty() {
@@ -1049,6 +1089,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -1063,6 +1108,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.insert(blocks)
@@ -1094,6 +1140,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -1107,6 +1158,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.resize(heights);
@@ -1147,6 +1199,11 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
+        let companion_block_map = self
+            .companion
+            .as_ref()
+            .and_then(|(companion_dm, _)| companion_dm.upgrade())
+            .map(|dm| dm.read(cx).block_map.downgrade());
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
@@ -1160,6 +1217,7 @@ impl DisplayMap {
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
                 companion_wrap_edits,
+                companion_block_map,
                 companion_ref.map(|c| (c, entity_id)),
             );
             block_map_writer.remove(ids);
@@ -2500,9 +2558,7 @@ pub mod tests {
     };
     use Bias::*;
     use block_map::BlockPlacement;
-    use gpui::{
-        App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px,
-    };
+    use gpui::{App, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px};
     use language::{
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
