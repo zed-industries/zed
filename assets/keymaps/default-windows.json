@@ -733,8 +733,8 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "ctrl-shift-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-shift-down": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -743,8 +743,8 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "ctrl-shift-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-shift-down": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
