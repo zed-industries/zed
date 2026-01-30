@@ -3601,6 +3601,7 @@ fn all_projects(
     window: Option<&WindowHandle<Workspace>>,
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
+    let mut seen_project_ids = std::collections::HashSet::new();
     workspace::AppState::global(cx)
         .upgrade()
         .map(|app_state| {
@@ -3613,6 +3614,7 @@ fn all_projects(
                 .chain(
                     window.and_then(|workspace| Some(workspace.read(cx).ok()?.project().clone())),
                 )
+                .filter(move |project| seen_project_ids.insert(project.entity_id()))
         })
         .into_iter()
         .flatten()
