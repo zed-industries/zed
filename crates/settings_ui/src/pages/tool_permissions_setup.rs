@@ -81,6 +81,7 @@ pub(crate) fn render_tool_permissions_setup_page(
         .pt_4()
         .px_8()
         .pb_16()
+        .gap_4()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
         .child(Label::new("Tool Permission Rules"))
@@ -90,15 +91,13 @@ pub(crate) fn render_tool_permissions_setup_page(
                 .color(Color::Muted),
         )
         .child(
-            v_flex()
-                .mt_4()
-                .children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
-                    let mut elements: Vec<AnyElement> = vec![item];
-                    if i + 1 < TOOLS.len() {
-                        elements.push(Divider::horizontal().into_any_element());
-                    }
-                    elements
-                })),
+            v_flex().children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
+                let mut elements: Vec<AnyElement> = vec![item];
+                if i + 1 < TOOLS.len() {
+                    elements.push(Divider::horizontal().into_any_element());
+                }
+                elements
+            })),
         )
         .into_any_element()
 }
