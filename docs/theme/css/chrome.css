@@ -678,87 +678,12 @@ ul#searchresults span.teaser em {
   box-shadow: none;
 }
 
-.search-button {
+#inkeep-search {
   min-width: 100px;
   max-width: 300px;
-  height: 28px;
-  width: 100%;
-  padding: 4px 4px 4px 8px;
-  display: flex;
-  gap: 8px;
-  background: var(--search-btn-bg);
-  border: 1px solid;
-  border-color: var(--search-btn-border);
-  font-size: 1.4rem;
-  font-family: var(--font);
-  color: var(--icons);
-  border-radius: 4px;
-  transition: 100ms;
-  transition-property: box-shadow, border-color, background-color;
-}
-
-.search-button:hover {
-  background: var(--search-btn-bg-hover);
-}
-
-.search-button .icon {
-  width: 12px;
-  height: 12px;
-  transform: translateY(10%);
-  scale: 0.9;
-}
-
-.search-content-desktop {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-}
-
-.search-content-mobile {
-  display: none;
-}
-
-.search-container {
-  box-sizing: border-box;
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  padding: 24px;
-  padding-top: 72px;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: none;
-  justify-content: center;
-}
-
-.search-container:has(#search-wrapper:not(.hidden)) {
-  display: flex;
-}
-
-.search-modal {
-  box-sizing: border-box;
-
-  max-width: 600px;
-  min-width: 600px;
-  height: fit-content;
-  max-height: 600px;
-  display: flex;
-  flex-direction: column;
-  padding: 16px;
-  overflow-y: auto;
-
-  border-radius: 8px;
-  background: var(--popover-bg);
-  border: 1px solid var(--popover-border);
-  box-shadow: var(--popover-shadow);
-}
-
-.searchbar-outer {
   width: 100%;
 }
 
-#searchbar {
-  margin: 0;
-}
 
 @media only screen and (max-width: 780px) {
   .header-bar {
@@ -782,7 +707,7 @@ ul#searchresults span.teaser em {
     width: fit-content;
   }
 
-  .search-button {
+  #inkeep-search {
     width: 100px;
     margin-left: auto;
     margin-right: 8px;
@@ -790,19 +715,6 @@ ul#searchresults span.teaser em {
 
   .ib-hidden-desktop {
     display: block;
-  }
-
-  .search-modal {
-    width: 90vw;
-    min-width: auto;
-  }
-
-  .search-content-desktop {
-    display: none;
-  }
-
-  .search-content-mobile {
-    display: flex;
   }
 
   .theme-popup {

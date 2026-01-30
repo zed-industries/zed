@@ -10,12 +10,21 @@
     aiChatSettings: {
       aiAssistantName: "Zed Assistant",
     },
-    label: "Ask Zed",
   };
 
   function initInkeep() {
     if (typeof Inkeep !== "undefined") {
-      Inkeep.ChatButton(config);
+      Inkeep.ChatButton({ ...config, label: "Ask Zed" });
+
+      var searchContainer = document.getElementById("inkeep-search");
+      if (searchContainer) {
+        Inkeep.SearchBar("#inkeep-search", {
+          baseSettings: config.baseSettings,
+          searchSettings: {
+            placeholder: "Search docs...",
+          },
+        });
+      }
     } else {
       setTimeout(initInkeep, 100);
     }

@@ -100,18 +100,7 @@
                     <i class="fa fa-bars"></i>
                 </button>
             </div>
-            {{#if search_enabled}}
-            <button id="search-toggle" class="search-button" type="button" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
-                <i class="icon fa fa-search"></i>
-                <span class="search-content-desktop">
-                    <span class="placeholder">Search docs…</span>
-                    <kbd>S</kbd>
-                </span>
-                <span class="search-content-mobile">
-                    <span class="placeholder">Search…</span>
-                </span>
-            </button>
-            {{/if}}
+            <div id="inkeep-search"></div>
             <div class="right-container">
                 <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                     <i class="fa fa-paint-brush"></i>
@@ -144,20 +133,6 @@
 
         <div id="page-wrapper" class="page-wrapper">
 
-            {{#if search_enabled}}
-            <div class="search-container">
-                <div id="search-wrapper" class="search-modal hidden">
-                    <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" id="searchbar" name="searchbar" placeholder="Search…" aria-controls="searchresults-outer" aria-describedby="searchresults-header">
-                    </form>
-                    <div id="searchresults-outer" class="searchresults-outer">
-                        <div id="searchresults-header" class="searchresults-header"></div>
-                        <ul id="searchresults">
-                        </ul>
-                    </div>
-                </div>
-            </div>
-            {{/if}}
 
             <nav id="sidebar" class="sidebar" aria-label="Table of contents">
                 <div class="sidebar-scrollbox">
@@ -191,30 +166,6 @@
                 })();
             </script>
 
-            <!-- Search backdrop handlers -->
-            <script>
-                (function() {
-                    var searchWrapper = document.getElementById('search-wrapper');
-                    var searchContainer = document.querySelector('.search-container');
-                    var searchResults = document.getElementById('searchresults');
-
-                    if (!searchWrapper || !searchContainer) return;
-
-                    searchContainer.addEventListener('click', function(e) {
-                        if (e.target === searchContainer) {
-                            searchWrapper.classList.add('hidden');
-                        }
-                    });
-
-                    if (searchResults) {
-                        searchResults.addEventListener('click', function(e) {
-                            if (e.target.tagName === 'A' || e.target.closest('a')) {
-                                searchWrapper.classList.add('hidden');
-                            }
-                        });
-                    }
-                })();
-            </script>
 
             <!-- Insert section spacers and apply collapsed state before scroll restoration to prevent layout shift/flicker -->
             <script>
