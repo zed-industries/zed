@@ -376,20 +376,6 @@ After adding your API key, Mercury Coder will appear in the provider dropdown in
 }
 ```
 
-### Supermaven {#supermaven}
-
-To use Supermaven as your provider, set this within `settings.json`:
-
-```json [settings]
-{
-  "features": {
-    "edit_prediction_provider": "supermaven"
-  }
-}
-```
-
-You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
-
 ### Codestral {#codestral}
 
 To use Mistral's Codestral as your provider:
