@@ -459,7 +459,7 @@ fn runnable_ranges(
                     return (jupytext_snippets[0..jupytext_snippets.len()-1].to_vec(), next_cursor);
                 }
                 else{
-                    // either the cursor is in the first cell or there's no cell in whole fike, run codes above cursor, exclude the current line.
+                    // either the cursor is in the first cell or there's no cell in whole file, run codes above cursor, exclude the current line.
                     snippet_range = cell_range(buffer, 0, range.start.row-1);
                 }
             } else {
