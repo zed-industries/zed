@@ -195,7 +195,8 @@ jobs:
           }
           PROMPT_EOF
 
-          # shellcheck disable=SC2016 -- single quotes are intentional to prevent bash expansion; node reads env vars via process.env
+          # Single quotes are intentional to prevent bash expansion; node reads env vars via process.env
+          # shellcheck disable=SC2016
           node << 'SCRIPT_EOF'
           const fs = require('fs');
           let prompt = fs.readFileSync('/tmp/area_prompt.txt', 'utf8');
@@ -524,7 +525,8 @@ jobs:
           }
           PROMPT_EOF
 
-          # shellcheck disable=SC2016 -- single quotes are intentional to prevent bash expansion; node reads env vars via process.env
+          # Single quotes are intentional to prevent bash expansion; node reads env vars via process.env
+          # shellcheck disable=SC2016
           node << 'SCRIPT_EOF'
           const fs = require('fs');
 
