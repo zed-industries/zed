@@ -227,11 +227,6 @@ impl SelectionsCollection {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
-
-        if start_ix >= end_ix {
-            return Vec::new();
-        }
-
         resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
 
