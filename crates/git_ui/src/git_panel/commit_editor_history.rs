@@ -16,11 +16,6 @@ pub(crate) struct CommitEditorHistory {
 }
 
 impl CommitEditorHistory {
-    pub fn entries(&self) -> impl Iterator<Item = &String> {
-        self.entries.iter()
-    }
-
-    // TODO: add 2nd param, String, taked from the editor text upon commit_changes
     pub fn add_new_entry(&mut self, message: String) {
         // not checking for an empty message - relying on the commit editor not letting it through
 
