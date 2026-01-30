@@ -1,9 +1,8 @@
 use editor::Editor;
-use gpui::{ElementId, Focusable, div};
-use ui::{
-    ActiveTheme as _, App, FluentBuilder as _, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, Styled as _, Window,
-};
+use gpui::{ElementId, Focusable, TextStyleRefinement, div};
+use settings::Settings as _;
+use theme::ThemeSettings;
+use ui::{prelude::*, rems};
 
 #[derive(IntoElement)]
 pub struct SettingsInputField {
@@ -12,6 +11,7 @@ pub struct SettingsInputField {
     placeholder: Option<&'static str>,
     confirm: Option<Box<dyn Fn(Option<String>, &mut Window, &mut App)>>,
     tab_index: Option<isize>,
+    use_buffer_font: bool,
 }
 
 impl SettingsInputField {
@@ -22,6 +22,7 @@ impl SettingsInputField {
             placeholder: None,
             confirm: None,
             tab_index: None,
+            use_buffer_font: false,
         }
     }
 
@@ -52,10 +53,17 @@ impl SettingsInputField {
         self.tab_index = Some(arg);
         self
     }
+
+    pub fn with_buffer_font(mut self) -> Self {
+        self.use_buffer_font = true;
+        self
+    }
 }
 
 impl RenderOnce for SettingsInputField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
+        let use_buffer_font = self.use_buffer_font;
+
         let editor = if let Some(id) = self.id {
             window.use_keyed_state(id, cx, {
                 let initial_text = self.initial_text.clone();
@@ -68,6 +76,14 @@ impl RenderOnce for SettingsInputField {
 
                     if let Some(placeholder) = placeholder {
                         editor.set_placeholder_text(placeholder, window, cx);
+                    }
+                    if use_buffer_font {
+                        let settings = ThemeSettings::get_global(cx);
+                        editor.set_text_style_refinement(TextStyleRefinement {
+                            font_family: Some(settings.buffer_font.family.clone()),
+                            font_size: Some(rems(0.75).into()),
+                            ..Default::default()
+                        });
                     }
                     editor
                 }
@@ -84,6 +100,14 @@ impl RenderOnce for SettingsInputField {
 
                     if let Some(placeholder) = placeholder {
                         editor.set_placeholder_text(placeholder, window, cx);
+                    }
+                    if use_buffer_font {
+                        let settings = ThemeSettings::get_global(cx);
+                        editor.set_text_style_refinement(TextStyleRefinement {
+                            font_family: Some(settings.buffer_font.family.clone()),
+                            font_size: Some(rems(0.75).into()),
+                            ..Default::default()
+                        });
                     }
                     editor
                 }

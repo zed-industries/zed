@@ -310,6 +310,7 @@ fn render_pattern_row(
                 .with_id(input_id)
                 .with_initial_text(pattern)
                 .tab_index(0)
+                .with_buffer_font()
                 .on_confirm(move |new_pattern, _window, cx| {
                     if let Some(new_pattern) = new_pattern {
                         let new_pattern = new_pattern.trim().to_string();
@@ -362,6 +363,7 @@ fn render_add_pattern_input(
                 .with_id(input_id)
                 .with_placeholder("Add regex pattern…")
                 .tab_index(0)
+                .with_buffer_font()
                 .on_confirm(move |pattern, _window, cx| {
                     if let Some(pattern) = pattern {
                         if !pattern.trim().is_empty() {
