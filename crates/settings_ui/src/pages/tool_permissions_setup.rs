@@ -259,10 +259,12 @@ fn render_verification_section(
     cx.observe(&editor, |_, _, cx| cx.notify()).detach();
 
     let current_text = editor.read(cx).text(cx);
-    let decision = if current_text.is_empty() {
-        None
+    let (decision, matched_patterns) = if current_text.is_empty() {
+        (None, Vec::new())
     } else {
-        Some(evaluate_test_input(tool_id, &current_text, cx))
+        let matches = find_matched_patterns(tool_id, &current_text, cx);
+        let decision = evaluate_test_input(tool_id, &current_text, cx);
+        (Some(decision), matches)
     };
 
     let theme_colors = cx.theme().colors();
@@ -298,6 +300,9 @@ fn render_verification_section(
                 )
                 .child(render_verification_result(decision.as_ref(), cx)),
         )
+        .when(!matched_patterns.is_empty(), |this| {
+            this.child(render_matched_patterns(&matched_patterns, cx))
+        })
         .when(always_allow_enabled, |this| {
             this.child(
                 h_flex()
@@ -310,13 +315,10 @@ fn render_verification_section(
                             .color(Color::Warning),
                     )
                     .child({
-                        let warning_color = Color::Warning.color(cx);
-                        let hover_color = Color::Default.color(cx);
                         div()
                             .id("always-allow-link")
                             .cursor_pointer()
-                            .text_color(warning_color)
-                            .hover(|style| style.text_color(hover_color))
+                            .text_color(Color::Warning.color(cx))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.navigate_to_setting(
                                     "agent.always_allow_tool_actions",
@@ -339,6 +341,100 @@ fn render_verification_section(
                     ),
             )
         })
+        .into_any_element()
+}
+
+#[derive(Clone, Debug)]
+struct MatchedPattern {
+    pattern: String,
+    rule_type: RuleType,
+    is_overridden: bool,
+}
+
+fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPattern> {
+    let settings = AgentSettings::get_global(cx);
+    let rules = match settings.tool_permissions.tools.get(tool_id) {
+        Some(rules) => rules,
+        None => return Vec::new(),
+    };
+
+    let mut matched = Vec::new();
+    let mut has_deny_match = false;
+    let mut has_confirm_match = false;
+
+    for rule in &rules.always_deny {
+        if rule.is_match(input) {
+            has_deny_match = true;
+            matched.push(MatchedPattern {
+                pattern: rule.pattern.clone(),
+                rule_type: RuleType::Deny,
+                is_overridden: false,
+            });
+        }
+    }
+
+    for rule in &rules.always_confirm {
+        if rule.is_match(input) {
+            has_confirm_match = true;
+            matched.push(MatchedPattern {
+                pattern: rule.pattern.clone(),
+                rule_type: RuleType::Confirm,
+                is_overridden: has_deny_match,
+            });
+        }
+    }
+
+    for rule in &rules.always_allow {
+        if rule.is_match(input) {
+            matched.push(MatchedPattern {
+                pattern: rule.pattern.clone(),
+                rule_type: RuleType::Allow,
+                is_overridden: has_deny_match || has_confirm_match,
+            });
+        }
+    }
+
+    matched
+}
+
+fn render_matched_patterns(patterns: &[MatchedPattern], _cx: &App) -> AnyElement {
+    v_flex()
+        .mt_2()
+        .gap_1()
+        .children(patterns.iter().map(|pattern| {
+            let (type_label, color) = match pattern.rule_type {
+                RuleType::Deny => ("Always Deny", Color::Error),
+                RuleType::Confirm => ("Always Confirm", Color::Warning),
+                RuleType::Allow => ("Always Allow", Color::Success),
+            };
+
+            let text_color = if pattern.is_overridden {
+                Color::Muted
+            } else {
+                color
+            };
+
+            h_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .when(pattern.is_overridden, |this| this.line_through())
+                        .child(
+                            Label::new(pattern.pattern.clone())
+                                .size(LabelSize::Small)
+                                .color(text_color),
+                        ),
+                )
+                .child(
+                    div()
+                        .when(pattern.is_overridden, |this| this.line_through())
+                        .child(
+                            Label::new(type_label)
+                                .size(LabelSize::XSmall)
+                                .color(text_color),
+                        ),
+                )
+        }))
         .into_any_element()
 }
 
