@@ -222,6 +222,10 @@ impl Model {
         self.name.as_str()
     }
 
+    pub fn request_multipler(&self) -> f64 {
+        self.billing.multiplier
+    }
+
     pub fn max_token_count(&self) -> u64 {
         self.capabilities.limits.max_prompt_tokens
     }
@@ -731,6 +735,10 @@ async fn request_models(
     response.body_mut().read_to_end(&mut body).await?;
 
     let body_str = std::str::from_utf8(&body)?;
+
+    log::info!("=== Copilot Models API Response ===");
+    log::info!("{}", body_str);
+    log::info!("=== End Copilot Models API Response ===");
 
     let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 

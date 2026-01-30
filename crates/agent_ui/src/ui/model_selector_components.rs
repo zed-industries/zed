@@ -119,6 +119,20 @@ impl RenderOnce for ModelSelectorListItem {
                 h_flex()
                     .w_full()
                     .gap_1p5()
+                    .child(
+                        div()
+                            .w(rems(0.75))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(self.is_selected, |this| {
+                                this.child(
+                                    Icon::new(IconName::Check)
+                                        .color(Color::Accent)
+                                        .size(IconSize::Small),
+                                )
+                            }),
+                    )
                     .when_some(self.icon, |this, icon| {
                         this.child(
                             match icon {
@@ -131,9 +145,11 @@ impl RenderOnce for ModelSelectorListItem {
                     })
                     .child(Label::new(self.title).truncate()),
             )
-            .end_slot(div().pr_2().when(self.is_selected, |this| {
-                this.child(Icon::new(IconName::Check).color(Color::Accent))
-            }))
+            .end_slot(
+                div()
+                    .pr_3()
+                    .child(Label::new(format!("{}x", 3)).color(Color::Muted)),
+            )
             .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
                 |this, handle_click| {
                     let (icon, color, tooltip) = if is_favorite {
