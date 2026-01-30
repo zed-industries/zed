@@ -253,7 +253,10 @@ impl GitHostingProvider for Gitlab {
             .ok()?;
 
         let mut url = self.base_url();
-        let path = format!("{}/{}/-/merge_requests/{}", remote.owner, remote.repo, number);
+        let path = format!(
+            "{}/{}/-/merge_requests/{}",
+            remote.owner, remote.repo, number
+        );
         url.set_path(&path);
 
         Some(PullRequest { number, url })
@@ -546,7 +549,8 @@ mod tests {
         let provider = Gitlab::public_instance();
 
         // Test standard merge commit pattern: "See merge request group/project!123"
-        let message = "Merge branch 'feature' into 'main'\n\nSee merge request zed-industries/zed!789";
+        let message =
+            "Merge branch 'feature' into 'main'\n\nSee merge request zed-industries/zed!789";
         let pull_request = provider.extract_pull_request(&remote, message).unwrap();
 
         assert_eq!(pull_request.number, 789);
