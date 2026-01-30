@@ -168,6 +168,7 @@ impl TeacherPrompt {
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
+    pub(crate) const NO_EDITS: &str = "NO_EDITS";
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
@@ -193,6 +194,12 @@ impl TeacherPrompt {
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
+
+        // Check if the model indicated no edits are needed
+        if new_editable_region.trim() == Self::NO_EDITS {
+            return Ok(String::new());
+        }
+
         let mut new_editable_region = Self::extract_editable_region(&new_editable_region)?;
         let old_editable_region = Self::extract_editable_region(
             &example
@@ -549,6 +556,19 @@ mod tests {
             one
             two three"}
         );
+    }
+
+    #[test]
+    fn test_parse_no_edits_response() {
+        let response = indoc::indoc! {"
+            The code is already complete. There is no clear next edit to make.
+
+            `````
+            NO_EDITS
+            `````
+        "};
+        let codeblock = extract_last_codeblock(response);
+        assert_eq!(codeblock.trim(), TeacherPrompt::NO_EDITS);
     }
 
     #[test]

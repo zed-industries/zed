@@ -36,6 +36,10 @@ You will be provided with:
 
 - Briefly explain the user's current intent based on the edit history and their current cursor location.
 - Output a markdown codeblock containing **only** the editable region with your predicted edits applied. The codeblock must start with `<|editable_region_start|>` and end with `<|editable_region_end|>`. Do not include any content before or after these tags.
+- If no edit is needed (the code is already complete and correct, or there is no clear next edit to make), output a codeblock containing only `NO_EDITS`:
+  `````
+  NO_EDITS
+  `````
 - If the next edit has some uncertainty, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
   - e.g. if a user is typing `func<|user_cursor|>`, but you don't know what the function name should be, you can predict `function <|user_cursor|>() {}`
 
@@ -135,6 +139,40 @@ fn handle_close_button_click(modal_state: &mut ModalState, evt: &Event) {
     eprintln!("<|user_cursor|>");
     modal_state.dismiss();
 <|editable_region_end|>
+`````
+
+## Example 3
+
+The code is already complete and there is no clear next edit to make. You should output NO_EDITS.
+
+### User Edit History
+
+`````
+--- a/src/utils.rs
++++ b/src/utils.rs
+@@ -10,7 +10,7 @@
+ fn add(a: i32, b: i32) -> i32 {
+-    a - b
++    a + b
+ }
+`````
+
+### Current File
+
+`````src/utils.rs
+<|editable_region_start|>
+fn add(a: i32, b: i32) -> i32 {
+    a + b<|user_cursor|>
+}
+<|editable_region_end|>
+`````
+
+### Output
+
+The user just fixed a bug in the `add` function, changing subtraction to addition. The code is now correct and complete. There is no clear next edit to make.
+
+`````
+NO_EDITS
 `````
 
 
