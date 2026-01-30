@@ -33,6 +33,7 @@ use crate::{
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
+    pub remote_user: String,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
 }
@@ -440,6 +441,9 @@ impl DockerExecConnection {
             Some(dir) => vec!["-w".to_string(), dir.to_string()],
             None => vec![],
         };
+
+        args.push("-u".to_string());
+        args.push(self.connection_options.remote_user.clone());
 
         for (k, v) in env.iter() {
             args.push("-e".to_string());

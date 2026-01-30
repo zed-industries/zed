@@ -1448,7 +1448,8 @@ impl WorkspaceDb {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(options.container_id);
                 name = Some(options.name);
-                use_podman = Some(options.use_podman)
+                use_podman = Some(options.use_podman);
+                user = Some(options.remote_user);
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {
@@ -1691,6 +1692,7 @@ impl WorkspaceDb {
                 Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     container_id: container_id?,
                     name: name?,
+                    remote_user: user?,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
                 }))
