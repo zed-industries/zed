@@ -568,8 +568,10 @@ async fn load_examples(
     // Skip resume logic for --in-place since input and output are the same file,
     // which would incorrectly treat all input examples as already processed.
     if !args.in_place {
-        if let Some(path) = output_path {
-            resume_from_output(path, &mut examples);
+        if let Some(path) = output_path
+            && let Some(command) = &args.command
+        {
+            resume_from_output(path, &mut examples, command);
         }
     }
 
@@ -594,7 +596,7 @@ fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
     hasher.finish()
 }
 
-fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
+fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>, command: &Command) {
     let file = match File::open(path) {
         Ok(f) => f,
         Err(_) => return,
@@ -615,8 +617,22 @@ fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
         if let Ok(output_example) = serde_json::from_str::<Example>(&line) {
             let hash = spec_hash(&output_example.spec);
             if input_hashes.contains(&hash) && !kept_hashes.contains(&hash) {
-                kept_hashes.insert(hash);
-                kept_lines.push(line);
+                let is_complete = match command {
+                    Command::Qa(_) => output_example
+                        .qa
+                        .first()
+                        .and_then(|q| q.as_ref())
+                        .and_then(|q| q.confidence)
+                        .is_some(),
+                    Command::Repair(_) => output_example.predictions.iter().any(|p| {
+                        p.provider == PredictionProvider::Repair && p.actual_patch.is_some()
+                    }),
+                    _ => true,
+                };
+                if is_complete {
+                    kept_hashes.insert(hash);
+                    kept_lines.push(line);
+                }
             }
         }
     }
