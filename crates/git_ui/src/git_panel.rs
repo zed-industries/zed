@@ -2217,6 +2217,7 @@ impl GitPanel {
             return false;
         }
     }
+    
     pub fn head_commit(&self, cx: &App) -> Option<CommitDetails> {
         self.active_repository
             .as_ref()
@@ -2339,6 +2340,8 @@ impl GitPanel {
             self.fill_co_authors(&mut message, cx);
         }
 
+        let commit_history_message = message.clone();
+
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.update(cx, |repo, cx| {
@@ -2376,7 +2379,7 @@ impl GitPanel {
 
                 match result {
                     Ok(()) => {
-                        this.add_commit_history_entry(cx);
+                        this.add_commit_history_entry(commit_history_message, cx);
 
                         if options.amend {
                             this.set_amend_pending(false, cx);
@@ -2395,10 +2398,8 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn add_commit_history_entry(&mut self, cx: &mut Context<Self>) {
-        // FIXME: if there is no text, add placeholder text to the commit history
-        self.commit_editor_history
-            .add_new_entry(self.commit_editor.read(cx).text(cx));
+    fn add_commit_history_entry(&mut self, commit_message: String, cx: &mut Context<Self>) {
+        self.commit_editor_history.add_new_entry(commit_message);
         self.serialize(cx);
         cx.notify();
     }
