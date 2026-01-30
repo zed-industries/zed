@@ -1,6 +1,6 @@
 use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
-use gpui::{ReadGlobal, ScrollHandle, prelude::*};
+use gpui::{Focusable, ReadGlobal, ScrollHandle, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
@@ -213,7 +213,7 @@ pub(crate) fn render_tool_config_page(
                 .child(render_rule_section(
                     tool_id,
                     "Always Deny",
-                    "Patterns that auto-reject (highest priority).",
+                    "If any of these regexes match, the tool action will be denied.",
                     RuleType::Deny,
                     &rules.always_deny,
                     cx,
@@ -257,6 +257,9 @@ fn render_verification_section(
     });
 
     cx.observe(&editor, |_, _, cx| cx.notify()).detach();
+
+    let focus_handle = editor.focus_handle(cx);
+    window.focus(&focus_handle, cx);
 
     let current_text = editor.read(cx).text(cx);
     let (decision, matched_patterns) = if current_text.is_empty() {
