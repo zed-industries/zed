@@ -51,6 +51,7 @@ pub struct ModelSelectorListItem {
     is_selected: bool,
     is_focused: bool,
     is_favorite: bool,
+    multiplier: Option<f64>,
     on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -63,6 +64,7 @@ impl ModelSelectorListItem {
             is_selected: false,
             is_focused: false,
             is_favorite: false,
+            multiplier: None,
             on_toggle_favorite: None,
         }
     }
@@ -89,6 +91,11 @@ impl ModelSelectorListItem {
 
     pub fn is_favorite(mut self, is_favorite: bool) -> Self {
         self.is_favorite = is_favorite;
+        self
+    }
+    
+    pub fn multiplier(mut self, multiplier: Option<f64>) -> Self {
+        self.multiplier = multiplier;
         self
     }
 
@@ -148,7 +155,9 @@ impl RenderOnce for ModelSelectorListItem {
             .end_slot(
                 div()
                     .pr_3()
-                    .child(Label::new(format!("{}x", 3)).color(Color::Muted)),
+                    .when_some(self.multiplier, |this, multiplier| {
+                        this.child(Label::new(format!("{:.1}x", multiplier)).color(Color::Muted))
+                    })
             )
             .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
                 |this, handle_click| {

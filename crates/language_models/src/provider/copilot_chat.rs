@@ -275,6 +275,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.max_token_count()
     }
 
+    fn request_multiplier(&self) -> Option<f64> {
+        Some(self.model.request_multiplier())
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

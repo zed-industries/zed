@@ -222,7 +222,7 @@ impl Model {
         self.name.as_str()
     }
 
-    pub fn request_multipler(&self) -> f64 {
+    pub fn request_multiplier(&self) -> f64 {
         self.billing.multiplier
     }
 

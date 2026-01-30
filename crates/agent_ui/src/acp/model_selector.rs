@@ -329,6 +329,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 let is_default = default_model.as_ref() == Some(&model_info.id);
 
                 let is_favorite = *is_favorite;
+                let multiplier = model_info.multiplier;
                 let handle_action_click = {
                     let model_id = model_info.id.clone();
                     let fs = self.fs.clone();
@@ -368,6 +369,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .is_favorite(is_favorite)
+                                .multiplier(multiplier)
                                 .on_toggle_favorite(handle_action_click),
                         )
                         .into_any_element(),
@@ -552,6 +554,7 @@ mod tests {
                             name: model.to_string().into(),
                             description: None,
                             icon: None,
+                            multiplier: None,
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -820,12 +823,14 @@ mod tests {
                 name: "Favorite".into(),
                 description: None,
                 icon: None,
+                multiplier: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("regular-model".to_string()),
                 name: "Regular".into(),
                 description: None,
                 icon: None,
+                multiplier: None,
             },
         ]);
         let favorites = create_favorites(vec!["favorite-model"]);
