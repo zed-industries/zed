@@ -58,6 +58,7 @@ sum_tree.workspace = true
 text.workspace = true
 tracing.workspace = true
 util.workspace = true
+zlog.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]
