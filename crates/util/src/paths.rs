@@ -86,7 +86,7 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    fn try_shell_safe(&self, shell_kind: Option<&ShellKind>) -> anyhow::Result<String>;
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -164,19 +164,13 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self, shell_kind: Option<&ShellKind>) -> anyhow::Result<String> {
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
         let path_str = self
             .as_ref()
             .to_str()
             .with_context(|| "Path contains invalid UTF-8")?;
-        let quoted = match shell_kind {
-            Some(kind) => kind.try_quote(path_str),
-            #[cfg(windows)]
-            None => Some(ShellKind::quote_powershell(path_str)),
-            #[cfg(unix)]
-            None => shlex::try_quote(path_str).ok(),
-        };
-        quoted
+        shell_kind
+            .try_quote(path_str)
             .as_deref()
             .map(ToOwned::to_owned)
             .context("Failed to quote path")

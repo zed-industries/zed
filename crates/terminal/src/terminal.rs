@@ -516,7 +516,7 @@ impl TerminalBuilder {
             // the compilation target. This is fine right now due to the restricted
             // way we use the return value, but would become incorrect if we
             // supported remoting into windows.
-            let shell_kind = shell.shell_kind();
+            let shell_kind = shell.shell_kind(cfg!(windows));
 
             let pty_options = {
                 let alac_shell = shell_params.as_ref().map(|params| {
@@ -532,7 +532,7 @@ impl TerminalBuilder {
                     drain_on_exit: true,
                     env: env.clone().into_iter().collect(),
                     #[cfg(windows)]
-                    escape_args: shell_kind.map(|k| k.tty_escape_args()).unwrap_or(true),
+                    escape_args: shell_kind.tty_escape_args(),
                 }
             };
 
@@ -664,10 +664,7 @@ impl TerminalBuilder {
                 // and while we have sent the activation script to the pty, it will be executed asynchronously.
                 // Therefore, we somehow need to wait for the activation script to finish executing before we
                 // can proceed with clearing the screen.
-                let clear_cmd = shell_kind
-                    .map(|k| k.clear_screen_command())
-                    .unwrap_or("clear");
-                terminal.write_to_pty(clear_cmd.as_bytes());
+                terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
                 // Simulate enter key press
                 terminal.write_to_pty(b"\x0d");
             }
@@ -2562,7 +2559,7 @@ mod tests {
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
-            ShellBuilder::new(&Shell::System).build(Some(command.to_owned()), &args);
+            ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2783,7 +2780,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System)
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
             .update(|cx| {
