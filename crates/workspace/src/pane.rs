@@ -4501,11 +4501,12 @@ impl ItemNavHistory {
     }
 
     pub fn navigation_entry(&self, data: Option<Arc<dyn Any + Send + Sync>>) -> NavigationEntry {
+        let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
         NavigationEntry {
             item: self.item.clone(),
             data: data,
             timestamp: 0, // not used
-            is_preview: self.is_preview,
+            is_preview: is_preview_item,
         }
     }
 
