@@ -1598,12 +1598,21 @@ impl RemoteServerProjects {
         });
     }
 
-    fn edit_in_dev_container_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn edit_in_dev_container_json(
+        &mut self,
+        config: Option<DevContainerConfig>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             cx.emit(DismissEvent);
             cx.notify();
             return;
         };
+
+        let config_path = config
+            .map(|c| c.config_path)
+            .unwrap_or_else(|| PathBuf::from(".devcontainer/devcontainer.json"));
 
         workspace.update(cx, |workspace, cx| {
             let project = workspace.project().clone();
@@ -1615,7 +1624,18 @@ impl RemoteServerProjects {
 
             if let Some(worktree) = worktree {
                 let tree_id = worktree.read(cx).id();
-                let devcontainer_path = RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                let devcontainer_path =
+                    match RelPath::new(&config_path, util::paths::PathStyle::Posix) {
+                        Ok(path) => path.into_owned(),
+                        Err(error) => {
+                            log::error!(
+                                "Invalid devcontainer path: {} - {}",
+                                config_path.display(),
+                                error
+                            );
+                            return;
+                        }
+                    };
                 cx.spawn_in(window, async move |workspace, cx| {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
@@ -1910,8 +1930,11 @@ impl RemoteServerProjects {
                             div()
                                 .id("edit-devcontainer-json")
                                 .track_focus(&state.entries[1].focus_handle)
-                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    this.edit_in_dev_container_json(window, cx);
+                                .on_action(cx.listener({
+                                    let config = selected_config.clone();
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.edit_in_dev_container_json(config.clone(), window, cx);
+                                    }
                                 }))
                                 .child(
                                     ListItem::new("li-edit-devcontainer-json")
@@ -1924,12 +1947,20 @@ impl RemoteServerProjects {
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
                                         .child(
-                                            h_flex().gap_1().child(Label::new("Edit")).child(
-                                                Label::new("devcontainer.json").buffer_font(cx),
-                                            ),
+                                            h_flex()
+                                                .gap_1()
+                                                .child(Label::new("Edit"))
+                                                .child(Label::new(config_label).buffer_font(cx)),
                                         )
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.edit_in_dev_container_json(window, cx);
+                                        .on_click(cx.listener({
+                                            let config = selected_config;
+                                            move |this, _, window, cx| {
+                                                this.edit_in_dev_container_json(
+                                                    config.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
                                         })),
                                 ),
                         )
@@ -1938,10 +1969,24 @@ impl RemoteServerProjects {
                             div()
                                 .id("devcontainer-go-back")
                                 .track_focus(&state.entries[2].focus_handle)
-                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                    cx.focus_self(window);
-                                    cx.notify();
+                                .on_action(cx.listener({
+                                    let available_configs = state.available_configs.clone();
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        if available_configs.len() > 1 {
+                                            let state = CreateRemoteDevContainer::new(window, cx)
+                                                .with_configs(
+                                                    available_configs.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            this.mode = Mode::CreateRemoteDevContainer(state);
+                                        } else {
+                                            this.mode =
+                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                        }
+                                        cx.focus_self(window);
+                                        cx.notify();
+                                    }
                                 }))
                                 .child(
                                     ListItem::new("li-devcontainer-go-back")
@@ -1964,11 +2009,28 @@ impl RemoteServerProjects {
                                             )
                                             .size(rems_from_px(12.)),
                                         )
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
-                                            cx.focus_self(window);
-                                            cx.notify()
+                                        .on_click(cx.listener({
+                                            let available_configs = state.available_configs.clone();
+                                            move |this, _, window, cx| {
+                                                if available_configs.len() > 1 {
+                                                    let state =
+                                                        CreateRemoteDevContainer::new(window, cx)
+                                                            .with_configs(
+                                                                available_configs.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                    this.mode =
+                                                        Mode::CreateRemoteDevContainer(state);
+                                                } else {
+                                                    this.mode = Mode::default_mode(
+                                                        &this.ssh_config_servers,
+                                                        cx,
+                                                    );
+                                                }
+                                                cx.focus_self(window);
+                                                cx.notify()
+                                            }
                                         })),
                                 ),
                         ),
@@ -2010,9 +2072,13 @@ impl RemoteServerProjects {
                     .track_focus(&state.entries[index].focus_handle)
                     .on_action(cx.listener({
                         let config = config_clone.clone();
+                        let configs = configs.clone();
                         move |this, _: &menu::Confirm, window, cx| {
-                            this.open_dev_container(Some(config.clone()), window, cx);
-                            this.view_in_progress_dev_container(window, cx);
+                            let mut state = CreateRemoteDevContainer::new(window, cx);
+                            state.selected_config = Some(config.clone());
+                            state.available_configs = configs.clone();
+                            this.mode = Mode::CreateRemoteDevContainer(state);
+                            cx.notify();
                         }
                     }))
                     .child(
@@ -2034,9 +2100,13 @@ impl RemoteServerProjects {
                             )
                             .on_click(cx.listener({
                                 let config = config_clone.clone();
+                                let configs = configs.clone();
                                 move |this, _, window, cx| {
-                                    this.open_dev_container(Some(config.clone()), window, cx);
-                                    this.view_in_progress_dev_container(window, cx);
+                                    let mut state = CreateRemoteDevContainer::new(window, cx);
+                                    state.selected_config = Some(config.clone());
+                                    state.available_configs = configs.clone();
+                                    this.mode = Mode::CreateRemoteDevContainer(state);
+                                    cx.notify();
                                 }
                             })),
                     ),
