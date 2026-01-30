@@ -1,6 +1,6 @@
 use alacritty_terminal::tty::Pty;
-use gpui::Context;
-use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
+use gpui::{Context, Task};
+use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
 #[cfg(target_os = "windows")]
 use std::num::NonZeroU32;
 #[cfg(unix)]
@@ -88,6 +88,7 @@ pub struct PtyProcessInfo {
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
     pub current: RwLock<Option<ProcessInfo>>,
+    task: Mutex<Option<Task<()>>>,
 }
 
 impl PtyProcessInfo {
@@ -104,6 +105,7 @@ impl PtyProcessInfo {
             refresh_kind: process_refresh_kind,
             pid_getter: ProcessIdGetter::new(pty),
             current: RwLock::new(None),
+            task: Mutex::new(None),
         }
     }
 
@@ -166,6 +168,9 @@ impl PtyProcessInfo {
 
     /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
     pub fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
+        if self.task.lock().is_some() {
+            return;
+        }
         let this = self.clone();
         let has_changed = cx.background_executor().spawn(async move {
             let current = this.load();
@@ -179,12 +184,15 @@ impl PtyProcessInfo {
             }
             has_changed
         });
-        cx.spawn(async move |term, cx| {
+        let this = Arc::downgrade(self);
+        *self.task.lock() = Some(cx.spawn(async move |term, cx| {
             if has_changed.await {
                 term.update(cx, |_, cx| cx.emit(Event::TitleChanged)).ok();
             }
-        })
-        .detach();
+            if let Some(this) = this.upgrade() {
+                this.task.lock().take();
+            }
+        }));
     }
 
     pub fn pid(&self) -> Option<Pid> {
