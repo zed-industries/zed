@@ -310,7 +310,7 @@ fn compute_excerpt_aware_reversal_overlap(
     compute_reversal_overlap(&current_content, excerpt_content, predicted_content)
 }
 
-pub fn reverse_diff(diff: &str) -> String {
+fn reverse_diff(diff: &str) -> String {
     let mut result: String = diff
         .lines()
         .map(|line| {
@@ -580,7 +580,7 @@ fn compute_lcs_length(a: &str, b: &str) -> usize {
     prev[n]
 }
 
-pub fn filter_edit_history_by_path<'a>(
+fn filter_edit_history_by_path<'a>(
     edit_history: &'a [Arc<zeta_prompt::Event>],
     cursor_path: &std::path::Path,
 ) -> Vec<&'a zeta_prompt::Event> {
@@ -603,7 +603,7 @@ pub fn filter_edit_history_by_path<'a>(
         .collect()
 }
 
-pub fn extract_diff_from_event(event: &zeta_prompt::Event) -> &str {
+fn extract_diff_from_event(event: &zeta_prompt::Event) -> &str {
     match event {
         zeta_prompt::Event::BufferChange { diff, .. } => diff.as_str(),
     }
@@ -657,6 +657,7 @@ pub fn compute_prediction_reversal_ratio(
 mod tests {
     use super::*;
     use edit_prediction::udiff::apply_diff_to_string;
+    use indoc::indoc;
 
     #[test]
     fn test_reversal_overlap() {
@@ -672,17 +673,35 @@ mod tests {
         let cases = [
             Case {
                 name: "user_adds_line_prediction_removes_it",
-                original: "a\nb\nc",
-                current: "a\nnew line\nb\nc",
-                predicted: "a\nb\nc",
+                original: indoc! {"
+                    a
+                    b
+                    c"},
+                current: indoc! {"
+                    a
+                    new line
+                    b
+                    c"},
+                predicted: indoc! {"
+                    a
+                    b
+                    c"},
                 expected_reversal_chars: 9,
                 expected_total_chars: 9,
             },
             Case {
                 name: "user_deletes_line_prediction_restores_it",
-                original: "a\ndeleted\nb",
-                current: "a\nb",
-                predicted: "a\ndeleted\nb",
+                original: indoc! {"
+                    a
+                    deleted
+                    b"},
+                current: indoc! {"
+                    a
+                    b"},
+                predicted: indoc! {"
+                    a
+                    deleted
+                    b"},
                 expected_reversal_chars: 8,
                 expected_total_chars: 8,
             },
@@ -704,9 +723,18 @@ mod tests {
             },
             Case {
                 name: "independent_edits_different_locations",
-                original: "line1\nline2\nline3",
-                current: "LINE1\nline2\nline3",
-                predicted: "LINE1\nline2\nLINE3",
+                original: indoc! {"
+                    line1
+                    line2
+                    line3"},
+                current: indoc! {"
+                    LINE1
+                    line2
+                    line3"},
+                predicted: indoc! {"
+                    LINE1
+                    line2
+                    LINE3"},
                 expected_reversal_chars: 0,
                 expected_total_chars: 10,
             },
@@ -720,9 +748,18 @@ mod tests {
             },
             Case {
                 name: "user_replaces_text_prediction_reverses",
-                original: "keep\ndelete_me\nkeep2",
-                current: "keep\nadded\nkeep2",
-                predicted: "keep\ndelete_me\nkeep2",
+                original: indoc! {"
+                    keep
+                    delete_me
+                    keep2"},
+                current: indoc! {"
+                    keep
+                    added
+                    keep2"},
+                predicted: indoc! {"
+                    keep
+                    delete_me
+                    keep2"},
                 expected_reversal_chars: 14,
                 expected_total_chars: 14,
             },
@@ -842,9 +879,13 @@ mod tests {
             },
             Case {
                 name: "infix insertion not reversal",
-                original: "from my_project import Foo\n",
-                current: "ifrom my_project import Foo\n",
-                predicted: indoc::indoc! {"
+                original: indoc! {"
+                    from my_project import Foo
+                "},
+                current: indoc! {"
+                    ifrom my_project import Foo
+                "},
+                predicted: indoc! {"
                     import
                     from my_project import Foo
                 "},
@@ -863,9 +904,9 @@ mod tests {
                 name: "multiple insertions no reversal",
                 original: "print(\"Hello, World!\")",
                 current: "sys.(\"Hello, World!\")",
-                predicted: "sys.stdout.write(\"Hello, World!\n\")",
+                predicted: "sys.stdout.write(\"Hello, World!\\n\")",
                 expected_reversal_chars: 0,
-                expected_total_chars: 13,
+                expected_total_chars: 14,
             },
         ];
 
@@ -886,14 +927,14 @@ mod tests {
 
     #[test]
     fn test_reverse_diff() {
-        let forward_diff = "\
---- a/file.rs
-+++ b/file.rs
-@@ -1,3 +1,4 @@
- fn main() {
-+    let x = 42;
-     println!(\"hello\");
-}";
+        let forward_diff = indoc! {"
+            --- a/file.rs
+            +++ b/file.rs
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +    let x = 42;
+                 println!(\"hello\");
+            }"};
 
         let reversed = reverse_diff(forward_diff);
 
@@ -918,8 +959,16 @@ mod tests {
     #[test]
     fn test_reverse_diff_roundtrip() {
         // Applying a diff and then its reverse should get back to original
-        let original = "first line\nhello world\nlast line\n";
-        let modified = "first line\nhello beautiful world\nlast line\n";
+        let original = indoc! {"
+            first line
+            hello world
+            last line
+        "};
+        let modified = indoc! {"
+            first line
+            hello beautiful world
+            last line
+        "};
 
         // unified_diff doesn't include file headers, but apply_diff_to_string needs them
         let diff_body = language::unified_diff(original, modified);
@@ -944,21 +993,33 @@ mod tests {
             Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("myrepo/src/file.rs")),
                 old_path: Arc::from(Path::new("myrepo/src/file.rs")),
-                diff: "@@ -1 +1 @@\n-old\n+new".into(),
+                diff: indoc! {"
+                    @@ -1 +1 @@
+                    -old
+                    +new"}
+                .into(),
                 predicted: false,
                 in_open_source_repo: true,
             }),
             Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("myrepo/other.rs")),
                 old_path: Arc::from(Path::new("myrepo/other.rs")),
-                diff: "@@ -1 +1 @@\n-a\n+b".into(),
+                diff: indoc! {"
+                    @@ -1 +1 @@
+                    -a
+                    +b"}
+                .into(),
                 predicted: false,
                 in_open_source_repo: true,
             }),
             Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/file.rs")),
                 old_path: Arc::from(Path::new("src/file.rs")),
-                diff: "@@ -1 +1 @@\n-x\n+y".into(),
+                diff: indoc! {"
+                    @@ -1 +1 @@
+                    -x
+                    +y"}
+                .into(),
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -992,14 +1053,25 @@ mod tests {
 
     #[test]
     fn test_reverse_diff_preserves_trailing_newline() {
-        let diff_with_trailing_newline = "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n";
+        let diff_with_trailing_newline = indoc! {"
+            --- a/file
+            +++ b/file
+            @@ -1 +1 @@
+            -old
+            +new
+        "};
         let reversed = reverse_diff(diff_with_trailing_newline);
         assert!(
             reversed.ends_with('\n'),
             "Reversed diff should preserve trailing newline"
         );
 
-        let diff_without_trailing_newline = "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new";
+        let diff_without_trailing_newline = indoc! {"
+            --- a/file
+            +++ b/file
+            @@ -1 +1 @@
+            -old
+            +new"};
         let reversed = reverse_diff(diff_without_trailing_newline);
         assert!(
             !reversed.ends_with('\n'),
@@ -1021,7 +1093,13 @@ mod tests {
         let cases = [
             Case {
                 name: "hunk_entirely_before_excerpt",
-                diff: "@@ -1,3 +1,4 @@\n line1\n+inserted\n line2\n line3\n",
+                diff: indoc! {"
+                    @@ -1,3 +1,4 @@
+                     line1
+                    +inserted
+                     line2
+                     line3
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 5,
                 expected_filtered_diff: "",
@@ -1029,15 +1107,33 @@ mod tests {
             },
             Case {
                 name: "hunk_entirely_inside_excerpt",
-                diff: "@@ -12,3 +12,4 @@\n line12\n+inserted\n line13\n line14\n",
+                diff: indoc! {"
+                    @@ -12,3 +12,4 @@
+                     line12
+                    +inserted
+                     line13
+                     line14
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 10,
-                expected_filtered_diff: "@@ -2,3 +2,4 @@\n line12\n+inserted\n line13\n line14\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -2,3 +2,4 @@
+                     line12
+                    +inserted
+                     line13
+                     line14
+                "},
                 expected_line_offset: 1,
             },
             Case {
                 name: "hunk_entirely_after_excerpt",
-                diff: "@@ -50,3 +50,4 @@\n line50\n+inserted\n line51\n line52\n",
+                diff: indoc! {"
+                    @@ -50,3 +50,4 @@
+                     line50
+                    +inserted
+                     line51
+                     line52
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 5,
                 expected_filtered_diff: "",
@@ -1045,31 +1141,81 @@ mod tests {
             },
             Case {
                 name: "hunk_straddles_excerpt_start",
-                diff: "@@ -8,5 +8,6 @@\n line8\n line9\n+inserted\n line10\n line11\n line12\n",
+                diff: indoc! {"
+                    @@ -8,5 +8,6 @@
+                     line8
+                     line9
+                    +inserted
+                     line10
+                     line11
+                     line12
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 10,
-                expected_filtered_diff: "@@ -1,3 +1,3 @@\n line10\n line11\n line12\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -1,3 +1,3 @@
+                     line10
+                     line11
+                     line12
+                "},
                 expected_line_offset: 1,
             },
             Case {
                 name: "hunk_straddles_excerpt_end",
-                diff: "@@ -18,5 +18,6 @@\n line18\n line19\n+inserted\n line20\n line21\n line22\n",
+                diff: indoc! {"
+                    @@ -18,5 +18,6 @@
+                     line18
+                     line19
+                    +inserted
+                     line20
+                     line21
+                     line22
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 10,
-                expected_filtered_diff: "@@ -8,2 +8,3 @@\n line18\n line19\n+inserted\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -8,2 +8,3 @@
+                     line18
+                     line19
+                    +inserted
+                "},
                 expected_line_offset: 1,
             },
             Case {
                 name: "multiple_hunks_mixed",
-                diff: "@@ -1,2 +1,3 @@\n line1\n+before_excerpt\n line2\n@@ -12,2 +13,3 @@\n line12\n+inside_excerpt\n line13\n@@ -50,2 +52,3 @@\n line50\n+after_excerpt\n line51\n",
+                diff: indoc! {"
+                    @@ -1,2 +1,3 @@
+                     line1
+                    +before_excerpt
+                     line2
+                    @@ -12,2 +13,3 @@
+                     line12
+                    +inside_excerpt
+                     line13
+                    @@ -50,2 +52,3 @@
+                     line50
+                    +after_excerpt
+                     line51
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 10,
-                expected_filtered_diff: "@@ -3,2 +3,3 @@\n line12\n+inside_excerpt\n line13\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -3,2 +3,3 @@
+                     line12
+                    +inside_excerpt
+                     line13
+                "},
                 expected_line_offset: 2,
             },
             Case {
                 name: "deletion_before_excerpt",
-                diff: "@@ -1,4 +1,3 @@\n line1\n-deleted\n line2\n line3\n",
+                diff: indoc! {"
+                    @@ -1,4 +1,3 @@
+                     line1
+                    -deleted
+                     line2
+                     line3
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 5,
                 expected_filtered_diff: "",
@@ -1077,10 +1223,22 @@ mod tests {
             },
             Case {
                 name: "deletion_inside_excerpt",
-                diff: "@@ -12,4 +12,3 @@\n line12\n-deleted\n line13\n line14\n",
+                diff: indoc! {"
+                    @@ -12,4 +12,3 @@
+                     line12
+                    -deleted
+                     line13
+                     line14
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 10,
-                expected_filtered_diff: "@@ -2,4 +2,3 @@\n line12\n-deleted\n line13\n line14\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -2,4 +2,3 @@
+                     line12
+                    -deleted
+                     line13
+                     line14
+                "},
                 expected_line_offset: -1,
             },
             Case {
@@ -1093,18 +1251,51 @@ mod tests {
             },
             Case {
                 name: "hunk_spans_entire_excerpt",
-                diff: "@@ -8,10 +8,12 @@\n line8\n line9\n line10\n line11\n+inserted1\n line12\n line13\n+inserted2\n line14\n line15\n line16\n line17\n",
+                diff: indoc! {"
+                    @@ -8,10 +8,12 @@
+                     line8
+                     line9
+                     line10
+                     line11
+                    +inserted1
+                     line12
+                     line13
+                    +inserted2
+                     line14
+                     line15
+                     line16
+                     line17
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 5,
-                expected_filtered_diff: "@@ -1,3 +1,5 @@\n line11\n+inserted1\n line12\n line13\n+inserted2\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -1,3 +1,5 @@
+                     line11
+                    +inserted1
+                     line12
+                     line13
+                    +inserted2
+                "},
                 expected_line_offset: 2,
             },
             Case {
                 name: "replacement_inside_excerpt",
-                diff: "@@ -12,3 +12,3 @@\n line12\n-old_text\n+new_text\n line14\n",
+                diff: indoc! {"
+                    @@ -12,3 +12,3 @@
+                     line12
+                    -old_text
+                    +new_text
+                     line14
+                "},
                 excerpt_start_row: 10,
                 excerpt_row_count: 10,
-                expected_filtered_diff: "@@ -2,3 +2,3 @@\n line12\n-old_text\n+new_text\n line14\n",
+                expected_filtered_diff: indoc! {"
+                    @@ -2,3 +2,3 @@
+                     line12
+                    -old_text
+                    +new_text
+                     line14
+                "},
                 expected_line_offset: 0,
             },
         ];
@@ -1143,74 +1334,183 @@ mod tests {
         let cases = [
             Case {
                 name: "edit_outside_excerpt_no_reversal",
-                edit_history_diffs: vec!["@@ -1,2 +1,3 @@\n line1\n+added_outside\n line2\n"],
-                excerpt_content: "line10\nline11\nline12\n",
+                edit_history_diffs: vec![indoc! {"
+                    @@ -1,2 +1,3 @@
+                     line1
+                    +added_outside
+                     line2
+                "}],
+                excerpt_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nmodified\nline12\n",
+                predicted_content: indoc! {"
+                    line10
+                    modified
+                    line12
+                "},
                 expected_reversal_chars: 0,
                 expected_total_chars: 14,
             },
             Case {
                 name: "edit_inside_excerpt_with_reversal",
-                edit_history_diffs: vec![
-                    "@@ -10,3 +10,4 @@\n line10\n+user_added\n line11\n line12\n",
-                ],
-                excerpt_content: "line10\nuser_added\nline11\nline12\n",
+                edit_history_diffs: vec![indoc! {"
+                    @@ -10,3 +10,4 @@
+                     line10
+                    +user_added
+                     line11
+                     line12
+                "}],
+                excerpt_content: indoc! {"
+                    line10
+                    user_added
+                    line11
+                    line12
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nline11\nline12\n",
+                predicted_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                "},
                 expected_reversal_chars: 11,
                 expected_total_chars: 11,
             },
             Case {
                 name: "straddling_edit_partial_reversal",
-                edit_history_diffs: vec![
-                    "@@ -8,6 +8,8 @@\n line8\n line9\n+before_excerpt\n line10\n+inside_excerpt\n line11\n line12\n line13\n",
-                ],
-                excerpt_content: "line10\ninside_excerpt\nline11\nline12\nline13\n",
+                edit_history_diffs: vec![indoc! {"
+                    @@ -8,6 +8,8 @@
+                     line8
+                     line9
+                    +before_excerpt
+                     line10
+                    +inside_excerpt
+                     line11
+                     line12
+                     line13
+                "}],
+                excerpt_content: indoc! {"
+                    line10
+                    inside_excerpt
+                    line11
+                    line12
+                    line13
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nline11\nline12\nline13\n",
+                predicted_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                    line13
+                "},
                 expected_reversal_chars: 15,
                 expected_total_chars: 15,
             },
             Case {
                 name: "multiple_edits_mixed_locations",
                 edit_history_diffs: vec![
-                    "@@ -1,2 +1,3 @@\n line1\n+outside1\n line2\n",
-                    "@@ -11,2 +12,3 @@\n line11\n+inside1\n line12\n",
+                    indoc! {"
+                        @@ -1,2 +1,3 @@
+                         line1
+                        +outside1
+                         line2
+                    "},
+                    indoc! {"
+                        @@ -11,2 +12,3 @@
+                         line11
+                        +inside1
+                         line12
+                    "},
                 ],
-                excerpt_content: "line10\nline11\ninside1\nline12\nline13\n",
+                excerpt_content: indoc! {"
+                    line10
+                    line11
+                    inside1
+                    line12
+                    line13
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nline11\nline12\nline13\n",
+                predicted_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                    line13
+                "},
                 expected_reversal_chars: 8,
                 expected_total_chars: 8,
             },
             Case {
                 name: "no_edit_history",
                 edit_history_diffs: vec![],
-                excerpt_content: "line10\nline11\nline12\n",
+                excerpt_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nmodified\nline12\n",
+                predicted_content: indoc! {"
+                    line10
+                    modified
+                    line12
+                "},
                 expected_reversal_chars: 0,
                 expected_total_chars: 14,
             },
             Case {
                 name: "edit_after_excerpt_no_effect",
-                edit_history_diffs: vec!["@@ -50,2 +50,3 @@\n line50\n+added_after\n line51\n"],
-                excerpt_content: "line10\nline11\nline12\n",
+                edit_history_diffs: vec![indoc! {"
+                    @@ -50,2 +50,3 @@
+                     line50
+                    +added_after
+                     line51
+                "}],
+                excerpt_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nchanged\nline12\n",
+                predicted_content: indoc! {"
+                    line10
+                    changed
+                    line12
+                "},
                 expected_reversal_chars: 0,
                 expected_total_chars: 13,
             },
             Case {
                 name: "line_offset_tracking_across_hunks",
                 edit_history_diffs: vec![
-                    "@@ -1,2 +1,4 @@\n line1\n+added1\n+added2\n line2\n",
-                    "@@ -12,2 +14,3 @@\n line12\n+inside_after_offset\n line13\n",
+                    indoc! {"
+                        @@ -1,2 +1,4 @@
+                         line1
+                        +added1
+                        +added2
+                         line2
+                    "},
+                    indoc! {"
+                        @@ -12,2 +14,3 @@
+                         line12
+                        +inside_after_offset
+                         line13
+                    "},
                 ],
-                excerpt_content: "line10\nline11\nline12\ninside_after_offset\nline13\n",
+                excerpt_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                    inside_after_offset
+                    line13
+                "},
                 excerpt_start_row: 10,
-                predicted_content: "line10\nline11\nline12\nline13\n",
+                predicted_content: indoc! {"
+                    line10
+                    line11
+                    line12
+                    line13
+                "},
                 expected_reversal_chars: 20,
                 expected_total_chars: 20,
             },
@@ -1248,27 +1548,86 @@ mod tests {
         let cases = [
             Case {
                 name: "hunk_context_not_found_skipped",
-                diff: "@@ -1,3 +1,4 @@\n context_not_in_content\n+added_line\n more_context\n final_context\n",
-                content: "completely\ndifferent\ncontent\n",
-                expected_result: "completely\ndifferent\ncontent\n",
+                diff: indoc! {"
+                    @@ -1,3 +1,4 @@
+                     context_not_in_content
+                    +added_line
+                     more_context
+                     final_context
+                "},
+                content: indoc! {"
+                    completely
+                    different
+                    content
+                "},
+                expected_result: indoc! {"
+                    completely
+                    different
+                    content
+                "},
             },
             Case {
                 name: "hunk_context_found_applied",
-                diff: "@@ -1,3 +1,4 @@\n line1\n+inserted\n line2\n line3\n",
-                content: "line1\nline2\nline3\n",
-                expected_result: "line1\ninserted\nline2\nline3\n",
+                diff: indoc! {"
+                    @@ -1,3 +1,4 @@
+                     line1
+                    +inserted
+                     line2
+                     line3
+                "},
+                content: indoc! {"
+                    line1
+                    line2
+                    line3
+                "},
+                expected_result: indoc! {"
+                    line1
+                    inserted
+                    line2
+                    line3
+                "},
             },
             Case {
                 name: "multiple_hunks_partial_match",
-                diff: "@@ -1,2 +1,3 @@\n not_found\n+skipped\n also_not_found\n@@ -5,2 +6,3 @@\n line5\n+applied\n line6\n",
-                content: "line1\nline2\nline3\nline4\nline5\nline6\n",
-                expected_result: "line1\nline2\nline3\nline4\nline5\napplied\nline6\n",
+                diff: indoc! {"
+                    @@ -1,2 +1,3 @@
+                     not_found
+                    +skipped
+                     also_not_found
+                    @@ -5,2 +6,3 @@
+                     line5
+                    +applied
+                     line6
+                "},
+                content: indoc! {"
+                    line1
+                    line2
+                    line3
+                    line4
+                    line5
+                    line6
+                "},
+                expected_result: indoc! {"
+                    line1
+                    line2
+                    line3
+                    line4
+                    line5
+                    applied
+                    line6
+                "},
             },
             Case {
                 name: "empty_diff",
                 diff: "",
-                content: "unchanged\ncontent\n",
-                expected_result: "unchanged\ncontent\n",
+                content: indoc! {"
+                    unchanged
+                    content
+                "},
+                expected_result: indoc! {"
+                    unchanged
+                    content
+                "},
             },
         ];
 
@@ -1388,14 +1747,25 @@ mod tests {
     #[test]
     fn test_compute_prediction_reversal_ratio_full_file() {
         let prompt_inputs = ExamplePromptInputs {
-            content: "line1\nuser_added\nline2\n".to_string(),
+            content: indoc! {"
+                line1
+                user_added
+                line2
+            "}
+            .to_string(),
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
-                diff: "@@ -1,2 +1,3 @@\n line1\n+user_added\n line2\n".into(),
+                diff: indoc! {"
+                    @@ -1,2 +1,3 @@
+                     line1
+                    +user_added
+                     line2
+                "}
+                .into(),
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -1403,7 +1773,10 @@ mod tests {
             related_files: None,
         };
 
-        let predicted = "line1\nline2\n";
+        let predicted = indoc! {"
+            line1
+            line2
+        "};
         let ratio =
             compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
 
@@ -1417,14 +1790,25 @@ mod tests {
     #[test]
     fn test_compute_prediction_reversal_ratio_with_excerpt() {
         let prompt_inputs = ExamplePromptInputs {
-            content: "line10\nuser_added\nline11\n".to_string(),
+            content: indoc! {"
+                line10
+                user_added
+                line11
+            "}
+            .to_string(),
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
-                diff: "@@ -10,2 +10,3 @@\n line10\n+user_added\n line11\n".into(),
+                diff: indoc! {"
+                    @@ -10,2 +10,3 @@
+                     line10
+                    +user_added
+                     line11
+                "}
+                .into(),
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -1432,7 +1816,10 @@ mod tests {
             related_files: None,
         };
 
-        let predicted = "line10\nline11\n";
+        let predicted = indoc! {"
+            line10
+            line11
+        "};
         let ratio =
             compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
 
@@ -1446,7 +1833,10 @@ mod tests {
     #[test]
     fn test_compute_prediction_reversal_ratio_no_history() {
         let prompt_inputs = ExamplePromptInputs {
-            content: "original content\n".to_string(),
+            content: indoc! {"
+                original content
+            "}
+            .to_string(),
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
@@ -1455,7 +1845,9 @@ mod tests {
             related_files: None,
         };
 
-        let predicted = "completely different\n";
+        let predicted = indoc! {"
+            completely different
+        "};
         let ratio =
             compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
 
@@ -1468,14 +1860,25 @@ mod tests {
     #[test]
     fn test_compute_prediction_reversal_ratio_path_filtering() {
         let prompt_inputs = ExamplePromptInputs {
-            content: "line1\nuser_added\nline2\n".to_string(),
+            content: indoc! {"
+                line1
+                user_added
+                line2
+            "}
+            .to_string(),
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/other.rs")),
                 old_path: Arc::from(Path::new("src/other.rs")),
-                diff: "@@ -1,2 +1,3 @@\n line1\n+user_added\n line2\n".into(),
+                diff: indoc! {"
+                    @@ -1,2 +1,3 @@
+                     line1
+                    +user_added
+                     line2
+                "}
+                .into(),
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -1483,7 +1886,10 @@ mod tests {
             related_files: None,
         };
 
-        let predicted = "line1\nline2\n";
+        let predicted = indoc! {"
+            line1
+            line2
+        "};
         let ratio =
             compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
 
@@ -1496,14 +1902,25 @@ mod tests {
     #[test]
     fn test_compute_prediction_reversal_ratio_lenient_fallback() {
         let prompt_inputs = ExamplePromptInputs {
-            content: "actual_line1\nuser_added\nactual_line2\n".to_string(),
+            content: indoc! {"
+                actual_line1
+                user_added
+                actual_line2
+            "}
+            .to_string(),
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
-                diff: "@@ -1,2 +1,3 @@\n wrong_context\n+user_added\n more_wrong\n".into(),
+                diff: indoc! {"
+                    @@ -1,2 +1,3 @@
+                     wrong_context
+                    +user_added
+                     more_wrong
+                "}
+                .into(),
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -1511,7 +1928,10 @@ mod tests {
             related_files: None,
         };
 
-        let predicted = "actual_line1\nactual_line2\n";
+        let predicted = indoc! {"
+            actual_line1
+            actual_line2
+        "};
         let ratio =
             compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
 
@@ -1524,9 +1944,22 @@ mod tests {
 
     #[test]
     fn test_excerpt_aware_reversal_error_recovery() {
-        let diffs = vec!["@@ -1,2 +1,3 @@\n nonexistent_context\n+added\n more_nonexistent\n"];
-        let excerpt_content = "completely\ndifferent\ncontent\n";
-        let predicted_content = "completely\nmodified\ncontent\n";
+        let diffs = vec![indoc! {"
+            @@ -1,2 +1,3 @@
+             nonexistent_context
+            +added
+             more_nonexistent
+        "}];
+        let excerpt_content = indoc! {"
+            completely
+            different
+            content
+        "};
+        let predicted_content = indoc! {"
+            completely
+            modified
+            content
+        "};
 
         let overlap =
             compute_excerpt_aware_reversal_overlap(&diffs, excerpt_content, 0, predicted_content);
@@ -1540,7 +1973,13 @@ mod tests {
     #[test]
     fn test_multiple_sequential_diffs() {
         let prompt_inputs = ExamplePromptInputs {
-            content: "line1\nfirst_add\nsecond_add\nline2\n".to_string(),
+            content: indoc! {"
+                line1
+                first_add
+                second_add
+                line2
+            "}
+            .to_string(),
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
@@ -1548,14 +1987,26 @@ mod tests {
                 Arc::new(zeta_prompt::Event::BufferChange {
                     path: Arc::from(Path::new("src/test.rs")),
                     old_path: Arc::from(Path::new("src/test.rs")),
-                    diff: "@@ -1,2 +1,3 @@\n line1\n+first_add\n line2\n".into(),
+                    diff: indoc! {"
+                        @@ -1,2 +1,3 @@
+                         line1
+                        +first_add
+                         line2
+                    "}
+                    .into(),
                     predicted: false,
                     in_open_source_repo: false,
                 }),
                 Arc::new(zeta_prompt::Event::BufferChange {
                     path: Arc::from(Path::new("src/test.rs")),
                     old_path: Arc::from(Path::new("src/test.rs")),
-                    diff: "@@ -2,2 +2,3 @@\n first_add\n+second_add\n line2\n".into(),
+                    diff: indoc! {"
+                        @@ -2,2 +2,3 @@
+                         first_add
+                        +second_add
+                         line2
+                    "}
+                    .into(),
                     predicted: false,
                     in_open_source_repo: false,
                 }),
@@ -1564,7 +2015,10 @@ mod tests {
             related_files: None,
         };
 
-        let predicted = "line1\nline2\n";
+        let predicted = indoc! {"
+            line1
+            line2
+        "};
         let ratio =
             compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
 
