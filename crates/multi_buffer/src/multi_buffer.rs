@@ -35,7 +35,7 @@ use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
-    cell::{Cell, Ref, RefCell},
+    cell::{Cell, OnceCell, Ref, RefCell},
     cmp, fmt,
     future::Future,
     io,
@@ -1003,7 +1003,7 @@ struct MultiBufferCursor<'a, MBD, BD> {
     excerpts: Cursor<'a, 'static, Excerpt, ExcerptDimension<MBD>>,
     diff_transforms: Cursor<'a, 'static, DiffTransform, DiffTransforms<MBD>>,
     diffs: &'a TreeMap<BufferId, DiffStateSnapshot>,
-    cached_region: Option<MultiBufferRegion<'a, MBD, BD>>,
+    cached_region: OnceCell<Option<MultiBufferRegion<'a, MBD, BD>>>,
 }
 
 #[derive(Clone)]
@@ -1443,6 +1443,7 @@ impl MultiBuffer {
                 continue;
             }
 
+            let start_region = start_region.clone();
             if range.end > start_region.range.end {
                 cursor.seek_forward(&range.end);
             }
@@ -1501,10 +1502,11 @@ impl MultiBuffer {
                             excerpt_id: start_region.excerpt.id,
                         });
                 }
+                let excerpt_id = end_region.excerpt.id;
                 if end_region.buffer.capability == Capability::ReadWrite
                     && end_region.is_main_buffer
                 {
-                    edited_excerpt_ids.push(end_region.excerpt.id);
+                    edited_excerpt_ids.push(excerpt_id);
                     buffer_edits
                         .entry(end_region.buffer.remote_id())
                         .or_default()
@@ -1513,14 +1515,14 @@ impl MultiBuffer {
                             new_text: new_text.clone(),
                             is_insertion: false,
                             original_indent_column,
-                            excerpt_id: end_region.excerpt.id,
+                            excerpt_id,
                         });
                 }
 
                 cursor.seek(&range.start);
                 cursor.next_excerpt();
                 while let Some(region) = cursor.region() {
-                    if region.excerpt.id == end_region.excerpt.id {
+                    if region.excerpt.id == excerpt_id {
                         break;
                     }
                     if region.buffer.capability == Capability::ReadWrite && region.is_main_buffer {
@@ -1529,7 +1531,7 @@ impl MultiBuffer {
                             .entry(region.buffer.remote_id())
                             .or_default()
                             .push(BufferEdit {
-                                range: region.buffer_range,
+                                range: region.buffer_range.clone(),
                                 new_text: new_text.clone(),
                                 is_insertion: false,
                                 original_indent_column,
@@ -3932,8 +3934,9 @@ impl MultiBufferSnapshot {
             {
                 return None;
             }
+            let excerpt = region.excerpt;
             cursor.next_excerpt();
-            Some(region.excerpt)
+            Some(excerpt)
         })
     }
 
@@ -4212,7 +4215,7 @@ impl MultiBufferSnapshot {
                             cursor.next();
                         }
                     }
-                    let start_region = cursor.region()?;
+                    let start_region = cursor.region()?.clone();
                     while let Some(region) = cursor.region() {
                         if region.is_main_buffer
                             && (region.buffer_range.end > metadata_buffer_range.end
@@ -5574,7 +5577,7 @@ impl MultiBufferSnapshot {
             excerpts,
             diff_transforms,
             diffs: &self.diffs,
-            cached_region: None,
+            cached_region: OnceCell::new(),
         }
     }
 
@@ -5646,7 +5649,7 @@ impl MultiBufferSnapshot {
         } else {
             cursor.seek_to_start_of_current_excerpt();
         }
-        let mut prev_region = cursor.region();
+        let mut prev_region = cursor.region().cloned();
 
         cursor.next_excerpt();
 
@@ -5656,7 +5659,7 @@ impl MultiBufferSnapshot {
                     return None;
                 }
 
-                let next_region = cursor.region()?;
+                let next_region = cursor.region()?.clone();
                 cursor.next_excerpt();
                 if !bounds.contains(&next_region.range.start.key) {
                     prev_region = Some(next_region);
@@ -5887,6 +5890,7 @@ impl MultiBufferSnapshot {
                 cursor.next();
                 region = cursor.region()?;
             }
+            let region = cursor.region()?;
             let overshoot = start_row.0.saturating_sub(region.range.start.row);
             let buffer_start_row =
                 (region.buffer_range.start.row + overshoot).min(region.buffer_range.end.row);
@@ -5902,10 +5906,13 @@ impl MultiBufferSnapshot {
             let line_indents = region
                 .buffer
                 .line_indents_in_row_range(buffer_start_row..buffer_end_row);
+            let region_buffer_row = region.buffer_range.start.row;
+            let region_row = region.range.start.row;
+            let region_buffer = &region.excerpt.buffer;
             cursor.next();
             Some(line_indents.map(move |(buffer_row, indent)| {
-                let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
-                (MultiBufferRow(row), indent, &region.excerpt.buffer)
+                let row = region_row + (buffer_row - region_buffer_row);
+                (MultiBufferRow(row), indent, region_buffer)
             }))
         })
         .flatten()
@@ -5925,6 +5932,7 @@ impl MultiBufferSnapshot {
                 cursor.prev();
                 region = cursor.region()?;
             }
+            let region = cursor.region()?;
 
             let buffer_start_row = region.buffer_range.start.row;
             let buffer_end_row = if region.is_main_buffer
@@ -5942,10 +5950,13 @@ impl MultiBufferSnapshot {
             let line_indents = region
                 .buffer
                 .reversed_line_indents_in_row_range(buffer_start_row..buffer_end_row);
+            let region_buffer_row = region.buffer_range.start.row;
+            let region_row = region.range.start.row;
+            let region_buffer = &region.excerpt.buffer;
             cursor.prev();
             Some(line_indents.map(move |(buffer_row, indent)| {
-                let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
-                (MultiBufferRow(row), indent, &region.excerpt.buffer)
+                let row = region_row + (buffer_row - region_buffer_row);
+                (MultiBufferRow(row), indent, region_buffer)
             }))
         })
         .flatten()
@@ -6937,11 +6948,10 @@ where
         }
     }
 
-    fn region(&mut self) -> Option<MultiBufferRegion<'a, MBD, BD>> {
-        if self.cached_region.is_none() {
-            self.cached_region = self.build_region();
-        }
-        self.cached_region.clone()
+    fn region(&self) -> Option<&MultiBufferRegion<'a, MBD, BD>> {
+        self.cached_region
+            .get_or_init(|| self.build_region())
+            .as_ref()
     }
 
     fn is_at_start_of_excerpt(&mut self) -> bool {
@@ -6960,7 +6970,7 @@ where
         })
     }
 
-    fn is_at_end_of_excerpt(&mut self) -> bool {
+    fn is_at_end_of_excerpt(&self) -> bool {
         if self.diff_transforms.end().excerpt_dimension < self.excerpts.end() {
             return false;
         } else if self.diff_transforms.end().excerpt_dimension > self.excerpts.end()
@@ -7694,11 +7704,11 @@ impl Iterator for MultiBufferRows<'_> {
             });
         }
 
-        let mut region = self.cursor.region()?;
+        let mut region = self.cursor.region()?.clone();
         while self.point >= region.range.end {
             self.cursor.next();
             if let Some(next_region) = self.cursor.region() {
-                region = next_region;
+                region = next_region.clone();
             } else if self.point == self.cursor.diff_transforms.end().output_dimension.0 {
                 let multibuffer_row = MultiBufferRow(self.point.row);
                 let last_excerpt = self
