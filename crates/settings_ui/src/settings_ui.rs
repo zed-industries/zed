@@ -1483,42 +1483,22 @@ impl SettingsWindow {
         .detach();
 
         if let Some(app_state) = AppState::global(cx).upgrade() {
-            for project in app_state
+            let workspaces: Vec<Entity<Workspace>> = app_state
                 .workspace_store
                 .read(cx)
                 .workspaces()
-                .iter()
-                .filter_map(|space| space.downcast::<MultiWorkspace>())
-                .filter_map(|handle| handle.read(cx).ok())
-                .flat_map(|multi_workspace| {
-                    multi_workspace
-                        .workspaces()
-                        .iter()
-                        .map(|workspace| workspace.read(cx).project().clone())
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>()
-            {
+                .filter_map(|weak| weak.upgrade())
+                .collect();
+
+            for workspace in workspaces {
+                let project = workspace.read(cx).project().clone();
                 cx.observe_release_in(&project, window, |this, _, window, cx| {
                     this.fetch_files(window, cx)
                 })
                 .detach();
                 cx.subscribe_in(&project, window, Self::handle_project_event)
                     .detach();
-            }
-
-            for multi_workspace in app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .iter()
-                .filter_map(|space| {
-                    space
-                        .downcast::<MultiWorkspace>()
-                        .and_then(|handle| handle.entity(cx).ok())
-                })
-            {
-                cx.observe_release_in(&multi_workspace, window, |this, _, window, cx| {
+                cx.observe_release_in(&workspace, window, |this, _, window, cx| {
                     this.fetch_files(window, cx)
                 })
                 .detach();
@@ -3335,25 +3315,22 @@ impl SettingsWindow {
                     return;
                 };
 
-                let Some((worktree, corresponding_workspace)) = app_state
+                let Some((workspace_window, worktree, corresponding_workspace)) = app_state
                     .workspace_store
                     .read(cx)
-                    .workspaces()
-                    .iter()
-                    .filter_map(|handle| handle.downcast::<MultiWorkspace>())
-                    .find_map(|handle| {
-                        handle
-                            .read_with(cx, |multi_workspace, cx| {
-                                multi_workspace
-                                    .workspace()
-                                    .read(cx)
-                                    .project()
-                                    .read(cx)
-                                    .worktree_for_id(*worktree_id, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .zip(Some(handle))
+                    .workspaces_with_windows()
+                    .filter_map(|(window_handle, weak)| {
+                        let workspace = weak.upgrade()?;
+                        let window = window_handle.downcast::<MultiWorkspace>()?;
+                        Some((window, workspace))
+                    })
+                    .find_map(|(window, workspace): (_, Entity<Workspace>)| {
+                        workspace
+                            .read(cx)
+                            .project()
+                            .read(cx)
+                            .worktree_for_id(*worktree_id, cx)
+                            .map(|worktree| (window, worktree, workspace))
                     })
                 else {
                     log::error!(
@@ -3381,33 +3358,29 @@ impl SettingsWindow {
 
                 // TODO: move zed::open_local_file() APIs to this crate, and
                 // re-implement the "initial_contents" behavior
-                corresponding_workspace
+                let workspace_weak = corresponding_workspace.downgrade();
+                workspace_window
                     .update(cx, |_, window, cx| {
-                        cx.spawn_in(window, async move |multi_workspace, cx| {
+                        cx.spawn_in(window, async move |_, cx| {
                             if let Some(create_task) = create_task {
                                 create_task.await.ok()?;
                             };
 
-                            multi_workspace
-                                .update_in(cx, |multi_workspace, window, cx| {
-                                    multi_workspace.workspace().clone().update(
+                            workspace_weak
+                                .update_in(cx, |workspace, window, cx| {
+                                    workspace.open_path(
+                                        (worktree_id, settings_path.clone()),
+                                        None,
+                                        true,
+                                        window,
                                         cx,
-                                        |workspace, cx| {
-                                            workspace.open_path(
-                                                (worktree_id, settings_path.clone()),
-                                                None,
-                                                true,
-                                                window,
-                                                cx,
-                                            )
-                                        },
                                     )
                                 })
                                 .ok()?
                                 .await
                                 .log_err()?;
 
-                            multi_workspace
+                            workspace_weak
                                 .update_in(cx, |_, window, cx| {
                                     window.activate_window();
                                     cx.notify();
@@ -3625,20 +3598,8 @@ fn all_projects(
                 .workspace_store
                 .read(cx)
                 .workspaces()
-                .iter()
-                .flat_map(|handle| {
-                    handle
-                        .downcast::<MultiWorkspace>()
-                        .and_then(|h| h.read(cx).ok())
-                        .map(|multi_workspace| {
-                            multi_workspace
-                                .workspaces()
-                                .iter()
-                                .map(|workspace| workspace.read(cx).project().clone())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                })
+                .filter_map(|weak| weak.upgrade())
+                .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
                 .chain(
                     window
                         .and_then(|handle| handle.read(cx).ok())

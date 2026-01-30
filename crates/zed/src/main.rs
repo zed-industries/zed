@@ -508,17 +508,9 @@ fn main() {
                     workspace_store.update(cx, |workspace_store, cx| {
                         Ok(workspace_store
                             .workspaces()
-                            .iter()
-                            .filter_map(|handle| handle.downcast::<MultiWorkspace>())
-                            .filter_map(|handle| handle.read(cx).ok())
-                            .flat_map(|multi_workspace| {
-                                multi_workspace
-                                    .workspaces()
-                                    .iter()
-                                    .map(|workspace| {
-                                        workspace.read(cx).project().read(cx).lsp_store()
-                                    })
-                                    .collect::<Vec<_>>()
+                            .filter_map(|weak| weak.upgrade())
+                            .map(|workspace: gpui::Entity<workspace::Workspace>| {
+                                workspace.read(cx).project().read(cx).lsp_store()
                             })
                             .collect())
                     })

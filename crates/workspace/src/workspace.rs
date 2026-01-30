@@ -3,6 +3,7 @@ pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
+mod multi_workspace;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
@@ -22,6 +23,7 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
+pub use multi_workspace::MultiWorkspace;
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
@@ -120,7 +122,7 @@ use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::{ListItem, Window, prelude::*};
+use ui::{Window, prelude::*};
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -976,7 +978,7 @@ struct GlobalAppState(Weak<AppState>);
 impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
-    workspaces: HashSet<gpui::AnyWindowHandle>,
+    workspaces: HashSet<(gpui::AnyWindowHandle, WeakEntity<Workspace>)>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -1175,285 +1177,6 @@ struct DispatchingKeystrokes {
     dispatched: HashSet<Vec<Keystroke>>,
     queue: VecDeque<Keystroke>,
     task: Option<Shared<Task<()>>>,
-}
-
-pub struct MultiWorkspace {
-    workspaces: Vec<Entity<Workspace>>,
-    active_workspace_index: usize,
-    sidebar_open: bool,
-}
-
-impl MultiWorkspace {
-    pub fn new(workspace: Entity<Workspace>, _cx: &mut Context<Self>) -> Self {
-        Self {
-            workspaces: vec![workspace],
-            active_workspace_index: 0,
-            sidebar_open: false,
-        }
-    }
-
-    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.sidebar_open = !self.sidebar_open;
-        cx.notify();
-    }
-
-    pub fn workspace(&self) -> &Entity<Workspace> {
-        &self.workspaces[self.active_workspace_index]
-    }
-
-    pub fn workspaces(&self) -> &[Entity<Workspace>] {
-        &self.workspaces
-    }
-
-    pub fn active_workspace_index(&self) -> usize {
-        self.active_workspace_index
-    }
-
-    pub fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
-        cx.notify();
-        self.workspaces.push(workspace);
-        self.workspaces.len() - 1
-    }
-
-    pub fn set_active_workspace(&mut self, index: usize, cx: &mut Context<Self>) {
-        assert!(
-            index < self.workspaces.len(),
-            "workspace index out of bounds"
-        );
-        self.active_workspace_index = index;
-        cx.notify();
-    }
-
-    pub fn activate_next_workspace(&mut self, cx: &mut Context<Self>) {
-        if self.workspaces.len() > 1 {
-            let next_index = (self.active_workspace_index + 1) % self.workspaces.len();
-            self.set_active_workspace(next_index, cx);
-        }
-    }
-
-    pub fn activate_previous_workspace(&mut self, cx: &mut Context<Self>) {
-        if self.workspaces.len() > 1 {
-            let prev_index = if self.active_workspace_index == 0 {
-                self.workspaces.len() - 1
-            } else {
-                self.active_workspace_index - 1
-            };
-            self.set_active_workspace(prev_index, cx);
-        }
-    }
-
-    pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
-        self.workspace().read(cx).panel::<T>(cx)
-    }
-
-    pub fn active_modal<V: ManagedView + 'static>(&self, cx: &App) -> Option<Entity<V>> {
-        self.workspace().read(cx).active_modal::<V>(cx)
-    }
-
-    pub fn add_panel<T: Panel>(
-        &mut self,
-        panel: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.workspace().update(cx, |workspace, cx| {
-            workspace.add_panel(panel, window, cx);
-        });
-    }
-
-    pub fn focus_panel<T: Panel>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<T>> {
-        self.workspace()
-            .update(cx, |workspace, cx| workspace.focus_panel::<T>(window, cx))
-    }
-
-    pub fn toggle_modal<V: ModalView, B>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        build: B,
-    ) where
-        B: FnOnce(&mut Window, &mut gpui::Context<V>) -> V,
-    {
-        self.workspace().update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, build);
-        });
-    }
-
-    pub fn toggle_dock(
-        &mut self,
-        dock_side: DockPosition,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.workspace().update(cx, |workspace, cx| {
-            workspace.toggle_dock(dock_side, window, cx);
-        });
-    }
-
-    pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
-        self.workspace().read(cx).active_item_as::<I>(cx)
-    }
-
-    pub fn items_of_type<'a, T: Item>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl 'a + Iterator<Item = Entity<T>> {
-        self.workspace().read(cx).items_of_type::<T>(cx)
-    }
-
-    pub fn database_id(&self, cx: &App) -> Option<WorkspaceId> {
-        self.workspace().read(cx).database_id()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_random_database_id(&mut self, cx: &mut Context<Self>) {
-        self.workspace().update(cx, |workspace, _cx| {
-            workspace.set_random_database_id();
-        });
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        Self::new(workspace, cx)
-    }
-}
-
-impl Render for MultiWorkspace {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar_height = (1.75 * window.rem_size()).max(px(34.));
-
-        let sidebar = if self.sidebar_open {
-            let items: Vec<_> = self
-                .workspaces
-                .iter()
-                .enumerate()
-                .map(|(index, workspace)| {
-                    let is_active = index == self.active_workspace_index;
-                    let worktree_names: Vec<String> = workspace
-                        .read(cx)
-                        .worktrees(cx)
-                        .filter_map(|wt| {
-                            wt.read(cx)
-                                .abs_path()
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                        })
-                        .collect();
-                    let label: SharedString = if worktree_names.is_empty() {
-                        format!("Workspace {}", index + 1).into()
-                    } else {
-                        worktree_names.join(", ").into()
-                    };
-
-                    ListItem::new(("workspace-item", index))
-                        .inset(true)
-                        .toggle_state(is_active)
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.set_active_workspace(index, cx);
-                            this.sidebar_open = false;
-                            cx.notify();
-                        }))
-                        .child(Label::new(label))
-                })
-                .collect();
-
-            Some(
-                div()
-                    .id("workspace-sidebar")
-                    .h_full()
-                    .w_64()
-                    .flex()
-                    .flex_col()
-                    .bg(cx.theme().colors().surface_background)
-                    .border_r_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        div()
-                            .h(titlebar_height)
-                            .w_full()
-                            .pl(px(80.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .pr_2()
-                            .child(Label::new("Workspaces").size(LabelSize::Small))
-                            .child(
-                                IconButton::new("new-workspace", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        window.dispatch_action(
-                                            NewWorkspaceInWindow.boxed_clone(),
-                                            cx,
-                                        );
-                                        this.sidebar_open = false;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(ui::ListSeparator)
-                    .child(
-                        div()
-                            .id("workspace-sidebar-content")
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .p_1()
-                            .children(items),
-                    ),
-            )
-        } else {
-            None
-        };
-
-        client_side_decorations(
-            div()
-                .size_full()
-                .flex()
-                .flex_row()
-                .on_action(
-                    cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
-                        let app_state = this.workspace().read(cx).app_state().clone();
-                        let project = Project::local(
-                            app_state.client.clone(),
-                            app_state.node_runtime.clone(),
-                            app_state.user_store.clone(),
-                            app_state.languages.clone(),
-                            app_state.fs.clone(),
-                            None,
-                            true,
-                            cx,
-                        );
-                        let new_workspace =
-                            cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-                        let index = this.add_workspace(new_workspace, cx);
-                        this.set_active_workspace(index, cx);
-                    }),
-                )
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &NextWorkspaceInWindow, _window, cx| {
-                        this.activate_next_workspace(cx);
-                    },
-                ))
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &PreviousWorkspaceInWindow, _window, cx| {
-                        this.activate_previous_workspace(cx);
-                    },
-                ))
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &ToggleWorkspaceSidebar, _window, cx| {
-                        this.toggle_sidebar(cx);
-                    },
-                ))
-                .children(sidebar)
-                .child(div().flex_1().size_full().child(self.workspace().clone())),
-            window,
-            cx,
-        )
-    }
 }
 
 /// Collects everything project-related for a certain window opened.
@@ -1730,7 +1453,9 @@ impl Workspace {
 
         let any_window_handle = window.window_handle();
         app_state.workspace_store.update(cx, |store, _| {
-            store.workspaces.insert(any_window_handle);
+            store
+                .workspaces
+                .insert((any_window_handle, weak_handle.clone()));
         });
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user();
@@ -1855,10 +1580,13 @@ impl Workspace {
                 GlobalTheme::reload_theme(cx);
                 GlobalTheme::reload_icon_theme(cx);
             }),
-            cx.on_release(move |this, cx| {
-                this.app_state.workspace_store.update(cx, move |store, _| {
-                    store.workspaces.remove(&any_window_handle);
-                })
+            cx.on_release({
+                let weak_handle = weak_handle.clone();
+                move |this, cx| {
+                    this.app_state.workspace_store.update(cx, move |store, _| {
+                        store.workspaces.retain(|(_, weak)| weak != &weak_handle);
+                    })
+                }
             }),
         ];
 
@@ -8022,13 +7750,13 @@ impl WorkspaceStore {
             };
 
             let mut response = proto::FollowResponse::default();
-            this.workspaces.retain(|any_window| {
-                let Some(window) = any_window.downcast::<MultiWorkspace>() else {
+
+            this.workspaces.retain(|(window_handle, weak_workspace)| {
+                let Some(workspace) = weak_workspace.upgrade() else {
                     return false;
                 };
-                window
-                    .update(cx, |multi_workspace, window, cx| {
-                        let workspace = multi_workspace.workspace().clone();
+                window_handle
+                    .update(cx, |_, window, cx| {
                         workspace.update(cx, |workspace, cx| {
                             let handler_response =
                                 workspace.handle_follow(follower.project_id, window, cx);
@@ -8055,13 +7783,12 @@ impl WorkspaceStore {
         let update = envelope.payload;
 
         this.update(&mut cx, |this, cx| {
-            this.workspaces.retain(|any_window| {
-                let Some(window) = any_window.downcast::<MultiWorkspace>() else {
+            this.workspaces.retain(|(window_handle, weak_workspace)| {
+                let Some(workspace) = weak_workspace.upgrade() else {
                     return false;
                 };
-                window
-                    .update(cx, |multi_workspace, window, cx| {
-                        let workspace = multi_workspace.workspace().clone();
+                window_handle
+                    .update(cx, |_, window, cx| {
                         workspace.update(cx, |workspace, cx| {
                             let project_id = workspace.project.read(cx).remote_id();
                             if update.project_id != project_id && update.project_id.is_some() {
@@ -8081,8 +7808,14 @@ impl WorkspaceStore {
         })
     }
 
-    pub fn workspaces(&self) -> &HashSet<gpui::AnyWindowHandle> {
-        &self.workspaces
+    pub fn workspaces(&self) -> impl Iterator<Item = &WeakEntity<Workspace>> {
+        self.workspaces.iter().map(|(_, weak)| weak)
+    }
+
+    pub fn workspaces_with_windows(
+        &self,
+    ) -> impl Iterator<Item = (gpui::AnyWindowHandle, &WeakEntity<Workspace>)> {
+        self.workspaces.iter().map(|(window, weak)| (*window, weak))
     }
 }
 
