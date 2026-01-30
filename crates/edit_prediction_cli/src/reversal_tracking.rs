@@ -448,17 +448,20 @@ fn normalize_extension_edits(edits: Vec<GranularEdit>) -> Vec<GranularEdit> {
             }
 
             if is_subsequence(&edit.old_text, &edit.new_text) {
-                let inserted_len = edit.new_text.len() - edit.old_text.len();
+                let inserted_char_count =
+                    edit.new_text.chars().count() - edit.old_text.chars().count();
                 GranularEdit {
                     range: edit.range.start..edit.range.start,
                     old_text: String::new(),
-                    new_text: edit.new_text.chars().take(inserted_len).collect(),
+                    new_text: edit.new_text.chars().take(inserted_char_count).collect(),
                 }
             } else if is_subsequence(&edit.new_text, &edit.old_text) {
-                let deleted_len = edit.old_text.len() - edit.new_text.len();
+                let deleted_char_count =
+                    edit.old_text.chars().count() - edit.new_text.chars().count();
+                let deleted_text: String = edit.old_text.chars().take(deleted_char_count).collect();
                 GranularEdit {
-                    range: edit.range.start..edit.range.start + deleted_len,
-                    old_text: edit.old_text.chars().take(deleted_len).collect(),
+                    range: edit.range.start..edit.range.start + deleted_text.len(),
+                    old_text: deleted_text,
                     new_text: String::new(),
                 }
             } else {
@@ -486,6 +489,8 @@ fn compute_reversal_overlap(
     let restored_deletions =
         compute_restored_deletions(&history_deletion_ranges, &prediction_edits);
 
+    // Note: These counts are in bytes, not Unicode characters, for consistency
+    // with the byte-based range overlap calculations used throughout.
     let total_chars_in_prediction: usize = prediction_edits
         .iter()
         .map(|e| e.new_text.len() + e.old_text.len())
@@ -1274,5 +1279,301 @@ mod tests {
                 case.name, case.expected_result, result
             );
         }
+    }
+
+    #[test]
+    fn test_unicode_reversal_overlap() {
+        // Note: The reversal tracking uses byte counts (not character counts) for consistency
+        // with byte-based range calculations. Test expectations reflect this.
+        struct Case {
+            name: &'static str,
+            original: &'static str,
+            current: &'static str,
+            predicted: &'static str,
+            expected_reversal_bytes: usize,
+            expected_total_bytes: usize,
+        }
+
+        let cases = [
+            Case {
+                name: "unicode_extension_cjk",
+                original: "",
+                current: "日",       // 3 bytes
+                predicted: "日本語", // 9 bytes, adds 6 bytes
+                expected_reversal_bytes: 0,
+                expected_total_bytes: 6, // "本語" = 6 bytes added
+            },
+            Case {
+                name: "unicode_extension_emoji",
+                original: "",
+                current: "🎉",       // 4 bytes
+                predicted: "🎉🎊🎈", // 12 bytes, adds 8 bytes
+                expected_reversal_bytes: 0,
+                expected_total_bytes: 8, // "🎊🎈" = 8 bytes added
+            },
+            Case {
+                name: "unicode_deletion_restored",
+                original: "héllo wörld", // 13 bytes (é and ö are 2 bytes each)
+                current: "héllo",        // 6 bytes
+                predicted: "héllo wörld", // restores " wörld" = 7 bytes, 6 chars
+                expected_reversal_bytes: 6, // LCS counts characters, not bytes: " wörld" = 6 chars
+                expected_total_bytes: 7, // total uses byte length
+            },
+            Case {
+                name: "unicode_addition_reversed",
+                original: "café",           // 5 bytes
+                current: "café latté",      // 12 bytes, added " latté" = 7 bytes
+                predicted: "café",          // removes " latté"
+                expected_reversal_bytes: 7, // 7 bytes removed
+                expected_total_bytes: 7,
+            },
+            Case {
+                name: "mixed_ascii_unicode",
+                original: "",
+                current: "test日本",         // 4 + 6 = 10 bytes
+                predicted: "test日本語です", // 4 + 12 = 16 bytes
+                expected_reversal_bytes: 0,
+                // After normalization (subsequence detection), only the net insertion is counted
+                expected_total_bytes: 3,
+            },
+            Case {
+                name: "unicode_replacement_not_subsequence",
+                original: "",
+                current: "日本",            // 6 bytes
+                predicted: "中国",          // 6 bytes, different chars
+                expected_reversal_bytes: 6, // removes "日本" = 6 bytes
+                expected_total_bytes: 12,   // 6 removed + 6 added
+            },
+        ];
+
+        for case in &cases {
+            let overlap = compute_reversal_overlap(case.original, case.current, case.predicted);
+            assert_eq!(
+                overlap.chars_reversing_user_edits, case.expected_reversal_bytes,
+                "Test '{}': expected {} reversal bytes, got {}",
+                case.name, case.expected_reversal_bytes, overlap.chars_reversing_user_edits
+            );
+            assert_eq!(
+                overlap.total_chars_in_prediction, case.expected_total_bytes,
+                "Test '{}': expected {} total bytes, got {}",
+                case.name, case.expected_total_bytes, overlap.total_chars_in_prediction
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_subsequence() {
+        assert!(is_subsequence("", "anything"));
+        assert!(is_subsequence("", ""));
+        assert!(is_subsequence("abc", "abc"));
+        assert!(is_subsequence("abc", "aXbXc"));
+        assert!(is_subsequence("ac", "abc"));
+        assert!(!is_subsequence("abc", "ab"));
+        assert!(!is_subsequence("abc", "cba"));
+        assert!(!is_subsequence("abc", ""));
+        assert!(is_subsequence("日本", "日X本Y語"));
+        assert!(!is_subsequence("日本語", "日本"));
+    }
+
+    #[test]
+    fn test_compute_lcs_length() {
+        assert_eq!(compute_lcs_length("", ""), 0);
+        assert_eq!(compute_lcs_length("abc", ""), 0);
+        assert_eq!(compute_lcs_length("", "abc"), 0);
+        assert_eq!(compute_lcs_length("abc", "abc"), 3);
+        assert_eq!(compute_lcs_length("abc", "def"), 0);
+        assert_eq!(compute_lcs_length("abcdef", "ace"), 3);
+        assert_eq!(compute_lcs_length("AGGTAB", "GXTXAYB"), 4);
+        assert_eq!(compute_lcs_length("日本語", "日語"), 2);
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_full_file() {
+        let prompt_inputs = ExamplePromptInputs {
+            content: "line1\nuser_added\nline2\n".to_string(),
+            cursor_row: 0,
+            cursor_column: 0,
+            cursor_offset: 0,
+            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/test.rs")),
+                old_path: Arc::from(Path::new("src/test.rs")),
+                diff: "@@ -1,2 +1,3 @@\n line1\n+user_added\n line2\n".into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            excerpt_start_row: None,
+            related_files: None,
+        };
+
+        let predicted = "line1\nline2\n";
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio > 0.9,
+            "Expected high reversal ratio when prediction removes user addition, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_with_excerpt() {
+        let prompt_inputs = ExamplePromptInputs {
+            content: "line10\nuser_added\nline11\n".to_string(),
+            cursor_row: 0,
+            cursor_column: 0,
+            cursor_offset: 0,
+            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/test.rs")),
+                old_path: Arc::from(Path::new("src/test.rs")),
+                diff: "@@ -10,2 +10,3 @@\n line10\n+user_added\n line11\n".into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            excerpt_start_row: Some(10),
+            related_files: None,
+        };
+
+        let predicted = "line10\nline11\n";
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio > 0.9,
+            "Expected high reversal ratio for excerpt-aware computation, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_no_history() {
+        let prompt_inputs = ExamplePromptInputs {
+            content: "original content\n".to_string(),
+            cursor_row: 0,
+            cursor_column: 0,
+            cursor_offset: 0,
+            edit_history: vec![],
+            excerpt_start_row: None,
+            related_files: None,
+        };
+
+        let predicted = "completely different\n";
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert_eq!(
+            ratio, 0.0,
+            "Expected zero reversal ratio with no edit history"
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_path_filtering() {
+        let prompt_inputs = ExamplePromptInputs {
+            content: "line1\nuser_added\nline2\n".to_string(),
+            cursor_row: 0,
+            cursor_column: 0,
+            cursor_offset: 0,
+            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/other.rs")),
+                old_path: Arc::from(Path::new("src/other.rs")),
+                diff: "@@ -1,2 +1,3 @@\n line1\n+user_added\n line2\n".into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            excerpt_start_row: None,
+            related_files: None,
+        };
+
+        let predicted = "line1\nline2\n";
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert_eq!(
+            ratio, 0.0,
+            "Expected zero reversal when edit history is for different file"
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_lenient_fallback() {
+        let prompt_inputs = ExamplePromptInputs {
+            content: "actual_line1\nuser_added\nactual_line2\n".to_string(),
+            cursor_row: 0,
+            cursor_column: 0,
+            cursor_offset: 0,
+            edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/test.rs")),
+                old_path: Arc::from(Path::new("src/test.rs")),
+                diff: "@@ -1,2 +1,3 @@\n wrong_context\n+user_added\n more_wrong\n".into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            excerpt_start_row: None,
+            related_files: None,
+        };
+
+        let predicted = "actual_line1\nactual_line2\n";
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio >= 0.0 && ratio <= 1.0,
+            "Ratio should be valid even with lenient fallback, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_excerpt_aware_reversal_error_recovery() {
+        let diffs = vec!["@@ -1,2 +1,3 @@\n nonexistent_context\n+added\n more_nonexistent\n"];
+        let excerpt_content = "completely\ndifferent\ncontent\n";
+        let predicted_content = "completely\nmodified\ncontent\n";
+
+        let overlap =
+            compute_excerpt_aware_reversal_overlap(&diffs, excerpt_content, 0, predicted_content);
+
+        assert!(
+            overlap.ratio() >= 0.0 && overlap.ratio() <= 1.0,
+            "Should handle failed diff application gracefully"
+        );
+    }
+
+    #[test]
+    fn test_multiple_sequential_diffs() {
+        let prompt_inputs = ExamplePromptInputs {
+            content: "line1\nfirst_add\nsecond_add\nline2\n".to_string(),
+            cursor_row: 0,
+            cursor_column: 0,
+            cursor_offset: 0,
+            edit_history: vec![
+                Arc::new(zeta_prompt::Event::BufferChange {
+                    path: Arc::from(Path::new("src/test.rs")),
+                    old_path: Arc::from(Path::new("src/test.rs")),
+                    diff: "@@ -1,2 +1,3 @@\n line1\n+first_add\n line2\n".into(),
+                    predicted: false,
+                    in_open_source_repo: false,
+                }),
+                Arc::new(zeta_prompt::Event::BufferChange {
+                    path: Arc::from(Path::new("src/test.rs")),
+                    old_path: Arc::from(Path::new("src/test.rs")),
+                    diff: "@@ -2,2 +2,3 @@\n first_add\n+second_add\n line2\n".into(),
+                    predicted: false,
+                    in_open_source_repo: false,
+                }),
+            ],
+            excerpt_start_row: None,
+            related_files: None,
+        };
+
+        let predicted = "line1\nline2\n";
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio > 0.9,
+            "Expected high reversal ratio when reversing multiple sequential edits, got {}",
+            ratio
+        );
     }
 }
