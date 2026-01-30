@@ -1188,17 +1188,17 @@ impl Window {
             move |request_frame_options| {
                 let thermal_state = cx.update(|cx| cx.thermal_state());
 
-                let now = Instant::now();
-                if let Some(last_frame) = last_frame_time.get()
-                    && (thermal_state == ThermalState::Serious
-                        || thermal_state == ThermalState::Critical)
+                if thermal_state == ThermalState::Serious || thermal_state == ThermalState::Critical
                 {
-                    if now.duration_since(last_frame) < Duration::from_micros(16667) {
+                    let now = Instant::now();
+                    let last_frame_time = last_frame_time.replace(Some(now));
+
+                    if let Some(last_frame) = last_frame_time
+                        && now.duration_since(last_frame) < Duration::from_micros(16667)
+                    {
                         return;
                     }
                 }
-
-                last_frame_time.set(Some(now));
 
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
