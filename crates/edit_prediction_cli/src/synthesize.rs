@@ -794,6 +794,8 @@ async fn build_example(
         rejected_patch: None,
         captured_prompt_input: None,
         telemetry: None,
+        human_feedback: Vec::new(),
+        rating: None,
     };
     spec.set_cursor_excerpt(&excerpt, cursor_offset, comment_prefix);
 

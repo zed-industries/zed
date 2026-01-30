@@ -11242,7 +11242,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 let venv_path = worktree_root.join(ancestor.as_std_path()).join(".venv");
                 if self.0.is_dir(&venv_path).await {
                     toolchains.push(Toolchain {
-                        name: SharedString::new("Python Venv"),
+                        name: SharedString::new_static("Python Venv"),
                         path: venv_path.to_string_lossy().into_owned().into(),
                         language_name: LanguageName(SharedString::new_static("Python")),
                         as_json: serde_json::Value::Null,
@@ -11274,7 +11274,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         fn activation_script(
             &self,
             _: &Toolchain,
-            _: ShellKind,
+            _: Option<ShellKind>,
             _: &gpui::App,
         ) -> futures::future::BoxFuture<'static, Vec<String>> {
             Box::pin(async { vec![] })

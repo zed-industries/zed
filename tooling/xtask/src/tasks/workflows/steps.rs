@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
-pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
@@ -160,7 +160,7 @@ pub fn script(name: &str) -> Step<Run> {
     if name.ends_with(".ps1") {
         Step::new(name).run(name).shell(PWSH_SHELL)
     } else {
-        Step::new(name).run(name).shell(BASH_SHELL)
+        Step::new(name).run(name)
     }
 }
 
@@ -290,9 +290,7 @@ pub mod named {
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
     pub fn bash(script: impl AsRef<str>) -> Step<Run> {
-        Step::new(function_name(1))
-            .run(script.as_ref())
-            .shell(BASH_SHELL)
+        Step::new(function_name(1)).run(script.as_ref())
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
@@ -308,25 +306,26 @@ pub mod named {
     pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
-            Platform::Linux | Platform::Mac => {
-                Step::new(function_name(1)).run(script).shell(BASH_SHELL)
-            }
+            Platform::Linux | Platform::Mac => Step::new(function_name(1)).run(script),
         }
     }
 
-    /// Returns a Workflow with the same name as the enclosing module.
+    /// Returns a Workflow with the same name as the enclosing module with default
+    /// set for the running shell.
     pub fn workflow() -> Workflow {
-        Workflow::default().name(
-            named::function_name(1)
-                .split("::")
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .skip(1)
-                .rev()
-                .collect::<Vec<_>>()
-                .join("::"),
-        )
+        Workflow::default()
+            .name(
+                named::function_name(1)
+                    .split("::")
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .skip(1)
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            )
+            .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 
     /// Returns a Job with the same name as the enclosing function.

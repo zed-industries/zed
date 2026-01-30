@@ -254,12 +254,20 @@ impl Output {
             Self::ClearOutputWaitMarker => None,
         };
 
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+
         h_flex()
             .id("output-content")
             .w_full()
-            .overflow_x_scroll()
+            .when(needs_horizontal_scroll, |el| el.overflow_x_scroll())
             .items_start()
-            .child(div().flex_1().children(content))
+            .child(
+                div()
+                    .when(!needs_horizontal_scroll, |el| {
+                        el.flex_1().w_full().overflow_x_hidden()
+                    })
+                    .children(content),
+            )
             .children(match self {
                 Self::Plain { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)

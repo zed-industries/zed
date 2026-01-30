@@ -3,7 +3,7 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
-use cloud_api_types::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
     CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
@@ -984,17 +984,15 @@ struct ZedAiConfiguration {
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let is_pro = self
-            .plan
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro));
+        let is_pro = self.plan.is_some_and(|plan| plan == Plan::ZedPro);
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::V2(PlanV2::ZedPro)), Some(_)) => {
+            (Some(Plan::ZedPro), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
+            (Some(Plan::ZedProTrial), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(Plan::V2(PlanV2::ZedFree)), Some(_)) => {
+            (Some(Plan::ZedFree), Some(_)) => {
                 if self.eligible_for_trial {
                     "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
                 } else {
@@ -1157,15 +1155,15 @@ impl Component for ZedAiConfiguration {
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(Plan::V2(PlanV2::ZedFree)), true, false),
+                        configuration(true, Some(Plan::ZedFree), true, false),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::V2(PlanV2::ZedProTrial)), true, false),
+                        configuration(true, Some(Plan::ZedProTrial), true, false),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(Plan::V2(PlanV2::ZedPro)), true, false),
+                        configuration(true, Some(Plan::ZedPro), true, false),
                     ),
                 ])
                 .into_any_element(),
