@@ -3281,41 +3281,42 @@ impl Workspace {
         };
 
         let workspace = cx.entity();
-        // TODO: this is added in the current window
-        let empty_pane = self.add_pane(window, cx);
         let window_handle = cx.open_window(
             gpui::WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(new_bounds)),
                 ..Default::default()
             },
             {
-                let pane = empty_pane.clone();
-                move |_, cx| {
-                    let mut group = PaneGroup::new(pane);
-                    group.set_in_satellite(true);
-                    group.set_is_center(true);
-                    group.mark_positions(cx);
+                let project = self.project.clone();
+                let pane_history_timestamp = self.pane_history_timestamp.clone();
+                move |window, cx| {
+                    let root = cx.new(|cx| {
+                        Pane::new(
+                            workspace.downgrade(),
+                            project,
+                            pane_history_timestamp,
+                            None,
+                            NewFile.boxed_clone(),
+                            true,
+                            window,
+                            cx,
+                        )
+                    });
 
-                    cx.new(|_| WorkspaceSatellite {
-                        center: group,
-                        workspace,
-                    })
+                    cx.new(|cx| WorkspaceSatellite::new(root, workspace, window, cx))
                 }
             },
         )?;
 
-        window_handle.update(cx, |_, window, cx| {
-            move_item(
-                &source_pane,
-                &empty_pane,
-                item_to_detach,
-                0,
-                true,
-                window,
-                cx,
-            );
+        let root = window_handle.update(cx, |satellite, window, cx| {
+            let root = satellite.center.first_pane();
+
+            move_item(&source_pane, &root, item_to_detach, 0, true, window, cx);
+
+            root
         })?;
 
+        self.panes.push(root);
         self.satellites.push(window_handle);
 
         cx.notify();

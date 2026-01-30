@@ -1,11 +1,48 @@
-use gpui::{Entity, EventEmitter, Focusable};
+use gpui::{App, Entity, EventEmitter, Focusable, Window, prelude::*};
 use ui::{ParentElement, Render, Styled, div};
 
-use crate::{ActivePaneDecorator, PaneGroup, Workspace, client_side_decorations};
+use crate::{ActivePaneDecorator, Pane, PaneGroup, Workspace, client_side_decorations, pane};
 
 pub struct WorkspaceSatellite {
     pub(crate) center: PaneGroup,
-    pub(crate) workspace: Entity<Workspace>,
+    workspace: Entity<Workspace>,
+}
+
+impl WorkspaceSatellite {
+    pub fn new(
+        root: Entity<Pane>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut group = PaneGroup::new(root.clone());
+        group.set_in_satellite(true);
+        group.set_is_center(true);
+        group.mark_positions(cx);
+
+        // TODO: can we share this logic with workspace
+        cx.subscribe_in(&root, window, Self::handle_pane_event)
+            .detach();
+
+        window.focus(&root.focus_handle(cx), cx);
+
+        Self {
+            center: group,
+            workspace,
+        }
+    }
+
+    fn handle_pane_event(
+        &mut self,
+        pane: &Entity<Pane>,
+        event: &pane::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.update(cx, move |workspace, cx| {
+            workspace.handle_pane_event(pane, event, window, cx)
+        })
+    }
 }
 
 pub enum WorkspaceSatelliteEvent {
