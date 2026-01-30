@@ -44,11 +44,18 @@ pub async fn run_context_retrieval(
             .map(|rf| rf.to_related_file())
             .collect();
 
+        let excerpt_start_row = compute_excerpt_start_row(
+            &captured.cursor_file_content,
+            captured.cursor_offset,
+            captured.cursor_row,
+        );
+
         example.prompt_inputs = Some(ExamplePromptInputs {
             content: captured.cursor_file_content.clone(),
             cursor_row: captured.cursor_row,
             cursor_column: captured.cursor_column,
             cursor_offset: captured.cursor_offset,
+            excerpt_start_row: Some(excerpt_start_row),
             edit_history,
             related_files: Some(related_files),
         });
@@ -97,6 +104,18 @@ pub async fn run_context_retrieval(
         prompt_inputs.related_files = Some(context_files);
     }
     Ok(())
+}
+
+fn compute_excerpt_start_row(
+    content: &str,
+    cursor_offset: usize,
+    cursor_row_in_full_file: u32,
+) -> u32 {
+    let cursor_row_in_content = content[..cursor_offset.min(content.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count() as u32;
+    cursor_row_in_full_file.saturating_sub(cursor_row_in_content)
 }
 
 async fn wait_for_language_servers_to_start(

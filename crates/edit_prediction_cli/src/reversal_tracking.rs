@@ -7,6 +7,309 @@ use language::text_diff;
 
 use crate::example::ExamplePromptInputs;
 
+fn apply_diff_to_string_lenient(diff_str: &str, text: &str) -> String {
+    let hunks = parse_diff_hunks(diff_str);
+    let mut result = text.to_string();
+
+    for hunk in hunks {
+        let hunk_diff = format!("--- a/file\n+++ b/file\n{}", format_hunk(&hunk));
+        if let Ok(updated) = apply_diff_to_string(&hunk_diff, &result) {
+            result = updated;
+        }
+    }
+
+    result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedHunk {
+    old_start: u32,
+    old_count: u32,
+    new_start: u32,
+    new_count: u32,
+    lines: Vec<HunkLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HunkLine {
+    Context(String),
+    Addition(String),
+    Deletion(String),
+}
+
+fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32)> {
+    let line = line.strip_prefix("@@ -")?;
+    let (old_part, rest) = line.split_once(' ')?;
+    let rest = rest.strip_prefix('+')?;
+    let (new_part, _) = rest.split_once(" @@")?;
+
+    let (old_start, old_count) = if let Some((start, count)) = old_part.split_once(',') {
+        (start.parse().ok()?, count.parse().ok()?)
+    } else {
+        (old_part.parse().ok()?, 1)
+    };
+
+    let (new_start, new_count) = if let Some((start, count)) = new_part.split_once(',') {
+        (start.parse().ok()?, count.parse().ok()?)
+    } else {
+        (new_part.parse().ok()?, 1)
+    };
+
+    Some((old_start, old_count, new_start, new_count))
+}
+
+fn parse_diff_hunks(diff: &str) -> Vec<ParsedHunk> {
+    let mut hunks = Vec::new();
+    let mut current_hunk: Option<ParsedHunk> = None;
+
+    for line in diff.lines() {
+        if let Some((old_start, old_count, new_start, new_count)) = parse_hunk_header(line) {
+            if let Some(hunk) = current_hunk.take() {
+                hunks.push(hunk);
+            }
+            current_hunk = Some(ParsedHunk {
+                old_start,
+                old_count,
+                new_start,
+                new_count,
+                lines: Vec::new(),
+            });
+        } else if let Some(ref mut hunk) = current_hunk {
+            if let Some(stripped) = line.strip_prefix('+') {
+                hunk.lines.push(HunkLine::Addition(stripped.to_string()));
+            } else if let Some(stripped) = line.strip_prefix('-') {
+                hunk.lines.push(HunkLine::Deletion(stripped.to_string()));
+            } else if let Some(stripped) = line.strip_prefix(' ') {
+                hunk.lines.push(HunkLine::Context(stripped.to_string()));
+            } else if line.is_empty() {
+                hunk.lines.push(HunkLine::Context(String::new()));
+            }
+        }
+    }
+
+    if let Some(hunk) = current_hunk {
+        hunks.push(hunk);
+    }
+
+    hunks
+}
+
+fn format_hunk(hunk: &ParsedHunk) -> String {
+    let mut result = format!(
+        "@@ -{},{} +{},{} @@\n",
+        hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
+    );
+    for line in &hunk.lines {
+        match line {
+            HunkLine::Context(text) => {
+                result.push(' ');
+                result.push_str(text);
+                result.push('\n');
+            }
+            HunkLine::Addition(text) => {
+                result.push('+');
+                result.push_str(text);
+                result.push('\n');
+            }
+            HunkLine::Deletion(text) => {
+                result.push('-');
+                result.push_str(text);
+                result.push('\n');
+            }
+        }
+    }
+    result
+}
+
+fn filter_diff_hunks_by_excerpt(
+    diff: &str,
+    excerpt_start_row: u32,
+    excerpt_row_count: u32,
+) -> (String, i32) {
+    let hunks = parse_diff_hunks(diff);
+    let excerpt_start_0based = excerpt_start_row;
+    let excerpt_end_0based = excerpt_start_row + excerpt_row_count;
+
+    let mut filtered_hunks = Vec::new();
+    let mut cumulative_line_offset: i32 = 0;
+
+    for hunk in hunks {
+        let hunk_start_0based = hunk.new_start.saturating_sub(1);
+        let hunk_end_0based = hunk_start_0based + hunk.new_count;
+
+        let additions: i32 = hunk
+            .lines
+            .iter()
+            .filter(|l| matches!(l, HunkLine::Addition(_)))
+            .count() as i32;
+        let deletions: i32 = hunk
+            .lines
+            .iter()
+            .filter(|l| matches!(l, HunkLine::Deletion(_)))
+            .count() as i32;
+        let hunk_line_delta = additions - deletions;
+
+        if hunk_end_0based <= excerpt_start_0based {
+            cumulative_line_offset += hunk_line_delta;
+            continue;
+        }
+
+        if hunk_start_0based >= excerpt_end_0based {
+            continue;
+        }
+
+        let mut filtered_lines = Vec::new();
+        let mut current_row_0based = hunk_start_0based;
+        let mut filtered_old_count = 0u32;
+        let mut filtered_new_count = 0u32;
+        let mut first_included_row: Option<u32> = None;
+
+        for line in &hunk.lines {
+            match line {
+                HunkLine::Context(text) => {
+                    if current_row_0based >= excerpt_start_0based
+                        && current_row_0based < excerpt_end_0based
+                    {
+                        if first_included_row.is_none() {
+                            first_included_row = Some(current_row_0based);
+                        }
+                        filtered_lines.push(HunkLine::Context(text.clone()));
+                        filtered_old_count += 1;
+                        filtered_new_count += 1;
+                    }
+                    current_row_0based += 1;
+                }
+                HunkLine::Addition(text) => {
+                    if current_row_0based >= excerpt_start_0based
+                        && current_row_0based < excerpt_end_0based
+                    {
+                        if first_included_row.is_none() {
+                            first_included_row = Some(current_row_0based);
+                        }
+                        filtered_lines.push(HunkLine::Addition(text.clone()));
+                        filtered_new_count += 1;
+                    }
+                    current_row_0based += 1;
+                }
+                HunkLine::Deletion(text) => {
+                    if current_row_0based >= excerpt_start_0based
+                        && current_row_0based < excerpt_end_0based
+                    {
+                        if first_included_row.is_none() {
+                            first_included_row = Some(current_row_0based);
+                        }
+                        filtered_lines.push(HunkLine::Deletion(text.clone()));
+                        filtered_old_count += 1;
+                    }
+                }
+            }
+        }
+
+        if !filtered_lines.is_empty() {
+            let first_row = first_included_row.unwrap_or(excerpt_start_0based);
+            let new_start_1based = (first_row - excerpt_start_0based) + 1;
+
+            filtered_hunks.push(ParsedHunk {
+                old_start: new_start_1based,
+                old_count: filtered_old_count,
+                new_start: new_start_1based,
+                new_count: filtered_new_count,
+                lines: filtered_lines,
+            });
+        }
+
+        cumulative_line_offset += hunk_line_delta;
+    }
+
+    let mut result = String::new();
+    for hunk in &filtered_hunks {
+        result.push_str(&format_hunk(hunk));
+    }
+
+    (result, cumulative_line_offset)
+}
+
+fn compute_excerpt_aware_reversal_overlap(
+    edit_history_diffs: &[&str],
+    excerpt_content: &str,
+    excerpt_start_row: u32,
+    predicted_content: &str,
+) -> ReversalOverlap {
+    let mut current_content = excerpt_content.to_string();
+    let mut current_excerpt_start_row = excerpt_start_row;
+
+    for diff in edit_history_diffs.iter().rev() {
+        if diff.is_empty() {
+            continue;
+        }
+
+        let current_row_count = current_content.lines().count() as u32;
+        let (filtered_diff, _line_offset) =
+            filter_diff_hunks_by_excerpt(diff, current_excerpt_start_row, current_row_count.max(1));
+
+        if filtered_diff.is_empty() {
+            let hunks = parse_diff_hunks(diff);
+            for hunk in hunks {
+                let hunk_end = hunk.new_start.saturating_sub(1) + hunk.new_count;
+                if hunk_end <= current_excerpt_start_row {
+                    let additions: u32 = hunk
+                        .lines
+                        .iter()
+                        .filter(|l| matches!(l, HunkLine::Addition(_)))
+                        .count() as u32;
+                    let deletions: u32 = hunk
+                        .lines
+                        .iter()
+                        .filter(|l| matches!(l, HunkLine::Deletion(_)))
+                        .count() as u32;
+                    if additions >= deletions {
+                        current_excerpt_start_row =
+                            current_excerpt_start_row.saturating_sub(additions - deletions);
+                    } else {
+                        current_excerpt_start_row += deletions - additions;
+                    }
+                }
+            }
+            continue;
+        }
+
+        let reversed = reverse_diff(&format!("--- a/file\n+++ b/file\n{}", filtered_diff));
+        match apply_diff_to_string(&reversed, &current_content) {
+            Ok(updated) => {
+                current_content = updated;
+            }
+            Err(_) => {
+                continue;
+            }
+        }
+
+        let hunks = parse_diff_hunks(diff);
+        for hunk in hunks {
+            let hunk_end = hunk.new_start.saturating_sub(1) + hunk.new_count;
+            if hunk_end <= current_excerpt_start_row {
+                let additions: u32 = hunk
+                    .lines
+                    .iter()
+                    .filter(|l| matches!(l, HunkLine::Addition(_)))
+                    .count() as u32;
+                let deletions: u32 = hunk
+                    .lines
+                    .iter()
+                    .filter(|l| matches!(l, HunkLine::Deletion(_)))
+                    .count() as u32;
+                if additions >= deletions {
+                    current_excerpt_start_row =
+                        current_excerpt_start_row.saturating_sub(additions - deletions);
+                } else {
+                    current_excerpt_start_row += deletions - additions;
+                }
+            }
+        }
+    }
+
+    compute_reversal_overlap(&current_content, excerpt_content, predicted_content)
+}
+
 pub fn reverse_diff(diff: &str) -> String {
     let mut result: String = diff
         .lines()
@@ -310,6 +613,20 @@ pub fn compute_prediction_reversal_ratio(
     let edit_history: &[Arc<zeta_prompt::Event>] = &prompt_inputs.edit_history;
     let relevant_events = filter_edit_history_by_path(edit_history, cursor_path);
 
+    if let Some(excerpt_start_row) = prompt_inputs.excerpt_start_row {
+        let diffs: Vec<&str> = relevant_events
+            .iter()
+            .map(|e| extract_diff_from_event(e))
+            .collect();
+        let overlap = compute_excerpt_aware_reversal_overlap(
+            &diffs,
+            current_content,
+            excerpt_start_row,
+            predicted_content,
+        );
+        return overlap.ratio();
+    }
+
     let mut original_content = current_content.to_string();
     for event in relevant_events.into_iter().rev() {
         let diff = extract_diff_from_event(event);
@@ -320,12 +637,8 @@ pub fn compute_prediction_reversal_ratio(
         let with_headers = format!("--- a/file\n+++ b/file\n{}", reversed);
         match apply_diff_to_string(&with_headers, &original_content) {
             Ok(updated_content) => original_content = updated_content,
-            Err(err) => {
-                log::error!(
-                    "Failed to reconstruct original content for reversal tracking: Failed to apply reversed diff: {:#}",
-                    err
-                );
-                return 0.0;
+            Err(_) => {
+                original_content = apply_diff_to_string_lenient(&reversed, &original_content);
             }
         }
     }
@@ -686,5 +999,280 @@ mod tests {
             !reversed.ends_with('\n'),
             "Reversed diff should not add trailing newline if original didn't have one"
         );
+    }
+
+    #[test]
+    fn test_filter_hunks_by_excerpt_region() {
+        struct Case {
+            name: &'static str,
+            diff: &'static str,
+            excerpt_start_row: u32,
+            excerpt_row_count: u32,
+            expected_filtered_diff: &'static str,
+            expected_line_offset: i32,
+        }
+
+        let cases = [
+            Case {
+                name: "hunk_entirely_before_excerpt",
+                diff: "@@ -1,3 +1,4 @@\n line1\n+inserted\n line2\n line3\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "hunk_entirely_inside_excerpt",
+                diff: "@@ -12,3 +12,4 @@\n line12\n+inserted\n line13\n line14\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: "@@ -2,3 +2,4 @@\n line12\n+inserted\n line13\n line14\n",
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "hunk_entirely_after_excerpt",
+                diff: "@@ -50,3 +50,4 @@\n line50\n+inserted\n line51\n line52\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: 0,
+            },
+            Case {
+                name: "hunk_straddles_excerpt_start",
+                diff: "@@ -8,5 +8,6 @@\n line8\n line9\n+inserted\n line10\n line11\n line12\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: "@@ -1,3 +1,3 @@\n line10\n line11\n line12\n",
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "hunk_straddles_excerpt_end",
+                diff: "@@ -18,5 +18,6 @@\n line18\n line19\n+inserted\n line20\n line21\n line22\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: "@@ -8,2 +8,3 @@\n line18\n line19\n+inserted\n",
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "multiple_hunks_mixed",
+                diff: "@@ -1,2 +1,3 @@\n line1\n+before_excerpt\n line2\n@@ -12,2 +13,3 @@\n line12\n+inside_excerpt\n line13\n@@ -50,2 +52,3 @@\n line50\n+after_excerpt\n line51\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: "@@ -3,2 +3,3 @@\n line12\n+inside_excerpt\n line13\n",
+                expected_line_offset: 2,
+            },
+            Case {
+                name: "deletion_before_excerpt",
+                diff: "@@ -1,4 +1,3 @@\n line1\n-deleted\n line2\n line3\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: -1,
+            },
+            Case {
+                name: "deletion_inside_excerpt",
+                diff: "@@ -12,4 +12,3 @@\n line12\n-deleted\n line13\n line14\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: "@@ -2,4 +2,3 @@\n line12\n-deleted\n line13\n line14\n",
+                expected_line_offset: -1,
+            },
+            Case {
+                name: "empty_diff",
+                diff: "",
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: 0,
+            },
+            Case {
+                name: "hunk_spans_entire_excerpt",
+                diff: "@@ -8,10 +8,12 @@\n line8\n line9\n line10\n line11\n+inserted1\n line12\n line13\n+inserted2\n line14\n line15\n line16\n line17\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "@@ -1,3 +1,5 @@\n line11\n+inserted1\n line12\n line13\n+inserted2\n",
+                expected_line_offset: 2,
+            },
+            Case {
+                name: "replacement_inside_excerpt",
+                diff: "@@ -12,3 +12,3 @@\n line12\n-old_text\n+new_text\n line14\n",
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: "@@ -2,3 +2,3 @@\n line12\n-old_text\n+new_text\n line14\n",
+                expected_line_offset: 0,
+            },
+        ];
+
+        for case in &cases {
+            let (filtered, line_offset) = filter_diff_hunks_by_excerpt(
+                case.diff,
+                case.excerpt_start_row,
+                case.excerpt_row_count,
+            );
+            assert_eq!(
+                filtered, case.expected_filtered_diff,
+                "Test '{}': filtered diff mismatch.\nExpected:\n{}\nGot:\n{}",
+                case.name, case.expected_filtered_diff, filtered
+            );
+            assert_eq!(
+                line_offset, case.expected_line_offset,
+                "Test '{}': line offset mismatch. Expected {}, got {}",
+                case.name, case.expected_line_offset, line_offset
+            );
+        }
+    }
+
+    #[test]
+    fn test_excerpt_aware_reversal_tracking() {
+        struct Case {
+            name: &'static str,
+            edit_history_diffs: Vec<&'static str>,
+            excerpt_content: &'static str,
+            excerpt_start_row: u32,
+            predicted_content: &'static str,
+            expected_reversal_chars: usize,
+            expected_total_chars: usize,
+        }
+
+        let cases = [
+            Case {
+                name: "edit_outside_excerpt_no_reversal",
+                edit_history_diffs: vec!["@@ -1,2 +1,3 @@\n line1\n+added_outside\n line2\n"],
+                excerpt_content: "line10\nline11\nline12\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nmodified\nline12\n",
+                expected_reversal_chars: 0,
+                expected_total_chars: 14,
+            },
+            Case {
+                name: "edit_inside_excerpt_with_reversal",
+                edit_history_diffs: vec![
+                    "@@ -10,3 +10,4 @@\n line10\n+user_added\n line11\n line12\n",
+                ],
+                excerpt_content: "line10\nuser_added\nline11\nline12\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nline11\nline12\n",
+                expected_reversal_chars: 11,
+                expected_total_chars: 11,
+            },
+            Case {
+                name: "straddling_edit_partial_reversal",
+                edit_history_diffs: vec![
+                    "@@ -8,6 +8,8 @@\n line8\n line9\n+before_excerpt\n line10\n+inside_excerpt\n line11\n line12\n line13\n",
+                ],
+                excerpt_content: "line10\ninside_excerpt\nline11\nline12\nline13\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nline11\nline12\nline13\n",
+                expected_reversal_chars: 15,
+                expected_total_chars: 15,
+            },
+            Case {
+                name: "multiple_edits_mixed_locations",
+                edit_history_diffs: vec![
+                    "@@ -1,2 +1,3 @@\n line1\n+outside1\n line2\n",
+                    "@@ -11,2 +12,3 @@\n line11\n+inside1\n line12\n",
+                ],
+                excerpt_content: "line10\nline11\ninside1\nline12\nline13\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nline11\nline12\nline13\n",
+                expected_reversal_chars: 8,
+                expected_total_chars: 8,
+            },
+            Case {
+                name: "no_edit_history",
+                edit_history_diffs: vec![],
+                excerpt_content: "line10\nline11\nline12\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nmodified\nline12\n",
+                expected_reversal_chars: 0,
+                expected_total_chars: 14,
+            },
+            Case {
+                name: "edit_after_excerpt_no_effect",
+                edit_history_diffs: vec!["@@ -50,2 +50,3 @@\n line50\n+added_after\n line51\n"],
+                excerpt_content: "line10\nline11\nline12\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nchanged\nline12\n",
+                expected_reversal_chars: 0,
+                expected_total_chars: 13,
+            },
+            Case {
+                name: "line_offset_tracking_across_hunks",
+                edit_history_diffs: vec![
+                    "@@ -1,2 +1,4 @@\n line1\n+added1\n+added2\n line2\n",
+                    "@@ -12,2 +14,3 @@\n line12\n+inside_after_offset\n line13\n",
+                ],
+                excerpt_content: "line10\nline11\nline12\ninside_after_offset\nline13\n",
+                excerpt_start_row: 10,
+                predicted_content: "line10\nline11\nline12\nline13\n",
+                expected_reversal_chars: 20,
+                expected_total_chars: 20,
+            },
+        ];
+
+        for case in &cases {
+            let overlap = compute_excerpt_aware_reversal_overlap(
+                &case.edit_history_diffs,
+                case.excerpt_content,
+                case.excerpt_start_row,
+                case.predicted_content,
+            );
+            assert_eq!(
+                overlap.chars_reversing_user_edits, case.expected_reversal_chars,
+                "Test '{}': expected {} reversal chars, got {}",
+                case.name, case.expected_reversal_chars, overlap.chars_reversing_user_edits
+            );
+            assert_eq!(
+                overlap.total_chars_in_prediction, case.expected_total_chars,
+                "Test '{}': expected {} total chars, got {}",
+                case.name, case.expected_total_chars, overlap.total_chars_in_prediction
+            );
+        }
+    }
+
+    #[test]
+    fn test_lenient_diff_application() {
+        struct Case {
+            name: &'static str,
+            diff: &'static str,
+            content: &'static str,
+            expected_result: &'static str,
+        }
+
+        let cases = [
+            Case {
+                name: "hunk_context_not_found_skipped",
+                diff: "@@ -1,3 +1,4 @@\n context_not_in_content\n+added_line\n more_context\n final_context\n",
+                content: "completely\ndifferent\ncontent\n",
+                expected_result: "completely\ndifferent\ncontent\n",
+            },
+            Case {
+                name: "hunk_context_found_applied",
+                diff: "@@ -1,3 +1,4 @@\n line1\n+inserted\n line2\n line3\n",
+                content: "line1\nline2\nline3\n",
+                expected_result: "line1\ninserted\nline2\nline3\n",
+            },
+            Case {
+                name: "multiple_hunks_partial_match",
+                diff: "@@ -1,2 +1,3 @@\n not_found\n+skipped\n also_not_found\n@@ -5,2 +6,3 @@\n line5\n+applied\n line6\n",
+                content: "line1\nline2\nline3\nline4\nline5\nline6\n",
+                expected_result: "line1\nline2\nline3\nline4\nline5\napplied\nline6\n",
+            },
+            Case {
+                name: "empty_diff",
+                diff: "",
+                content: "unchanged\ncontent\n",
+                expected_result: "unchanged\ncontent\n",
+            },
+        ];
+
+        for case in &cases {
+            let result = apply_diff_to_string_lenient(case.diff, case.content);
+            assert_eq!(
+                result, case.expected_result,
+                "Test '{}': expected:\n{}\ngot:\n{}",
+                case.name, case.expected_result, result
+            );
+        }
     }
 }
