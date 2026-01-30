@@ -278,15 +278,14 @@ fn render_verification_section(
                             .with_placeholder("Enter a test input to see how rules apply...")
                             .tab_index(0)
                             .on_confirm(move |input, _window, cx| {
-                                if let Some(input) = input {
-                                    let decision =
-                                        evaluate_test_input(&tool_id_for_callback, &input, cx);
-                                    cx.set_global(VerificationResult {
-                                        id: result_id_for_callback.clone(),
-                                        decision,
-                                    });
-                                    cx.notify(entity_id);
-                                }
+                                let decision = input
+                                    .filter(|s| !s.is_empty())
+                                    .map(|input| evaluate_test_input(&tool_id_for_callback, &input, cx));
+                                cx.set_global(VerificationResult {
+                                    id: result_id_for_callback.clone(),
+                                    decision,
+                                });
+                                cx.notify(entity_id);
                             }),
                     ),
                 )
@@ -336,23 +335,20 @@ fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDe
 fn render_verification_result(result_id: &str, cx: &App) -> AnyElement {
     let result = cx.try_global::<VerificationResult>();
 
-    let (label, color, icon) = match result {
-        Some(result) if result.id == result_id => match &result.decision {
-            ToolPermissionDecision::Allow => ("Allowed", Color::Success, IconName::Check),
-            ToolPermissionDecision::Deny(_) => ("Denied", Color::Error, IconName::XCircle),
-            ToolPermissionDecision::Confirm => ("Confirm", Color::Warning, IconName::Info),
-        },
-        _ => ("", Color::Muted, IconName::Dash),
+    let matching_result = result.filter(|r| r.id == result_id);
+    let decision = matching_result.as_ref().and_then(|r| r.decision.as_ref());
+
+    let (label, color, icon) = match decision {
+        Some(ToolPermissionDecision::Allow) => ("Allowed", Color::Success, IconName::Check),
+        Some(ToolPermissionDecision::Deny(_)) => ("Denied", Color::Error, IconName::XCircle),
+        Some(ToolPermissionDecision::Confirm) => ("Confirm", Color::Warning, IconName::Info),
+        None => ("", Color::Muted, IconName::Dash),
     };
 
-    let has_result = result.is_some_and(|r| r.id == result_id);
-    let deny_reason = result.and_then(|r| {
-        if r.id == result_id {
-            if let ToolPermissionDecision::Deny(reason) = &r.decision {
-                Some(reason.clone())
-            } else {
-                None
-            }
+    let has_result = decision.is_some();
+    let deny_reason = decision.and_then(|d| {
+        if let ToolPermissionDecision::Deny(reason) = d {
+            Some(reason.clone())
         } else {
             None
         }
@@ -382,7 +378,7 @@ fn render_verification_result(result_id: &str, cx: &App) -> AnyElement {
 #[derive(Clone)]
 struct VerificationResult {
     id: String,
-    decision: ToolPermissionDecision,
+    decision: Option<ToolPermissionDecision>,
 }
 
 impl Global for VerificationResult {}
