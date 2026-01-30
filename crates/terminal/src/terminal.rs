@@ -41,7 +41,7 @@ use mappings::mouse::{
 
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
-use pty_info::{ProcessIdGetter, PtyProcessInfo};
+use pty_info::{ProcessIdGetter, ProcessInfo, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
@@ -59,7 +59,7 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, RangeInclusive},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
@@ -2203,14 +2203,43 @@ impl Terminal {
             return true;
         }
 
-        let Some(process_id_getter) = self.pid_getter() else {
+        let TerminalType::Pty { info, .. } = &self.terminal_type else {
             return false;
         };
-        let Some(process_id) = self.pid() else {
+        let current_info = info.current.read();
+        let Some(process_info) = current_info.as_ref() else {
             return false;
         };
 
-        process_id != process_id_getter.fallback_pid()
+        !self.is_shell_process(process_info)
+    }
+
+    fn is_shell_process(&self, process_info: &ProcessInfo) -> bool {
+        let Some(shell_name) = self.shell_process_name() else {
+            return false;
+        };
+        Self::normalize_process_name(&process_info.name)
+            == Self::normalize_process_name(&shell_name)
+    }
+
+    fn shell_process_name(&self) -> Option<String> {
+        self.template
+            .shell
+            .shell_kind()
+            .map(|kind| kind.name().to_string())
+            .or_else(|| {
+                Path::new(&self.template.shell.program())
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+    }
+
+    fn normalize_process_name(name: &str) -> String {
+        let normalized = name.trim_start_matches('-').to_ascii_lowercase();
+        normalized
+            .strip_suffix(".exe")
+            .unwrap_or(normalized.as_str())
+            .to_string()
     }
 
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
@@ -2540,7 +2569,7 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::PathBuf, time::Duration};
 
     use super::*;
     use crate::{
@@ -2720,6 +2749,41 @@ mod tests {
             content_after.contains("from_injection"),
             "expected injected output to appear, got: {content_after}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_has_running_process_detects_shell_and_child(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (terminal, _completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
+        terminal.update(cx, |terminal, _| {
+            let shell_name = terminal
+                .shell_process_name()
+                .expect("expected shell name for PTY terminal");
+            if let TerminalType::Pty { info, .. } = &terminal.terminal_type {
+                *info.current.write() = Some(ProcessInfo {
+                    name: shell_name.clone(),
+                    cwd: PathBuf::new(),
+                    argv: vec![shell_name],
+                });
+            }
+            assert!(
+                !terminal.has_running_process(),
+                "shell process should not count as a running child process"
+            );
+
+            if let TerminalType::Pty { info, .. } = &terminal.terminal_type {
+                *info.current.write() = Some(ProcessInfo {
+                    name: "zed-test-child".to_string(),
+                    cwd: PathBuf::new(),
+                    argv: vec!["zed-test-child".to_string()],
+                });
+            }
+            assert!(
+                terminal.has_running_process(),
+                "non-shell process should count as a running child process"
+            );
+        });
     }
 
     // TODO should be tested on Linux too, but does not work there well
