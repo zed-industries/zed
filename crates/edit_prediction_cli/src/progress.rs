@@ -50,6 +50,7 @@ pub enum Step {
     FormatPrompt,
     Predict,
     Score,
+    Qa,
     Synthesize,
     PullExamples,
 }
@@ -68,6 +69,7 @@ impl Step {
             Step::FormatPrompt => "Format",
             Step::Predict => "Predict",
             Step::Score => "Score",
+            Step::Qa => "QA",
             Step::Synthesize => "Synthesize",
             Step::PullExamples => "Pull",
         }
@@ -80,6 +82,7 @@ impl Step {
             Step::FormatPrompt => "\x1b[34m",
             Step::Predict => "\x1b[32m",
             Step::Score => "\x1b[31m",
+            Step::Qa => "\x1b[36m",
             Step::Synthesize => "\x1b[36m",
             Step::PullExamples => "\x1b[36m",
         }
