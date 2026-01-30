@@ -713,7 +713,7 @@ impl Vim {
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
-                let extra_line = if first_char == Some('\n') { 1 } else { 0 };
+                let extra_line = if first_char == Some('\n') && selection.is_empty() { 1 } else { 0 };
 
                 let end_row = current_end_row + count as u32 + extra_line;
 
