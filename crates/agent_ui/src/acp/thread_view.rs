@@ -2126,6 +2126,20 @@ impl AcpThreadView {
         };
     }
 
+    fn authorize_subagent_tool_call(
+        &mut self,
+        subagent_thread: Entity<AcpThread>,
+        tool_call_id: acp::ToolCallId,
+        option_id: acp::PermissionOptionId,
+        option_kind: acp::PermissionOptionKind,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        subagent_thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
+        });
+    }
+
     fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
         if let Some(active) = self.as_active_thread_mut() {
             active.restore_checkpoint(message_id, cx);
@@ -3497,6 +3511,25 @@ impl AcpThreadView {
                     self.render_subagent_expanded_content(entry_ix, context_ix, thread, window, cx),
                 )
             })
+            .children(
+                thread_read
+                    .first_tool_awaiting_confirmation()
+                    .and_then(|tc| {
+                        if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tc.status {
+                            Some(self.render_subagent_pending_tool_call(
+                                entry_ix,
+                                context_ix,
+                                thread.clone(),
+                                tc,
+                                options,
+                                window,
+                                cx,
+                            ))
+                        } else {
+                            None
+                        }
+                    }),
+            )
             .into_any_element()
     }
 
@@ -4066,6 +4099,360 @@ impl AcpThreadView {
                         }
                     }))
             }))
+    }
+
+    fn render_subagent_pending_tool_call(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        subagent_thread: Entity<AcpThread>,
+        tool_call: &ToolCall,
+        options: &PermissionOptions,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let tool_call_id = tool_call.id.clone();
+        let is_edit =
+            matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
+
+        v_flex()
+            .w_full()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                self.render_tool_call_label(
+                    entry_ix, tool_call, is_edit, false, // has_failed
+                    false, // has_revealed_diff
+                    true,  // use_card_layout
+                    window, cx,
+                )
+                .py_1(),
+            )
+            .children(
+                tool_call
+                    .content
+                    .iter()
+                    .enumerate()
+                    .map(|(content_ix, content)| {
+                        self.render_tool_call_content(
+                            entry_ix,
+                            content,
+                            content_ix,
+                            tool_call,
+                            true, // card_layout
+                            has_image_content,
+                            false, // has_failed
+                            window,
+                            cx,
+                        )
+                    }),
+            )
+            .child(self.render_subagent_permission_buttons(
+                entry_ix,
+                context_ix,
+                subagent_thread,
+                tool_call_id,
+                options,
+                cx,
+            ))
+    }
+
+    fn render_subagent_permission_buttons(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        subagent_thread: Entity<AcpThread>,
+        tool_call_id: acp::ToolCallId,
+        options: &PermissionOptions,
+        cx: &Context<Self>,
+    ) -> Div {
+        match options {
+            PermissionOptions::Flat(options) => self.render_subagent_permission_buttons_flat(
+                entry_ix,
+                context_ix,
+                subagent_thread,
+                tool_call_id,
+                options,
+                cx,
+            ),
+            PermissionOptions::Dropdown(options) => self
+                .render_subagent_permission_buttons_dropdown(
+                    entry_ix,
+                    context_ix,
+                    subagent_thread,
+                    tool_call_id,
+                    options,
+                    cx,
+                ),
+        }
+    }
+
+    fn render_subagent_permission_buttons_flat(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        subagent_thread: Entity<AcpThread>,
+        tool_call_id: acp::ToolCallId,
+        options: &[acp::PermissionOption],
+        cx: &Context<Self>,
+    ) -> Div {
+        div()
+            .p_1()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .w_full()
+            .v_flex()
+            .gap_0p5()
+            .children(options.iter().map(move |option| {
+                let option_id = SharedString::from(format!(
+                    "subagent-{}-{}-{}",
+                    entry_ix, context_ix, option.option_id.0
+                ));
+                Button::new((option_id, entry_ix), option.name.clone())
+                    .map(|this| match option.kind {
+                        acp::PermissionOptionKind::AllowOnce => {
+                            this.icon(IconName::Check).icon_color(Color::Success)
+                        }
+                        acp::PermissionOptionKind::AllowAlways => {
+                            this.icon(IconName::CheckDouble).icon_color(Color::Success)
+                        }
+                        acp::PermissionOptionKind::RejectOnce
+                        | acp::PermissionOptionKind::RejectAlways
+                        | _ => this.icon(IconName::Close).icon_color(Color::Error),
+                    })
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener({
+                        let subagent_thread = subagent_thread.clone();
+                        let tool_call_id = tool_call_id.clone();
+                        let option_id = option.option_id.clone();
+                        let option_kind = option.kind;
+                        move |this, _, window, cx| {
+                            this.authorize_subagent_tool_call(
+                                subagent_thread.clone(),
+                                tool_call_id.clone(),
+                                option_id.clone(),
+                                option_kind,
+                                window,
+                                cx,
+                            );
+                        }
+                    }))
+            }))
+    }
+
+    fn render_subagent_permission_buttons_dropdown(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        subagent_thread: Entity<AcpThread>,
+        tool_call_id: acp::ToolCallId,
+        choices: &[PermissionOptionChoice],
+        cx: &Context<Self>,
+    ) -> Div {
+        let selected_index = if let Some(active) = self.as_active_thread() {
+            active
+                .selected_permission_granularity
+                .get(&tool_call_id)
+                .copied()
+                .unwrap_or_else(|| choices.len().saturating_sub(1))
+        } else {
+            choices.len().saturating_sub(1)
+        };
+
+        let selected_choice = choices.get(selected_index).or(choices.last());
+
+        let dropdown_label: SharedString = selected_choice
+            .map(|choice| choice.label())
+            .unwrap_or_else(|| "Only this time".into());
+
+        let (allow_option_id, allow_option_kind, deny_option_id, deny_option_kind) =
+            if let Some(choice) = selected_choice {
+                (
+                    choice.allow.option_id.clone(),
+                    choice.allow.kind,
+                    choice.deny.option_id.clone(),
+                    choice.deny.kind,
+                )
+            } else {
+                (
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                    acp::PermissionOptionId::new("deny"),
+                    acp::PermissionOptionKind::RejectOnce,
+                )
+            };
+
+        h_flex()
+            .w_full()
+            .p_1()
+            .gap_2()
+            .justify_between()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                h_flex()
+                    .gap_0p5()
+                    .child(
+                        Button::new(
+                            (
+                                SharedString::from(format!(
+                                    "subagent-allow-btn-{}-{}",
+                                    entry_ix, context_ix
+                                )),
+                                entry_ix,
+                            ),
+                            "Allow",
+                        )
+                        .icon(IconName::Check)
+                        .icon_color(Color::Success)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::XSmall)
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener({
+                            let subagent_thread = subagent_thread.clone();
+                            let tool_call_id = tool_call_id.clone();
+                            let option_id = allow_option_id;
+                            let option_kind = allow_option_kind;
+                            move |this, _, window, cx| {
+                                this.authorize_subagent_tool_call(
+                                    subagent_thread.clone(),
+                                    tool_call_id.clone(),
+                                    option_id.clone(),
+                                    option_kind,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })),
+                    )
+                    .child(
+                        Button::new(
+                            (
+                                SharedString::from(format!(
+                                    "subagent-deny-btn-{}-{}",
+                                    entry_ix, context_ix
+                                )),
+                                entry_ix,
+                            ),
+                            "Deny",
+                        )
+                        .icon(IconName::Close)
+                        .icon_color(Color::Error)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::XSmall)
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            let option_id = deny_option_id;
+                            let option_kind = deny_option_kind;
+                            move |this, _, window, cx| {
+                                this.authorize_subagent_tool_call(
+                                    subagent_thread.clone(),
+                                    tool_call_id.clone(),
+                                    option_id.clone(),
+                                    option_kind,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })),
+                    ),
+            )
+            .child(self.render_subagent_permission_granularity_dropdown(
+                choices,
+                dropdown_label,
+                entry_ix,
+                context_ix,
+                tool_call_id,
+                selected_index,
+                cx,
+            ))
+    }
+
+    fn render_subagent_permission_granularity_dropdown(
+        &self,
+        choices: &[PermissionOptionChoice],
+        current_label: SharedString,
+        entry_ix: usize,
+        context_ix: usize,
+        tool_call_id: acp::ToolCallId,
+        selected_index: usize,
+        _cx: &Context<Self>,
+    ) -> AnyElement {
+        let menu_options: Vec<(usize, SharedString)> = choices
+            .iter()
+            .enumerate()
+            .map(|(i, choice)| (i, choice.label()))
+            .collect();
+
+        let permission_dropdown_handle = match &self.thread_state {
+            ThreadState::Active(ActiveThreadState {
+                permission_dropdown_handle,
+                ..
+            }) => permission_dropdown_handle.clone(),
+            _ => return div().into_any_element(),
+        };
+
+        PopoverMenu::new((
+            SharedString::from(format!(
+                "subagent-permission-granularity-{}-{}",
+                entry_ix, context_ix
+            )),
+            entry_ix,
+        ))
+        .with_handle(permission_dropdown_handle)
+        .trigger(
+            Button::new(
+                (
+                    SharedString::from(format!(
+                        "subagent-granularity-trigger-{}-{}",
+                        entry_ix, context_ix
+                    )),
+                    entry_ix,
+                ),
+                current_label,
+            )
+            .icon(IconName::ChevronDown)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Muted)
+            .label_size(LabelSize::Small),
+        )
+        .menu(move |window, cx| {
+            let tool_call_id = tool_call_id.clone();
+            let options = menu_options.clone();
+
+            Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                for (index, display_name) in options.iter() {
+                    let display_name = display_name.clone();
+                    let index = *index;
+                    let tool_call_id_for_entry = tool_call_id.clone();
+                    let is_selected = index == selected_index;
+
+                    menu = menu.toggleable_entry(
+                        display_name,
+                        is_selected,
+                        IconPosition::End,
+                        None,
+                        move |window, cx| {
+                            window.dispatch_action(
+                                SelectPermissionGranularity {
+                                    tool_call_id: tool_call_id_for_entry.0.to_string(),
+                                    index,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            );
+                        },
+                    );
+                }
+
+                menu
+            }))
+        })
+        .into_any_element()
     }
 
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
