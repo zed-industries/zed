@@ -11266,7 +11266,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         fn activation_script(
             &self,
             _: &Toolchain,
-            _: Option<ShellKind>,
+            _: ShellKind,
             _: &gpui::App,
         ) -> futures::future::BoxFuture<'static, Vec<String>> {
             Box::pin(async { vec![] })

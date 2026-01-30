@@ -30,22 +30,15 @@ impl ToolPermissionDecision {
     ///
     /// # Shell Compatibility (Terminal Tool Only)
     ///
-    /// For the terminal tool, commands are parsed using brush-parser to extract sub-commands
-    /// for security. This ensures that patterns like `^cargo\b` cannot be bypassed with
-    /// shell injection like `cargo && rm -rf /`.
+    /// For the terminal tool, commands are parsed to extract sub-commands for security.
+    /// This parsing only works for shells with POSIX-like `&&` / `||` / `;` / `|` syntax:
     ///
-    /// The parser handles `;` (sequential execution), `|` (piping), `&&` and `||`
-    /// (conditional execution), `$()` and backticks (command substitution), and process
-    /// substitution.
+    /// **Compatible shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
     ///
-    /// # Shell Notes
+    /// **Incompatible shells:** Nushell, Elvish, Rc (Plan 9)
     ///
-    /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are
-    ///   boolean operators on values (e.g., `$true and $false`), not command chaining.
-    /// - **Elvish**: Uses `;` to separate pipelines, which brush-parser handles. Elvish
-    ///   does not have `&&` or `||` operators. Its `and`/`or` are special commands that
-    ///   operate on values, not command chaining (e.g., `and $true $false`).
-    /// - **Rc (Plan 9)**: Uses `;` for sequential execution. Does not have `&&`/`||`.
+    /// For incompatible shells, `always_allow` patterns are disabled for safety.
     ///
     /// # Pattern Matching Tips
     ///
@@ -64,7 +57,7 @@ impl ToolPermissionDecision {
         input: &str,
         permissions: &ToolPermissions,
         always_allow_tool_actions: bool,
-        shell_kind: Option<ShellKind>,
+        shell_kind: ShellKind,
     ) -> ToolPermissionDecision {
         // If always_allow_tool_actions is enabled, bypass all permission checks.
         // This is intentionally placed first - it's a global override that the user
@@ -93,28 +86,22 @@ impl ToolPermissionDecision {
         // If parsing fails or the shell syntax is unsupported, always_allow is
         // disabled for this command (we set allow_enabled to false to signal this).
         if tool_name == TerminalTool::name() {
-            // Check if this shell's syntax can be parsed by brush-parser.
-            // See the doc comment above for shell compatibility notes.
-            let supports_chaining = shell_kind
-                .map(|k| k.supports_posix_chaining())
-                .unwrap_or(false);
-            if !supports_chaining {
+            // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
+            // See the doc comment above for the list of compatible/incompatible shells.
+            if !shell_kind.supports_posix_chaining() {
                 // For shells with incompatible syntax, we can't reliably parse
                 // the command to extract sub-commands.
                 if !rules.always_allow.is_empty() {
                     // If the user has configured always_allow patterns, we must deny
                     // because we can't safely verify the command doesn't contain
                     // hidden sub-commands that bypass the allow patterns.
-                    const SUFFIX: &str = " does not support \"always allow\" patterns for the \
-                        terminal tool because Zed cannot parse its command chaining syntax. \
-                        Please remove the always_allow patterns from your tool_permissions \
-                        settings, or switch to a supported shell.";
-                    let message = if let Some(name) = shell_kind.map(|k| k.name()) {
-                        format!("The {} shell{}", name, SUFFIX)
-                    } else {
-                        format!("This shell is unrecognized, and{}", SUFFIX)
-                    };
-                    return ToolPermissionDecision::Deny(message);
+                    return ToolPermissionDecision::Deny(format!(
+                        "The {} shell does not support \"always allow\" patterns for the terminal \
+                         tool because Zed cannot parse its command chaining syntax. Please remove \
+                         the always_allow patterns from your tool_permissions settings, or switch \
+                         to a POSIX-conforming shell.",
+                        shell_kind
+                    ));
                 }
                 // No always_allow rules, so we can still check deny/confirm patterns.
                 return check_commands(std::iter::once(input.to_string()), rules, tool_name, false);
@@ -242,7 +229,6 @@ mod tests {
     use crate::pattern_extraction::extract_terminal_pattern;
     use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
     use std::sync::Arc;
-    use util::shell::PosixShell;
 
     fn pattern(command: &str) -> &'static str {
         Box::leak(
@@ -260,7 +246,7 @@ mod tests {
         deny: Vec<(&'static str, bool)>,
         confirm: Vec<(&'static str, bool)>,
         global: bool,
-        shell: Option<ShellKind>,
+        shell: ShellKind,
     }
 
     impl PermTest {
@@ -273,7 +259,7 @@ mod tests {
                 deny: vec![],
                 confirm: vec![],
                 global: false,
-                shell: Some(ShellKind::Posix(PosixShell::Sh)),
+                shell: ShellKind::Posix,
             }
         }
 
@@ -309,7 +295,7 @@ mod tests {
             self.global = g;
             self
         }
-        fn shell(mut self, s: Option<ShellKind>) -> Self {
+        fn shell(mut self, s: ShellKind) -> Self {
             self.shell = s;
             self
         }
@@ -384,7 +370,7 @@ mod tests {
                 tools: collections::HashMap::default(),
             },
             global,
-            Some(ShellKind::Posix(PosixShell::Sh)),
+            ShellKind::Posix,
         )
     }
 
@@ -619,34 +605,16 @@ mod tests {
         let p = ToolPermissions { tools };
         // With always_allow_tool_actions=true, even default_mode: Deny is overridden
         assert_eq!(
-            ToolPermissionDecision::from_input(
-                "terminal",
-                "x",
-                &p,
-                true,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
         // With always_allow_tool_actions=false, default_mode: Deny is respected
         assert!(matches!(
-            ToolPermissionDecision::from_input(
-                "terminal",
-                "x",
-                &p,
-                false,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            ToolPermissionDecision::from_input(
-                "edit_file",
-                "x",
-                &p,
-                false,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
     }
@@ -667,13 +635,7 @@ mod tests {
         let p = ToolPermissions { tools };
         // "terminal" should not match "term" rules, so falls back to Confirm (no rules)
         assert_eq!(
-            ToolPermissionDecision::from_input(
-                "terminal",
-                "x",
-                &p,
-                false,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Confirm
         );
     }
@@ -701,24 +663,12 @@ mod tests {
         };
         // With global=true, all checks are bypassed including invalid pattern check
         assert!(matches!(
-            ToolPermissionDecision::from_input(
-                "terminal",
-                "echo hi",
-                &p,
-                true,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("terminal", "echo hi", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         ));
         // With global=false, invalid patterns block the tool
         assert!(matches!(
-            ToolPermissionDecision::from_input(
-                "terminal",
-                "echo hi",
-                &p,
-                false,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Deny(_)
         ));
     }
@@ -907,13 +857,7 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert!(matches!(
-            ToolPermissionDecision::from_input(
-                "terminal",
-                "x",
-                &p,
-                false,
-                Some(ShellKind::Posix(PosixShell::Sh))
-            ),
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
@@ -922,7 +866,7 @@ mod tests {
                 "x",
                 &p,
                 false,
-                Some(ShellKind::Posix(PosixShell::Sh))
+                ShellKind::Posix
             ),
             ToolPermissionDecision::Allow
         );
@@ -956,88 +900,38 @@ mod tests {
     }
 
     #[test]
-    fn nushell_allows_with_allow_pattern() {
-        // Nushell uses `;` for sequential execution, which brush-parser handles.
-        // The `and`/`or` keywords are boolean operators, not command chaining.
-        t("ls")
-            .allow(&["^ls"])
-            .shell(Some(ShellKind::Nushell))
-            .is_allow();
+    fn nushell_denies_when_always_allow_configured() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_deny();
     }
 
     #[test]
-    fn nushell_denies_with_deny_pattern() {
+    fn nushell_allows_deny_patterns() {
         t("rm -rf /")
             .deny(&["rm\\s+-rf"])
-            .shell(Some(ShellKind::Nushell))
+            .shell(ShellKind::Nushell)
             .is_deny();
     }
 
     #[test]
-    fn nushell_confirms_with_confirm_pattern() {
+    fn nushell_allows_confirm_patterns() {
         t("sudo reboot")
             .confirm(&["sudo"])
-            .shell(Some(ShellKind::Nushell))
+            .shell(ShellKind::Nushell)
             .is_confirm();
     }
 
     #[test]
-    fn nushell_falls_through_to_default() {
+    fn nushell_no_allow_patterns_uses_default() {
         t("ls")
             .deny(&["rm"])
             .mode(ToolPermissionMode::Allow)
-            .shell(Some(ShellKind::Nushell))
+            .shell(ShellKind::Nushell)
             .is_allow();
     }
 
     #[test]
-    fn elvish_allows_with_allow_pattern() {
-        // Elvish uses `;` to separate pipelines, which brush-parser handles.
-        // The `and`/`or` special commands require parentheses around expressions.
-        t("ls")
-            .allow(&["^ls"])
-            .shell(Some(ShellKind::Elvish))
-            .is_allow();
-    }
-
-    #[test]
-    fn rc_allows_with_allow_pattern() {
-        // Rc (Plan 9) uses `;` for sequential execution, which brush-parser handles.
-        // Rc does not have `&&`/`||` operators.
-        t("ls")
-            .allow(&["^ls"])
-            .shell(Some(ShellKind::Rc))
-            .is_allow();
-    }
-
-    #[test]
-    fn unknown_shell_denies_when_always_allow_configured() {
-        // Unknown shells have unrecognized syntax, so we cannot safely parse them.
-        // For security, always_allow patterns are disabled.
-        t("ls").allow(&["^ls"]).shell(None).is_deny();
-    }
-
-    #[test]
-    fn unknown_shell_allows_deny_patterns() {
-        // Deny patterns still work for unknown shells since they're checked
-        // against the raw input string.
-        t("rm -rf /").deny(&["rm\\s+-rf"]).shell(None).is_deny();
-    }
-
-    #[test]
-    fn unknown_shell_allows_confirm_patterns() {
-        // Confirm patterns still work for unknown shells.
-        t("sudo reboot").confirm(&["sudo"]).shell(None).is_confirm();
-    }
-
-    #[test]
-    fn unknown_shell_falls_through_to_default() {
-        // With no always_allow patterns, unknown shells use the default mode.
-        t("ls")
-            .deny(&["rm"])
-            .mode(ToolPermissionMode::Allow)
-            .shell(None)
-            .is_allow();
+    fn elvish_denies_when_always_allow_configured() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_deny();
     }
 
     #[test]
@@ -1066,13 +960,8 @@ mod tests {
         );
         let p = ToolPermissions { tools };
 
-        let result = ToolPermissionDecision::from_input(
-            "terminal",
-            "x",
-            &p,
-            false,
-            Some(ShellKind::Posix(PosixShell::Sh)),
-        );
+        let result =
+            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix);
         match result {
             ToolPermissionDecision::Deny(msg) => {
                 assert!(msg.contains("2 regex patterns"), "Expected plural: {}", msg);
