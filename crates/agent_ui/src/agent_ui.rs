@@ -101,6 +101,10 @@ actions!(
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
         OpenAgentDiff,
+        /// Copies the current thread to the clipboard as JSON for debugging.
+        CopyThreadToClipboard,
+        /// Loads a thread from the clipboard JSON for debugging.
+        LoadThreadFromClipboard,
         /// Keeps the current suggestion or change.
         Keep,
         /// Rejects the current suggestion or change.
