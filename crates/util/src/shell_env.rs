@@ -36,8 +36,8 @@ async fn capture_unix(
 
     use crate::command::new_std_command;
 
-    let shell_kind = ShellKind::new(shell_path, false);
-    let zed_path = super::get_shell_safe_zed_path(shell_kind)?;
+    let shell_kind = ShellKind::new(shell_path);
+    let zed_path = super::get_shell_safe_zed_path(shell_kind.as_ref())?;
 
     let mut command_string = String::new();
     let mut command = new_std_command(shell_path);
@@ -50,21 +50,21 @@ async fn capture_unix(
     const FD_STDERR: std::os::fd::RawFd = 2;
 
     let (fd_num, redir) = match shell_kind {
-        ShellKind::Rc => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
-        ShellKind::Nushell | ShellKind::Tcsh => (FD_STDOUT, "".to_string()),
+        Some(ShellKind::Rc) => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
+        Some(ShellKind::Nushell) | Some(ShellKind::Tcsh) => (FD_STDOUT, "".to_string()),
         // xonsh doesn't support redirecting to stdin, and control sequences are printed to
         // stdout on startup
-        ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
-        ShellKind::PowerShell => (FD_STDIN, format!(">{}", FD_STDIN)),
+        Some(ShellKind::Xonsh) => (FD_STDERR, "o>e".to_string()),
+        Some(ShellKind::PowerShell) => (FD_STDIN, format!(">{}", FD_STDIN)),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
 
     match shell_kind {
-        ShellKind::Csh | ShellKind::Tcsh => {
+        Some(ShellKind::Csh) | Some(ShellKind::Tcsh) => {
             // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
             command.arg0("-");
         }
-        ShellKind::Fish => {
+        Some(ShellKind::Fish) => {
             // in fish, asdf, direnv attach to the `fish_prompt` event
             command_string.push_str("emit fish_prompt;");
             command.arg("-l");
@@ -75,7 +75,7 @@ async fn capture_unix(
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    if let Some(prefix) = shell_kind.command_prefix() {
+    if let Some(prefix) = shell_kind.and_then(|k| k.command_prefix()) {
         command_string.push(prefix);
     }
     command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
@@ -140,16 +140,18 @@ async fn capture_windows(
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    let shell_kind = ShellKind::new(shell_path, true);
+    let shell_kind = ShellKind::new(shell_path);
     let mut cmd = crate::command::new_smol_command(shell_path);
     cmd.args(args);
     let cmd = match shell_kind {
-        ShellKind::Csh
-        | ShellKind::Tcsh
-        | ShellKind::Rc
-        | ShellKind::Fish
-        | ShellKind::Xonsh
-        | ShellKind::Posix => cmd.args([
+        Some(
+            ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::Xonsh
+            | ShellKind::Posix(_),
+        ) => cmd.args([
             "-l",
             "-i",
             "-c",
@@ -159,7 +161,7 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        ShellKind::PowerShell | ShellKind::Pwsh => cmd.args([
+        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) | None => cmd.args([
             "-NonInteractive",
             "-NoProfile",
             "-Command",
@@ -169,7 +171,7 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        ShellKind::Elvish => cmd.args([
+        Some(ShellKind::Elvish) => cmd.args([
             "-c",
             &format!(
                 "cd '{}'; '{}' --printenv",
@@ -177,19 +179,19 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        ShellKind::Nushell => cmd.args([
+        Some(ShellKind::Nushell) => cmd.args([
             "-c",
             &format!(
                 "cd '{}'; {}'{}' --printenv",
                 directory.display(),
-                shell_kind
+                ShellKind::Nushell
                     .command_prefix()
                     .map(|prefix| prefix.to_string())
                     .unwrap_or_default(),
                 zed_path.display()
             ),
         ]),
-        ShellKind::Cmd => cmd.args([
+        Some(ShellKind::Cmd) => cmd.args([
             "/c",
             "cd",
             &directory.display().to_string(),

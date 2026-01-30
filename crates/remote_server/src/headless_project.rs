@@ -25,7 +25,7 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::WorktreeStore,
+    worktree_store::{WorktreeIdCounter, WorktreeStore},
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -98,7 +98,7 @@ impl HeadlessProject {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
-            let mut store = WorktreeStore::local(true, fs.clone());
+            let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
             store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
@@ -482,7 +482,12 @@ impl HeadlessProject {
                 }
             }
         };
-
+        let next_worktree_id = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .update(cx, |worktree_store, _| worktree_store.next_worktree_id())
+            })
+            .await?;
         let worktree = this
             .read_with(&cx.clone(), |this, _| {
                 Worktree::local(
@@ -491,6 +496,7 @@ impl HeadlessProject {
                     this.fs.clone(),
                     this.next_entry_id.clone(),
                     true,
+                    next_worktree_id,
                     &mut cx,
                 )
             })
@@ -754,7 +760,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path,
+                        path,
                     },
                     cx,
                 )

@@ -49,19 +49,21 @@ pub async fn run_scoring(
     // The actual_cursor_offset from Teacher is relative to the editable region, while the expected
     // cursor from the patch is relative to the hunk. We need to apply the patch to the editable
     // region to find where the hunk matched, then compute the expected cursor position.
-    let old_editable_region = example.prompt.as_ref().and_then(|p| {
+    let old_editable_region = if let Some(p) = example.prompt.as_ref() {
         if matches!(
             p.provider,
             PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_)
         ) {
             Some(
-                TeacherPrompt::extract_editable_region(&p.input)
+                TeacherPrompt::extract_editable_region(&p.input)?
                     .replace(TeacherPrompt::USER_CURSOR_MARKER, ""),
             )
         } else {
             None
         }
-    });
+    } else {
+        None
+    };
 
     let zero_scores = ExampleScore {
         delta_chr_f: 0.0,

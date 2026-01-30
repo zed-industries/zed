@@ -69,7 +69,7 @@ pub async fn run_prediction(
         .await?;
 
         let batched = matches!(provider, PredictionProvider::Teacher(..));
-        return predict_teacher(example, backend, batched, repetition_count).await;
+        return predict_teacher(example, backend, batched, repetition_count, args.cache_only).await;
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
@@ -263,12 +263,15 @@ async fn predict_teacher(
     backend: TeacherBackend,
     batched: bool,
     repetition_count: usize,
+    cache_only: bool,
 ) -> anyhow::Result<()> {
     match backend {
         TeacherBackend::Sonnet45 => {
-            predict_anthropic(example, backend, batched, repetition_count).await
+            predict_anthropic(example, backend, batched, repetition_count, cache_only).await
         }
-        TeacherBackend::Gpt52 => predict_openai(example, backend, batched, repetition_count).await,
+        TeacherBackend::Gpt52 => {
+            predict_openai(example, backend, batched, repetition_count, cache_only).await
+        }
     }
 }
 
@@ -277,6 +280,7 @@ async fn predict_anthropic(
     backend: TeacherBackend,
     batched: bool,
     repetition_count: usize,
+    cache_only: bool,
 ) -> anyhow::Result<()> {
     let llm_model_name = backend.model_name();
     let max_tokens = 16384;
@@ -302,7 +306,7 @@ async fn predict_anthropic(
 
         let seed = if repetition_count > 1 { Some(ix) } else { None };
         let Some(response) = llm_client
-            .generate(llm_model_name, max_tokens, messages, seed)
+            .generate(llm_model_name, max_tokens, messages, seed, cache_only)
             .await?
         else {
             // Request stashed for batched processing
@@ -343,6 +347,7 @@ async fn predict_openai(
     backend: TeacherBackend,
     batched: bool,
     repetition_count: usize,
+    cache_only: bool,
 ) -> anyhow::Result<()> {
     let llm_model_name = backend.model_name();
     let max_tokens = 16384;
@@ -364,7 +369,7 @@ async fn predict_openai(
 
         let seed = if repetition_count > 1 { Some(ix) } else { None };
         let Some(response) = llm_client
-            .generate(llm_model_name, max_tokens, messages, seed)
+            .generate(llm_model_name, max_tokens, messages, seed, cache_only)
             .await?
         else {
             // Request stashed for batched processing

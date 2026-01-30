@@ -4,7 +4,7 @@ use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
 use language::Point;
 use std::{
     cmp::Ordering,
-    ops::{AddAssign, Range, Sub},
+    ops::{Add, AddAssign, Range, Sub},
 };
 use sum_tree::Bias;
 
@@ -185,7 +185,9 @@ impl Anchor {
         D: MultiBufferDimension
             + Ord
             + Sub<Output = D::TextDimension>
-            + AddAssign<D::TextDimension>,
+            + Sub<D::TextDimension, Output = D>
+            + AddAssign<D::TextDimension>
+            + Add<D::TextDimension, Output = D>,
         D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         snapshot.summary_for_anchor(self)
