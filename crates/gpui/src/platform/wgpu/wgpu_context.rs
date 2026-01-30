@@ -57,7 +57,7 @@ impl WgpuContext {
             label: Some("gpui_device"),
             required_features,
             required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::Performance,
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
             trace: wgpu::Trace::Off,
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
         }))
