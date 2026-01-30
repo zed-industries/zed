@@ -51,6 +51,7 @@ pub enum Step {
     Predict,
     Score,
     Qa,
+    Repair,
     Synthesize,
     PullExamples,
 }
@@ -70,6 +71,7 @@ impl Step {
             Step::Predict => "Predict",
             Step::Score => "Score",
             Step::Qa => "QA",
+            Step::Repair => "Repair",
             Step::Synthesize => "Synthesize",
             Step::PullExamples => "Pull",
         }
@@ -83,6 +85,7 @@ impl Step {
             Step::Predict => "\x1b[32m",
             Step::Score => "\x1b[31m",
             Step::Qa => "\x1b[36m",
+            Step::Repair => "\x1b[95m",
             Step::Synthesize => "\x1b[36m",
             Step::PullExamples => "\x1b[36m",
         }

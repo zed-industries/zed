@@ -745,34 +745,7 @@ fn main() {
             }
             return;
         }
-        Command::Repair(repair_args) => {
-            // Read examples from input files
-            let mut examples = example::read_example_files(&args.inputs);
 
-            // Apply filters
-            if let Some(name_filter) = &args.name {
-                examples.retain(|e| e.spec.name.contains(name_filter));
-            }
-            if let Some(repo_filter) = &args.repo {
-                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
-            }
-            if let Some(offset) = args.offset {
-                examples.splice(0..offset, []);
-            }
-            if let Some(limit) = args.limit {
-                examples.truncate(limit);
-            }
-
-            smol::block_on(async {
-                if let Err(e) =
-                    repair::run_repair(&mut examples, repair_args, output.as_ref()).await
-                {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
         _ => {}
     }
 
@@ -802,6 +775,9 @@ fn main() {
                     }
                     Command::Qa(args) => {
                         qa::sync_batches(args).await?;
+                    }
+                    Command::Repair(args) => {
+                        repair::sync_batches(args).await?;
                     }
                     _ => (),
                 }
@@ -937,13 +913,16 @@ fn main() {
                                         Command::Qa(args) => {
                                             qa::run_qa(example, args, &example_progress).await?;
                                         }
+                                        Command::Repair(args) => {
+                                            repair::run_repair(example, args, &example_progress)
+                                                .await?;
+                                        }
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_)
-                                        | Command::Repair(_) => {
+                                        | Command::ImportBatch(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -1040,6 +1019,12 @@ fn main() {
                     }
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
+                    }
+                    Command::Qa(args) => {
+                        qa::sync_batches(args).await?;
+                    }
+                    Command::Repair(args) => {
+                        repair::sync_batches(args).await?;
                     }
                     _ => (),
                 }
