@@ -18,17 +18,24 @@
 use anyhow::{Context as _, Result, bail};
 use clap::Args;
 use collections::HashMap;
-use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-#[derive(RustEmbed)]
-#[folder = "../languages/src/"]
-#[include = "*/config.toml"]
-struct LanguageConfigs;
+#[cfg(not(feature = "dynamic_prompts"))]
+mod language_configs_embedded {
+    use rust_embed::RustEmbed;
+
+    #[derive(RustEmbed)]
+    #[folder = "../languages/src/"]
+    #[include = "*/config.toml"]
+    pub struct LanguageConfigs;
+}
+
+#[cfg(not(feature = "dynamic_prompts"))]
+use language_configs_embedded::LanguageConfigs;
 
 #[derive(Debug, Deserialize)]
 struct LanguageConfig {
@@ -89,6 +96,7 @@ pub struct FilterLanguagesArgs {
     pub show_top_excluded: Option<usize>,
 }
 
+#[cfg(not(feature = "dynamic_prompts"))]
 fn build_extension_to_language_map() -> HashMap<String, String> {
     let mut map = HashMap::default();
 
@@ -107,6 +115,42 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
             for suffix in &config.path_suffixes {
                 map.insert(suffix.to_lowercase(), config.name.clone());
             }
+        }
+    }
+
+    map
+}
+
+#[cfg(feature = "dynamic_prompts")]
+fn build_extension_to_language_map() -> HashMap<String, String> {
+    const LANGUAGES_SRC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../languages/src");
+
+    let mut map = HashMap::default();
+
+    let languages_dir = Path::new(LANGUAGES_SRC_DIR);
+    let entries = match std::fs::read_dir(languages_dir) {
+        Ok(e) => e,
+        Err(_) => return map,
+    };
+
+    for entry in entries.flatten() {
+        let config_path = entry.path().join("config.toml");
+        if !config_path.exists() {
+            continue;
+        }
+
+        let content_str = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let config: LanguageConfig = match toml::from_str(&content_str) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for suffix in &config.path_suffixes {
+            map.insert(suffix.to_lowercase(), config.name.clone());
         }
     }
 

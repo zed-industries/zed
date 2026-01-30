@@ -16,8 +16,6 @@ use anyhow::Result;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-const PROMPT_TEMPLATE: &str = include_str!("prompts/repair.md");
-
 /// Arguments for the repair command.
 #[derive(Debug, Clone, clap::Args)]
 pub struct RepairArgs {
@@ -91,8 +89,9 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
         .confidence
         .map_or("unknown".to_string(), |v| v.to_string());
 
+    let prompt_template = crate::prompt_assets::get_prompt("repair.md");
     Some(
-        PROMPT_TEMPLATE
+        prompt_template
             .replace("{edit_history}", &edit_history)
             .replace("{context}", &context)
             .replace("{cursor_excerpt}", &cursor_excerpt)

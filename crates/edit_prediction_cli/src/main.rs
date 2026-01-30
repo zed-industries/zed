@@ -12,6 +12,7 @@ mod parse_output;
 mod paths;
 mod predict;
 mod progress;
+mod prompt_assets;
 mod pull_examples;
 mod qa;
 mod reorder_patch;
