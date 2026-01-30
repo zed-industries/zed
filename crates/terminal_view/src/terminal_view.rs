@@ -6,7 +6,7 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{Editor, EditorSettings, ToOffset, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Point,
@@ -50,13 +50,14 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
-    delete_unloaded_items,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, Panel, ToolbarItemLocation, Workspace,
+    WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    with_active_or_new_workspace,
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
@@ -101,6 +102,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
+        workspace.register_action(TerminalView::send_to_terminal);
     })
     .detach();
     SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
@@ -843,6 +845,63 @@ impl TerminalView {
             self.clear_bell(cx);
             self.process_keystroke(&keystroke, cx);
         }
+    }
+
+    pub fn send_to_terminal(
+        _workspace: &mut Workspace,
+        action: &workspace::SendToTerminal,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let newline = action.append_newline.clone();
+        with_active_or_new_workspace(cx, move |workspace, _window, cx| {
+            let Some(active_item) = workspace.active_item(cx) else {
+                return;
+            };
+
+            let Some(editor) = active_item.act_as::<editor::Editor>(cx) else {
+                return;
+            };
+
+            let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+            let selection = editor.read(cx).selections.newest_anchor();
+            let selection_range =
+                selection.start.to_offset(&buffer)..selection.end.to_offset(&buffer);
+            let expression_text = buffer
+                .text_for_range(selection_range.clone())
+                .collect::<String>();
+
+            let expression_text = expression_text.trim().to_string();
+
+            if expression_text.is_empty() {
+                return;
+            }
+
+            let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
+                return;
+            };
+
+            let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
+            }) else {
+                return;
+            };
+
+            let command = if newline {
+                format!("{}\n", expression_text)
+            } else {
+                expression_text
+            };
+
+            terminal_view.update(cx, |view, cx| {
+                view.terminal().update(cx, |terminal, _cx| {
+                    terminal.input(command.into_bytes());
+                });
+            });
+        });
+        return;
     }
 
     fn dispatch_context(&self, cx: &App) -> KeyContext {
