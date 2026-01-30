@@ -482,13 +482,6 @@ fn render_verification_result(decision: Option<&ToolPermissionDecision>, cx: &Ap
     };
 
     let has_result = decision.is_some();
-    let deny_reason = decision.and_then(|d| {
-        if let ToolPermissionDecision::Deny(reason) = d {
-            Some(reason.clone())
-        } else {
-            None
-        }
-    });
 
     h_flex()
         .h_7()
@@ -500,13 +493,6 @@ fn render_verification_result(decision: Option<&ToolPermissionDecision>, cx: &Ap
         .when(has_result, |this| {
             this.child(Icon::new(icon).size(IconSize::Small).color(color))
                 .child(Label::new(label).size(LabelSize::Small).color(color))
-        })
-        .when_some(deny_reason, |this, reason| {
-            this.child(
-                Label::new(format!("— {}", reason))
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
         })
         .into_any_element()
 }
