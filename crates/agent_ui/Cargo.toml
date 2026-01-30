@@ -40,6 +40,7 @@ assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 audio.workspace = true
+base64.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -118,7 +119,6 @@ reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
-base64.workspace = true
 agent = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }

@@ -128,7 +128,7 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
-/// Increases the font size in the editor buffer.
+/// Opens the settings editor at a specific path.
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -512,7 +512,7 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
-    /// Spawns a task by the name given.
+    /// Spawns a task by the tag given.
     ByTag {
         task_tag: String,
         #[serde(default)]

@@ -75,6 +75,7 @@ impl Mercury {
             );
 
             let context_offset_range = context_range.to_offset(&snapshot);
+            let context_start_row = context_range.start.row;
 
             let editable_offset_range = editable_range.to_offset(&snapshot);
 
@@ -82,7 +83,7 @@ impl Mercury {
                 events,
                 related_files,
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
-                    - context_range.start.to_offset(&snapshot),
+                    - context_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt: snapshot
                     .text_for_range(context_range)
@@ -91,6 +92,7 @@ impl Mercury {
                 editable_range_in_excerpt: (editable_offset_range.start
                     - context_offset_range.start)
                     ..(editable_offset_range.end - context_offset_range.start),
+                excerpt_start_row: Some(context_start_row),
             };
 
             let prompt = build_prompt(&inputs);

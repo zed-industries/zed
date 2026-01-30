@@ -60,11 +60,23 @@ pub(crate) fn release() -> Workflow {
     let validate_release_assets = validate_release_assets(&[&upload_release_assets]);
 
     let auto_release_preview = auto_release_preview(&[&validate_release_assets]);
+
+    let test_jobs = [
+        &macos_tests,
+        &linux_tests,
+        &windows_tests,
+        &macos_clippy,
+        &linux_clippy,
+        &windows_clippy,
+        &check_scripts,
+    ];
     let push_slack_notification = push_release_update_notification(
         &create_draft_release,
         &upload_release_assets,
         &validate_release_assets,
         &auto_release_preview,
+        &test_jobs,
+        &bundle,
     );
 
     named::workflow()
@@ -258,7 +270,14 @@ pub(crate) fn push_release_update_notification(
     upload_assets_job: &NamedJob,
     validate_assets_job: &NamedJob,
     auto_release_preview: &NamedJob,
+    test_jobs: &[&NamedJob],
+    bundle_jobs: &ReleaseBundleJobs,
 ) -> NamedJob {
+    let all_job_names = test_jobs
+        .into_iter()
+        .map(|j| j.name.as_ref())
+        .chain(bundle_jobs.jobs().into_iter().map(|j| j.name.as_ref()));
+
     let notification_script = formatdoc! {r#"
         DRAFT_RESULT="${{{{ needs.{draft_job}.result }}}}"
         UPLOAD_RESULT="${{{{ needs.{upload_job}.result }}}}"
@@ -273,6 +292,23 @@ pub(crate) fn push_release_update_notification(
             RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
             if [ "$UPLOAD_RESULT" == "failure" ]; then
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
+            elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
+                FAILED_JOBS=""
+                {failure_checks}
+                FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
+                if [ "$UPLOAD_RESULT" == "cancelled" ]; then
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Release job for $TAG was cancelled, most likely because tests \`$FAILED_JOBS\` failed: $RUN_URL"
+                    else
+                        echo "❌ Release job for $TAG was cancelled: $RUN_URL"
+                    fi
+                else
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
+                    else
+                        echo "❌ Tests for $TAG failed: $RUN_URL"
+                    fi
+                fi
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
                 echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
@@ -289,16 +325,28 @@ pub(crate) fn push_release_update_notification(
         validate_job = validate_assets_job.name,
         auto_release_job = auto_release_preview.name,
         run_url = CURRENT_ACTION_RUN_URL,
+        failure_checks = all_job_names
+            .into_iter()
+            .map(|name: &str| format!(
+                "if [ \"${{{{ needs.{name}.result }}}}\" == \"failure\" ];\
+                then FAILED_JOBS=\"$FAILED_JOBS {name}\"; fi"
+            ))
+            .collect::<Vec<_>>()
+            .join("\n        "),
     };
 
-    let mut job = dependant_job(&[
+    let mut all_deps: Vec<&NamedJob> = vec![
         create_draft_release_job,
         upload_assets_job,
         validate_assets_job,
         auto_release_preview,
-    ])
-    .runs_on(runners::LINUX_SMALL)
-    .cond(Expression::new("always()"));
+    ];
+    all_deps.extend(test_jobs.iter().copied());
+    all_deps.extend(bundle_jobs.jobs());
+
+    let mut job = dependant_job(&all_deps)
+        .runs_on(runners::LINUX_SMALL)
+        .cond(Expression::new("always()"));
 
     for step in notify_slack(MessageType::Evaluated(notification_script)) {
         job = job.add_step(step);

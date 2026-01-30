@@ -368,6 +368,7 @@ impl Worktree {
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
         scanning_enabled: bool,
+        worktree_id: WorktreeId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
@@ -376,12 +377,7 @@ impl Worktree {
             .await
             .context("failed to stat worktree path")?;
 
-        let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-            log::error!(
-                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
-            );
-            true
-        });
+        let fs_case_sensitive = fs.is_case_sensitive().await;
 
         let root_file_handle = if metadata.as_ref().is_some() {
             fs.open_handle(&abs_path)
@@ -404,7 +400,7 @@ impl Worktree {
                 repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
-                    cx.entity_id().as_u64(),
+                    worktree_id,
                     abs_path
                         .file_name()
                         .and_then(|f| f.to_str())
@@ -493,7 +489,7 @@ impl Worktree {
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Snapshot::new(
-                worktree.id,
+                WorktreeId::from_proto(worktree.id),
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
@@ -1086,10 +1082,7 @@ impl LocalWorktree {
                 } else {
                     (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
                 };
-                let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-                    log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
-                    true
-                });
+                let fs_case_sensitive = fs.is_case_sensitive().await;
 
                 let mut scanner = BackgroundScanner {
                     fs,
@@ -1831,7 +1824,7 @@ impl LocalWorktree {
             .unbounded_send((self.snapshot(), Arc::default()))
             .ok();
 
-        let worktree_id = cx.entity_id().as_u64();
+        let worktree_id = self.id.to_proto();
         let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes)) = snapshots_rx.next().await {
@@ -2137,13 +2130,13 @@ impl RemoteWorktree {
 
 impl Snapshot {
     pub fn new(
-        id: u64,
+        id: WorktreeId,
         root_name: Arc<RelPath>,
         abs_path: Arc<Path>,
         path_style: PathStyle,
     ) -> Self {
         Snapshot {
-            id: WorktreeId::from_usize(id as usize),
+            id,
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name

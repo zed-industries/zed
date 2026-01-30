@@ -19,6 +19,8 @@ pub struct ZetaPromptInput {
     pub cursor_excerpt: Arc<str>,
     pub editable_range_in_excerpt: Range<usize>,
     pub cursor_offset_in_excerpt: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
     pub related_files: Vec<RelatedFile>,
 }
@@ -433,6 +435,7 @@ mod tests {
             cursor_excerpt: cursor_excerpt.into(),
             editable_range_in_excerpt: editable_range,
             cursor_offset_in_excerpt: cursor_offset,
+            excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
             related_files,
         }

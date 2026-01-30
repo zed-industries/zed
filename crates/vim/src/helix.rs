@@ -53,9 +53,9 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
-        /// Delete the selection and enter edit mode.
+        /// Select the next match for the current search query.
         HelixSelectNext,
-        /// Delete the selection and enter edit mode, without yanking the selection.
+        /// Select the previous match for the current search query.
         HelixSelectPrevious,
     ]
 );
@@ -583,6 +583,7 @@ impl Vim {
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
                         helix_select: true,
+                        _dismiss_subscription: None,
                     }
                 });
             }

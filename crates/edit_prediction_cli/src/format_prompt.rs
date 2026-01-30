@@ -5,7 +5,7 @@ use crate::{
     progress::{ExampleProgress, Step},
     retrieve_context::run_context_retrieval,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use edit_prediction::cursor_excerpt::editable_and_context_ranges_for_cursor_position;
 use gpui::{AppContext, AsyncApp};
 use language::{Buffer, OffsetRangeExt, Point};
@@ -97,6 +97,7 @@ pub async fn run_format_prompt(
                 cursor_excerpt: prompt_inputs.content[context_range].to_string().into(),
                 editable_range_in_excerpt,
                 cursor_offset_in_excerpt,
+                excerpt_start_row: prompt_inputs.excerpt_start_row,
                 events: prompt_inputs.edit_history.clone(),
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
             };
@@ -164,10 +165,10 @@ pub fn zeta2_output_for_patch(
 pub struct TeacherPrompt;
 
 impl TeacherPrompt {
-    const PROMPT: &str = include_str!("prompts/teacher.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
+    pub(crate) const NO_EDITS: &str = "NO_EDITS";
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
@@ -181,7 +182,8 @@ impl TeacherPrompt {
         let context = Self::format_context(example);
         let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
 
-        let prompt = Self::PROMPT
+        let prompt_template = crate::prompt_assets::get_prompt("teacher.md");
+        let prompt = prompt_template
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
             .replace("{{cursor_excerpt}}", &cursor_excerpt);
@@ -193,14 +195,20 @@ impl TeacherPrompt {
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
-        let mut new_editable_region = Self::extract_editable_region(&new_editable_region);
+
+        // Check if the model indicated no edits are needed
+        if new_editable_region.trim() == Self::NO_EDITS {
+            return Ok(String::new());
+        }
+
+        let mut new_editable_region = Self::extract_editable_region(&new_editable_region)?;
         let old_editable_region = Self::extract_editable_region(
             &example
                 .prompt
                 .as_ref()
                 .context("example prompt missing")?
                 .input,
-        );
+        )?;
         let prompt_inputs = example
             .prompt_inputs
             .as_ref()
@@ -217,7 +225,7 @@ impl TeacherPrompt {
             .content
             .match_indices(&old_editable_region)
             .min_by_key(|(index, _)| index.abs_diff(prompt_inputs.cursor_offset))
-            .unwrap();
+            .context("editable region not found in prompt content")?;
         let editable_region_start_line = prompt_inputs.content[..editable_region_offset]
             .matches('\n')
             .count();
@@ -320,16 +328,20 @@ impl TeacherPrompt {
         result
     }
 
-    fn extract_editable_region(text: &str) -> String {
+    fn extract_editable_region(text: &str) -> Result<String> {
         let start = text
             .rfind(Self::EDITABLE_REGION_START)
             .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
         let end = text.rfind(Self::EDITABLE_REGION_END).unwrap_or(text.len());
 
+        if start >= end {
+            return Err(anyhow!("Invalid editable region markers"));
+        }
+
         let region = &text[start..end];
         let region = region.strip_suffix('\n').unwrap_or(region);
 
-        region.replace(Self::USER_CURSOR_MARKER, "")
+        Ok(region.replace(Self::USER_CURSOR_MARKER, ""))
     }
 
     fn is_udiff_content_line(s: &str) -> bool {
@@ -486,7 +498,7 @@ mod tests {
             more
             lines here
             "};
-        let parsed = TeacherPrompt::extract_editable_region(text);
+        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
         assert_eq!(
             parsed,
             indoc::indoc! {"
@@ -538,13 +550,26 @@ mod tests {
         let text = indoc::indoc! {"
             one
             two three"};
-        let parsed = TeacherPrompt::extract_editable_region(text);
+        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
         assert_eq!(
             parsed,
             indoc::indoc! {"
             one
             two three"}
         );
+    }
+
+    #[test]
+    fn test_parse_no_edits_response() {
+        let response = indoc::indoc! {"
+            The code is already complete. There is no clear next edit to make.
+
+            `````
+            NO_EDITS
+            `````
+        "};
+        let codeblock = extract_last_codeblock(response);
+        assert_eq!(codeblock.trim(), TeacherPrompt::NO_EDITS);
     }
 
     #[test]
@@ -556,7 +581,7 @@ mod tests {
 
             <|editable_region_end|>
             "};
-        let parsed = TeacherPrompt::extract_editable_region(text);
+        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
         assert_eq!(
             parsed,
             indoc::indoc! {"

@@ -65,6 +65,8 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_start_row: Option<u32>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
 }
@@ -243,14 +245,23 @@ pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
 }
 
 pub fn group_examples_by_repo(examples: Vec<Example>) -> VecDeque<Vec<Example>> {
-    let mut examples_by_repo = HashMap::default();
+    let mut examples_by_repo: HashMap<String, Vec<Example>> = HashMap::default();
+    let mut ungrouped = Vec::new();
     for example in examples {
-        examples_by_repo
-            .entry(example.spec.repository_url.clone())
-            .or_insert_with(Vec::new)
-            .push(example);
+        if example.spec.repository_url.is_empty() {
+            ungrouped.push(example);
+        } else {
+            examples_by_repo
+                .entry(example.spec.repository_url.clone())
+                .or_insert_with(Vec::new)
+                .push(example);
+        }
     }
-    examples_by_repo.into_values().collect()
+    let mut result: VecDeque<Vec<Example>> = examples_by_repo.into_values().collect();
+    for example in ungrouped {
+        result.push_back(vec![example]);
+    }
+    result
 }
 
 fn parse_markdown_example(input: &str) -> Result<Example> {
