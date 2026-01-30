@@ -510,6 +510,7 @@ pub(crate) struct Vim {
 
     operator_stack: Vec<Operator>,
     beam_jump: Option<BeamJumpState>,
+    beam_jump_ignore_activation_keystroke: bool,
     beam_jump_idle_cancel_task: Option<Task<()>>,
     beam_jump_idle_cancel_timer_id: Option<u64>,
     beam_jump_idle_cancel_next_id: u64,
@@ -593,6 +594,7 @@ impl Vim {
                 exit_temporary_mode: false,
                 operator_stack: Vec::new(),
                 beam_jump: None,
+                beam_jump_ignore_activation_keystroke: false,
                 beam_jump_idle_cancel_task: None,
                 beam_jump_idle_cancel_timer_id: None,
                 beam_jump_idle_cancel_next_id: 0,
@@ -630,32 +632,55 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.handle_beam_jump_keystroke(keystroke_event, window, cx);
+    }
+
+    fn handle_beam_jump_keystroke(
+        &mut self,
+        keystroke_event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.beam_jump.is_none() {
-            return;
+            return false;
+        }
+
+        if self.beam_jump_ignore_activation_keystroke {
+            if let Some(action) = keystroke_event.action.as_ref()
+                && action.as_any().downcast_ref::<PushSneak>().is_some()
+            {
+                // Beam Jump is started by the activation keystroke itself; don't treat it as
+                // pattern input even if keystroke observation ordering changes.
+                self.beam_jump_ignore_activation_keystroke = false;
+                return true;
+            }
         }
 
         if keystroke_event.keystroke.is_ime_in_progress() {
-            return;
+            return true;
         }
 
         match keystroke_event.keystroke.key.as_str() {
             "backspace" | "tab" => {
                 self.clear_operator(window, cx);
                 cx.stop_propagation();
+                true
             }
             "enter" => {
                 self.beam_jump_enter(window, cx);
                 cx.stop_propagation();
+                true
             }
             _ => {
                 if let Some(text) = keystroke_event.keystroke.key_char.as_deref() {
                     self.beam_jump_input(Arc::<str>::from(text), window, cx);
                     cx.stop_propagation();
-                    return;
+                    return true;
                 }
 
                 self.clear_operator(window, cx);
                 cx.stop_propagation();
+                true
             }
         }
     }
@@ -1119,41 +1144,7 @@ impl Vim {
             self.switch_mode(Mode::Insert, false, window, cx)
         }
 
-        if self.beam_jump.is_some() {
-            if let Some(action) = keystroke_event.action.as_ref()
-                && action.as_any().downcast_ref::<PushSneak>().is_some()
-            {
-                // Beam Jump is started by the `s` key itself; don't treat the activation key as
-                // pattern input.
-                return;
-            }
-
-            if keystroke_event.keystroke.is_ime_in_progress() {
-                return;
-            }
-
-            match keystroke_event.keystroke.key.as_str() {
-                "backspace" | "tab" => {
-                    self.clear_operator(window, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                "enter" => {
-                    self.beam_jump_enter(window, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                _ => {}
-            }
-
-            if let Some(text) = keystroke_event.keystroke.key_char.as_deref() {
-                self.beam_jump_input(Arc::<str>::from(text), window, cx);
-                cx.stop_propagation();
-                return;
-            }
-
-            self.clear_operator(window, cx);
-            cx.stop_propagation();
+        if self.handle_beam_jump_keystroke(keystroke_event, window, cx) {
             return;
         }
 
@@ -1661,6 +1652,7 @@ impl Vim {
     }
 
     fn clear_beam_jump(&mut self, cx: &mut Context<Self>) {
+        self.beam_jump_ignore_activation_keystroke = false;
         self.beam_jump_idle_cancel_task = None;
         self.beam_jump_idle_cancel_timer_id = None;
 
@@ -1702,6 +1694,11 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.clear_beam_jump(cx);
+
+        self.beam_jump_ignore_activation_keystroke = true;
+        cx.defer_in(window, |vim, _window, _cx| {
+            vim.beam_jump_ignore_activation_keystroke = false;
+        });
 
         let smartcase = VimSettings::get_global(cx).use_smartcase_find;
         let previous_last_find = Vim::globals(cx).last_find.clone();
