@@ -2317,7 +2317,7 @@ Example:
 
 ## Hover Popover Delay
 
-- Description: Time to wait in milliseconds before showing the informational hover box.
+- Description: Time to wait in milliseconds before showing the informational hover box. This delay also applies to auto signature help when `auto_signature_help` is enabled.
 - Setting: `hover_popover_delay`
 - Default: `300`
 
@@ -4376,6 +4376,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "indent_size": 20,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
+    "bold_folder_labels": false,
     "drag_and_drop": true,
     "scrollbar": {
       "show": null
@@ -4525,6 +4526,30 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "auto_fold_dirs": false
+}
+```
+
+### Bold Folder Labels
+
+- Description: Whether to show folder names with bold text in the project panel.
+- Setting: `bold_folder_labels`
+- Default: `false`
+
+**Options**
+
+1. Enable bold folder labels
+
+```json [settings]
+{
+  "bold_folder_labels": true
+}
+```
+
+2. Disable bold folder labels
+
+```json [settings]
+{
+  "bold_folder_labels": false
 }
 ```
 

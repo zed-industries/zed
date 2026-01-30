@@ -73,6 +73,7 @@ pub struct ExamplePromptInputs {
 pub struct ExamplePrompt {
     pub input: String,
     pub expected_output: String,
+    pub rejected_output: Option<String>, // For DPO
     pub provider: PredictionProvider,
 }
 
@@ -105,6 +106,8 @@ pub struct ExampleScore {
     pub exact_lines_fp: usize,
     #[serde(default)]
     pub exact_lines_fn: usize,
+    #[serde(default)]
+    pub reversal_ratio: f32,
 }
 
 impl Example {

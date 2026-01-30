@@ -1,6 +1,4 @@
-use gh_workflow::{
-    Event, Expression, Job, Run, Schedule, Step, Strategy, Use, Workflow, WorkflowDispatch,
-};
+use gh_workflow::{Event, Expression, Job, Run, Step, Strategy, Use, Workflow, WorkflowDispatch};
 use serde_json::json;
 
 use crate::tasks::workflows::{
@@ -88,10 +86,10 @@ pub(crate) fn run_cron_unit_evals() -> Workflow {
     named::workflow()
         .name("run_cron_unit_evals")
         .on(Event::default()
-            .schedule([
-                // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
-                Schedule::default().cron("47 1 * * 2"),
-            ])
+            // .schedule([
+            //     // GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
+            //     Schedule::default().cron("47 1 * * 2"),
+            // ])
             .workflow_dispatch(WorkflowDispatch::default()))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))

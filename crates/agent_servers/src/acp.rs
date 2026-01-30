@@ -148,6 +148,10 @@ impl AgentSessionList for AcpSessionList {
         Some(self.updates_rx.clone())
     }
 
+    fn notify_refresh(&self) {
+        self.notify_update();
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
@@ -191,7 +195,7 @@ impl AcpConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let builder = ShellBuilder::new(&shell).non_interactive();
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
@@ -578,10 +582,6 @@ impl AgentConnection for AcpConnection {
                 },
             );
 
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
-            }
-
             Ok(thread)
         })
     }
@@ -663,10 +663,6 @@ impl AgentConnection for AcpConnection {
                 session.config_options = config_options.map(ConfigOptions::new);
             }
 
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
-            }
-
             Ok(thread)
         })
     }
@@ -739,10 +735,6 @@ impl AgentConnection for AcpConnection {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);
-            }
-
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
             }
 
             Ok(thread)

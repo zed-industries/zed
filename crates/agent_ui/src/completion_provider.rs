@@ -13,10 +13,12 @@ use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
 use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
+use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
+use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
@@ -25,7 +27,10 @@ use project::{
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
-use text::{Anchor, ToPoint as _};
+use settings::{Settings, TerminalDockPosition};
+use terminal::terminal_settings::TerminalSettings;
+use terminal_view::terminal_panel::TerminalPanel;
+use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -33,6 +38,7 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::truncate_and_remove_front;
 use workspace::Workspace;
+use workspace::dock::DockPosition;
 
 use crate::AgentPanel;
 use crate::mention_set::MentionSet;
@@ -554,48 +560,130 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
             PromptContextAction::AddSelections => {
-                const PLACEHOLDER: &str = "selection ";
-                let selections = selection_ranges(workspace, cx)
+                // Collect non-empty editor selections
+                let editor_selections: Vec<_> = selection_ranges(workspace, cx)
+                    .into_iter()
+                    .filter(|(buffer, range)| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        range.start.to_offset(&snapshot) != range.end.to_offset(&snapshot)
+                    })
+                    .collect();
+
+                // Collect terminal selections from all terminal views if the terminal panel is visible
+                let terminal_selections: Vec<String> =
+                    terminal_selections_if_panel_open(workspace, cx);
+
+                const EDITOR_PLACEHOLDER: &str = "selection ";
+                const TERMINAL_PLACEHOLDER: &str = "terminal ";
+
+                let selections = editor_selections
                     .into_iter()
                     .enumerate()
                     .map(|(ix, (buffer, range))| {
                         (
                             buffer,
                             range,
-                            (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
+                            (EDITOR_PLACEHOLDER.len() * ix)
+                                ..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
                         )
                     })
                     .collect::<Vec<_>>();
 
-                let new_text: String = PLACEHOLDER.repeat(selections.len());
+                let mut new_text: String = EDITOR_PLACEHOLDER.repeat(selections.len());
+
+                // Add terminal placeholders for each terminal selection
+                let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+                    .into_iter()
+                    .map(|text| {
+                        let start = new_text.len();
+                        new_text.push_str(TERMINAL_PLACEHOLDER);
+                        (text, start..(new_text.len() - 1))
+                    })
+                    .collect();
 
                 let callback = Arc::new({
                     let source_range = source_range.clone();
-                    move |_, window: &mut Window, cx: &mut App| {
+                    move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
                         let editor = editor.clone();
                         let selections = selections.clone();
                         let mention_set = mention_set.clone();
                         let source_range = source_range.clone();
+                        let terminal_ranges = terminal_ranges.clone();
                         window.defer(cx, move |window, cx| {
                             if let Some(editor) = editor.upgrade() {
-                                mention_set
-                                    .update(cx, |store, cx| {
-                                        store.confirm_mention_for_selection(
-                                            source_range,
-                                            selections,
-                                            editor,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .ok();
+                                // Insert editor selections
+                                if !selections.is_empty() {
+                                    mention_set
+                                        .update(cx, |store, cx| {
+                                            store.confirm_mention_for_selection(
+                                                source_range.clone(),
+                                                selections,
+                                                editor.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                }
+
+                                // Insert terminal selections
+                                for (terminal_text, terminal_range) in terminal_ranges {
+                                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                                    let Some(start) =
+                                        snapshot.as_singleton_anchor(source_range.start)
+                                    else {
+                                        return;
+                                    };
+                                    let offset = start.to_offset(&snapshot);
+
+                                    let line_count = terminal_text.lines().count() as u32;
+                                    let mention_uri = MentionUri::TerminalSelection { line_count };
+                                    let range = snapshot.anchor_after(offset + terminal_range.start)
+                                        ..snapshot.anchor_after(offset + terminal_range.end);
+
+                                    let crease = crate::mention_set::crease_for_mention(
+                                        mention_uri.name().into(),
+                                        mention_uri.icon_path(cx),
+                                        range,
+                                        editor.downgrade(),
+                                    );
+
+                                    let crease_id = editor.update(cx, |editor, cx| {
+                                        let crease_ids =
+                                            editor.insert_creases(vec![crease.clone()], cx);
+                                        editor.fold_creases(vec![crease], false, window, cx);
+                                        crease_ids.first().copied().unwrap()
+                                    });
+
+                                    mention_set
+                                        .update(cx, |mention_set, _| {
+                                            mention_set.insert_mention(
+                                                crease_id,
+                                                mention_uri.clone(),
+                                                gpui::Task::ready(Ok(
+                                                    crate::mention_set::Mention::Text {
+                                                        content: terminal_text,
+                                                        tracked_buffers: vec![],
+                                                    },
+                                                ))
+                                                .shared(),
+                                            );
+                                        })
+                                        .ok();
+                                }
                             }
                         });
                         false
                     }
                 });
 
-                (new_text, callback)
+                (
+                    new_text,
+                    callback
+                        as Arc<
+                            dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync,
+                        >,
+                )
             }
         };
 
@@ -1087,7 +1175,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
         }
 
-        let has_selection = workspace
+        let has_editor_selection = workspace
             .read(cx)
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
@@ -1096,7 +1184,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     editor.has_non_empty_selection(&editor.display_snapshot(cx))
                 })
             });
-        if has_selection {
+
+        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
+
+        if has_editor_selection || has_terminal_selection {
             entries.push(PromptContextEntry::Action(
                 PromptContextAction::AddSelections,
             ));
@@ -2106,6 +2197,30 @@ fn build_code_label_for_path(
     label.build()
 }
 
+/// Returns terminal selections from all terminal views if the terminal panel is open.
+fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+        return Vec::new();
+    };
+
+    // Check if the dock containing this panel is open
+    let position = match TerminalSettings::get_global(cx).dock {
+        TerminalDockPosition::Left => DockPosition::Left,
+        TerminalDockPosition::Bottom => DockPosition::Bottom,
+        TerminalDockPosition::Right => DockPosition::Right,
+    };
+    let dock_is_open = workspace
+        .read(cx)
+        .dock_at_position(position)
+        .read(cx)
+        .is_open();
+    if !dock_is_open {
+        return Vec::new();
+    }
+
+    panel.read(cx).terminal_selections(cx)
+}
+
 fn selection_ranges(
     workspace: &Entity<Workspace>,
     cx: &mut App,
@@ -2461,7 +2576,7 @@ mod tests {
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+            worktrees[0].read(cx).id()
         });
 
         // Open a file in dir2 to create navigation history.

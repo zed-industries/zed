@@ -277,6 +277,8 @@ pub trait AgentSessionList {
         None
     }
 
+    fn notify_refresh(&self) {}
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
 

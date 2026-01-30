@@ -4,6 +4,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod shell_parser;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -1399,6 +1400,7 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
+    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
     updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
@@ -1406,11 +1408,15 @@ pub struct NativeAgentSessionList {
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
         let (tx, rx) = smol::channel::unbounded();
+        let this_tx = tx.clone();
         let subscription = cx.observe(&thread_store, move |_, _| {
-            tx.try_send(acp_thread::SessionListUpdate::Refresh).ok();
+            this_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .ok();
         });
         Self {
             thread_store,
+            updates_tx: tx,
             updates_rx: rx,
             _subscription: subscription,
         }
@@ -1465,6 +1471,12 @@ impl AgentSessionList for NativeAgentSessionList {
         _cx: &mut App,
     ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
+    }
+
+    fn notify_refresh(&self) {
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::Refresh)
+            .ok();
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

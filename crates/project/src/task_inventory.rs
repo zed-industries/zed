@@ -512,6 +512,7 @@ impl Inventory {
             let new_resolved_tasks = worktree_tasks
                 .flat_map(|(kind, task)| {
                     let id_base = kind.to_id_base();
+
                     if let TaskSourceKind::Worktree { id, .. } = &kind {
                         None.or_else(|| {
                             let (_, _, item_context) =
@@ -660,8 +661,31 @@ impl Inventory {
                 });
             }
         };
+
+        let mut validation_errors = Vec::new();
         let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+            let template = serde_json::from_value::<TaskTemplate>(raw_template).log_err()?;
+
+            // Validate the variable names used in the `TaskTemplate`.
+            let unknown_variables = template.unknown_variables();
+            if !unknown_variables.is_empty() {
+                let variables_list = unknown_variables
+                    .iter()
+                    .map(|variable| format!("${variable}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                validation_errors.push(format!(
+                    "Task '{}' uses unknown variables: {}",
+                    template.label, variables_list
+                ));
+
+                // Skip this template, since it uses unknown variable names, but
+                // continue processing others.
+                return None;
+            }
+
+            Some(template)
         });
 
         let parsed_templates = &mut self.templates_from_settings;
@@ -708,6 +732,18 @@ impl Inventory {
                     }
                 });
             }
+        }
+
+        if !validation_errors.is_empty() {
+            return Err(InvalidSettingsError::Tasks {
+                path: match &location {
+                    TaskSettingsLocation::Global(path) => path.to_path_buf(),
+                    TaskSettingsLocation::Worktree(location) => {
+                        location.path.as_std_path().join(task_file_name())
+                    }
+                },
+                message: validation_errors.join("\n"),
+            });
         }
 
         Ok(())
