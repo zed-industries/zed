@@ -1,6 +1,6 @@
 use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
-use gpui::{Global, ReadGlobal, ScrollHandle, prelude::*};
+use gpui::{ReadGlobal, ScrollHandle, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
@@ -186,7 +186,7 @@ pub(crate) fn render_tool_config_page(
     tool_id: &'static str,
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let tool = TOOLS.iter().find(|t| t.id == tool_id).unwrap();
@@ -203,7 +203,7 @@ pub(crate) fn render_tool_config_page(
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
         .child(Label::new(page_title).size(LabelSize::Large))
-        .child(render_verification_section(tool_id, cx))
+        .child(render_verification_section(tool_id, window, cx))
         .child(
             v_flex()
                 .mt_6()
@@ -242,16 +242,30 @@ pub(crate) fn render_tool_config_page(
 
 fn render_verification_section(
     tool_id: &'static str,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let input_id = format!("{}-verification-input", tool_id);
-    let result_id = format!("{}-verification-result", tool_id);
-    let tool_id_for_callback = tool_id.to_string();
-    let result_id_for_callback = result_id.clone();
-    let entity_id = cx.entity_id();
 
     let settings = AgentSettings::get_global(cx);
     let always_allow_enabled = settings.always_allow_tool_actions;
+
+    let editor = window.use_keyed_state(input_id.clone(), cx, |window, cx| {
+        let mut editor = editor::Editor::single_line(window, cx);
+        editor.set_placeholder_text("Enter a test input to see how rules apply...", window, cx);
+        editor
+    });
+
+    cx.observe(&editor, |_, _, cx| cx.notify()).detach();
+
+    let current_text = editor.read(cx).text(cx);
+    let decision = if current_text.is_empty() {
+        None
+    } else {
+        Some(evaluate_test_input(tool_id, &current_text, cx))
+    };
+
+    let theme_colors = cx.theme().colors();
 
     v_flex()
         .id(format!("{}-verification-section", tool_id))
@@ -272,24 +286,17 @@ fn render_verification_section(
                 .gap_3()
                 .items_start()
                 .child(
-                    div().flex_1().child(
-                        SettingsInputField::new()
-                            .with_id(input_id)
-                            .with_placeholder("Enter a test input to see how rules apply...")
-                            .tab_index(0)
-                            .on_confirm(move |input, _window, cx| {
-                                let decision = input
-                                    .filter(|s| !s.is_empty())
-                                    .map(|input| evaluate_test_input(&tool_id_for_callback, &input, cx));
-                                cx.set_global(VerificationResult {
-                                    id: result_id_for_callback.clone(),
-                                    decision,
-                                });
-                                cx.notify(entity_id);
-                            }),
-                    ),
+                    div()
+                        .flex_1()
+                        .py_1()
+                        .px_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme_colors.border)
+                        .bg(theme_colors.editor_background)
+                        .child(editor),
                 )
-                .child(render_verification_result(&result_id, cx)),
+                .child(render_verification_result(decision.as_ref(), cx)),
         )
         .when(always_allow_enabled, |this| {
             this.child(
@@ -332,12 +339,7 @@ fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDe
     )
 }
 
-fn render_verification_result(result_id: &str, cx: &App) -> AnyElement {
-    let result = cx.try_global::<VerificationResult>();
-
-    let matching_result = result.filter(|r| r.id == result_id);
-    let decision = matching_result.as_ref().and_then(|r| r.decision.as_ref());
-
+fn render_verification_result(decision: Option<&ToolPermissionDecision>, cx: &App) -> AnyElement {
     let (label, color, icon) = match decision {
         Some(ToolPermissionDecision::Allow) => ("Allowed", Color::Success, IconName::Check),
         Some(ToolPermissionDecision::Deny(_)) => ("Denied", Color::Error, IconName::XCircle),
@@ -374,14 +376,6 @@ fn render_verification_result(result_id: &str, cx: &App) -> AnyElement {
         })
         .into_any_element()
 }
-
-#[derive(Clone)]
-struct VerificationResult {
-    id: String,
-    decision: Option<ToolPermissionDecision>,
-}
-
-impl Global for VerificationResult {}
 
 fn render_rule_section(
     tool_id: &'static str,
