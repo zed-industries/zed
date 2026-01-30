@@ -4,9 +4,9 @@ use crate::{
     WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
-        ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
-        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
-        TabContentParams, TabTooltipContent, WeakItemHandle,
+        ActivateOnClose, CloseConfirmation, ClosePosition, Item, ItemBufferKind, ItemHandle,
+        ItemSettings, PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -1947,20 +1947,23 @@ impl Pane {
                 let confirmation =
                     pane.update_in(cx, |_, _, cx| item_to_close.close_confirmation(cx))?;
                 if let Some(confirmation) = confirmation {
-                    let confirmation_level = confirmation.level;
-                    let confirmation_message = confirmation.message.clone();
-                    let confirmation_detail = confirmation.detail.clone();
-                    let confirm_button = confirmation.confirm_button.clone();
-                    let cancel_button = confirmation.cancel_button.clone();
+                    let CloseConfirmation {
+                        level,
+                        message,
+                        detail,
+                        confirm_button,
+                        cancel_button,
+                    } = confirmation;
                     let answer = pane.update_in(cx, |_, window, cx| {
                         let buttons = [
                             PromptButton::ok(confirm_button),
                             PromptButton::cancel(cancel_button),
                         ];
+                        let detail = detail.as_ref().map(|detail| detail.as_ref());
                         window.prompt(
-                            confirmation_level,
-                            confirmation_message.as_ref(),
-                            confirmation_detail.as_ref().map(|detail| detail.as_ref()),
+                            level,
+                            message.as_ref(),
+                            detail,
                             &buttons,
                             cx,
                         )
