@@ -43,7 +43,9 @@ use crate::{
     Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, TextRenderingMode, colors::{Colors, GlobalColors},
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
+    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
 
