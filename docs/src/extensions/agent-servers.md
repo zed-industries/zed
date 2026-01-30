@@ -2,10 +2,10 @@
 
 <div class="warning">
 
-Note that starting from v0.221.x, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
+Note that starting from `v0.221`.x, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
 You can learn more about it in [the release blog post](https://zed.dev/blog/acp-registry)
 
-At some point in the near future, Agent Server extensions should be deprecated.
+At some point in the near future, Agent Server extensions will be deprecated.
 
 </div>
 

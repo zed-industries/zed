@@ -41,13 +41,13 @@ thiserror.workspace = true
 url.workspace = true
 util.workspace = true
 urlencoding.workspace = true
+parking_lot.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-parking_lot.workspace = true
 rand.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }

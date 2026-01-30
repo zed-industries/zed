@@ -249,6 +249,10 @@ impl MentionSet {
                 debug_panic!("unexpected selection URI");
                 Task::ready(Err(anyhow!("unexpected selection URI")))
             }
+            MentionUri::TerminalSelection { .. } => {
+                debug_panic!("unexpected terminal URI");
+                Task::ready(Err(anyhow!("unexpected terminal URI")))
+            }
         };
         let task = cx
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))

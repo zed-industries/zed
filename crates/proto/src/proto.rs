@@ -33,6 +33,8 @@ messages!(
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
     (AdvertiseContexts, Foreground),
+    (AllocateWorktreeId, Foreground),
+    (AllocateWorktreeIdResponse, Foreground),
     (ApplyCodeAction, Background),
     (ApplyCodeActionResponse, Background),
     (ApplyCompletionAdditionalEdits, Background),
@@ -352,6 +354,7 @@ messages!(
 );
 
 request_messages!(
+    (AllocateWorktreeId, AllocateWorktreeIdResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -561,6 +564,7 @@ entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
     AddWorktree,
+    AllocateWorktreeId,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
     BlameBuffer,
