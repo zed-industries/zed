@@ -227,7 +227,7 @@ impl AcpThreadView {
     pub fn send(
         &mut self,
         message_editor: Entity<MessageEditor>,
-        agent: Rc<dyn AgentServer>,
+        agent_name: SharedString,
         login: Option<task::SpawnInTerminal>,
         window: &mut Window,
         cx: &mut Context<AcpServerView>,
@@ -273,13 +273,11 @@ impl AcpThreadView {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
 
                 let this = cx.weak_entity();
-                let agent = agent.clone();
                 window.defer(cx, |window, cx| {
                     AcpServerView::handle_auth_required(
                         this,
                         AuthRequired::new(),
-                        agent,
-                        connection,
+                        agent_name,
                         window,
                         cx,
                     );
@@ -365,15 +363,8 @@ impl AcpThreadView {
         let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
-            if let ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        is_loading_contents,
-                        ..
-                    },
-            } = &mut this.server_state
-            {
-                *is_loading_contents = false;
+            if let Some(thread) = this.as_active_thread_mut() {
+                thread.is_loading_contents = false;
             }
             cx.notify();
         })
@@ -451,20 +442,14 @@ impl AcpThreadView {
                 .ok();
             } else {
                 this.update(cx, |this, cx| {
-                    if let ServerState::Connected {
-                        current:
-                            AcpThreadView {
-                                should_be_following,
-                                ..
-                            },
-                    } = &mut this.server_state
-                    {
-                        *should_be_following = this
-                            .workspace
-                            .update(cx, |workspace, _| {
-                                workspace.is_being_followed(CollaboratorId::Agent)
-                            })
-                            .unwrap_or_default();
+                    let should_be_following = this
+                        .workspace
+                        .update(cx, |workspace, _| {
+                            workspace.is_being_followed(CollaboratorId::Agent)
+                        })
+                        .unwrap_or_default();
+                    if let Some(thread) = this.as_active_thread_mut() {
+                        thread.should_be_following = should_be_following;
                     }
                 })
                 .ok();

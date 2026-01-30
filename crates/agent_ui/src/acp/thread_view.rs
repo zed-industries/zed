@@ -732,7 +732,7 @@ impl AcpServerView {
                 Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
                     Ok(err) => {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(this, err, agent, connection, window, cx)
+                            Self::handle_auth_required(this, err, agent.name(), window, cx)
                         })
                         .log_err();
                         return;
@@ -963,12 +963,10 @@ impl AcpServerView {
     fn handle_auth_required(
         this: WeakEntity<Self>,
         err: AuthRequired,
-        agent: Rc<dyn AgentServer>,
-        connection: Rc<dyn AgentConnection>,
+        agent_name: SharedString,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let agent_name = agent.name();
         let (configuration_view, subscription) = if let Some(provider_id) = &err.provider_id {
             let registry = LanguageModelRegistry::global(cx);
 
@@ -993,7 +991,7 @@ impl AcpServerView {
 
             let view = registry.read(cx).provider(&provider_id).map(|provider| {
                 provider.configuration_view(
-                    language_model::ConfigurationViewTargetAgent::Other(agent_name.clone()),
+                    language_model::ConfigurationViewTargetAgent::Other(agent_name),
                     window,
                     cx,
                 )
@@ -1355,11 +1353,11 @@ impl AcpServerView {
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let message_editor = self.message_editor.clone();
-        let agent = self.agent.clone();
         let login = self.login.clone();
+        let agent_name = self.agent.name();
 
         if let Some(active) = self.as_active_thread_mut() {
-            active.send(message_editor, agent, login, window, cx);
+            active.send(message_editor, agent_name, login, window, cx);
         }
     }
 
@@ -1763,12 +1761,16 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ServerState::Unauthenticated {
+        let ServerState::Connected(ConnectedServerState {
+            auth_state:
+                AuthState::Unauthenticated {
+                    configuration_view,
+                    pending_auth_method,
+                    ..
+                },
             connection,
-            pending_auth_method,
-            configuration_view,
             ..
-        } = &mut self.server_state
+        }) = &mut self.server_state
         else {
             return;
         };
@@ -1863,10 +1865,14 @@ impl AcpServerView {
 
                                     this.update_in(cx, |this, window, cx| {
                                         if let Err(err) = result {
-                                            if let ServerState::Unauthenticated {
-                                                pending_auth_method,
+                                            if let Some(ConnectedServerState {
+                                                auth_state:
+                                                    AuthState::Unauthenticated {
+                                                        pending_auth_method,
+                                                        ..
+                                                    },
                                                 ..
-                                            } = &mut this.server_state
+                                            }) = this.as_connected_mut()
                                             {
                                                 pending_auth_method.take();
                                             }
@@ -1894,8 +1900,7 @@ impl AcpServerView {
                 .unwrap();
             if !provider.is_authenticated(cx) {
                 let this = cx.weak_entity();
-                let agent = self.agent.clone();
-                let connection = connection.clone();
+                let agent_name = self.agent.name();
                 window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
@@ -1903,8 +1908,7 @@ impl AcpServerView {
                             description: Some("GEMINI_API_KEY must be set".to_owned()),
                             provider_id: Some(language_model::GOOGLE_PROVIDER_ID),
                         },
-                        agent,
-                        connection,
+                        agent_name,
                         window,
                         cx,
                     );
@@ -1917,8 +1921,7 @@ impl AcpServerView {
                 || (std::env::var("GOOGLE_CLOUD_PROJECT").is_err()))
         {
             let this = cx.weak_entity();
-            let agent = self.agent.clone();
-            let connection = connection.clone();
+            let agent_name = self.agent.name();
 
             window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
@@ -1930,8 +1933,7 @@ impl AcpServerView {
                             ),
                             provider_id: None,
                         },
-                        agent,
-                        connection,
+                        agent_name,
                         window,
                         cx,
                     )
@@ -1976,10 +1978,14 @@ impl AcpServerView {
 
                 this.update_in(cx, |this, window, cx| {
                     if let Err(err) = result {
-                        if let ServerState::Unauthenticated {
-                            pending_auth_method,
+                        if let Some(ConnectedServerState {
+                            auth_state:
+                                AuthState::Unauthenticated {
+                                    pending_auth_method,
+                                    ..
+                                },
                             ..
-                        } = &mut this.server_state
+                        }) = this.as_connected_mut()
                         {
                             pending_auth_method.take();
                         }
@@ -3073,7 +3079,7 @@ impl AcpServerView {
                                         })
                                         .when_some(diff_for_discard, |this, diff| {
                                             let tool_call_id = tool_call.id.clone();
-                                            let is_discarded = matches!(&self.server_state, ServerState::Connected{current: AcpThreadView { discarded_partial_edits, .. }} if discarded_partial_edits.contains(&tool_call_id));
+                                            let is_discarded = matches!(&self.server_state, ServerState::Connected(ConnectedServerState{current: AcpThreadView { discarded_partial_edits, .. }, ..}) if discarded_partial_edits.contains(&tool_call_id));
                                             this.when(!is_discarded, |this| {
                                                 this.child(
                                                     IconButton::new(
@@ -8408,12 +8414,7 @@ impl AcpServerView {
             .style(ButtonStyle::Filled)
             .on_click(cx.listener({
                 move |this, _, window, cx| {
-                    let agent = this.agent.clone();
-                    let Some(thread_state) = this.as_active_thread() else {
-                        return;
-                    };
-
-                    let connection = thread_state.thread.read(cx).connection().clone();
+                    let agent_name = this.agent.name();
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt.take() {
                         this.message_editor.update(cx, |editor, cx| {
@@ -8425,8 +8426,7 @@ impl AcpServerView {
                         Self::handle_auth_required(
                             this,
                             AuthRequired::new(),
-                            agent,
-                            connection,
+                            agent_name,
                             window,
                             cx,
                         );
@@ -8436,16 +8436,11 @@ impl AcpServerView {
     }
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let agent = self.agent.clone();
-        let Some(thread_state) = self.as_active_thread() else {
-            return;
-        };
-
-        let connection = thread_state.thread.read(cx).connection().clone();
+        let agent_name = self.agent.name();
         self.clear_thread_error(cx);
         let this = cx.weak_entity();
         window.defer(cx, |window, cx| {
-            Self::handle_auth_required(this, AuthRequired::new(), agent, connection, window, cx);
+            Self::handle_auth_required(this, AuthRequired::new(), agent_name, window, cx);
         })
     }
 
