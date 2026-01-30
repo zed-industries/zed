@@ -1,13 +1,10 @@
 use agent_settings::AgentSettings;
-use gpui::{FontWeight, ReadGlobal, ScrollHandle, prelude::*};
+use gpui::{ReadGlobal, ScrollHandle, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
 
-use crate::{
-    SettingsWindow,
-    components::{SettingsInputField, SettingsSectionHeader},
-};
+use crate::{SettingsWindow, components::SettingsInputField};
 
 /// Tools that support permission rules
 const TOOLS: &[ToolInfo] = &[
@@ -78,26 +75,27 @@ pub(crate) fn render_tool_permissions_setup_page(
         .id("tool-permissions-page")
         .min_w_0()
         .size_full()
-        .pt_4()
+        .pt_2p5()
         .px_8()
         .pb_16()
-        .gap_4()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
-        .child(Label::new("Tool Permission Rules"))
+        .child(Label::new("Tool Permission Rules").size(LabelSize::Large))
         .child(
             Label::new(page_description)
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
         .child(
-            v_flex().children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
-                let mut elements: Vec<AnyElement> = vec![item];
-                if i + 1 < TOOLS.len() {
-                    elements.push(Divider::horizontal().into_any_element());
-                }
-                elements
-            })),
+            v_flex()
+                .mt_4()
+                .children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
+                    let mut elements: Vec<AnyElement> = vec![item];
+                    if i + 1 < TOOLS.len() {
+                        elements.push(Divider::horizontal().into_any_element());
+                    }
+                    elements
+                })),
         )
         .into_any_element()
 }
@@ -191,57 +189,50 @@ pub(crate) fn render_tool_config_page(
 ) -> AnyElement {
     let tool = TOOLS.iter().find(|t| t.id == tool_id).unwrap();
     let rules = get_tool_rules(tool_id, cx);
+    let page_title = format!("{} Tool", tool.name);
 
-    div()
+    v_flex()
+        .id(format!("tool-config-page-{}", tool_id))
+        .min_w_0()
         .size_full()
+        .pt_2p5()
+        .px_8()
+        .pb_16()
+        .overflow_y_scroll()
+        .track_scroll(scroll_handle)
+        .child(Label::new(page_title).size(LabelSize::Large))
         .child(
             v_flex()
-                .id(format!("tool-config-page-{}", tool_id))
-                .min_w_0()
-                .size_full()
-                .px_8()
-                .pb_16()
-                .overflow_y_scroll()
-                .track_scroll(scroll_handle)
-                .child(
-                    v_flex()
-                        .pt_8()
-                        .gap_1()
-                        .child(SettingsSectionHeader::new(tool.name).no_padding(true))
-                        .child(
-                            Label::new(tool.description)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-                .child(render_rule_section(
-                    tool_id,
-                    "Always Allow",
-                    "Patterns that auto-approve without prompting",
-                    Color::Success,
-                    RuleType::Allow,
-                    &rules.always_allow,
-                    cx,
-                ))
-                .child(render_rule_section(
-                    tool_id,
-                    "Always Confirm",
-                    "Patterns that always require confirmation",
-                    Color::Warning,
-                    RuleType::Confirm,
-                    &rules.always_confirm,
-                    cx,
-                ))
+                .mt_6()
+                .gap_5()
+                .child(render_default_mode_section(tool_id, rules.default_mode, cx))
+                .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
                 .child(render_rule_section(
                     tool_id,
                     "Always Deny",
-                    "Patterns that auto-reject (highest priority)",
-                    Color::Error,
+                    "Patterns that auto-reject (highest priority).",
                     RuleType::Deny,
                     &rules.always_deny,
                     cx,
                 ))
-                .child(render_default_mode_section(tool_id, rules.default_mode, cx)),
+                .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
+                .child(render_rule_section(
+                    tool_id,
+                    "Always Allow",
+                    "Patterns that auto-approve without prompting.",
+                    RuleType::Allow,
+                    &rules.always_allow,
+                    cx,
+                ))
+                .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
+                .child(render_rule_section(
+                    tool_id,
+                    "Always Confirm",
+                    "Patterns that always require confirmation.",
+                    RuleType::Confirm,
+                    &rules.always_confirm,
+                    cx,
+                )),
         )
         .into_any_element()
 }
@@ -250,7 +241,6 @@ fn render_rule_section(
     tool_id: &'static str,
     title: &'static str,
     description: &'static str,
-    color: Color,
     rule_type: RuleType,
     patterns: &[String],
     cx: &mut Context<SettingsWindow>,
@@ -259,48 +249,39 @@ fn render_rule_section(
 
     v_flex()
         .id(section_id)
-        .mt_6()
-        .gap_2()
+        .child(Label::new(title))
         .child(
-            h_flex().justify_between().child(
-                v_flex()
-                    .child(
-                        Label::new(title)
-                            .size(LabelSize::Default)
-                            .weight(FontWeight::MEDIUM)
-                            .color(color),
-                    )
-                    .child(
-                        Label::new(description)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            ),
+            Label::new(description)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
         )
         .child(
             v_flex()
                 .w_full()
+                .mt_2()
                 .gap_1()
                 .when(patterns.is_empty(), |this| {
-                    this.child(
-                        div().py_2().child(
-                            Label::new("No patterns configured")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
+                    this.child(render_pattern_empty_state(cx))
                 })
                 .children(patterns.iter().enumerate().map(|(index, pattern)| {
                     render_pattern_row(tool_id, rule_type, index, pattern.clone(), cx)
                 }))
                 .child(render_add_pattern_input(tool_id, rule_type, cx)),
         )
+        .into_any_element()
+}
+
+fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
+    h_flex()
+        .p_2()
+        .rounded_md()
+        .border_1()
+        .border_dashed()
+        .border_color(cx.theme().colors().border_variant)
         .child(
-            div()
-                .mt_4()
-                .h_px()
-                .w_full()
-                .bg(cx.theme().colors().border_variant),
+            Label::new("No patterns configured")
+                .size(LabelSize::Small)
+                .color(Color::Disabled),
         )
         .into_any_element()
 }
@@ -318,40 +299,47 @@ fn render_pattern_row(
     let tool_id_for_update = tool_id.to_string();
     let input_id = format!("{}-{:?}-pattern-{}", tool_id, rule_type, index);
     let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
+    let group = format!("{}-pattern", tool_id);
 
-    h_flex()
+    div()
+        .group(&group)
+        .relative()
         .w_full()
-        .gap_2()
         .child(
-            div().flex_1().child(
-                SettingsInputField::new()
-                    .with_id(input_id)
-                    .with_initial_text(pattern)
-                    .tab_index(0)
-                    .on_confirm(move |new_pattern, _window, cx| {
-                        if let Some(new_pattern) = new_pattern {
-                            let new_pattern = new_pattern.trim().to_string();
-                            if !new_pattern.is_empty() && new_pattern != pattern_for_update {
-                                update_pattern(
-                                    &tool_id_for_update,
-                                    rule_type,
-                                    &pattern_for_update,
-                                    new_pattern,
-                                    cx,
-                                );
-                            }
+            SettingsInputField::new()
+                .with_id(input_id)
+                .with_initial_text(pattern)
+                .tab_index(0)
+                .on_confirm(move |new_pattern, _window, cx| {
+                    if let Some(new_pattern) = new_pattern {
+                        let new_pattern = new_pattern.trim().to_string();
+                        if !new_pattern.is_empty() && new_pattern != pattern_for_update {
+                            update_pattern(
+                                &tool_id_for_update,
+                                rule_type,
+                                &pattern_for_update,
+                                new_pattern,
+                                cx,
+                            );
                         }
-                    }),
-            ),
+                    }
+                }),
         )
         .child(
-            IconButton::new(delete_id, IconName::Trash)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Delete pattern"))
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
-                })),
+            div()
+                .visible_on_hover(group.clone())
+                .absolute()
+                .top_1p5()
+                .right_1p5()
+                .child(
+                    IconButton::new(delete_id, IconName::Trash)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Delete Pattern"))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
+                        })),
+                ),
         )
         .into_any_element()
 }
@@ -363,30 +351,39 @@ fn render_add_pattern_input(
 ) -> AnyElement {
     let tool_id_owned = tool_id.to_string();
     let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
+    let group = format!("{}-pattern", tool_id);
 
-    h_flex()
+    div()
+        .group(&group)
+        .relative()
         .w_full()
-        .gap_2()
-        .pt_2()
         .child(
-            div().flex_1().child(
-                SettingsInputField::new()
-                    .with_id(input_id)
-                    .with_placeholder("Enter regex pattern and press Enter...")
-                    .tab_index(0)
-                    .on_confirm(move |pattern, _window, cx| {
-                        if let Some(pattern) = pattern {
-                            if !pattern.trim().is_empty() {
-                                save_pattern(
-                                    &tool_id_owned,
-                                    rule_type,
-                                    pattern.trim().to_string(),
-                                    cx,
-                                );
-                            }
+            SettingsInputField::new()
+                .with_id(input_id)
+                .with_placeholder("Add regex pattern…")
+                .tab_index(0)
+                .on_confirm(move |pattern, _window, cx| {
+                    if let Some(pattern) = pattern {
+                        if !pattern.trim().is_empty() {
+                            save_pattern(&tool_id_owned, rule_type, pattern.trim().to_string(), cx);
                         }
-                    }),
-            ),
+                    }
+                }),
+        )
+        .child(
+            div()
+                .visible_on_hover(group.clone())
+                .absolute()
+                .top_1p5()
+                .right_1p5(), // .child(
+                              //     IconButton::new(delete_id, IconName::Trash)
+                              //         .icon_size(IconSize::Small)
+                              //         .icon_color(Color::Muted)
+                              //         .tooltip(Tooltip::text("Delete Pattern"))
+                              //         .on_click(cx.listener(move |_, _, _, cx| {
+                              //             delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
+                              //         })),
+                              // ),
         )
         .into_any_element()
 }
@@ -404,74 +401,47 @@ fn render_default_mode_section(
 
     let tool_id_owned = tool_id.to_string();
 
-    v_flex()
-        .mt_4()
-        .gap_2()
+    h_flex()
+        .justify_between()
         .child(
-            v_flex()
-                .child(
-                    Label::new("Default Action")
-                        .size(LabelSize::Default)
-                        .weight(FontWeight::MEDIUM),
-                )
-                .child(
-                    Label::new("Action to take when no patterns match")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+            v_flex().child(Label::new("Default Action")).child(
+                Label::new("Action to take when no patterns match.")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            ),
         )
         .child(
-            h_flex()
-                .w_full()
-                .justify_between()
-                .child(Label::new("When no patterns match:").size(LabelSize::Small))
-                .child(
-                    PopoverMenu::new(format!("default-mode-{}", tool_id))
-                        .trigger(
-                            Button::new(format!("mode-trigger-{}", tool_id), mode_label)
-                                .style(ButtonStyle::Subtle)
-                                .icon(IconName::ChevronDown)
-                                .icon_position(IconPosition::End)
-                                .icon_size(IconSize::XSmall)
-                                .label_size(LabelSize::Small),
-                        )
-                        .menu(move |window, cx| {
-                            let tool_id = tool_id_owned.clone();
-                            Some(ContextMenu::build(window, cx, move |menu, _, _| {
-                                let tool_id_confirm = tool_id.clone();
-                                let tool_id_allow = tool_id.clone();
-                                let tool_id_deny = tool_id;
+            PopoverMenu::new(format!("default-mode-{}", tool_id))
+                .trigger(
+                    Button::new(format!("mode-trigger-{}", tool_id), mode_label)
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .icon(IconName::ChevronDown)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::Small),
+                )
+                .menu(move |window, cx| {
+                    let tool_id = tool_id_owned.clone();
+                    Some(ContextMenu::build(window, cx, move |menu, _, _| {
+                        let tool_id_confirm = tool_id.clone();
+                        let tool_id_allow = tool_id.clone();
+                        let tool_id_deny = tool_id;
 
-                                menu.entry("Confirm", None, move |_, cx| {
-                                    set_default_mode(
-                                        &tool_id_confirm,
-                                        ToolPermissionMode::Confirm,
-                                        cx,
-                                    );
-                                })
-                                .entry("Allow", None, move |_, cx| {
-                                    set_default_mode(&tool_id_allow, ToolPermissionMode::Allow, cx);
-                                })
-                                .entry(
-                                    "Deny",
-                                    None,
-                                    move |_, cx| {
-                                        set_default_mode(
-                                            &tool_id_deny,
-                                            ToolPermissionMode::Deny,
-                                            cx,
-                                        );
-                                    },
-                                )
-                            }))
+                        menu.entry("Confirm", None, move |_, cx| {
+                            set_default_mode(&tool_id_confirm, ToolPermissionMode::Confirm, cx);
                         })
-                        .anchor(gpui::Corner::TopRight),
-                ),
+                        .entry("Allow", None, move |_, cx| {
+                            set_default_mode(&tool_id_allow, ToolPermissionMode::Allow, cx);
+                        })
+                        .entry("Deny", None, move |_, cx| {
+                            set_default_mode(&tool_id_deny, ToolPermissionMode::Deny, cx);
+                        })
+                    }))
+                })
+                .anchor(gpui::Corner::TopRight),
         )
         .into_any_element()
 }
-
-// Helper types and functions
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum RuleType {
