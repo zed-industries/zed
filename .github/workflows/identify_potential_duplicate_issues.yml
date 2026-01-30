@@ -107,6 +107,7 @@ jobs:
           ISSUE_TITLE: ${{ steps.fetch-issue.outputs.issue_title }}
           ISSUE_BODY: ${{ steps.fetch-issue.outputs.issue_body }}
         run: |
+          # shellcheck disable=SC2016
           cat > /tmp/area_prompt.txt << 'PROMPT_EOF'
           You are classifying a GitHub issue for the Zed code editor into area categories.
 
@@ -470,6 +471,7 @@ jobs:
           DUPLICATE_MAGNETS: ${{ steps.gather-candidates.outputs.duplicate_magnets }}
           CANDIDATES: ${{ steps.gather-candidates.outputs.candidates }}
         run: |
+          # shellcheck disable=SC2016
           cat > /tmp/prompt.txt << 'PROMPT_EOF'
           You are analyzing a GitHub issue to determine if it might be a duplicate of an existing issue.
 
