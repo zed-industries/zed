@@ -249,6 +249,7 @@ pub fn zeta2_prompt_input(
     );
 
     let context_start_offset = context_range.start.to_offset(snapshot);
+    let context_start_row = context_range.start.row;
     let editable_offset_range = editable_range.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset - context_start_offset;
     let editable_range_in_excerpt = (editable_offset_range.start - context_start_offset)
@@ -262,6 +263,7 @@ pub fn zeta2_prompt_input(
             .into(),
         editable_range_in_excerpt,
         cursor_offset_in_excerpt,
+        excerpt_start_row: Some(context_start_row),
         events,
         related_files,
     };

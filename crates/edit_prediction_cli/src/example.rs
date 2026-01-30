@@ -65,6 +65,8 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_start_row: Option<u32>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
 }
