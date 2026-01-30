@@ -120,6 +120,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub copy_on_select: Option<bool>,
+    /// Whether to confirm before closing a terminal tab with a running process.
+    ///
+    /// Default: false
+    pub confirm_close_running_process: Option<bool>,
     /// Whether to keep the text selection after copying it to the clipboard.
     ///
     /// Default: true
