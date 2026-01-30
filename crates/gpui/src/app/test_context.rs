@@ -705,6 +705,11 @@ impl VisualTestContext {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
 
+    /// Read the document path off the window (set by `Window#set_document_path`)
+    pub fn document_path(&mut self) -> Option<std::path::PathBuf> {
+        self.cx.test_window(self.window).0.lock().document_path.clone()
+    }
+
     /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
     /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
