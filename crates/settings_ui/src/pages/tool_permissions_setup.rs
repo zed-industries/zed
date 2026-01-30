@@ -301,11 +301,13 @@ fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDe
         None
     };
 
+    // Always pass false for always_allow_tool_actions so we test the actual rules,
+    // not the global override that bypasses all checks.
     ToolPermissionDecision::from_input(
         tool_id,
         input,
         &settings.tool_permissions,
-        settings.always_allow_tool_actions,
+        false,
         shell_kind,
     )
 }
