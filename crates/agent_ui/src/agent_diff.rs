@@ -1,10 +1,11 @@
-use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
+use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, RejectAllConfirmation};
 use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::ActionLogTelemetry;
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
+use db::kvp::Dismissable;
 use editor::{
     Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
     SelectionEffects, ToPoint,
@@ -279,6 +280,46 @@ impl AgentDiffPane {
     }
 
     fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
+        // If the user has already dismissed the confirmation, proceed directly
+        if RejectAllConfirmation::dismissed() {
+            self.do_reject_all(window, cx);
+            return;
+        }
+
+        // Show confirmation dialog
+        cx.spawn_in(window, async move |this, cx| {
+            let response = cx.prompt(
+                gpui::PromptLevel::Warning,
+                "Reject all changes?",
+                Some("This will discard all agent edits. You can undo individual file changes with the regular undo command, but the agent review UI will be cleared."),
+                &["Reject All", "Don't Ask Again", "Cancel"],
+            );
+
+            match response.await {
+                Ok(0) => {
+                    // "Reject All" - proceed without setting dismissed
+                    this.update_in(cx, |this, window, cx| {
+                        this.do_reject_all(window, cx);
+                    }).ok();
+                }
+                Ok(1) => {
+                    // "Don't Ask Again" - set dismissed and proceed
+                    cx.update(|_, cx| {
+                        RejectAllConfirmation::set_dismissed(true, cx);
+                    }).ok();
+                    this.update_in(cx, |this, window, cx| {
+                        this.do_reject_all(window, cx);
+                    }).ok();
+                }
+                _ => {
+                    // "Cancel" or dialog closed - do nothing
+                }
+            }
+            anyhow::Ok(())
+        }).detach_and_log_err(cx);
+    }
+
+    fn do_reject_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             reject_edits_in_ranges(

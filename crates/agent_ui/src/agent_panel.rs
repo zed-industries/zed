@@ -17,8 +17,9 @@ use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, Follow, InlineAssistant, NewTextThread, NewThread,
-    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, RejectAllConfirmation,
+    ResetRejectAllConfirmation, ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu,
+    ToggleNewThreadMenu, ToggleOptionsMenu,
     acp::AcpThreadView,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
@@ -205,6 +206,9 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
                     TrialEndUpsell::set_dismissed(false, cx);
+                })
+                .register_action(|_workspace, _: &ResetRejectAllConfirmation, _window, cx| {
+                    RejectAllConfirmation::set_dismissed(false, cx);
                 })
                 .register_action(|workspace, _: &ResetAgentZoom, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {

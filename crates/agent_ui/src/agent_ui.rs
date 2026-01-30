@@ -26,6 +26,8 @@ mod user_slash_command;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use db::kvp::Dismissable;
+
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -107,6 +109,8 @@ actions!(
         Reject,
         /// Rejects all suggestions or changes.
         RejectAll,
+        /// Resets the "Don't show again" state for the Reject All confirmation dialog.
+        ResetRejectAllConfirmation,
         /// Keeps all suggestions or changes.
         KeepAll,
         /// Allow this operation only this time.
@@ -238,6 +242,14 @@ impl ManageProfiles {
             customize_tools: Some(profile_id),
         }
     }
+}
+
+/// Tracks whether the user has dismissed the "Reject All" confirmation dialog.
+/// When dismissed, clicking "Reject All" will immediately reject without prompting.
+pub struct RejectAllConfirmation;
+
+impl Dismissable for RejectAllConfirmation {
+    const KEY: &'static str = "reject_all_confirmation_dismissed";
 }
 
 #[derive(Clone)]

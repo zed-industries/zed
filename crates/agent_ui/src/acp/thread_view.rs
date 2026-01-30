@@ -80,9 +80,11 @@ use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
     ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
-    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
+    OpenHistory, RejectAll, RejectAllConfirmation, RejectOnce, RemoveFirstQueuedMessage,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
+    ToggleThinkingMode,
 };
+use db::kvp::Dismissable;
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
@@ -6683,10 +6685,50 @@ impl AcpThreadView {
         };
     }
 
-    fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.reject_all(cx);
-        };
+    fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
+        // If the user has already dismissed the confirmation, proceed directly
+        if RejectAllConfirmation::dismissed() {
+            if let Some(active) = self.as_active_thread_mut() {
+                active.reject_all(cx);
+            }
+            return;
+        }
+
+        // Show confirmation dialog
+        cx.spawn_in(window, async move |this, cx| {
+            let response = cx.prompt(
+                gpui::PromptLevel::Warning,
+                "Reject all changes?",
+                Some("This will discard all agent edits. You can undo individual file changes with the regular undo command, but the agent review UI will be cleared."),
+                &["Reject All", "Don't Ask Again", "Cancel"],
+            );
+
+            match response.await {
+                Ok(0) => {
+                    // "Reject All" - proceed without setting dismissed
+                    this.update(cx, |this, cx| {
+                        if let Some(active) = this.as_active_thread_mut() {
+                            active.reject_all(cx);
+                        }
+                    }).ok();
+                }
+                Ok(1) => {
+                    // "Don't Ask Again" - set dismissed and proceed
+                    cx.update(|_, cx| {
+                        RejectAllConfirmation::set_dismissed(true, cx);
+                    }).ok();
+                    this.update(cx, |this, cx| {
+                        if let Some(active) = this.as_active_thread_mut() {
+                            active.reject_all(cx);
+                        }
+                    }).ok();
+                }
+                _ => {
+                    // "Cancel" or dialog closed - do nothing
+                }
+            }
+            anyhow::Ok(())
+        }).detach_and_log_err(cx);
     }
 
     fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
