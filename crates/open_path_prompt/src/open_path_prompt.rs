@@ -910,11 +910,7 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
             (dir, suffix)
         }
         PathStyle::Windows => {
-            let last_sep = query
-                .rfind('\\')
-                .into_iter()
-                .chain(query.rfind('/'))
-                .max();
+            let last_sep = query.rfind('\\').into_iter().chain(query.rfind('/')).max();
             let (mut dir, suffix) = if let Some(index) = last_sep {
                 (query[..index].to_string(), query[index + 1..].to_string())
             } else {
