@@ -1,3 +1,4 @@
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, px};
 use project::Project;
 use theme::ActiveTheme;
@@ -24,7 +25,14 @@ impl MultiWorkspace {
         }
     }
 
+    fn multi_workspace_enabled(&self, cx: &App) -> bool {
+        cx.has_flag::<AgentV2FeatureFlag>()
+    }
+
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
         self.sidebar_open = !self.sidebar_open;
         cx.notify();
     }
@@ -42,6 +50,15 @@ impl MultiWorkspace {
     }
 
     pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            // In single workspace mode, replace the current workspace
+            self.workspaces[0] = workspace;
+            self.active_workspace_index = 0;
+            cx.notify();
+            return;
+        }
+
+        // Multi-workspace mode: insert if not present, then activate
         let index = self
             .workspaces
             .iter()
@@ -167,8 +184,9 @@ impl MultiWorkspace {
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let titlebar_height = (1.75 * window.rem_size()).max(px(34.));
+        let multi_workspace_enabled = self.multi_workspace_enabled(cx);
 
-        let sidebar = if self.sidebar_open {
+        let sidebar = if multi_workspace_enabled && self.sidebar_open {
             let items: Vec<_> = self
                 .workspaces
                 .iter()
@@ -257,6 +275,9 @@ impl Render for MultiWorkspace {
                 .flex_row()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
+                        if !this.multi_workspace_enabled(cx) {
+                            return;
+                        }
                         let app_state = this.workspace().read(cx).app_state().clone();
                         let project = Project::local(
                             app_state.client.clone(),

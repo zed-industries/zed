@@ -628,8 +628,6 @@ pub fn connect(
     })
 }
 
-// TODO! All the changes to this function need a rethink. They're interacting with the window
-// but we want them to interact with the multiworkspace instead, so they don't trash running agents
 pub async fn open_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
@@ -638,8 +636,11 @@ pub async fn open_remote_project(
     cx: &mut AsyncApp,
 ) -> Result<()> {
     let created_new_window = open_options.replace_window.is_none();
-    let window = if let Some(window) = open_options.replace_window {
-        window
+    let (window, initial_workspace) = if let Some(window) = open_options.replace_window {
+        let workspace = window.update(cx, |multi_workspace, _, _| {
+            multi_workspace.workspace().clone()
+        })?;
+        (window, workspace)
     } else {
         let workspace_position = cx
             .update(|cx| {
@@ -653,7 +654,7 @@ pub async fn open_remote_project(
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
-        cx.open_window(options, |window, cx| {
+        let window = cx.open_window(options, |window, cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
@@ -670,7 +671,11 @@ pub async fn open_remote_project(
                 workspace
             });
             cx.new(|cx| MultiWorkspace::new(workspace, cx))
-        })?
+        })?;
+        let workspace = window.update(cx, |multi_workspace, _, _cx| {
+            multi_workspace.workspace().clone()
+        })?;
+        (window, workspace)
     };
 
     loop {
@@ -678,10 +683,10 @@ pub async fn open_remote_project(
         let delegate = window.update(cx, {
             let paths = paths.clone();
             let connection_options = connection_options.clone();
-            move |multi_workspace: &mut MultiWorkspace, window, cx| {
+            let initial_workspace = initial_workspace.clone();
+            move |_multi_workspace: &mut MultiWorkspace, window, cx| {
                 window.activate_window();
-                let workspace = multi_workspace.workspace().clone();
-                workspace.update(cx, |workspace, cx| {
+                initial_workspace.update(cx, |workspace, cx| {
                     workspace.hide_modal(window, cx);
                     workspace.toggle_modal(window, cx, |window, cx| {
                         RemoteConnectionModal::new(&connection_options, paths, window, cx)
@@ -720,16 +725,11 @@ pub async fn open_remote_project(
         let connection = remote::connect(connection_options.clone(), delegate.clone(), cx);
         let connection = select! {
             _ = cancel_rx => {
-                window
-                    .update(cx, |multi_workspace: &mut MultiWorkspace, _, cx| {
-                        let workspace = multi_workspace.workspace().clone();
-                        workspace.update(cx, |workspace, cx| {
-                            if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-                                ui.update(cx, |modal, cx| modal.finished(cx))
-                            }
-                        });
-                    })
-                    .ok();
+                initial_workspace.update(cx, |workspace, cx| {
+                    if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                        ui.update(cx, |modal, cx| modal.finished(cx))
+                    }
+                });
 
                 break;
             },
@@ -738,16 +738,11 @@ pub async fn open_remote_project(
         let remote_connection = match connection {
             Ok(connection) => connection,
             Err(e) => {
-                window
-                    .update(cx, |multi_workspace: &mut MultiWorkspace, _, cx| {
-                        let workspace = multi_workspace.workspace().clone();
-                        workspace.update(cx, |workspace, cx| {
-                            if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-                                ui.update(cx, |modal, cx| modal.finished(cx))
-                            }
-                        });
-                    })
-                    .ok();
+                initial_workspace.update(cx, |workspace, cx| {
+                    if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                        ui.update(cx, |modal, cx| modal.finished(cx))
+                    }
+                });
                 log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
@@ -801,16 +796,11 @@ pub async fn open_remote_project(
             })
             .await;
 
-        window
-            .update(cx, |multi_workspace: &mut MultiWorkspace, _, cx| {
-                let workspace = multi_workspace.workspace().clone();
-                workspace.update(cx, |workspace, cx| {
-                    if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-                        ui.update(cx, |modal, cx| modal.finished(cx))
-                    }
-                });
-            })
-            .ok();
+        initial_workspace.update(cx, |workspace, cx| {
+            if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                ui.update(cx, |modal, cx| modal.finished(cx))
+            }
+        });
 
         match opened_items {
             Err(e) => {
@@ -840,23 +830,20 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                window
-                    .update(cx, |multi_workspace: &mut MultiWorkspace, window, cx| {
-                        if created_new_window {
-                            window.remove_window();
-                        }
-                        let workspace = multi_workspace.workspace().clone();
-                        workspace.update(cx, |workspace, cx| {
-                            trusted_worktrees::track_worktree_trust(
-                                workspace.project().read(cx).worktree_store(),
-                                None,
-                                None,
-                                None,
-                                cx,
-                            );
-                        });
-                    })
-                    .ok();
+                if created_new_window {
+                    window
+                        .update(cx, |_, window, _| window.remove_window())
+                        .ok();
+                }
+                initial_workspace.update(cx, |workspace, cx| {
+                    trusted_worktrees::track_worktree_trust(
+                        workspace.project().read(cx).worktree_store(),
+                        None,
+                        None,
+                        None,
+                        cx,
+                    );
+                });
             }
 
             Ok(items) => {
@@ -889,6 +876,9 @@ pub async fn open_remote_project(
         break;
     }
 
+    // Register the remote client with extensions. We use `multi_workspace.workspace()` here
+    // (not `initial_workspace`) because `open_remote_project_inner` activated the new remote
+    // workspace, so the active workspace is now the one with the remote project.
     window
         .update(cx, |multi_workspace: &mut MultiWorkspace, _, cx| {
             let workspace = multi_workspace.workspace().clone();

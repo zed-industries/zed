@@ -1764,14 +1764,14 @@ impl Workspace {
                 });
             }
 
-            let window = if let Some(window) = requesting_window {
-                let centered_layout = serialized_workspace
-                    .as_ref()
-                    .map(|w| w.centered_layout)
-                    .unwrap_or(false);
+            let (window, workspace): (WindowHandle<MultiWorkspace>, Entity<Workspace>) =
+                if let Some(window) = requesting_window {
+                    let centered_layout = serialized_workspace
+                        .as_ref()
+                        .map(|w| w.centered_layout)
+                        .unwrap_or(false);
 
-                cx.update_window(window.into(), |_, window, cx| {
-                    window.replace_root(cx, |window, cx| {
+                    let workspace = window.update(cx, |multi_workspace, window, cx| {
                         let workspace = cx.new(|cx| {
                             let mut workspace = Workspace::new(
                                 Some(workspace_id),
@@ -1790,67 +1790,73 @@ impl Workspace {
 
                             workspace
                         });
-                        MultiWorkspace::new(workspace, cx)
-                    });
-                })?;
-                window
-            } else {
-                let window_bounds_override = window_bounds_env_override();
-
-                let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
-                    (Some(WindowBounds::Windowed(bounds)), None)
-                } else if let Some(workspace) = serialized_workspace.as_ref()
-                    && let Some(display) = workspace.display
-                    && let Some(bounds) = workspace.window_bounds.as_ref()
-                {
-                    // Reopening an existing workspace - restore its saved bounds
-                    (Some(bounds.0), Some(display))
-                } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
-                    // New or empty workspace - use the last known window bounds
-                    (Some(bounds), Some(display))
+                        multi_workspace.activate(workspace.clone(), cx);
+                        workspace
+                    })?;
+                    (window, workspace)
                 } else {
-                    // New window - let GPUI's default_bounds() handle cascading
-                    (None, None)
+                    let window_bounds_override = window_bounds_env_override();
+
+                    let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+                        (Some(WindowBounds::Windowed(bounds)), None)
+                    } else if let Some(workspace) = serialized_workspace.as_ref()
+                        && let Some(display) = workspace.display
+                        && let Some(bounds) = workspace.window_bounds.as_ref()
+                    {
+                        // Reopening an existing workspace - restore its saved bounds
+                        (Some(bounds.0), Some(display))
+                    } else if let Some((display, bounds)) =
+                        persistence::read_default_window_bounds()
+                    {
+                        // New or empty workspace - use the last known window bounds
+                        (Some(bounds), Some(display))
+                    } else {
+                        // New window - let GPUI's default_bounds() handle cascading
+                        (None, None)
+                    };
+
+                    // Use the serialized workspace to construct the new window
+                    let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx));
+                    options.window_bounds = window_bounds;
+                    let centered_layout = serialized_workspace
+                        .as_ref()
+                        .map(|w| w.centered_layout)
+                        .unwrap_or(false);
+                    let window = cx.open_window(options, {
+                        let app_state = app_state.clone();
+                        let project_handle = project_handle.clone();
+                        move |window, cx| {
+                            let workspace = cx.new(|cx| {
+                                let mut workspace = Workspace::new(
+                                    Some(workspace_id),
+                                    project_handle,
+                                    app_state,
+                                    window,
+                                    cx,
+                                );
+                                workspace.centered_layout = centered_layout;
+
+                                // Call init callback to add items before window renders
+                                if let Some(init) = init {
+                                    init(&mut workspace, window, cx);
+                                }
+
+                                workspace
+                            });
+                            cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                        }
+                    })?;
+                    let workspace =
+                        window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
+                            multi_workspace.workspace().clone()
+                        })?;
+                    (window, workspace)
                 };
-
-                // Use the serialized workspace to construct the new window
-                let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx));
-                options.window_bounds = window_bounds;
-                let centered_layout = serialized_workspace
-                    .as_ref()
-                    .map(|w| w.centered_layout)
-                    .unwrap_or(false);
-                cx.open_window(options, {
-                    let app_state = app_state.clone();
-                    let project_handle = project_handle.clone();
-                    move |window, cx| {
-                        let workspace = cx.new(|cx| {
-                            let mut workspace = Workspace::new(
-                                Some(workspace_id),
-                                project_handle,
-                                app_state,
-                                window,
-                                cx,
-                            );
-                            workspace.centered_layout = centered_layout;
-
-                            // Call init callback to add items before window renders
-                            if let Some(init) = init {
-                                init(&mut workspace, window, cx);
-                            }
-
-                            workspace
-                        });
-                        cx.new(|cx| MultiWorkspace::new(workspace, cx))
-                    }
-                })?
-            };
 
             notify_if_database_failed(window, cx);
             let opened_items = window
-                .update(cx, |multi_workspace, window, cx| {
-                    let workspace = multi_workspace.workspace().clone();
-                    workspace.update(cx, |_workspace, cx| {
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |_workspace: &mut Workspace, cx| {
                         open_items(serialized_workspace, project_paths, window, cx)
                     })
                 })?
@@ -1858,11 +1864,10 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(cx, |multi_workspace, window, cx| {
+                .update(cx, |_, window, cx| {
                     window.activate_window();
-                    let workspace = multi_workspace.workspace().clone();
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.update_history(cx);
+                    workspace.update(cx, |this: &mut Workspace, cx| {
+                        this.update_history(cx);
                     });
                 })
                 .log_err();
@@ -8521,7 +8526,6 @@ pub fn open_remote_project_with_existing_connection(
     })
 }
 
-// TODO: replace_root target
 async fn open_remote_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
@@ -8573,65 +8577,45 @@ async fn open_remote_project_inner(
         return Err(project_path_errors.pop().context("no paths given")?);
     }
 
-    if let Some(detach_session_task) = window
-        .update(cx, |multi_workspace, window, cx| {
-            let workspace = multi_workspace.workspace().clone();
-            cx.spawn_in(window, async move |_this, cx| {
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.remove_from_session(window, cx)
-                    })
-                    .ok();
-            })
-        })
-        .ok()
-    {
-        detach_session_task.await;
-    }
+    let workspace = window.update(cx, |multi_workspace, window, cx| {
+        telemetry::event!("SSH Project Opened");
 
-    cx.update_window(window.into(), |_, window, cx| {
-        window.replace_root(cx, |window, cx| {
-            telemetry::event!("SSH Project Opened");
+        let new_workspace = cx.new(|cx| {
+            let mut workspace =
+                Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
+            workspace.update_history(cx);
 
-            let workspace = cx.new(|cx| {
-                let mut workspace =
-                    Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
-                workspace.update_history(cx);
+            if let Some(ref serialized) = serialized_workspace {
+                workspace.centered_layout = serialized.centered_layout;
+            }
 
-                if let Some(ref serialized) = serialized_workspace {
-                    workspace.centered_layout = serialized.centered_layout;
-                }
-
-                workspace
-            });
-            MultiWorkspace::new(workspace, cx)
+            workspace
         });
+
+        multi_workspace.activate(new_workspace.clone(), cx);
+        new_workspace
     })?;
 
     let items = window
-        .update(cx, |multi_workspace, window, cx| {
+        .update(cx, |_, window, cx| {
             window.activate_window();
-            let workspace = multi_workspace.workspace().clone();
             workspace.update(cx, |_workspace, cx| {
                 open_items(serialized_workspace, project_paths_to_open, window, cx)
             })
         })?
         .await?;
 
-    window.update(cx, |multi_workspace, _, cx| {
-        let workspace = multi_workspace.workspace().clone();
-        workspace.update(cx, |workspace, cx| {
-            for error in project_path_errors {
-                if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
-                    if let Some(path) = error.error_tag("path") {
-                        workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
-                    }
-                } else {
-                    workspace.show_error(&error, cx)
+    workspace.update(cx, |workspace, cx| {
+        for error in project_path_errors {
+            if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
+                if let Some(path) = error.error_tag("path") {
+                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
                 }
+            } else {
+                workspace.show_error(&error, cx)
             }
-        });
-    })?;
+        }
+    });
 
     Ok(items.into_iter().map(|item| item?.ok()).collect())
 }
