@@ -6,18 +6,22 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point,
+    prelude::*,
+    px, rems, size,
+    taffy::{NodeMeasureCtx, TaffyLayoutEngine},
+    text_system::TextSystemLayoutIndex,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -761,7 +765,7 @@ pub(crate) struct PrepaintStateIndex {
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
-    line_layout_index: LineLayoutIndex,
+    text_layout_index: TextSystemLayoutIndex,
 }
 
 #[derive(Clone, Default)]
@@ -772,7 +776,7 @@ pub(crate) struct PaintIndex {
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
     tab_handle_index: usize,
-    line_layout_index: LineLayoutIndex,
+    text_layout_index: TextSystemLayoutIndex,
 }
 
 impl Frame {
@@ -2472,7 +2476,7 @@ impl Window {
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            line_layout_index: self.text_system.layout_index(),
+            text_layout_index: self.text_system.layout_index(),
         }
     }
 
@@ -2495,7 +2499,7 @@ impl Window {
                 .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+            .reuse_layouts(range.start.text_layout_index..range.end.text_layout_index);
 
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
@@ -2534,7 +2538,7 @@ impl Window {
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
-            line_layout_index: self.text_system.layout_index(),
+            text_layout_index: self.text_system.layout_index(),
         }
     }
 
@@ -2569,7 +2573,7 @@ impl Window {
         );
 
         self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+            .reuse_layouts(range.start.text_layout_index..range.end.text_layout_index);
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
@@ -2725,7 +2729,7 @@ impl Window {
             self.next_frame
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
-            self.text_system.truncate_layouts(index.line_layout_index);
+            self.text_system.truncate_layouts(index.text_layout_index);
         }
         result
     }
@@ -3541,6 +3545,47 @@ impl Window {
             .as_mut()
             .unwrap()
             .request_measured_layout(style, rem_size, scale_factor, measure)
+    }
+
+    /// Add a node to the layout tree for the current frame using a `NodeMeasureCtx`.
+    /// This is like [`Window::request_layout`], but delegates sizing to custom layout logic
+    /// that runs during the layout pass.
+    ///
+    /// Use this when the element’s size cannot be expressed solely with `Style` and built‑in
+    /// layout rules (block/flex/grid). The `NodeMeasureCtx` can measure itself, measure its
+    /// children explicitly, and retain per‑element state across frames (e.g. text shaping,
+    /// inline flow layout, or other custom measurement).
+    ///
+    /// The provided `children` are inserted into the layout tree and may be measured by the
+    /// context during layout. This method should only be called as part of the request_layout
+    /// or prepaint phase of element drawing.
+    pub fn request_layout_with_context<C>(
+        &mut self,
+        style: Style,
+        context: C,
+        children: impl IntoIterator<Item = LayoutId>,
+        cx: &mut App,
+    ) -> LayoutId
+    where
+        C: NodeMeasureCtx + 'static,
+    {
+        self.invalidator.debug_assert_prepaint();
+
+        cx.layout_id_buffer.clear();
+        cx.layout_id_buffer.extend(children);
+        let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
+
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .request_layout_with_context(
+                style,
+                rem_size,
+                scale_factor,
+                Box::new(context),
+                &cx.layout_id_buffer,
+            )
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -5477,5 +5522,63 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{self as gpui, AvailableSpace, EmptyView, Style, TestAppContext, px, size};
+
+    #[gpui::test]
+    fn test_layout_bounds_invalidation(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| EmptyView);
+
+        cx.update(|window, app| {
+            let rem_size = window.rem_size();
+            let scale_factor = window.scale_factor();
+            let mut layout_engine = window.layout_engine.take().expect("layout engine");
+
+            let layout_id = layout_engine.request_measured_layout(
+                Style::default(),
+                rem_size,
+                scale_factor,
+                |_known, avail, _, _| {
+                    let width = match avail.width {
+                        AvailableSpace::Definite(width) => width,
+                        _ => px(0.0),
+                    };
+                    size(width, px(10.0))
+                },
+            );
+
+            layout_engine.compute_layout(
+                layout_id,
+                size(
+                    AvailableSpace::Definite(px(200.0)),
+                    AvailableSpace::MinContent,
+                ),
+                window,
+                app,
+            );
+            let bounds_a = layout_engine.layout_bounds(layout_id, scale_factor);
+
+            layout_engine.compute_layout(
+                layout_id,
+                size(
+                    AvailableSpace::Definite(px(120.0)),
+                    AvailableSpace::MinContent,
+                ),
+                window,
+                app,
+            );
+            let bounds_b = layout_engine.layout_bounds(layout_id, scale_factor);
+
+            window.layout_engine = Some(layout_engine);
+
+            assert_ne!(
+                bounds_a.size.width, bounds_b.size.width,
+                "expected bounds cache to invalidate after recompute"
+            );
+        });
     }
 }
