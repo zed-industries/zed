@@ -172,7 +172,9 @@ impl QaClient {
                         cache_control: None,
                     }],
                 }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
+                let response = client
+                    .generate(model, max_tokens, messages, None, false)
+                    .await?;
                 Ok(response.map(|r| {
                     r.content
                         .iter()
@@ -188,7 +190,9 @@ impl QaClient {
                 let messages = vec![open_ai::RequestMessage::User {
                     content: open_ai::MessageContent::Plain(prompt.to_string()),
                 }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
+                let response = client
+                    .generate(model, max_tokens, messages, None, false)
+                    .await?;
                 Ok(response.map(|r| {
                     r.choices
                         .into_iter()

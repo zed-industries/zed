@@ -257,6 +257,9 @@ struct PredictArgs {
     provider: Option<PredictionProvider>,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
+    /// Only use cached responses, don't queue new requests for batching
+    #[clap(long)]
+    cache_only: bool,
 }
 
 #[derive(Debug, Args, Clone)]
