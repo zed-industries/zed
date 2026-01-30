@@ -35,7 +35,7 @@ impl CommitEditorHistory {
             self.entries.truncate(MAX_HISTORY);
         }
 
-        self.cursor = Some(0usize); // reset navigation state
+        self.cursor = None;
     }
 
     pub fn prev(&mut self) -> Option<&str> {
