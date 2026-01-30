@@ -2010,7 +2010,7 @@ impl App {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.platform.update_jump_list(menus, entries)
     }
 
