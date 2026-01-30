@@ -1,8 +1,10 @@
+use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
-use gpui::{ReadGlobal, ScrollHandle, prelude::*};
+use gpui::{Global, ReadGlobal, ScrollHandle, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
+use util::shell::ShellKind;
 
 use crate::{SettingsWindow, components::SettingsInputField};
 
@@ -201,6 +203,7 @@ pub(crate) fn render_tool_config_page(
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
         .child(Label::new(page_title).size(LabelSize::Large))
+        .child(render_verification_section(tool_id, cx))
         .child(
             v_flex()
                 .mt_6()
@@ -236,6 +239,130 @@ pub(crate) fn render_tool_config_page(
         )
         .into_any_element()
 }
+
+fn render_verification_section(
+    tool_id: &'static str,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let input_id = format!("{}-verification-input", tool_id);
+    let result_id = format!("{}-verification-result", tool_id);
+    let tool_id_for_callback = tool_id.to_string();
+    let result_id_for_callback = result_id.clone();
+    let entity_id = cx.entity_id();
+
+    v_flex()
+        .id(format!("{}-verification-section", tool_id))
+        .mt_4()
+        .p_3()
+        .rounded_md()
+        .bg(cx.theme().colors().surface_background)
+        .border_1()
+        .border_color(cx.theme().colors().border_variant)
+        .child(
+            Label::new("Test Your Rules")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(
+            h_flex()
+                .mt_2()
+                .gap_3()
+                .items_start()
+                .child(
+                    div().flex_1().child(
+                        SettingsInputField::new()
+                            .with_id(input_id)
+                            .with_placeholder("Enter a test input to see how rules apply...")
+                            .tab_index(0)
+                            .on_confirm(move |input, _window, cx| {
+                                if let Some(input) = input {
+                                    let decision =
+                                        evaluate_test_input(&tool_id_for_callback, &input, cx);
+                                    cx.set_global(VerificationResult {
+                                        id: result_id_for_callback.clone(),
+                                        decision,
+                                    });
+                                    cx.notify(entity_id);
+                                }
+                            }),
+                    ),
+                )
+                .child(render_verification_result(&result_id, cx)),
+        )
+        .into_any_element()
+}
+
+fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDecision {
+    let settings = AgentSettings::get_global(cx);
+
+    let shell_kind = if tool_id == "terminal" {
+        ShellKind::system()
+    } else {
+        None
+    };
+
+    ToolPermissionDecision::from_input(
+        tool_id,
+        input,
+        &settings.tool_permissions,
+        settings.always_allow_tool_actions,
+        shell_kind,
+    )
+}
+
+fn render_verification_result(result_id: &str, cx: &App) -> AnyElement {
+    let result = cx.try_global::<VerificationResult>();
+
+    let (label, color, icon) = match result {
+        Some(result) if result.id == result_id => match &result.decision {
+            ToolPermissionDecision::Allow => ("Allowed", Color::Success, IconName::Check),
+            ToolPermissionDecision::Deny(_) => ("Denied", Color::Error, IconName::XCircle),
+            ToolPermissionDecision::Confirm => ("Confirm", Color::Warning, IconName::Info),
+        },
+        _ => ("", Color::Muted, IconName::Dash),
+    };
+
+    let has_result = result.is_some_and(|r| r.id == result_id);
+    let deny_reason = result.and_then(|r| {
+        if r.id == result_id {
+            if let ToolPermissionDecision::Deny(reason) = &r.decision {
+                Some(reason.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+
+    h_flex()
+        .h_7()
+        .px_2()
+        .gap_1()
+        .items_center()
+        .rounded_md()
+        .when(has_result, |this| this.bg(color.color(cx).opacity(0.1)))
+        .when(has_result, |this| {
+            this.child(Icon::new(icon).size(IconSize::Small).color(color))
+                .child(Label::new(label).size(LabelSize::Small).color(color))
+        })
+        .when_some(deny_reason, |this, reason| {
+            this.child(
+                Label::new(format!("— {}", reason))
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+        })
+        .into_any_element()
+}
+
+#[derive(Clone)]
+struct VerificationResult {
+    id: String,
+    decision: ToolPermissionDecision,
+}
+
+impl Global for VerificationResult {}
 
 fn render_rule_section(
     tool_id: &'static str,
