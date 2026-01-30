@@ -53,7 +53,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     #[cfg(windows)]
     let expected_separator = ".\\";
 
-    // If the query ends with a slash, the picker should show the contents of the directory.
+    // If the query ends with a slash, the picker should show the contents of the directory and not show any of the hidden entries.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -97,15 +97,15 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir3", "dir4"]);
 
-    // Show candidates for the query ".".
+    // Don't show candidates for the query ".".
     let query = path!("/root/.");
     insert_query(query, &picker, cx).await;
-    assert_eq!(collect_match_candidates(&picker, cx), vec![".a1", ".b1"]);
+    assert_eq!(collect_match_candidates(&picker, cx), Vec::<String>::new());
 
-    // Show candidates for the query ".a".
+    // Don't show any candidates for the query ".a".
     let query = path!("/root/.a");
     insert_query(query, &picker, cx).await;
-    assert_eq!(collect_match_candidates(&picker, cx), vec![".a1"]);
+    assert_eq!(collect_match_candidates(&picker, cx), Vec::<String>::new());
 
     // Show candidates for the query "./".
     // Should show current directory and contents.
@@ -398,11 +398,13 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
     let expected_separator = ".\\";
 
     insert_query(path!("/root/"), &picker, cx).await;
-
     assert_eq!(
         collect_match_candidates(&picker, cx),
         vec![expected_separator, ".hidden", "directory_1", "directory_2"]
     );
+
+    insert_query(path!("/root/."), &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec![".hidden"]);
 }
 
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

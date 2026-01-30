@@ -403,14 +403,15 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
+            if !hidden_entries {
+                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
+            }
+
             let max_id = new_entries
                 .iter()
                 .map(|entry| entry.path.id)
                 .max()
                 .unwrap_or(0);
-            if !suffix.starts_with('.') && !hidden_entries {
-                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
-            }
 
             if suffix.is_empty() {
                 let should_prepend_with_current_dir = this
@@ -489,6 +490,8 @@ impl PickerDelegate for OpenPathDelegate {
                 .filter_map(|entry| {
                     if is_create_state && !entry.is_dir && Some(&suffix) == Some(&entry.path.string)
                     {
+                        None
+                    } else if !suffix.is_empty() && entry.path.string == current_dir {
                         None
                     } else {
                         Some(&entry.path)
