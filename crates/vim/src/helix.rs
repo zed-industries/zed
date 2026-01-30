@@ -1334,7 +1334,9 @@ mod test {
             line one
             ˇ
             line three
-            line four"},
+            line four
+            line five
+            line six"},
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
@@ -1343,7 +1345,22 @@ mod test {
             line one
             «
             line three
-            ˇ»line four"},
+            ˇ»line four
+            line five
+            line six"},
+            Mode::HelixNormal,
+        );
+
+        // Another x should only select the next line
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            line four
+            ˇ»line five
+            line six"},
             Mode::HelixNormal,
         );
 
