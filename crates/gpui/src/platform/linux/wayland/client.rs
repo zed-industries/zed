@@ -2028,22 +2028,15 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 }
                             };
 
-                            let mut items: SmallVec<[DropItem; 2]> = SmallVec::new();
-                            for line in file_list.lines() {
-                                if let Ok(url) = Url::parse(line) {
-                                    match url.scheme() {
-                                        "file" => {
-                                            if let Ok(path) = url.to_file_path() {
-                                                items.push(DropItem::Path(path));
-                                            }
-                                        }
-                                        "http" | "https" => {
-                                            items.push(DropItem::Url(url));
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
+                            let items: SmallVec<[DropItem; 2]> = file_list
+                                .lines()
+                                .filter_map(|line| Url::parse(line).log_err())
+                                .filter_map(|url| match url.scheme() {
+                                    "file" => url.to_file_path().log_err().map(DropItem::Path),
+                                    "http" | "https" => Some(DropItem::Url(url)),
+                                    _ => None,
+                                })
+                                .collect();
                             let position = Point::new(x.into(), y.into());
 
                             // Prevent dropping text from other programs.

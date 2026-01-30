@@ -97,17 +97,15 @@ div()
     })
 ```
 
-### Migration from ExternalPaths
+### Using ExternalDrop for Drag and Drop
 
-`ExternalPaths` is deprecated. Use `ExternalDrop` instead:
+For drag-and-drop handling, prefer `ExternalDrop` which supports both files and URLs:
 
 ```rust
-// Old (deprecated)
-.on_drop(|paths: ExternalPaths, _window, _cx| { /* ... */ })
-
-// New
 .on_drop(|drop: ExternalDrop, _window, _cx| {
     for path in drop.paths() { /* handle file paths */ }
     for url in drop.urls() { /* handle URLs */ }
 })
 ```
+
+Note: `ExternalPaths` remains available for clipboard operations via `ClipboardEntry::ExternalPaths`.
