@@ -1462,29 +1462,33 @@ impl App {
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            cx.window_update_stack.pop();
+            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
 
-            if window.removed {
-                cx.window_handles.remove(&id);
-                cx.windows.remove(id);
+                if window.removed {
+                    cx.window_handles.remove(&id);
+                    cx.windows.remove(id);
 
-                cx.window_closed_observers.clone().retain(&(), |callback| {
-                    callback(cx);
-                    true
-                });
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx);
+                        true
+                    });
 
-                let quit_on_empty = match cx.quit_mode {
-                    QuitMode::Explicit => false,
-                    QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => cfg!(not(target_os = "macos")),
-                };
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
 
-                if quit_on_empty && cx.windows.is_empty() {
-                    cx.quit();
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(id)?.replace(window);
                 }
-            } else {
-                cx.windows.get_mut(id)?.replace(window);
+                Some(())
             }
+            trail(id, window, cx)?;
 
             Some(result)
         })
