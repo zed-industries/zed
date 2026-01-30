@@ -20,11 +20,8 @@ impl WorkspaceSatellite {
         group.set_is_center(true);
         group.mark_positions(cx);
 
-        // TODO: can we share this logic with workspace
         cx.subscribe_in(&root, window, Self::handle_pane_event)
             .detach();
-
-        window.focus(&root.focus_handle(cx), cx);
 
         Self {
             center: group,
