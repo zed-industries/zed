@@ -310,9 +310,24 @@ fn render_verification_section(
                             .color(Color::Warning),
                     )
                     .child(
-                        Label::new("\"Always allow tool actions\" is enabled — all tools will be allowed regardless of these rules.")
-                            .size(LabelSize::Small)
-                            .color(Color::Warning),
+                        Button::new("always-allow-link", "Always allow tool actions")
+                            .style(ButtonStyle::Transparent)
+                            .color(Color::Warning)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.sub_page_stack.clear();
+                                this.search_bar.update(cx, |editor, cx| {
+                                    editor.set_text("#agent.always_allow_tool_actions", window, cx);
+                                });
+                                this.update_matches(cx);
+                            })),
+                    )
+                    .child(
+                        Label::new(
+                            "is enabled — all tools will be allowed regardless of these rules.",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
                     ),
             )
         })
