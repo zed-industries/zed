@@ -41,7 +41,7 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{self, AddAssign, ControlFlow, Range, RangeBounds, Sub, SubAssign},
+    ops::{self, Add, AddAssign, ControlFlow, Range, RangeBounds, Sub, SubAssign},
     rc::Rc,
     str,
     sync::{Arc, OnceLock},
@@ -380,6 +380,14 @@ impl ops::Add<usize> for MultiBufferOffsetUtf16 {
     }
 }
 
+impl ops::Add<OffsetUtf16> for MultiBufferOffsetUtf16 {
+    type Output = Self;
+
+    fn add(self, rhs: OffsetUtf16) -> Self::Output {
+        MultiBufferOffsetUtf16(self.0 + rhs)
+    }
+}
+
 impl AddAssign<OffsetUtf16> for MultiBufferOffsetUtf16 {
     fn add_assign(&mut self, rhs: OffsetUtf16) {
         self.0 += rhs;
@@ -397,6 +405,14 @@ impl Sub for MultiBufferOffsetUtf16 {
 
     fn sub(self, other: MultiBufferOffsetUtf16) -> Self::Output {
         self.0 - other.0
+    }
+}
+
+impl Sub<OffsetUtf16> for MultiBufferOffsetUtf16 {
+    type Output = MultiBufferOffsetUtf16;
+
+    fn sub(self, other: OffsetUtf16) -> Self::Output {
+        MultiBufferOffsetUtf16(self.0 - other)
     }
 }
 
@@ -831,6 +847,23 @@ impl From<TextSummary> for MBTextSummary {
         }
     }
 }
+
+impl From<MBTextSummary> for TextSummary {
+    fn from(summary: MBTextSummary) -> Self {
+        TextSummary {
+            len: summary.len.0,
+            chars: summary.chars,
+            len_utf16: summary.len_utf16,
+            lines: summary.lines,
+            first_line_chars: summary.first_line_chars,
+            last_line_chars: summary.last_line_chars,
+            last_line_len_utf16: summary.last_line_len_utf16,
+            longest_row: summary.longest_row,
+            longest_row_chars: summary.longest_row_chars,
+        }
+    }
+}
+
 impl From<&str> for MBTextSummary {
     fn from(text: &str) -> Self {
         MBTextSummary::from(TextSummary::from(text))
@@ -5063,10 +5096,100 @@ impl MultiBufferSnapshot {
         MBD: MultiBufferDimension
             + Ord
             + Sub<Output = MBD::TextDimension>
-            + AddAssign<MBD::TextDimension>,
+            + Sub<MBD::TextDimension, Output = MBD>
+            + AddAssign<MBD::TextDimension>
+            + Add<MBD::TextDimension, Output = MBD>,
         MBD::TextDimension: Sub<Output = MBD::TextDimension> + Ord,
     {
-        self.summaries_for_anchors([anchor])[0]
+        let excerpt_id = self.latest_excerpt_id(anchor.excerpt_id);
+        let locator = self.excerpt_locator_for_id(excerpt_id);
+        let (start, _, mut item) = self
+            .excerpts
+            .find::<ExcerptSummary, _>((), locator, Bias::Left);
+        let mut start = MBD::from_summary(&start.text);
+        if item.is_none() && excerpt_id == ExcerptId::max() {
+            item = self.excerpts.last();
+            if let Some(last_summary) = self.excerpts.last_summary() {
+                start = start - <MBD::TextDimension>::from_text_summary(&last_summary.text.into());
+            }
+        }
+
+        if self.diff_transforms.is_empty() {
+            let excerpt_start_position = ExcerptDimension(start);
+            if let Some(excerpt) = item {
+                if excerpt.id != excerpt_id && excerpt_id != ExcerptId::max() {
+                    return excerpt_start_position.0;
+                }
+                let excerpt_buffer_start = excerpt
+                    .range
+                    .context
+                    .start
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
+                let excerpt_buffer_end = excerpt
+                    .range
+                    .context
+                    .end
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
+                let buffer_summary = anchor
+                    .text_anchor
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
+                let summary = cmp::min(excerpt_buffer_end, buffer_summary);
+                let mut position = excerpt_start_position;
+                if summary > excerpt_buffer_start {
+                    position += summary - excerpt_buffer_start;
+                }
+
+                position.0
+            } else {
+                excerpt_start_position.0
+            }
+        } else {
+            let mut diff_transforms_cursor = self
+                .diff_transforms
+                .cursor::<Dimensions<ExcerptDimension<MBD>, OutputDimension<MBD>>>(());
+            diff_transforms_cursor.next();
+
+            let excerpt_start_position = ExcerptDimension(start);
+            if let Some(excerpt) = item {
+                if excerpt.id != excerpt_id && excerpt_id != ExcerptId::max() {
+                    return self.resolve_summary_for_anchor(
+                        &Anchor::min(),
+                        excerpt_start_position,
+                        &mut diff_transforms_cursor,
+                    );
+                }
+                let excerpt_buffer_start = excerpt
+                    .range
+                    .context
+                    .start
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
+                let excerpt_buffer_end = excerpt
+                    .range
+                    .context
+                    .end
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
+                let buffer_summary = anchor
+                    .text_anchor
+                    .summary::<MBD::TextDimension>(&excerpt.buffer);
+                let summary = cmp::min(excerpt_buffer_end, buffer_summary);
+                let mut position = excerpt_start_position;
+                if summary > excerpt_buffer_start {
+                    position += summary - excerpt_buffer_start;
+                }
+
+                if diff_transforms_cursor.start().0 < position {
+                    diff_transforms_cursor.seek_forward(&position, Bias::Left);
+                }
+                self.resolve_summary_for_anchor(&anchor, position, &mut diff_transforms_cursor)
+            } else {
+                diff_transforms_cursor.seek_forward(&excerpt_start_position, Bias::Left);
+                self.resolve_summary_for_anchor(
+                    &Anchor::max(),
+                    excerpt_start_position,
+                    &mut diff_transforms_cursor,
+                )
+            }
+        }
     }
 
     fn resolve_summary_for_anchor<MBD>(
@@ -7439,7 +7562,13 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
     }
 
     fn add_summary(&mut self, summary: &Self) {
-        debug_assert!(summary.excerpt_locator > self.excerpt_locator);
+        debug_assert!(
+            summary.excerpt_locator > self.excerpt_locator
+                || self.excerpt_locator == Locator::min(),
+            "Excerpt locators must be in ascending order: {:?} > {:?}",
+            summary.excerpt_locator,
+            self.excerpt_locator
+        );
         self.excerpt_locator = summary.excerpt_locator.clone();
         self.text += summary.text;
         self.widest_line_number = cmp::max(self.widest_line_number, summary.widest_line_number);
