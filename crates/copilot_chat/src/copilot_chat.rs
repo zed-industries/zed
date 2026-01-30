@@ -736,10 +736,6 @@ async fn request_models(
 
     let body_str = std::str::from_utf8(&body)?;
 
-    log::info!("=== Copilot Models API Response ===");
-    log::info!("{}", body_str);
-    log::info!("=== End Copilot Models API Response ===");
-
     let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 
     Ok(models)
