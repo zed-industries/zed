@@ -1,0 +1,31 @@
+[package]
+name = "stock_trading"
+version = "0.1.0"
+edition.workspace = true
+publish = false  # Required to avoid license errors (.rules compliance)
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/stock_trading.rs"  # Avoid default lib.rs, use descriptive name (.rules compliance)
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+settings.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+# WebSocket dependencies
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+url = "2.5"
+rand = "0.8"  # For mock data generation
+tokio = { version = "1.0", features = ["sync"] }  # For Arc, Mutex
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tokio-test = "0.4"  # For WebSocket testing

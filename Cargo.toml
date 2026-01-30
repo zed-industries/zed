@@ -166,6 +166,7 @@ members = [
     "crates/snippets_ui",
     "crates/sqlez",
     "crates/sqlez_macros",
+    "crates/stock_trading",
     "crates/story",
     "crates/storybook",
     "crates/streaming_diff",

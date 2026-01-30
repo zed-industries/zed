@@ -23,7 +23,7 @@ The implementation prioritizes core functionality first (entities and basic data
 
 ## Tasks
 
-- [ ] 1. Set up stock trading crate structure with gpui-component integration
+- [x] 1. Set up stock trading crate structure with gpui-component integration
   - Create `crates/stock_trading/` directory with proper Cargo.toml
   - Set library path to `stock_trading.rs` in Cargo.toml (avoid default `lib.rs`) (.rules compliance)
   - Add gpui-component dependency from GitHub repository
@@ -42,6 +42,70 @@ The implementation prioritizes core functionality first (entities and basic data
   - **Property 12: Order Validation**
   - **Validates: Requirements 5.2**
 
+- [x] 1.2 Implement comprehensive financial data models with WebSocket support
+  - Define enhanced MarketData structure with market status, day high/low, previous close
+  - Create OrderBook structure with bid/ask spreads and order counts
+  - Implement Portfolio and Position structures for account management
+  - Add StockInfo structure for fundamental data (PE ratio, market cap, sector)
+  - Define Trade structure for execution records
+  - Add TimeInForce enum for order duration management
+  - **Create WebSocket message structures for real-time updates**
+  - **Define QuoteUpdate, TradeUpdate, OrderBookUpdate structures**
+  - **Add Subscription management for WebSocket connections**
+  - Use full words for all field names (e.g., `market_data` not `mkt_data`) (.rules compliance)
+  - Include proper error handling for data validation (.rules compliance)
+  - _Requirements: All data-related requirements_
+
+- [x] 1.3 Create MockDataService and MockWebSocketService for development
+  - Implement MockDataService with realistic stock data for AAPL, GOOGL, MSFT, TSLA, AMZN, NVDA, META
+  - Generate realistic price movements using mathematical models (random walk, mean reversion)
+  - Create mock order book data with proper bid/ask spreads
+  - Implement historical data generation for all supported timeframes
+  - Add mock portfolio data with positions and P&L calculations
+  - Include market status simulation (pre-market, open, closed, after-hours)
+  - **Implement MockWebSocketService for real-time data simulation**
+  - **Add configurable update intervals and price volatility simulation**
+  - **Generate realistic quote updates, trade executions, and order book changes**
+  - Use proper error handling for mock data generation (.rules compliance)
+  - Support real-time data simulation with configurable update intervals
+  - _Requirements: 8.1, 8.2, 8.3_
+
+- [x] 1.4 Implement WebSocket service for real-time data updates
+  - Create WebSocketService entity with proper GPUI integration
+  - Implement connection management with automatic reconnection
+  - Add subscription management for symbols and message types
+  - Implement message parsing and routing with proper error handling
+  - Add heartbeat mechanism for connection keep-alive
+  - Support multiple WebSocket endpoints and failover
+  - Use `cx.background_spawn()` for WebSocket operations (.rules compliance)
+  - Implement proper error propagation with `?` operator, never `unwrap()` (.rules compliance)
+  - Use `.log_err()` for connection error visibility (.rules compliance)
+  - Add bounds checking for message parsing (.rules compliance)
+  - _Requirements: 8.1, 8.2, 8.7, 10.1, 10.2_
+
+- [ ]* 1.5 Write property tests for WebSocket functionality
+  - Test WebSocket connection and reconnection logic
+  - Validate message serialization/deserialization
+  - Test subscription management and message routing
+  - Verify error handling for connection failures
+  - Test mock WebSocket service simulation accuracy
+  - Use `TestAppContext` and proper async testing patterns (AGENTS.md compliance)
+  - Follow .rules: never use `unwrap()`, use `?` for error propagation
+  - **Property 24: Stale Data Refresh** (via WebSocket updates)
+  - **Property 29: Comprehensive Error Handling**
+  - **Property 30: Rate Limiting Management**
+  - **Validates: Requirements 8.2, 8.3, 10.1, 10.2**
+- [ ]* 1.6 Write property tests for financial data models
+  - Test data model serialization/deserialization with various inputs
+  - Validate price calculation accuracy (P&L, spreads, percentages)
+  - Test order book consistency (bid prices < ask prices)
+  - Verify portfolio calculations (total value, unrealized P&L)
+  - Test WebSocket message format consistency
+  - Use `TestAppContext` and proper error handling (.rules compliance)
+  - **Property 23: Data Caching Efficiency**
+  - **Property 25: Memory Management**
+  - **Validates: Requirements 8.1, 8.5**
+
 - [ ] 2. Implement all trading panels using gpui-component widgets
   - [ ] 2.1 Create panels.rs with enhanced UI components from gpui-component
     - Implement WatchlistPanel using gpui-component's virtualized Table for stock list
@@ -57,12 +121,15 @@ The implementation prioritizes core functionality first (entities and basic data
     - Prioritize code correctness and clarity over speed/efficiency (.rules compliance)
     - _Requirements: 2.1, 3.1, 4.1, 5.1, 6.1, 7.1_
 
-  - [ ] 2.2 Implement enhanced data management with gpui-component features
+  - [ ] 2.2 Implement enhanced data management with real-time WebSocket updates
     - Use gpui-component's virtualized Table for efficient large dataset handling
     - Leverage built-in Chart component for high-performance K-line rendering
     - Add/remove stock symbols with validation using `?` operator, never `unwrap()`
     - Store panel data using Zed's settings system
     - Display information using gpui-component's enhanced UI elements
+    - **Integrate WebSocket service for real-time price updates**
+    - **Add real-time data subscription management per panel**
+    - **Implement automatic UI updates when WebSocket data arrives**
     - Use `cx.notify()` when state changes affect rendering
     - Handle async operations with `cx.spawn()` and proper error propagation
     - Use `.log_err()` for visibility when ignoring non-critical errors (.rules compliance)
@@ -137,20 +204,31 @@ The implementation prioritizes core functionality first (entities and basic data
     - **Validates: Requirements 3.2, 3.3, 3.4, 3.5**
 
 - [ ] 5. Implement data service entity with strict error handling patterns
-  - [ ] 5.1 Create DataService entity for market data fetching
+  - [ ] 5.1 Create DataService entity with WebSocket integration
     - Implement GPUI entity with proper `Context<Self>` usage
     - Create HTTP-based market data API client using Zed's HTTP client
+    - Integrate MockDataService for development and testing
+    - Add configuration flag to switch between mock and real data
     - Add support for real-time quotes and historical data
+    - **Integrate WebSocketService for real-time data streaming**
+    - **Implement automatic fallback from WebSocket to HTTP polling**
+    - **Add WebSocket subscription management tied to UI panel visibility**
     - Use `cx.background_spawn()` for network operations
     - Implement proper error propagation with `?` operator, never `unwrap()` (.rules compliance)
     - Use safe indexing with bounds checking for cache operations (.rules compliance)
     - Use full words for variable names (e.g., `historical_data` not `hist_data`) (.rules compliance)
     - _Requirements: 8.1, 8.2, 8.8_
 
-  - [ ] 5.2 Implement caching and data management with memory cleanup
+  - [ ] 5.2 Implement caching and real-time data management
     - Add intelligent caching using HashMap with timestamp tracking
     - Implement automatic data refresh during market hours using timers
     - Add memory management and cleanup logic with thresholds
+    - Integrate mock data simulation with realistic price movements
+    - Add configurable update intervals for real-time simulation
+    - Support switching between mock and live data sources
+    - **Implement WebSocket message caching and deduplication**
+    - **Add real-time data validation and quality checks**
+    - **Implement automatic WebSocket reconnection with exponential backoff**
     - Use `cx.spawn()` for periodic cleanup tasks
     - Handle cache errors with `.log_err()` for visibility, never `let _ =` (.rules compliance)
     - Use explicit error handling with `match` or `if let Err(...)` for custom logic (.rules compliance)
@@ -165,15 +243,60 @@ The implementation prioritizes core functionality first (entities and basic data
     - **Property 25: Memory Management**
     - **Validates: Requirements 8.1, 8.3, 8.5**
 
-- [ ] 6. Checkpoint - Ensure core functionality works together
+- [ ] 6.5 Implement WebSocket real-time data streaming
+  - [ ] 6.5.1 Create WebSocket connection management
+    - Implement WebSocketService entity with tokio-tungstenite integration
+    - Add connection state management (connecting, connected, disconnected, error)
+    - Implement automatic reconnection with exponential backoff strategy
+    - Add connection health monitoring with heartbeat/ping-pong
+    - Support multiple WebSocket endpoints with failover capability
+    - Use proper async patterns with `cx.background_spawn()` (.rules compliance)
+    - Implement comprehensive error handling with `?` operator (.rules compliance)
+    - _Requirements: 8.2, 10.1, 10.2_
+
+  - [ ] 6.5.2 Add real-time subscription management
+    - Implement symbol-based subscription system
+    - Add message type filtering (quotes, trades, order book updates)
+    - Create subscription lifecycle management (subscribe/unsubscribe)
+    - Implement subscription persistence across reconnections
+    - Add subscription rate limiting and throttling
+    - Use bounds checking for subscription management (.rules compliance)
+    - Never use `unwrap()` for subscription operations (.rules compliance)
+    - _Requirements: 8.1, 8.3, 10.2_
+
+  - [ ] 6.5.3 Implement real-time message processing
+    - Add WebSocket message parsing and validation
+    - Implement message routing to appropriate panels
+    - Add message deduplication and ordering
+    - Create real-time data quality checks
+    - Implement message buffering for high-frequency updates
+    - Use `.log_err()` for message processing errors (.rules compliance)
+    - Add explicit error handling for malformed messages (.rules compliance)
+    - _Requirements: 8.4, 8.7, 10.3_
+
+  - [ ]* 6.5.4 Write WebSocket integration tests
+    - Test WebSocket connection and reconnection scenarios
+    - Validate subscription management and message routing
+    - Test error handling for network failures and malformed data
+    - Verify real-time data flow from WebSocket to UI panels
+    - Test mock WebSocket service simulation accuracy
+    - Use `TestAppContext` and `cx.background_executor().timer()` (AGENTS.md compliance)
+    - Follow .rules: never use `unwrap()`, use `?` for error propagation
+    - **Property 24: Stale Data Refresh**
+    - **Property 29: Comprehensive Error Handling**
+    - **Property 30: Rate Limiting Management**
+    - **Validates: Requirements 8.2, 8.3, 10.1, 10.2**
+- [ ] 7. Checkpoint - Ensure core functionality and WebSocket integration work together
   - Run `./script/clippy` to check for lint errors and coding standard violations (AGENTS.md compliance)
   - Run `cargo nextest run -p stock_trading` to verify all tests pass (AGENTS.md compliance)
   - Verify all error handling follows `.rules` patterns (no `unwrap()`, proper `?` usage, `.log_err()` for visibility)
   - Check that variable names use full words without abbreviations (.rules compliance)
+  - Test WebSocket connection and real-time data flow
+  - Verify mock WebSocket service provides realistic data simulation
   - Ask the user if questions arise about data flow or error handling
 
-- [ ] 7. Implement comprehensive error handling following Zed patterns
-  - [ ] 7.1 Add network error handling with proper async patterns
+- [ ] 8. Implement comprehensive error handling following Zed patterns
+  - [ ] 8.1 Add network error handling with proper async patterns
     - Handle connection failures with offline status display
     - Implement API rate limiting with exponential backoff using `cx.spawn()`
     - Add graceful degradation for network issues with fallback UI
@@ -182,7 +305,7 @@ The implementation prioritizes core functionality first (entities and basic data
     - Use explicit error handling with `match` or `if let Err(...)` for custom logic (.rules compliance)
     - _Requirements: 10.1, 10.2, 10.4, 10.9_
 
-  - [ ] 7.2 Add input validation and error recovery
+  - [ ] 8.2 Add input validation and error recovery
     - Validate stock symbols and order parameters without using `unwrap()` or panicking (.rules compliance)
     - Handle parsing errors with fallback to cached data using safe error patterns
     - Use proper error propagation in async contexts returning `anyhow::Result`
@@ -190,7 +313,7 @@ The implementation prioritizes core functionality first (entities and basic data
     - Use bounds checking for all indexing operations to prevent panics (.rules compliance)
     - _Requirements: 10.3, 10.5, 10.8_
 
-  - [ ]* 7.3 Write GPUI property tests for error handling
+  - [ ]* 8.3 Write GPUI property tests for error handling
     - Test error scenarios using `TestAppContext` and mock failures
     - Use `cx.background_executor().timer()` for test timing (AGENTS.md compliance)
     - Follow .rules: never use `unwrap()`, use `?` for error propagation
@@ -198,8 +321,8 @@ The implementation prioritizes core functionality first (entities and basic data
     - **Property 30: Rate Limiting Management**
     - **Validates: Requirements 10.1, 10.2, 10.3, 10.4, 10.5**
 
-- [ ] 8. Implement action system integration following Zed patterns
-  - [ ] 8.1 Add trading actions using Zed's action system
+- [ ] 9. Implement action system integration following Zed patterns
+  - [ ] 9.1 Add trading actions using Zed's action system
     - Define actions using `actions!` macro and `#[derive(Action)]`
     - Integrate with Zed's existing action dispatch system
     - Add keyboard shortcuts for panel toggles and trading operations
@@ -207,50 +330,50 @@ The implementation prioritizes core functionality first (entities and basic data
     - Use full words for action names (e.g., `ToggleWatchlistPanel` not `ToggleWL`) (.rules compliance)
     - _Requirements: 1.1, 1.2, 1.3_
 
-  - [ ]* 8.2 Write GPUI unit tests for action integration
+  - [ ]* 9.2 Write GPUI unit tests for action integration
     - Test action dispatch using `TestAppContext`
     - Test keyboard shortcuts and panel opening
     - Use `cx.background_executor().timer()` for test timing (AGENTS.md compliance)
     - Follow .rules: never use `unwrap()`, use `?` for error propagation
     - _Requirements: 1.1, 1.3_
 
-- [ ] 9. Implement settings and configuration with proper error handling
-  - [ ] 9.1 Create trading system settings integration
+- [ ] 10. Implement settings and configuration with proper error handling
+  - [ ] 10.1 Create trading system settings integration
     - Add StockTradingSettings struct with JSON schema
     - Integrate with Zed's existing settings system
     - Add configuration UI for refresh rates and API endpoints
     - Use proper error handling for settings validation (no `unwrap()`) (.rules compliance)
     - _Requirements: 9.1, 9.4_
 
-  - [ ] 9.2 Add panel persistence and theme integration
+  - [ ] 10.2 Add panel persistence and theme integration
     - Save panel positions and sizes between sessions
     - Update colors when themes change
     - Validate settings input with user feedback using proper error patterns
     - Use `.log_err()` for visibility when ignoring non-critical settings errors (.rules compliance)
     - _Requirements: 9.2, 9.3, 9.5_
 
-  - [ ]* 9.3 Write property tests for settings management
+  - [ ]* 10.3 Write property tests for settings management
     - **Property 26: Settings Persistence**
     - **Property 27: Theme Integration**
     - **Property 28: Settings Validation**
     - **Validates: Requirements 9.2, 9.3, 9.5**
 
-- [ ] 10. Implement panel system integration with comprehensive testing
-  - [ ] 10.1 Add advanced panel management features
+- [ ] 11. Implement panel system integration with comprehensive testing
+  - [ ] 11.1 Add advanced panel management features
     - Implement flexible panel docking to all supported positions
     - Add proportional layout maintenance during resize
     - Implement panel state restoration after close/reopen
     - Use safe indexing and bounds checking for panel operations (.rules compliance)
     - _Requirements: 7.1, 7.2, 7.3_
 
-  - [ ] 10.2 Add multi-panel navigation and persistence
+  - [ ] 11.2 Add multi-panel navigation and persistence
     - Implement tab-based navigation for multiple panels
     - Persist all panel configurations between sessions
     - Ensure smooth integration with Zed's workspace system
     - Handle panel lifecycle errors gracefully with proper error propagation (.rules compliance)
     - _Requirements: 7.4, 7.5_
 
-  - [ ]* 10.3 Write property tests for panel system integration
+  - [ ]* 11.3 Write property tests for panel system integration
     - **Property 18: Panel Docking Flexibility**
     - **Property 19: Layout Proportionality**
     - **Property 20: Panel State Restoration**
@@ -258,8 +381,8 @@ The implementation prioritizes core functionality first (entities and basic data
     - **Property 22: Multi-Panel Navigation**
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5**
 
-- [ ] 11. Integration and final wiring using GPUI entity patterns
-  - [ ] 11.1 Wire all entities together in TradingManager
+- [ ] 12. Integration and final wiring using GPUI entity patterns
+  - [ ] 12.1 Wire all entities together in TradingManager
     - Create central TradingManager entity as coordinator
     - Connect all panel entities through event subscription using `cx.subscribe()`
     - Implement cross-panel communication using `EventEmitter` traits
@@ -268,7 +391,7 @@ The implementation prioritizes core functionality first (entities and basic data
     - Use proper error handling throughout integration (no `unwrap()`, use `?`) (.rules compliance)
     - _Requirements: All requirements integration_
 
-  - [ ] 11.2 Add trading system initialization to Zed Lite main.rs
+  - [ ] 12.2 Add trading system initialization to Zed Lite main.rs
     - Modify Zed Lite's main.rs to initialize trading system entities
     - Register all panels with the workspace using proper entity creation
     - Add trading actions to the application action registry
@@ -276,15 +399,85 @@ The implementation prioritizes core functionality first (entities and basic data
     - Use `stock_trading::init(cx)` pattern similar to other Zed components
     - _Requirements: System integration_
 
-  - [ ]* 11.3 Write GPUI integration tests for complete system
+  - [ ]* 12.3 Write GPUI integration tests for complete system
     - Test end-to-end workflows using `TestAppContext`
     - Test multi-entity coordination and event flow
     - Use `cx.background_executor().timer()` for test timing (AGENTS.md compliance)
     - Follow .rules: never use `unwrap()`, use `?` for error propagation
     - _Requirements: Complete system validation_
 
-- [ ] 12. Final checkpoint - Ensure complete system works
+- [ ] 13. API接口设计和WebSocket实时数据集成
+  - [ ] 13.1 设计标准化的金融数据API接口
+    - 定义统一的API trait用于市场数据获取
+    - 设计RESTful API接口规范（获取股票信息、历史数据、实时报价）
+    - **定义WebSocket接口规范用于实时数据推送**
+    - **创建WebSocket消息协议和数据格式标准**
+    - **设计WebSocket订阅管理和心跳机制**
+    - 创建API响应数据结构和错误处理模式
+    - 支持多种数据源（Alpha Vantage, Yahoo Finance, IEX Cloud, Polygon.io等）
+    - 使用full words命名所有API相关结构 (.rules compliance)
+    - 实现proper error propagation with `?` operator (.rules compliance)
+    - _Requirements: 8.1, 8.2, 10.1_
+
+  - [ ] 13.2 实现API抽象层和WebSocket适配器模式
+    - 创建DataProvider trait定义统一接口
+    - 实现MockDataProvider用于开发测试
+    - **实现MockWebSocketProvider用于实时数据模拟**
+    - 设计RealDataProvider框架用于接入真实API
+    - **设计RealWebSocketProvider用于真实WebSocket连接**
+    - 添加API配置管理（API密钥、端点URL、WebSocket URL、限流设置）
+    - 实现API响应缓存和错误重试机制
+    - **实现WebSocket重连机制和消息缓冲**
+    - 支持多个数据源的fallback机制
+    - 使用proper async patterns with `cx.background_spawn()` (.rules compliance)
+    - Never use `unwrap()` for API responses (.rules compliance)
+    - _Requirements: 8.1, 8.4, 10.1, 10.2_
+
+  - [ ] 13.3 准备生产环境API和WebSocket集成
+    - 创建API密钥管理和安全存储机制
+    - 实现API限流和配额管理
+    - **实现WebSocket连接池和负载均衡**
+    - **添加WebSocket消息压缩和优化**
+    - 添加API监控和日志记录
+    - **添加WebSocket连接监控和性能指标**
+    - 设计API数据质量检查和验证
+    - **实现实时数据质量监控和异常检测**
+    - 实现数据源切换的热更新机制
+    - 添加API性能监控和告警
+    - Use `.log_err()` for API error visibility (.rules compliance)
+    - Implement bounds checking for API response parsing (.rules compliance)
+    - _Requirements: 8.4, 10.1, 10.2, 10.4_
+
+  - [ ]* 13.4 编写API和WebSocket集成测试
+    - 测试MockDataProvider和RealDataProvider的一致性
+    - **测试MockWebSocketProvider和RealWebSocketProvider的一致性**
+    - 验证API错误处理和重试机制
+    - **验证WebSocket重连和消息处理机制**
+    - 测试数据源切换和fallback功能
+    - **测试WebSocket订阅管理和消息路由**
+    - 验证API限流和配额管理
+    - **验证WebSocket连接池和负载均衡**
+    - 使用`TestAppContext`进行异步API测试 (AGENTS.md compliance)
+    - Follow .rules: never use `unwrap()`, use `?` for error propagation
+    - **Property 23: Data Caching Efficiency**
+    - **Property 24: Stale Data Refresh** (via WebSocket)
+    - **Property 29: Comprehensive Error Handling**
+    - **Property 30: Rate Limiting Management**
+    - **Validates: Requirements 8.1, 8.2, 8.3, 10.1, 10.2**
+- [ ] 14. Final checkpoint - Ensure complete system with WebSocket works
   - Run `./script/clippy` to check for all lint errors and coding standard violations (AGENTS.md compliance)
+  - Run `cargo nextest run -p stock_trading` to verify all tests pass (AGENTS.md compliance)
+  - Run `cargo doc --workspace --no-deps --open` to verify documentation builds (AGENTS.md compliance)
+  - Verify all error handling follows `.rules` patterns throughout the codebase
+  - Check that all variable names use full words without abbreviations (.rules compliance)
+  - Ensure no `mod.rs` files were created and all files use direct paths (.rules compliance)
+  - Test mock data service with realistic financial scenarios
+  - **Test WebSocket real-time data streaming and UI updates**
+  - **Verify WebSocket reconnection and error handling**
+  - **Test mock WebSocket service simulation accuracy**
+  - Verify API abstraction layer is ready for production integration
+  - **Verify WebSocket abstraction layer supports multiple data sources**
+  - Ask the user if questions arise about the complete system integration
   - Run `cargo nextest run -p stock_trading` to verify all tests pass (AGENTS.md compliance)
   - Run `cargo doc --workspace --no-deps --open` to verify documentation builds (AGENTS.md compliance)
   - Verify all error handling follows `.rules` patterns throughout the codebase

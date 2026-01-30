@@ -80,6 +80,8 @@ crates/stock_trading/
 │   ├── data_service.rs           # Data fetching and caching entity  
 │   ├── order_service.rs          # Order management entity
 │   ├── chart_renderer.rs         # Chart rendering components
+│   ├── websocket_service.rs      # WebSocket connection and message handling
+│   ├── mock_data_service.rs      # Mock data generation and simulation
 │   ├── trading_actions.rs        # Action definitions
 │   └── trading_settings.rs       # Settings integration
 ```
@@ -90,6 +92,8 @@ crates/stock_trading/
 - Use descriptive file names without `mod.rs` paths
 - Use full words for all variable names (no abbreviations like `mkt_data` → use `market_data`)
 - Prioritize code correctness and clarity over speed/efficiency unless specified
+- Add dedicated `websocket_service.rs` for real-time data streaming functionality
+- Separate `mock_data_service.rs` for comprehensive development and testing support
 
 ## Components and Interfaces
 
@@ -363,8 +367,15 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 
+# WebSocket dependencies
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+url = "2.5"
+rand = "0.8"  # For mock data generation
+tokio = { version = "1.0", features = ["sync"] }  # For Arc, Mutex
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+tokio-test = "0.4"  # For WebSocket testing
 ```
 
 ### GPUI Component Integration
@@ -533,6 +544,18 @@ pub struct MarketData {
     pub high_52w: Option<f64>,
     pub low_52w: Option<f64>,
     pub timestamp: SystemTime,
+    pub market_status: MarketStatus,
+    pub previous_close: f64,
+    pub day_high: f64,
+    pub day_low: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MarketStatus {
+    PreMarket,
+    Open,
+    Closed,
+    AfterHours,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,6 +566,7 @@ pub struct Candle {
     pub low: f64,
     pub close: f64,
     pub volume: u64,
+    pub adjusted_close: Option<f64>, // For dividend adjustments
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -550,6 +574,17 @@ pub struct OrderBookEntry {
     pub price: f64,
     pub quantity: u64,
     pub side: OrderSide,
+    pub order_count: u32, // Number of orders at this price level
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderBook {
+    pub symbol: String,
+    pub bids: Vec<OrderBookEntry>, // Sorted by price descending
+    pub asks: Vec<OrderBookEntry>, // Sorted by price ascending
+    pub timestamp: SystemTime,
+    pub spread: f64,
+    pub spread_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -565,6 +600,48 @@ pub enum TimeFrame {
     FifteenMinutes,
     OneHour,
     OneDay,
+    OneWeek,
+    OneMonth,
+}
+
+impl TimeFrame {
+    pub fn to_seconds(&self) -> u64 {
+        match self {
+            TimeFrame::OneMinute => 60,
+            TimeFrame::FiveMinutes => 300,
+            TimeFrame::FifteenMinutes => 900,
+            TimeFrame::OneHour => 3600,
+            TimeFrame::OneDay => 86400,
+            TimeFrame::OneWeek => 604800,
+            TimeFrame::OneMonth => 2592000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchlistItem {
+    pub symbol: String,
+    pub name: String,
+    pub current_price: f64,
+    pub change: f64,
+    pub change_percent: f64,
+    pub volume: u64,
+    pub added_at: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockInfo {
+    pub symbol: String,
+    pub name: String,
+    pub exchange: String,
+    pub sector: Option<String>,
+    pub industry: Option<String>,
+    pub market_cap: Option<u64>,
+    pub pe_ratio: Option<f64>,
+    pub dividend_yield: Option<f64>,
+    pub beta: Option<f64>,
+    pub eps: Option<f64>,
+    pub description: Option<String>,
 }
 ```
 
@@ -578,6 +655,8 @@ pub struct OrderRequest {
     pub order_type: OrderType,
     pub quantity: u64,
     pub price: Option<f64>, // None for market orders
+    pub time_in_force: TimeInForce,
+    pub stop_price: Option<f64>, // For stop orders
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -586,6 +665,15 @@ pub enum OrderType {
     Limit,
     StopLoss,
     StopLimit,
+    TrailingStop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TimeInForce {
+    Day,        // Good for day
+    GTC,        // Good till cancelled
+    IOC,        // Immediate or cancel
+    FOK,        // Fill or kill
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -594,9 +682,14 @@ pub struct Order {
     pub request: OrderRequest,
     pub status: OrderStatus,
     pub filled_quantity: u64,
+    pub remaining_quantity: u64,
     pub average_price: Option<f64>,
+    pub commission: Option<f64>,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
+    pub filled_at: Option<SystemTime>,
+    pub cancelled_at: Option<SystemTime>,
+    pub reject_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -606,6 +699,289 @@ pub enum OrderStatus {
     Filled,
     Cancelled,
     Rejected,
+    Expired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Trade {
+    pub id: String,
+    pub order_id: String,
+    pub symbol: String,
+    pub side: OrderSide,
+    pub quantity: u64,
+    pub price: f64,
+    pub commission: f64,
+    pub timestamp: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Portfolio {
+    pub total_value: f64,
+    pub cash_balance: f64,
+    pub positions: Vec<Position>,
+    pub day_change: f64,
+    pub day_change_percent: f64,
+    pub total_return: f64,
+    pub total_return_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Position {
+    pub symbol: String,
+    pub quantity: i64, // Negative for short positions
+    pub average_cost: f64,
+    pub current_price: f64,
+    pub market_value: f64,
+    pub unrealized_pnl: f64,
+    pub unrealized_pnl_percent: f64,
+    pub day_change: f64,
+    pub day_change_percent: f64,
+}
+```
+
+### WebSocket Integration for Real-time Data
+
+```rust
+use tokio_tungstenite::{WebSocketStream, MaybeTlsStream};
+use tokio::net::TcpStream;
+use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketMessage {
+    pub message_type: MessageType,
+    pub symbol: Option<String>,
+    pub data: serde_json::Value,
+    pub timestamp: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MessageType {
+    Quote,           // Real-time price updates
+    Trade,           // Trade executions
+    OrderBook,       // Order book updates
+    OrderUpdate,     // Order status changes
+    MarketStatus,    // Market open/close status
+    Heartbeat,       // Connection keep-alive
+    Error,           // Error messages
+    Subscribe,       // Subscription requests
+    Unsubscribe,     // Unsubscription requests
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuoteUpdate {
+    pub symbol: String,
+    pub bid: f64,
+    pub ask: f64,
+    pub bid_size: u64,
+    pub ask_size: u64,
+    pub last_price: f64,
+    pub last_size: u64,
+    pub volume: u64,
+    pub timestamp: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeUpdate {
+    pub symbol: String,
+    pub price: f64,
+    pub size: u64,
+    pub side: OrderSide,
+    pub timestamp: SystemTime,
+    pub trade_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderBookUpdate {
+    pub symbol: String,
+    pub bids: Vec<OrderBookEntry>,
+    pub asks: Vec<OrderBookEntry>,
+    pub timestamp: SystemTime,
+    pub sequence: u64, // For ordering updates
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subscription {
+    pub symbol: String,
+    pub message_types: Vec<MessageType>,
+    pub subscribed_at: SystemTime,
+}
+
+// WebSocket Service Entity
+pub struct WebSocketService {
+    connection: Option<Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>>, // 使用具体类型
+    subscriptions: HashMap<String, Subscription>,
+    message_handlers: HashMap<MessageType, Box<dyn Fn(WebSocketMessage) -> Result<()> + Send + Sync>>, // 添加Result返回类型
+    reconnect_attempts: u32,
+    max_reconnect_attempts: u32,
+    reconnect_delay: Duration,
+    heartbeat_interval: Duration,
+    last_heartbeat: Option<SystemTime>,
+    _subscriptions: Vec<gpui::Subscription>,
+}
+
+impl WebSocketService {
+    pub fn new(cx: &mut App) -> Entity<Self>;
+    
+    pub fn connect(&mut self, url: &str, cx: &mut Context<Self>) -> Task<Result<()>>;
+    
+    pub fn subscribe_to_symbol(
+        &mut self, 
+        symbol: String, 
+        message_types: Vec<MessageType>,
+        cx: &mut Context<Self>
+    ) -> Result<()>;
+    
+    pub fn unsubscribe_from_symbol(
+        &mut self, 
+        symbol: &str,
+        cx: &mut Context<Self>
+    ) -> Result<()>;
+    
+    pub fn send_message(
+        &mut self, 
+        message: WebSocketMessage,
+        cx: &mut Context<Self>
+    ) -> Task<Result<()>>;
+    
+    // Safe message handling with bounds checking (.rules compliance)
+    pub fn handle_message(&mut self, message: WebSocketMessage, cx: &mut Context<Self>) -> Result<()> {
+        match self.message_handlers.get(&message.message_type) {
+            Some(handler) => {
+                handler(message)?; // 传播错误而不是忽略
+                Ok(())
+            }
+            None => {
+                log::warn!("No handler for message type: {:?}", message.message_type);
+                Ok(())
+            }
+        }
+    }
+    
+    // Proper error handling for connection management (.rules compliance)
+    pub fn handle_connection_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        error.log_err(); // Use .log_err() for visibility
+        
+        if self.reconnect_attempts < self.max_reconnect_attempts {
+            self.reconnect_attempts += 1;
+            let delay = self.reconnect_delay * self.reconnect_attempts;
+            
+            cx.spawn(|this, mut cx| async move {
+                cx.background_executor().timer(delay).await;
+                
+                if let Err(e) = this.update(&mut cx, |this, cx| this.attempt_reconnect(cx)) {
+                    e.log_err(); // Never let _ = on fallible operations
+                }
+            }).detach();
+        }
+    }
+    
+    // Heartbeat management with proper async patterns
+    pub fn start_heartbeat(&mut self, cx: &mut Context<Self>) {
+        let heartbeat_interval = self.heartbeat_interval;
+        
+        cx.spawn(|this, mut cx| async move {
+            loop {
+                cx.background_executor().timer(heartbeat_interval).await;
+                
+                if let Err(e) = this.update(&mut cx, |this, cx| {
+                    this.send_heartbeat(cx)
+                }) {
+                    e.log_err(); // Proper error handling
+                    break;
+                }
+            }
+        }).detach();
+    }
+}
+
+impl EventEmitter<WebSocketEvent> for WebSocketService {}
+
+#[derive(Clone, Debug)]
+pub enum WebSocketEvent {
+    Connected,
+    Disconnected,
+    MessageReceived(WebSocketMessage),
+    SubscriptionAdded(String),
+    SubscriptionRemoved(String),
+    ConnectionError(String),
+    ReconnectAttempt(u32),
+}
+
+// Mock WebSocket Service for development
+pub struct MockWebSocketService {
+    subscriptions: HashMap<String, Subscription>,
+    simulation_active: bool,
+    update_interval: Duration,
+    price_volatility: f64,
+    _simulation_task: Option<Task<()>>,
+}
+
+impl MockWebSocketService {
+    pub fn new() -> Self {
+        Self {
+            subscriptions: HashMap::new(),
+            simulation_active: false,
+            update_interval: Duration::from_millis(1000), // 1 second updates
+            price_volatility: 0.02, // 2% volatility
+            _simulation_task: None,
+        }
+    }
+    
+    pub fn start_simulation(&mut self, cx: &mut Context<Self>) {
+        if self.simulation_active {
+            return;
+        }
+        
+        self.simulation_active = true;
+        let update_interval = self.update_interval;
+        
+        let task = cx.spawn(|this, mut cx| async move {
+            loop {
+                cx.background_executor().timer(update_interval).await;
+                
+                if let Err(e) = this.update(&mut cx, |this, cx| {
+                    this.generate_mock_updates(cx)
+                }) {
+                    e.log_err(); // Proper error handling
+                    break;
+                }
+            }
+        });
+        
+        self._simulation_task = Some(task);
+    }
+    
+    fn generate_mock_updates(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        for (symbol, _subscription) in &self.subscriptions {
+            // Generate realistic price movements
+            let quote_update = self.generate_mock_quote_update(symbol)?;
+            let message = WebSocketMessage {
+                message_type: MessageType::Quote,
+                symbol: Some(symbol.clone()),
+                data: serde_json::to_value(quote_update)?,
+                timestamp: SystemTime::now(),
+            };
+            
+            cx.emit(WebSocketEvent::MessageReceived(message));
+        }
+        Ok(())
+    }
+    
+    fn generate_mock_quote_update(&self, symbol: &str) -> Result<QuoteUpdate> {
+        // Use mathematical models to generate realistic price movements
+        // This will be implemented with proper random walk algorithms
+        Ok(QuoteUpdate {
+            symbol: symbol.to_string(),
+            bid: 100.0, // Will be calculated based on current price
+            ask: 100.1,
+            bid_size: 1000,
+            ask_size: 1500,
+            last_price: 100.05,
+            last_size: 100,
+            volume: 1000000,
+            timestamp: SystemTime::now(),
+        })
+    }
 }
 ```
 
