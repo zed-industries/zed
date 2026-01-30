@@ -745,32 +745,6 @@ fn main() {
             }
             return;
         }
-        Command::Qa(qa_args) => {
-            // Read examples from input files
-            let mut examples = example::read_example_files(&args.inputs);
-
-            // Apply filters
-            if let Some(name_filter) = &args.name {
-                examples.retain(|e| e.spec.name.contains(name_filter));
-            }
-            if let Some(repo_filter) = &args.repo {
-                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
-            }
-            if let Some(offset) = args.offset {
-                examples.splice(0..offset, []);
-            }
-            if let Some(limit) = args.limit {
-                examples.truncate(limit);
-            }
-
-            smol::block_on(async {
-                if let Err(e) = qa::run_qa(&mut examples, qa_args, output.as_ref()).await {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
         Command::Repair(repair_args) => {
             // Read examples from input files
             let mut examples = example::read_example_files(&args.inputs);
@@ -825,6 +799,9 @@ fn main() {
                     }
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
+                    }
+                    Command::Qa(args) => {
+                        qa::sync_batches(args).await?;
                     }
                     _ => (),
                 }
@@ -957,13 +934,15 @@ fn main() {
                                             )
                                             .await?;
                                         }
+                                        Command::Qa(args) => {
+                                            qa::run_qa(example, args, &example_progress).await?;
+                                        }
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::Qa(_)
                                         | Command::Repair(_) => {
                                             unreachable!()
                                         }
