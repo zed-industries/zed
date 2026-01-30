@@ -211,16 +211,23 @@ pub(crate) fn render_tool_config_page(
         .pb_16()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
-        .child(Label::new(page_title).size(LabelSize::Large))
         .child(
-            Label::new(tool.regex_explanation)
-                .size(LabelSize::Small)
-                .color(Color::Muted),
+            v_flex()
+                .min_w_0()
+                .flex_1()
+                .child(Label::new(page_title).size(LabelSize::Large))
+                .child(
+                    Label::new(tool.regex_explanation)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
-        .child(render_verification_section(tool_id, window, cx))
+        // .child(render_verification_section(tool_id, window, cx))
         .child(
             v_flex()
                 .mt_6()
+                .min_w_0()
+                .w_full()
                 .gap_5()
                 .child(render_default_mode_section(tool_id, rules.default_mode, cx))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
@@ -534,8 +541,8 @@ fn render_rule_section(
         )
         .child(
             v_flex()
-                .w_full()
                 .mt_2()
+                .w_full()
                 .gap_1()
                 .when(patterns.is_empty(), |this| {
                     this.child(render_pattern_empty_state(cx))
@@ -576,49 +583,35 @@ fn render_pattern_row(
     let tool_id_for_update = tool_id.to_string();
     let input_id = format!("{}-{:?}-pattern-{}", tool_id, rule_type, index);
     let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
-    let group = format!("{}-pattern", tool_id);
 
-    div()
-        .group(&group)
-        .relative()
-        .w_full()
-        .child(
-            SettingsInputField::new()
-                .with_id(input_id)
-                .with_initial_text(pattern)
-                .tab_index(0)
-                .with_buffer_font()
-                .on_confirm(move |new_pattern, _window, cx| {
-                    if let Some(new_pattern) = new_pattern {
-                        let new_pattern = new_pattern.trim().to_string();
-                        if !new_pattern.is_empty() && new_pattern != pattern_for_update {
-                            update_pattern(
-                                &tool_id_for_update,
-                                rule_type,
-                                &pattern_for_update,
-                                new_pattern,
-                                cx,
-                            );
-                        }
-                    }
-                }),
+    SettingsInputField::new()
+        .with_id(input_id)
+        .with_initial_text(pattern)
+        .tab_index(0)
+        .with_buffer_font()
+        .action_slot(
+            IconButton::new(delete_id, IconName::Trash)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Delete Pattern"))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
+                })),
         )
-        .child(
-            div()
-                .visible_on_hover(group.clone())
-                .absolute()
-                .top_1p5()
-                .right_1p5()
-                .child(
-                    IconButton::new(delete_id, IconName::Trash)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Delete Pattern"))
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
-                        })),
-                ),
-        )
+        .on_confirm(move |new_pattern, _window, cx| {
+            if let Some(new_pattern) = new_pattern {
+                let new_pattern = new_pattern.trim().to_string();
+                if !new_pattern.is_empty() && new_pattern != pattern_for_update {
+                    update_pattern(
+                        &tool_id_for_update,
+                        rule_type,
+                        &pattern_for_update,
+                        new_pattern,
+                        cx,
+                    );
+                }
+            }
+        })
         .into_any_element()
 }
 
@@ -629,41 +622,21 @@ fn render_add_pattern_input(
 ) -> AnyElement {
     let tool_id_owned = tool_id.to_string();
     let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
-    let group = format!("{}-pattern", tool_id);
 
-    div()
-        .group(&group)
-        .relative()
-        .w_full()
-        .child(
-            SettingsInputField::new()
-                .with_id(input_id)
-                .with_placeholder("Add regex pattern…")
-                .tab_index(0)
-                .with_buffer_font()
-                .on_confirm(move |pattern, _window, cx| {
-                    if let Some(pattern) = pattern {
-                        if !pattern.trim().is_empty() {
-                            save_pattern(&tool_id_owned, rule_type, pattern.trim().to_string(), cx);
-                        }
-                    }
-                }),
-        )
-        .child(
-            div()
-                .visible_on_hover(group.clone())
-                .absolute()
-                .top_1p5()
-                .right_1p5(), // .child(
-                              //     IconButton::new(delete_id, IconName::Trash)
-                              //         .icon_size(IconSize::Small)
-                              //         .icon_color(Color::Muted)
-                              //         .tooltip(Tooltip::text("Delete Pattern"))
-                              //         .on_click(cx.listener(move |_, _, _, cx| {
-                              //             delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
-                              //         })),
-                              // ),
-        )
+    SettingsInputField::new()
+        .with_id(input_id)
+        .with_placeholder("Add regex pattern…")
+        .tab_index(0)
+        .with_buffer_font()
+        .display_clear_button()
+        .display_confirm_button()
+        .on_confirm(move |pattern, _window, cx| {
+            if let Some(pattern) = pattern {
+                if !pattern.trim().is_empty() {
+                    save_pattern(&tool_id_owned, rule_type, pattern.trim().to_string(), cx);
+                }
+            }
+        })
         .into_any_element()
 }
 
