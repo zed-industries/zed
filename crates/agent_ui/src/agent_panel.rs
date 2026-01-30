@@ -1,7 +1,8 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::{AcpThread, AgentSessionInfo};
-use agent::{ContextServerRegistry, ThreadStore};
+use agent::{ContextServerRegistry, SharedThread, ThreadStore};
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -16,9 +17,10 @@ use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
-    AddContextServer, AgentDiffPane, Follow, InlineAssistant, NewTextThread, NewThread,
-    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, CopyThreadToClipboard, Follow, InlineAssistant,
+    LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu,
+    ToggleOptionsMenu,
     acp::AcpThreadView,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
@@ -46,9 +48,9 @@ use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, Corner, DismissEvent,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
+    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -210,6 +212,21 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.reset_agent_zoom(window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &CopyThreadToClipboard, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.copy_thread_to_clipboard(window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &LoadThreadFromClipboard, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.load_thread_from_clipboard(window, cx);
                         });
                     }
                 });
@@ -1185,6 +1202,178 @@ impl AgentPanel {
             | ActiveView::History { .. }
             | ActiveView::Configuration => {}
         }
+    }
+
+    fn copy_thread_to_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.active_native_agent_thread(cx) else {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    struct NoThreadToast;
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            workspace::notifications::NotificationId::unique::<NoThreadToast>(),
+                            "No active native thread to copy",
+                        )
+                        .autohide(),
+                        cx,
+                    );
+                });
+            }
+            return;
+        };
+
+        let workspace = self.workspace.clone();
+        let load_task = thread.read(cx).to_db(cx);
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let db_thread = load_task.await;
+            let shared_thread = SharedThread::from_db_thread(&db_thread);
+            let thread_data = shared_thread.to_bytes()?;
+            let encoded = base64::Engine::encode(&base64::prelude::BASE64_STANDARD, &thread_data);
+
+            cx.update(|_window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(encoded));
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadCopiedToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                workspace::notifications::NotificationId::unique::<ThreadCopiedToast>(),
+                                "Thread copied to clipboard (base64 encoded)",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    struct NoClipboardToast;
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            workspace::notifications::NotificationId::unique::<NoClipboardToast>(),
+                            "No clipboard content available",
+                        )
+                        .autohide(),
+                        cx,
+                    );
+                });
+            }
+            return;
+        };
+
+        let Some(encoded) = clipboard.text() else {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    struct InvalidClipboardToast;
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            workspace::notifications::NotificationId::unique::<InvalidClipboardToast>(),
+                            "Clipboard does not contain text",
+                        )
+                        .autohide(),
+                        cx,
+                    );
+                });
+            }
+            return;
+        };
+
+        let thread_data = match base64::Engine::decode(&base64::prelude::BASE64_STANDARD, &encoded)
+        {
+            Ok(data) => data,
+            Err(_) => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct DecodeErrorToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                workspace::notifications::NotificationId::unique::<DecodeErrorToast>(),
+                                "Failed to decode clipboard content (expected base64)",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+                return;
+            }
+        };
+
+        let shared_thread = match SharedThread::from_bytes(&thread_data) {
+            Ok(thread) => thread,
+            Err(_) => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ParseErrorToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                workspace::notifications::NotificationId::unique::<ParseErrorToast>(
+                                ),
+                                "Failed to parse thread data from clipboard",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+                return;
+            }
+        };
+
+        let db_thread = shared_thread.to_db_thread();
+        let session_id = acp::SessionId::new(uuid::Uuid::new_v4().to_string());
+        let thread_store = self.thread_store.clone();
+        let title = db_thread.title.clone();
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            thread_store
+                .update(&mut cx.clone(), |store, cx| {
+                    store.save_thread(session_id.clone(), db_thread, cx)
+                })
+                .await?;
+
+            let thread_metadata = acp_thread::AgentSessionInfo {
+                session_id,
+                cwd: None,
+                title: Some(title),
+                updated_at: Some(chrono::Utc::now()),
+                meta: None,
+            };
+
+            this.update_in(cx, |this, window, cx| {
+                this.open_thread(thread_metadata, window, cx);
+            })?;
+
+            this.update_in(cx, |_, _window, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadLoadedToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                workspace::notifications::NotificationId::unique::<ThreadLoadedToast>(),
+                                "Thread loaded from clipboard",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_agent_configuration_event(
