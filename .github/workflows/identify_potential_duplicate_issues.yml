@@ -244,6 +244,7 @@ jobs:
           echo "Area detection result: $AREA_RESULT"
 
           # Extract just the areas array, handling potential markdown fences
+          # shellcheck disable=SC2016
           CLEAN_JSON=$(echo "$AREA_RESULT" | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
           AREAS=$(echo "$CLEAN_JSON" | jq -r '.areas // [] | join(",")')
           echo "Detected areas: $AREAS"
