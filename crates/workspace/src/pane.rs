@@ -4130,9 +4130,9 @@ fn default_render_tab_bar_buttons(
                                 .boxed_clone(),
                             )
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
-                            .separator()
                             .when(!in_satellite, |menu| {
-                                menu.action("New Terminal", NewTerminal::default().boxed_clone())
+                                menu.separator()
+                                    .action("New Terminal", NewTerminal::default().boxed_clone())
                             })
                     }))
                 }),
