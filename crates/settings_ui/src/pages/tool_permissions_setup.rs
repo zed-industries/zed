@@ -397,7 +397,7 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
     matched
 }
 
-fn render_matched_patterns(patterns: &[MatchedPattern], _cx: &App) -> AnyElement {
+fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement {
     v_flex()
         .mt_2()
         .gap_1()
@@ -408,7 +408,13 @@ fn render_matched_patterns(patterns: &[MatchedPattern], _cx: &App) -> AnyElement
                 RuleType::Allow => ("Always Allow", Color::Success),
             };
 
-            let text_color = if pattern.is_overridden {
+            let pattern_color = if pattern.is_overridden {
+                Color::Muted
+            } else {
+                Color::Default
+            };
+
+            let type_color = if pattern.is_overridden {
                 Color::Muted
             } else {
                 color
@@ -422,7 +428,8 @@ fn render_matched_patterns(patterns: &[MatchedPattern], _cx: &App) -> AnyElement
                         .child(
                             Label::new(pattern.pattern.clone())
                                 .size(LabelSize::Small)
-                                .color(text_color),
+                                .color(pattern_color)
+                                .buffer_font(cx),
                         ),
                 )
                 .child(
@@ -431,7 +438,7 @@ fn render_matched_patterns(patterns: &[MatchedPattern], _cx: &App) -> AnyElement
                         .child(
                             Label::new(type_label)
                                 .size(LabelSize::XSmall)
-                                .color(text_color),
+                                .color(type_color),
                         ),
                 )
         }))
