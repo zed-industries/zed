@@ -3802,13 +3802,13 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
-        let global_gitignore_path = paths::global_gitignore_path();
-        let mut global_gitignore_events = if let Some(gitignore_path) = &global_gitignore_path
+        let mut global_gitignore_events = if let Some(global_gitignore_path) =
+            &paths::global_gitignore_path()
             && scanning_enabled
         {
-            let is_file = self.fs.is_file(&gitignore_path).await;
+            let is_file = self.fs.is_file(&global_gitignore_path).await;
             self.state.lock().await.snapshot.global_gitignore = if is_file {
-                build_gitignore(gitignore_path, self.fs.as_ref())
+                build_gitignore(global_gitignore_path, self.fs.as_ref())
                     .await
                     .ok()
                     .map(Arc::new)
@@ -3816,9 +3816,12 @@ impl BackgroundScanner {
                 None
             };
             if is_file
-                || matches!(gitignore_path.parent(), Some(path) if self.fs.is_dir(path).await)
+                || matches!(global_gitignore_path.parent(), Some(path) if self.fs.is_dir(path).await)
             {
-                self.fs.watch(gitignore_path, FS_WATCH_LATENCY).await.0
+                self.fs
+                    .watch(global_gitignore_path, FS_WATCH_LATENCY)
+                    .await
+                    .0
             } else {
                 Box::pin(futures::stream::pending())
             }
@@ -3933,11 +3936,7 @@ impl BackgroundScanner {
                 paths = global_gitignore_events.next().fuse() => {
                     match paths.as_deref() {
                         Some([event, ..]) => {
-                            if let Some(gitignore_path) = &global_gitignore_path {
-                                if &event.path == gitignore_path {
-                                    self.update_global_gitignore(&event.path).await;
-                                }
-                            }
+                            self.update_global_gitignore(&event.path).await;
                         }
                         _ => (),
                     }
