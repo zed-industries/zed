@@ -144,6 +144,7 @@ impl AddToolchainState {
         let (tx, rx) = oneshot::channel();
         let weak = cx.weak_entity();
         let lister = OpenPathDelegate::new(tx, DirectoryLister::Project(project), false, cx)
+            .show_hidden()
             .with_footer(Arc::new(move |_, cx| {
                 let error = weak
                     .read_with(cx, |this, _| {
