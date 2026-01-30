@@ -300,8 +300,16 @@ fn render_verification_section(
                 )
                 .child(render_verification_result(decision.as_ref(), cx)),
         )
-        .when(!matched_patterns.is_empty(), |this| {
-            this.child(render_matched_patterns(&matched_patterns, cx))
+        .when(decision.is_some(), |this| {
+            if matched_patterns.is_empty() {
+                this.child(
+                    Label::new("(No regex matches, using Default Action)")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            } else {
+                this.child(render_matched_patterns(&matched_patterns, cx))
+            }
         })
         .when(always_allow_enabled, |this| {
             this.child(
