@@ -841,7 +841,7 @@ impl TestClient {
         channel_id: ChannelId,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
+        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, None, cx))
             .await
             .unwrap();
         cx.run_until_parked();

@@ -1161,6 +1161,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             client::ChannelId(channel_id),
                             app_state.clone(),
                             None,
+                            None,
                             cx,
                         )
                     })

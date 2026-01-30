@@ -4,8 +4,8 @@ use fuzzy::StringMatchCandidate;
 
 use git::repository::Worktree as GitWorktree;
 use gpui::{
-    Action, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
+    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
     PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
     actions, rems,
 };
@@ -289,7 +289,6 @@ impl WorktreeListDelegate {
         };
 
         let branch = worktree_branch.to_string();
-        let window_handle = window.window_handle();
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
             let Some(paths) = worktree_path.await? else {
@@ -355,7 +354,7 @@ impl WorktreeListDelegate {
                     connection_options,
                     vec![new_worktree_path],
                     app_state,
-                    window_handle,
+                    workspace.clone(),
                     replace_current_window,
                     cx,
                 )
@@ -407,13 +406,12 @@ impl WorktreeListDelegate {
                 |e, _, _| Some(e.to_string()),
             );
         } else if let Some(connection_options) = connection_options {
-            let window_handle = window.window_handle();
             cx.spawn_in(window, async move |_, cx| {
                 open_remote_worktree(
                     connection_options,
                     vec![path],
                     app_state,
-                    window_handle,
+                    workspace,
                     replace_current_window,
                     cx,
                 )
@@ -441,63 +439,52 @@ async fn open_remote_worktree(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     app_state: Arc<workspace::AppState>,
-    window: gpui::AnyWindowHandle,
+    workspace: WeakEntity<Workspace>,
     replace_current_window: bool,
-    cx: &mut AsyncApp,
+    cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<()> {
-    let workspace_window = window
+    let workspace_window = cx
+        .window_handle()
         .downcast::<MultiWorkspace>()
         .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
 
-    // Capture the workspace at call time - this is where the modal will be shown/dismissed
-    let workspace: WeakEntity<Workspace> =
-        workspace_window.update(cx, |mw, _, _| mw.workspace().downgrade())?;
+    let connect_task = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| {
+            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+        });
 
-    let connect_task = workspace_window.update(cx, |_, window, cx| {
-        let workspace = workspace.upgrade().context("workspace released")?;
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
-            });
+        let prompt = workspace
+            .active_modal::<RemoteConnectionModal>(cx)
+            .expect("Modal just created")
+            .read(cx)
+            .prompt
+            .clone();
 
-            let prompt = workspace
-                .active_modal::<RemoteConnectionModal>(cx)
-                .expect("Modal just created")
-                .read(cx)
-                .prompt
-                .clone();
-
-            anyhow::Ok(
-                connect(
-                    ConnectionIdentifier::setup(),
-                    connection_options.clone(),
-                    prompt,
-                    window,
-                    cx,
-                )
-                .prompt_err("Failed to connect", window, cx, |_, _, _| None),
-            )
-        })
-    })??;
+        connect(
+            ConnectionIdentifier::setup(),
+            connection_options.clone(),
+            prompt,
+            window,
+            cx,
+        )
+        .prompt_err("Failed to connect", window, cx, |_, _, _| None)
+    })?;
 
     let session = connect_task.await;
 
-    workspace_window.update(cx, |_, _window, cx| {
-        let Some(workspace) = workspace.upgrade() else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
+    workspace
+        .update_in(cx, |workspace, _window, cx| {
             if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
                 prompt.update(cx, |prompt, cx| prompt.finished(cx))
             }
-        });
-    })?;
+        })
+        .ok();
 
     let Some(Some(session)) = session else {
         return Ok(());
     };
 
-    let new_project: Entity<project::Project> = cx.update(|cx| {
+    let new_project: Entity<project::Project> = cx.update(|_, cx| {
         project::Project::remote(
             session,
             app_state.client.clone(),
@@ -508,20 +495,20 @@ async fn open_remote_worktree(
             true,
             cx,
         )
-    });
+    })?;
 
     let window_to_use = if replace_current_window {
         workspace_window
     } else {
         let workspace_position = cx
-            .update(|cx| {
+            .update(|_, cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })
+            })?
             .await
             .context("fetching workspace position from db")?;
 
         let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
+            cx.update(|_, cx| (app_state.build_window_options)(workspace_position.display, cx))?;
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {

@@ -41,14 +41,23 @@ impl MultiWorkspace {
         self.active_workspace_index
     }
 
-    pub fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
-        cx.notify();
-        self.workspaces.push(workspace);
-        self.workspaces.len() - 1
+    pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
+        let index = self
+            .workspaces
+            .iter()
+            .position(|w| *w == workspace)
+            .unwrap_or_else(|| {
+                self.workspaces.push(workspace);
+                self.workspaces.len() - 1
+            });
+        if self.active_workspace_index != index {
+            self.active_workspace_index = index;
+            cx.notify();
+        }
     }
 
-    pub fn set_active_workspace(&mut self, index: usize, cx: &mut Context<Self>) {
-        assert!(
+    fn activate_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        debug_assert!(
             index < self.workspaces.len(),
             "workspace index out of bounds"
         );
@@ -59,7 +68,7 @@ impl MultiWorkspace {
     pub fn activate_next_workspace(&mut self, cx: &mut Context<Self>) {
         if self.workspaces.len() > 1 {
             let next_index = (self.active_workspace_index + 1) % self.workspaces.len();
-            self.set_active_workspace(next_index, cx);
+            self.activate_index(next_index, cx);
         }
     }
 
@@ -70,7 +79,7 @@ impl MultiWorkspace {
             } else {
                 self.active_workspace_index - 1
             };
-            self.set_active_workspace(prev_index, cx);
+            self.activate_index(prev_index, cx);
         }
     }
 
@@ -186,7 +195,7 @@ impl Render for MultiWorkspace {
                         .inset(true)
                         .toggle_state(is_active)
                         .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.set_active_workspace(index, cx);
+                            this.activate_index(index, cx);
                             this.sidebar_open = false;
                             cx.notify();
                         }))
@@ -261,8 +270,7 @@ impl Render for MultiWorkspace {
                         );
                         let new_workspace =
                             cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-                        let index = this.add_workspace(new_workspace, cx);
-                        this.set_active_workspace(index, cx);
+                        this.activate(new_workspace, cx);
                     }),
                 )
                 .on_action(cx.listener(

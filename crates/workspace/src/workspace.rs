@@ -5064,40 +5064,26 @@ impl Workspace {
             return;
         }
 
-        // TODO: This should only ever need to use the MultiWorkspace,
-        // Try MultiWorkspace first (production), then fallback to Workspace (tests)
-        let on_release_callback: Option<Box<dyn FnOnce(&mut App) + Send + 'static>> =
-            if let Some(multi_workspace_handle) =
-                window.window_handle().downcast::<MultiWorkspace>()
-            {
-                Some(Box::new(move |cx| {
-                    multi_workspace_handle
-                        .update(cx, |multi_workspace, window, cx| {
-                            multi_workspace.workspace().update(cx, |workspace, cx| {
-                                workspace.dirty_items.remove(&item_id);
-                                workspace.update_window_edited(window, cx)
-                            })
+        let workspace = self.weak_handle();
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+            return;
+        };
+        let on_release_callback = Box::new(move |cx: &mut App| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dirty_items.remove(&item_id);
+                            workspace.update_window_edited(window, cx)
                         })
                         .ok();
-                }))
-            } else if let Some(workspace_handle) = window.window_handle().downcast::<Self>() {
-                Some(Box::new(move |cx| {
-                    workspace_handle
-                        .update(cx, |this, window, cx| {
-                            this.dirty_items.remove(&item_id);
-                            this.update_window_edited(window, cx)
-                        })
-                        .ok();
-                }))
-            } else {
-                None
-            };
+                })
+                .ok();
+        });
 
-        if let Some(callback) = on_release_callback {
-            let s = item.on_release(cx, callback);
-            self.dirty_items.insert(item_id, s);
-            self.update_window_edited(window, cx);
-        }
+        let s = item.on_release(cx, on_release_callback);
+        self.dirty_items.insert(item_id, s);
+        self.update_window_edited(window, cx);
     }
 
     fn render_notifications(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Div> {
@@ -7919,12 +7905,10 @@ async fn join_channel_internal(
     channel_id: ChannelId,
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<MultiWorkspace>>,
+    requesting_workspace: Option<WeakEntity<Workspace>>,
     active_call: &Entity<ActiveCall>,
     cx: &mut AsyncApp,
 ) -> Result<bool> {
-    let requesting_workspace =
-        requesting_window.and_then(|w| w.update(cx, |mw, _, _| mw.workspace().clone()).ok());
-
     let (should_prompt, open_room) = active_call.update(cx, |active_call, cx| {
         let Some(room) = active_call.room().map(|room| room.read(cx)) else {
             return (false, None);
@@ -8027,7 +8011,7 @@ async fn join_channel_internal(
         // If you are the first to join a channel, see if you should share your project.
         if room.remote_participants().is_empty()
             && !room.local_participant_is_guest()
-            && let Some(workspace) = requesting_workspace
+            && let Some(workspace) = requesting_workspace.as_ref().and_then(|w| w.upgrade())
         {
             let project = workspace.update(cx, |workspace, cx| {
                 let project = workspace.project.read(cx);
@@ -8070,13 +8054,20 @@ pub fn join_channel(
     channel_id: ChannelId,
     app_state: Arc<AppState>,
     requesting_window: Option<WindowHandle<MultiWorkspace>>,
+    requesting_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut App,
 ) -> Task<Result<()>> {
     let active_call = ActiveCall::global(cx);
     cx.spawn(async move |cx| {
-        let result =
-            join_channel_internal(channel_id, &app_state, requesting_window, &active_call, cx)
-                .await;
+        let result = join_channel_internal(
+            channel_id,
+            &app_state,
+            requesting_window,
+            requesting_workspace,
+            &active_call,
+            cx,
+        )
+        .await;
 
         // join channel succeeded, and opened a window
         if matches!(result, Ok(true)) {
@@ -8195,11 +8186,9 @@ pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<MultiWorkspace>> {
         .filter(|multi_workspace| {
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
                 multi_workspace
-                    .workspace()
-                    .read(cx)
-                    .project
-                    .read(cx)
-                    .is_local()
+                    .workspaces()
+                    .iter()
+                    .any(|workspace| workspace.read(cx).project.read(cx).is_local())
             })
         })
         .collect()
@@ -8228,7 +8217,7 @@ pub fn open_paths(
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
-    let mut existing = None;
+    let mut existing: Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> = None;
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
     #[cfg(target_os = "windows")]
@@ -8248,20 +8237,21 @@ pub fn open_paths(
             cx.update(|cx| {
                 for window in local_workspace_windows(cx) {
                     if let Ok(multi_workspace) = window.read(cx) {
-                        let workspace = multi_workspace.workspace().read(cx);
-                        let m = workspace.project.read(cx).visibility_for_paths(
-                            &abs_paths,
-                            &all_metadatas,
-                            open_options.open_new_workspace == None,
-                            cx,
-                        );
-                        if m > best_match {
-                            existing = Some(window);
-                            best_match = m;
-                        } else if best_match.is_none()
-                            && open_options.open_new_workspace == Some(false)
-                        {
-                            existing = Some(window)
+                        for workspace in multi_workspace.workspaces() {
+                            let m = workspace.read(cx).project.read(cx).visibility_for_paths(
+                                &abs_paths,
+                                &all_metadatas,
+                                open_options.open_new_workspace == None,
+                                cx,
+                            );
+                            if m > best_match {
+                                existing = Some((window, workspace.clone()));
+                                best_match = m;
+                            } else if best_match.is_none()
+                                && open_options.open_new_workspace == Some(false)
+                            {
+                                existing = Some((window, workspace.clone()))
+                            }
                         }
                     }
                 }
@@ -8277,34 +8267,37 @@ pub fn open_paths(
                         .and_then(|window| window.downcast::<MultiWorkspace>())
                         && let Ok(multi_workspace) = window.read(cx)
                     {
-                        let project = multi_workspace.workspace().read(cx).project().read(cx);
+                        let active_workspace = multi_workspace.workspace().clone();
+                        let project = active_workspace.read(cx).project().read(cx);
                         if project.is_local() && !project.is_via_collab() {
-                            existing = Some(window);
+                            existing = Some((window, active_workspace));
                             open_visible = OpenVisible::None;
                             return;
                         }
                     }
-                    for window in local_workspace_windows(cx) {
+                    'outer: for window in local_workspace_windows(cx) {
                         if let Ok(multi_workspace) = window.read(cx) {
-                            let project = multi_workspace.workspace().read(cx).project().read(cx);
-                            if project.is_via_collab() {
-                                continue;
+                            for workspace in multi_workspace.workspaces() {
+                                let project = workspace.read(cx).project().read(cx);
+                                if project.is_via_collab() {
+                                    continue;
+                                }
+                                existing = Some((window, workspace.clone()));
+                                open_visible = OpenVisible::None;
+                                break 'outer;
                             }
-                            existing = Some(window);
-                            open_visible = OpenVisible::None;
-                            break;
                         }
                     }
                 });
             }
         }
 
-        let result = if let Some(existing) = existing {
+        let result = if let Some((existing, target_workspace)) = existing {
             let open_task = existing
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    let workspace = multi_workspace.workspace().clone();
-                    workspace.update(cx, |workspace, cx| {
+                    multi_workspace.activate(target_workspace.clone(), cx);
+                    target_workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(
                             abs_paths,
                             OpenOptions {
@@ -8528,6 +8521,7 @@ pub fn open_remote_project_with_existing_connection(
     })
 }
 
+// TODO: replace_root target
 async fn open_remote_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
@@ -8675,31 +8669,37 @@ pub fn join_in_room_project(
 ) -> Task<Result<()>> {
     let windows = cx.windows();
     cx.spawn(async move |cx| {
-        let existing_workspace = windows.into_iter().find_map(|window_handle| {
+        let existing_window_and_workspace: Option<(
+            WindowHandle<MultiWorkspace>,
+            Entity<Workspace>,
+        )> = windows.into_iter().find_map(|window_handle| {
             window_handle
                 .downcast::<MultiWorkspace>()
                 .and_then(|window_handle| {
                     window_handle
                         .update(cx, |multi_workspace, _window, cx| {
-                            if multi_workspace
-                                .workspace()
-                                .read(cx)
-                                .project()
-                                .read(cx)
-                                .remote_id()
-                                == Some(project_id)
-                            {
-                                Some(window_handle)
-                            } else {
-                                None
+                            for workspace in multi_workspace.workspaces() {
+                                if workspace.read(cx).project().read(cx).remote_id()
+                                    == Some(project_id)
+                                {
+                                    return Some((window_handle, workspace.clone()));
+                                }
                             }
+                            None
                         })
                         .unwrap_or(None)
                 })
         });
 
-        let multi_workspace_window = if let Some(existing_workspace) = existing_workspace {
-            existing_workspace
+        let multi_workspace_window = if let Some((existing_window, target_workspace)) =
+            existing_window_and_workspace
+        {
+            existing_window
+                .update(cx, |multi_workspace, _, cx| {
+                    multi_workspace.activate(target_workspace, cx);
+                })
+                .ok();
+            existing_window
         } else {
             let active_call = cx.update(|cx| ActiveCall::global(cx));
             let room = active_call
@@ -8733,6 +8733,7 @@ pub fn join_in_room_project(
             cx.activate(true);
             window.activate_window();
 
+            // We set the active workspace above, so this is the correct workspace.
             let workspace = multi_workspace.workspace().clone();
             workspace.update(cx, |workspace, cx| {
                 if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {

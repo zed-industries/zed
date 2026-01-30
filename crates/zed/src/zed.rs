@@ -1343,16 +1343,30 @@ fn quit(_: &Quit, cx: &mut App) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Some(should_close) = window
-                .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.workspace().update(cx, |workspace, cx| {
-                        workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-                    })
+            let workspaces = window
+                .update(cx, |multi_workspace, _, _| {
+                    multi_workspace.workspaces().to_vec()
                 })
-                .log_err()
-            {
-                if !should_close.await? {
-                    return Ok(());
+                .log_err();
+
+            let Some(workspaces) = workspaces else {
+                continue;
+            };
+
+            for workspace in workspaces {
+                if let Some(should_close) = window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.activate(workspace.clone(), cx);
+                        window.activate_window();
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+                        })
+                    })
+                    .log_err()
+                {
+                    if !should_close.await? {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -5275,5 +5289,471 @@ mod tests {
                 )
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_switches_to_best_workspace(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "dir1": {
+                        "a.txt": "content a"
+                    },
+                    "dir2": {
+                        "b.txt": "content b"
+                    },
+                    "dir3": {
+                        "c.txt": "content c"
+                    }
+                }),
+            )
+            .await;
+
+        // Create a window with workspace 0 containing /dir1
+        let project1 = Project::test(app_state.fs.clone(), [path!("/dir1").as_ref()], cx).await;
+
+        let window = cx.add_window({
+            let project = project1.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1, "Should start with 1 window");
+
+        // Create workspace 2 with /dir2
+        let project2 = Project::test(app_state.fs.clone(), [path!("/dir2").as_ref()], cx).await;
+        let workspace2 = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project2.clone(), window, cx))
+            })
+            .unwrap();
+
+        // Create workspace 3 with /dir3
+        let project3 = Project::test(app_state.fs.clone(), [path!("/dir3").as_ref()], cx).await;
+        let workspace3 = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project3.clone(), window, cx))
+            })
+            .unwrap();
+
+        let workspace1 = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.activate(workspace2.clone(), cx);
+                multi_workspace.activate(workspace3.clone(), cx);
+                // Switch back to workspace1 for test setup
+                multi_workspace.activate(workspace1, cx);
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify setup: 3 workspaces, workspace 0 active, still 1 window
+        window
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.workspaces().len(), 3);
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+
+        // Open a file in /dir3 - should switch to workspace 3 (not just "the other one")
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir3/c.txt"))],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace 2 is active and file opened there
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    2,
+                    "Should have switched to workspace 3 which contains /dir3"
+                );
+                let active_item = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .expect("Should have an active item");
+                assert_eq!(active_item.tab_content_text(0, cx), "c.txt");
+            })
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1, "Should reuse existing window");
+
+        // Open a file in /dir2 - should switch to workspace 2
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir2/b.txt"))],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace 1 is active and file opened there
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    1,
+                    "Should have switched to workspace 2 which contains /dir2"
+                );
+                let active_item = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .expect("Should have an active item");
+                assert_eq!(active_item.tab_content_text(0, cx), "b.txt");
+            })
+            .unwrap();
+
+        // Verify c.txt is still in workspace 3 (file opened in correct workspace, not active one)
+        workspace3.read_with(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .expect("Workspace 2 should have an active item");
+            assert_eq!(
+                active_item.tab_content_text(0, cx),
+                "c.txt",
+                "c.txt should have been opened in workspace 3, not the active workspace"
+            );
+        });
+
+        assert_eq!(cx.windows().len(), 1, "Should still have only 1 window");
+
+        // Open a file in /dir1 - should switch back to workspace 0
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir1/a.txt"))],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace 0 is active and file opened there
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    0,
+                    "Should have switched back to workspace 0 which contains /dir1"
+                );
+                let active_item = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .expect("Should have an active item");
+                assert_eq!(active_item.tab_content_text(0, cx), "a.txt");
+            })
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1, "Should still have only 1 window");
+    }
+
+    #[gpui::test]
+    async fn test_quit_checks_all_workspaces_for_dirty_items(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "dir1": {
+                        "a.txt": "content a"
+                    },
+                    "dir2": {
+                        "b.txt": "content b"
+                    },
+                    "dir3": {
+                        "c.txt": "content c"
+                    }
+                }),
+            )
+            .await;
+
+        // === Setup Window 1 with two workspaces ===
+        let project1 = Project::test(app_state.fs.clone(), [path!("/dir1").as_ref()], cx).await;
+        let window1 = cx.add_window({
+            let project = project1.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+
+        cx.run_until_parked();
+
+        let project2 = Project::test(app_state.fs.clone(), [path!("/dir2").as_ref()], cx).await;
+        let workspace1_1 = window1
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let workspace1_2 = window1
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project2.clone(), window, cx))
+            })
+            .unwrap();
+
+        window1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.activate(workspace1_2.clone(), cx);
+                multi_workspace.activate(workspace1_1.clone(), cx);
+            })
+            .unwrap();
+
+        // === Setup Window 2 with one workspace ===
+        let project3 = Project::test(app_state.fs.clone(), [path!("/dir3").as_ref()], cx).await;
+        let window2 = cx.add_window({
+            let project = project3.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 2);
+
+        // === Case 1: Active workspace has dirty item, quit can be cancelled ===
+        let worktree1_id = project1.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor1 = window1
+            .update(cx, |_, window, cx| {
+                workspace1_1.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree1_id, rel_path("a.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window1
+            .update(cx, |_, window, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.insert("dirty in active workspace", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace1_1 is active
+        window1
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        cx.dispatch_action(*window1, Quit);
+        cx.run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Case 1: Should prompt to save dirty item in active workspace"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Case 1: Windows should still exist after cancelling quit"
+        );
+
+        // Clean up Case 1: Close the dirty item without saving
+        let close_task = window1
+            .update(cx, |_, window, cx| {
+                workspace1_1.update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_active_item(&Default::default(), window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Don't Save");
+        close_task.await.ok();
+        cx.run_until_parked();
+
+        // === Case 2: Non-active workspace (same window) has dirty item ===
+        let worktree2_id = project2.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor2 = window1
+            .update(cx, |_, window, cx| {
+                workspace1_2.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree2_id, rel_path("b.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window1
+            .update(cx, |_, window, cx| {
+                editor2.update(cx, |editor, cx| {
+                    editor.insert("dirty in non-active workspace", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace1_1 is still active (not workspace1_2 with dirty item)
+        window1
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        cx.dispatch_action(*window1, Quit);
+        cx.run_until_parked();
+
+        // Verify the non-active workspace got activated to show the dirty item
+        window1
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    1,
+                    "Case 2: Non-active workspace should be activated when it has dirty item"
+                );
+            })
+            .unwrap();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Case 2: Should prompt to save dirty item in non-active workspace"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Case 2: Windows should still exist after cancelling quit"
+        );
+
+        // Clean up Case 2: Close the dirty item without saving
+        let close_task = window1
+            .update(cx, |_, window, cx| {
+                workspace1_2.update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_active_item(&Default::default(), window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Don't Save");
+        close_task.await.ok();
+        cx.run_until_parked();
+
+        // === Case 3: Non-active window has dirty item ===
+        let workspace3 = window2
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let worktree3_id = project3.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor3 = window2
+            .update(cx, |_, window, cx| {
+                workspace3.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree3_id, rel_path("c.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window2
+            .update(cx, |_, window, cx| {
+                editor3.update(cx, |editor, cx| {
+                    editor.insert("dirty in other window", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Activate window1 explicitly (editing in window2 may have activated it)
+        window1
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify window2 is not active (window1 should still be active)
+        assert_eq!(
+            cx.update(|cx| window2.is_active(cx)),
+            Some(false),
+            "Case 3: window2 should not be active before quit"
+        );
+
+        // Dispatch quit from window1 (window2 has the dirty item)
+        cx.dispatch_action(*window1, Quit);
+        cx.run_until_parked();
+
+        // Verify window2 is now active (quit handler activated it to show dirty item)
+        assert_eq!(
+            cx.update(|cx| window2.is_active(cx)),
+            Some(true),
+            "Case 3: window2 should be activated when it has dirty item"
+        );
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Case 3: Should prompt to save dirty item in non-active window"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Case 3: Windows should still exist after cancelling quit"
+        );
     }
 }

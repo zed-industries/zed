@@ -2279,6 +2279,7 @@ impl CollabPanel {
             channel_id,
             workspace.read(cx).app_state().clone(),
             Some(handle),
+            Some(self.workspace.clone()),
             cx,
         )
         .detach_and_prompt_err("Failed to join channel", window, cx, |_, _, _| None)

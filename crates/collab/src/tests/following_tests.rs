@@ -2144,7 +2144,7 @@ pub(crate) async fn join_channel(
     client: &TestClient,
     cx: &mut TestAppContext,
 ) -> anyhow::Result<()> {
-    cx.update(|cx| workspace::join_channel(channel_id, client.app_state.clone(), None, cx))
+    cx.update(|cx| workspace::join_channel(channel_id, client.app_state.clone(), None, None, cx))
         .await
 }
 
