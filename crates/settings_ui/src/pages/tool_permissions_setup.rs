@@ -315,11 +315,11 @@ fn render_verification_section(
                             .color(Color::Warning)
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.sub_page_stack.clear();
-                                this.search_bar.update(cx, |editor, cx| {
-                                    editor.set_text("#agent.always_allow_tool_actions", window, cx);
-                                });
-                                this.update_matches(cx);
+                                this.navigate_to_setting(
+                                    "agent.always_allow_tool_actions",
+                                    window,
+                                    cx,
+                                );
                             })),
                     )
                     .child(

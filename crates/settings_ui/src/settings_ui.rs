@@ -3485,6 +3485,48 @@ impl SettingsWindow {
         false
     }
 
+    /// Navigate to a setting by its json_path.
+    /// Clears the sub-page stack and scrolls to the setting item.
+    /// Returns true if the setting was found, false otherwise.
+    pub fn navigate_to_setting(
+        &mut self,
+        json_path: &str,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> bool {
+        self.sub_page_stack.clear();
+
+        for (page_index, page) in self.pages.iter().enumerate() {
+            for (item_index, item) in page.items.iter().enumerate() {
+                let item_json_path = match item {
+                    SettingsPageItem::SettingItem(setting_item) => setting_item.field.json_path(),
+                    SettingsPageItem::DynamicItem(dynamic_item) => {
+                        dynamic_item.discriminant.field.json_path()
+                    }
+                    _ => None,
+                };
+                if item_json_path == Some(json_path) {
+                    if let Some(navbar_entry_index) = self
+                        .navbar_entries
+                        .iter()
+                        .position(|e| e.page_index == page_index && e.is_root)
+                    {
+                        self.open_and_scroll_to_navbar_entry(
+                            navbar_entry_index,
+                            None,
+                            false,
+                            window,
+                            cx,
+                        );
+                        self.scroll_to_content_item(item_index, window, cx);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.sub_page_stack.pop();
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
