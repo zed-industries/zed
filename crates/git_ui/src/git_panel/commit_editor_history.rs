@@ -12,7 +12,7 @@ pub(crate) struct SerializedCommitEditorHistory {
 pub(crate) struct CommitEditorHistory {
     entries: VecDeque<String>,
     cursor: Option<usize>, // index into entries VecDeque (0..len-1), the greater the index, the older is an item; None means pointing before the first entry
-    pending_edit: Option<String>,
+    pending_edit: String,
 }
 
 impl CommitEditorHistory {
@@ -85,12 +85,12 @@ impl CommitEditorHistory {
         }
     }
 
-    pub fn get_pending_edit(&self) -> Option<&str> {
-        self.pending_edit.as_deref()
+    pub fn get_pending_edit(&self) -> &str {
+        self.pending_edit.as_str()
     }
 
     pub fn set_pending_edit(&mut self, message: String) {
-        self.pending_edit = Some(message);
+        self.pending_edit = message;
         self.cursor = None;
     }
 
