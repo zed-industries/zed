@@ -71,36 +71,25 @@ pub(crate) fn render_tool_permissions_setup_page(
         .map(|tool| render_tool_list_item(settings_window, tool, window, cx))
         .collect();
 
-    div()
+    let page_description =
+        "Configure regex patterns to control which tool actions require confirmation.";
+
+    v_flex()
+        .id("tool-permissions-page")
+        .min_w_0()
         .size_full()
+        .pt_4()
+        .px_8()
+        .pb_16()
+        .overflow_y_scroll()
+        .track_scroll(scroll_handle)
+        .child(Label::new("Tool Permission Rules"))
         .child(
-            v_flex()
-                .id("tool-permissions-page")
-                .min_w_0()
-                .size_full()
-                .px_8()
-                .pb_16()
-                .overflow_y_scroll()
-                .track_scroll(scroll_handle)
-                .child(
-                    v_flex()
-                        .pt_8()
-                        .gap_1()
-                        .child(
-                            Label::new("Tool Permission Rules")
-                                .size(LabelSize::Large)
-                                .weight(FontWeight::SEMIBOLD),
-                        )
-                        .child(
-                            Label::new(
-                                "Configure regex patterns to control which tool actions require confirmation.",
-                            )
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                        ),
-                )
-                .child(v_flex().mt_4().gap_0().children(tool_items)),
+            Label::new(page_description)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
         )
+        .child(v_flex().mt_4().children(tool_items))
         .into_any_element()
 }
 
