@@ -1680,28 +1680,11 @@ impl AcpServerView {
     }
 
     fn emit_load_error_telemetry(&self, error: &LoadError) {
-        let (error_kind, message): (&str, SharedString) = match error {
-            LoadError::Unsupported {
-                command,
-                current_version,
-                minimum_version,
-            } => (
-                "unsupported",
-                format!(
-                    "Upgrade {} to work with Zed. Currently using {}, which is version {} (need at least {})",
-                    self.agent.name(),
-                    command,
-                    current_version,
-                    minimum_version
-                )
-                .into(),
-            ),
-            LoadError::FailedToInstall(msg) => ("failed_to_install", msg.clone()),
-            LoadError::Exited { status } => (
-                "exited",
-                format!("Server exited with status {}", status).into(),
-            ),
-            LoadError::Other(msg) => ("other", msg.clone()),
+        let error_kind = match error {
+            LoadError::Unsupported { .. } => "unsupported",
+            LoadError::FailedToInstall(_) => "failed_to_install",
+            LoadError::Exited { .. } => "exited",
+            LoadError::Other(_) => "other",
         };
 
         let agent_name = self.agent.name();
@@ -1710,9 +1693,8 @@ impl AcpServerView {
             "Agent Panel Error Shown",
             agent = agent_name,
             kind = error_kind,
-            message = message,
+            message = error.to_string(),
         );
-    }
 
     fn render_load_error(
         &self,
