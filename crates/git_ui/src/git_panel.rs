@@ -2105,16 +2105,9 @@ impl GitPanel {
         match self.commit_editor_history.next() {
             Some(entry) => buffer.update(cx, |buffer, cx| buffer.set_text(entry, cx)),
             None => {
-                if self.commit_editor_history.get_pending_edit().is_some() {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.set_text(
-                            self.commit_editor_history
-                                .get_pending_edit()
-                                .expect("Pending edit should be present"),
-                            cx,
-                        )
-                    });
-                }
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text(self.commit_editor_history.get_pending_edit(), cx)
+                });
                 None
             }
         };
