@@ -321,7 +321,7 @@ pub fn compute_prediction_reversal_ratio(
         match apply_diff_to_string(&with_headers, &original_content) {
             Ok(updated_content) => original_content = updated_content,
             Err(err) => {
-                log::warn!(
+                log::error!(
                     "Failed to reconstruct original content for reversal tracking: Failed to apply reversed diff: {:#}",
                     err
                 );
