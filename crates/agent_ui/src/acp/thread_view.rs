@@ -3511,24 +3511,24 @@ impl AcpThreadView {
                     self.render_subagent_expanded_content(entry_ix, context_ix, thread, window, cx),
                 )
             })
-            .when_some(
-                thread_read.first_tool_awaiting_confirmation().and_then(|tc| {
-                    if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tc.status {
-                        Some((tc.id.clone(), options.clone()))
-                    } else {
-                        None
-                    }
-                }),
-                |this, (tool_call_id, options)| {
-                    this.child(self.render_subagent_permission_buttons(
-                        entry_ix,
-                        context_ix,
-                        thread.clone(),
-                        tool_call_id,
-                        &options,
-                        cx,
-                    ))
-                },
+            .children(
+                thread_read
+                    .first_tool_awaiting_confirmation()
+                    .and_then(|tc| {
+                        if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tc.status {
+                            Some(self.render_subagent_pending_tool_call(
+                                entry_ix,
+                                context_ix,
+                                thread.clone(),
+                                tc,
+                                options,
+                                window,
+                                cx,
+                            ))
+                        } else {
+                            None
+                        }
+                    }),
             )
             .into_any_element()
     }
@@ -4099,6 +4099,61 @@ impl AcpThreadView {
                         }
                     }))
             }))
+    }
+
+    fn render_subagent_pending_tool_call(
+        &self,
+        entry_ix: usize,
+        context_ix: usize,
+        subagent_thread: Entity<AcpThread>,
+        tool_call: &ToolCall,
+        options: &PermissionOptions,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let tool_call_id = tool_call.id.clone();
+        let is_edit =
+            matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
+        let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
+
+        v_flex()
+            .w_full()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                self.render_tool_call_label(
+                    entry_ix,
+                    tool_call,
+                    is_edit,
+                    false, // has_failed
+                    false, // has_revealed_diff
+                    true,  // use_card_layout
+                    window,
+                    cx,
+                )
+                .py_1(),
+            )
+            .children(tool_call.content.iter().enumerate().map(|(content_ix, content)| {
+                self.render_tool_call_content(
+                    entry_ix,
+                    content,
+                    content_ix,
+                    tool_call,
+                    true, // card_layout
+                    has_image_content,
+                    false, // has_failed
+                    window,
+                    cx,
+                )
+            }))
+            .child(self.render_subagent_permission_buttons(
+                entry_ix,
+                context_ix,
+                subagent_thread,
+                tool_call_id,
+                options,
+                cx,
+            ))
     }
 
     fn render_subagent_permission_buttons(
