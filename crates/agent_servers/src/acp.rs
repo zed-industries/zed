@@ -599,6 +599,15 @@ impl AgentConnection for AcpConnection {
                 .is_some()
     }
 
+    /// Override the default implementation to check for session list capability.
+    /// Session history is available if the agent supports listing sessions,
+    /// regardless of whether it supports loading or resuming sessions.
+    fn supports_session_history(&self, cx: &App) -> bool {
+        // Session listing is available if the agent has list capability
+        // (indicated by session_list being Some) - this is independent of the beta flag
+        self.session_list.is_some()
+    }
+
     fn load_session(
         self: Rc<Self>,
         session: AgentSessionInfo,
@@ -889,11 +898,9 @@ impl AgentConnection for AcpConnection {
     }
 
     fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-        if cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.session_list.clone().map(|s| s as _)
-        } else {
-            None
-        }
+        // Session listing is a core feature that doesn't require the beta flag.
+        // If the agent has list capability, return it regardless of beta flag status.
+        self.session_list.clone().map(|s| s as _)
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
