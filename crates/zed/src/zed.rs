@@ -4994,10 +4994,7 @@ mod tests {
         cx.update(init);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let _window = cx.add_window({
-            let project = project.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
-        });
+        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         cx.update(|cx| {
             cx.dispatch_action(&OpenDefaultSettings);
