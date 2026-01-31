@@ -125,11 +125,12 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
 
 /// Parse the repair response into a prediction.
 fn parse_repair_response(example: &Example, response_text: &str) -> Result<ExamplePrediction> {
-    let actual_patch = TeacherPrompt::parse(example, response_text)?;
+    let (actual_patch, actual_cursor_offset) = TeacherPrompt::parse(example, response_text)?;
 
     Ok(ExamplePrediction {
         actual_patch: Some(actual_patch),
         actual_output: response_text.to_string(),
+        actual_cursor_offset,
         error: None,
         provider: PredictionProvider::Repair,
     })
@@ -362,6 +363,7 @@ pub async fn run_repair(
                     example.predictions.push(ExamplePrediction {
                         actual_patch: None,
                         actual_output: response_text.clone(),
+                        actual_cursor_offset: None,
                         error: Some(format!("Failed to parse repair response: {}", e)),
                         provider: PredictionProvider::Repair,
                     });

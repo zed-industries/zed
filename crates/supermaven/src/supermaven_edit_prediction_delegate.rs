@@ -100,6 +100,7 @@ fn completion_from_diff(
     EditPrediction::Local {
         id: None,
         edits,
+        cursor_position: None,
         edit_preview: None,
     }
 }

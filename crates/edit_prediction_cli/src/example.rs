@@ -86,6 +86,8 @@ pub struct ExamplePrediction {
     #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_cursor_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub provider: PredictionProvider,
 }
@@ -110,6 +112,10 @@ pub struct ExampleScore {
     pub exact_lines_fn: usize,
     #[serde(default)]
     pub reversal_ratio: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_exact_match: Option<bool>,
 }
 
 impl Example {

@@ -330,6 +330,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         Some(EditPrediction::Local {
             id: None,
             edits,
+            cursor_position: None,
             edit_preview: Some(current_completion.edit_preview.clone()),
         })
     }
