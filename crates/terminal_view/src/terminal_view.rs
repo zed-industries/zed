@@ -1885,17 +1885,14 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::MultiBufferOffset;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::TestAppContext;
     use language::{Language, LanguageConfig, LanguageMatcher, PointUtf16, tree_sitter_python};
     use project::{Entry, Project, ProjectPath, Worktree};
     use serde_json::json;
     use std::path::Path;
-    use std::{ops::Deref, path::Path};
+    use util::path;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use util::{path, rel_path::RelPath};
-    use workspace::AppState;
     use workspace::{AppState, OpenOptions, OpenVisible, SendToTerminal};
 
     // Working directory calculation tests
@@ -2375,6 +2372,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_send_to_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
         let params = cx.update(AppState::test);
         params
             .fs
@@ -2388,23 +2387,34 @@ mod tests {
             .await;
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
-        });
-        cx.update(|cx| {
             editor::init(cx);
             crate::init(cx);
         });
 
         let project = Project::test(params.fs.clone(), [path!("/root").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
-        cx.run_until_parked();
 
         let python_lang = python_language();
-
         project.update(cx, |project, _cx| {
             project.languages().add(python_lang.clone());
         });
+
+        let terminal_panel = window
+            .update(cx, |workspace, window, cx| {
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                workspace.add_panel(terminal_panel.clone(), window, cx);
+                terminal_panel
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(workspace::NewTerminal::default().boxed_clone(), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
         let _res = window
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
@@ -2419,7 +2429,7 @@ mod tests {
                 )
             })
             .unwrap();
-        cx.background_executor.run_until_parked();
+        cx.run_until_parked();
 
         let code = r#"
 import pandas as pd
@@ -2435,8 +2445,6 @@ df.describe()
                 workspace.active_item_as::<Editor>(cx).unwrap()
             })
             .unwrap();
-        // Editor -> MultiBuffer -> Vec<Buffer>
-        // Buffer -> Text
 
         window
             .update(cx, |_, window, cx| {
@@ -2454,46 +2462,8 @@ df.describe()
             })
             .unwrap();
 
-        cx.background_executor.run_until_parked();
+        cx.run_until_parked();
 
-        let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
-            .await
-            .unwrap();
-
-        let terminal_view = cx
-            .add_window(|window, cx| {
-                TerminalView::new(
-                    terminal,
-                    workspace.downgrade(),
-                    None,
-                    project.downgrade(),
-                    window,
-                    cx,
-                )
-            })
-            .root(cx)
-            .unwrap();
-        /*
-                // Create a terminal in the terminal panel
-                let terminal_panel = window
-                    .update(cx, |workspace, cx| {
-                        workspace.panel::<TerminalPanel>(cx).unwrap()
-                    })
-                    .unwrap();
-
-                // Add a terminal to the panel
-                let task = window
-                    .update(cx, |_, window, cx| {
-                        terminal_panel.update(cx, |panel, cx| {
-                            panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
-                        })
-                    })
-                    .unwrap();
-                task.await.unwrap();
-        */
-        cx.background_executor.run_until_parked();
-        // Check selection moves to terminal
         let selected_text = window
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| {
@@ -2519,13 +2489,7 @@ df.describe()
         assert!(buffer_text.contains("import pandas as pd"));
         assert!(buffer_text.contains("df.describe()"));
         assert!(selected_text.eq("import pa"));
-
-        // TODO: Now I know the correct text is selected, but this action isn't getting dispatched
-        /*
-        cx.dispatch_action(SendToTerminal {
-            append_newline: false,
-        });
-        */
+        // Sends event with newline false
         window
             .update(cx, |_workspace, window, cx| {
                 window.dispatch_action(
@@ -2538,17 +2502,31 @@ df.describe()
             })
             .unwrap();
 
-        cx.background_executor.run_until_parked();
+        cx.run_until_parked();
 
-        terminal_view.update(cx, |view, cx| {
-            view.terminal().update(cx, |t, _cx| {
-                let text = t.get_content();
-                //dbg!(&text);
-                assert!(
-                    text.contains("import pa"),
-                    "text should be sent, got: '{}'",
-                    text
-                );
+        terminal_panel.update(cx, |panel, cx| {
+            let terminal_view = panel
+                .pane()
+                .unwrap()
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<TerminalView>()
+                .unwrap();
+            // TODO: The problem here is that because the terminal contains a bunch of newlines, it's hard to tell if a newline is injected when we ask it to be
+            terminal_view.update(cx, |view, cx| {
+                view.terminal().update(cx, |t, _cx| {
+                    let text = t.get_content();
+                    assert!(
+                        text.contains("import pa"),
+                        "text should be sent, got: '{}'",
+                        text
+                    );
+                    assert!(
+                        !text.contains("import pan"),
+                        "terminal should not contain the first unselected character"
+                    );
+                });
             });
         });
     }
