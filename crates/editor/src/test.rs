@@ -192,7 +192,6 @@ pub fn editor_content_with_blocks_and_size(
     draw_size: Size<Pixels>,
     cx: &mut VisualTestContext,
 ) -> String {
-    let draw_size = draw_size;
     cx.simulate_resize(draw_size);
     cx.draw(gpui::Point::default(), draw_size, |_, _| editor.clone());
     let (snapshot, mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
