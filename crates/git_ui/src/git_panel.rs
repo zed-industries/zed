@@ -1737,19 +1737,25 @@ impl GitPanel {
             return StageStatus::Unstaged;
         };
 
+        let show_placeholders = self.show_placeholders && !self.has_staged_changes();
         let mut fully_staged_count = 0usize;
         let mut any_staged_or_partially_staged = false;
 
         for descendant in descendants {
-            match GitPanel::stage_status_for_entry(descendant, repo) {
-                StageStatus::Staged => {
-                    fully_staged_count += 1;
-                    any_staged_or_partially_staged = true;
+            if show_placeholders && !descendant.status.is_created() {
+                fully_staged_count += 1;
+                any_staged_or_partially_staged = true;
+            } else {
+                match GitPanel::stage_status_for_entry(descendant, repo) {
+                    StageStatus::Staged => {
+                        fully_staged_count += 1;
+                        any_staged_or_partially_staged = true;
+                    }
+                    StageStatus::PartiallyStaged => {
+                        any_staged_or_partially_staged = true;
+                    }
+                    StageStatus::Unstaged => {}
                 }
-                StageStatus::PartiallyStaged => {
-                    any_staged_or_partially_staged = true;
-                }
-                StageStatus::Unstaged => {}
             }
         }
 
