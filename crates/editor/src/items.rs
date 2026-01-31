@@ -204,17 +204,20 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_proto(&self, _: &Window, cx: &App) -> Option<proto::view::Variant> {
-        let buffer = self.buffer.read(cx);
-        if buffer
+    fn to_state_proto(&self, _: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
+        let is_private = self
+            .buffer
+            .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .is_some_and(|file| file.is_private())
-        {
+            .is_some_and(|file| file.is_private());
+        if is_private {
             return None;
         }
 
-        let scroll_anchor = self.scroll_manager.anchor();
+        let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
+        let buffer = self.buffer.read(cx);
         let excerpts = buffer
             .read(cx)
             .excerpts()
@@ -269,8 +272,8 @@ impl FollowableItem for Editor {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        _: &Window,
-        cx: &App,
+        _: &mut Window,
+        cx: &mut App,
     ) -> bool {
         let update =
             update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
@@ -305,8 +308,9 @@ impl FollowableItem for Editor {
                     true
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
+                    let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
                     let snapshot = self.buffer.read(cx).snapshot(cx);
-                    let scroll_anchor = self.scroll_manager.anchor();
+                    let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
                     update.scroll_top_anchor =
                         Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
                     update.scroll_x = scroll_anchor.offset.x;
