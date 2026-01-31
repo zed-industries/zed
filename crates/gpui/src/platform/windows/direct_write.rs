@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use ::util::ResultExt;
+use ::util::{ResultExt, maybe};
 use anyhow::{Context, Result};
 use collections::HashMap;
 use itertools::Itertools;
@@ -32,7 +32,7 @@ struct FontInfo {
     font_face: IDWriteFontFace3,
     features: IDWriteTypography,
     fallbacks: Option<IDWriteFontFallback>,
-    is_system_font: bool,
+    font_collection: IDWriteFontCollection1,
 }
 
 pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
@@ -205,11 +205,11 @@ impl DirectWriteTextSystem {
     pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
         let components = DirectWriteComponent::new(directx_devices)?;
         let system_font_collection = unsafe {
-            let mut result = std::mem::zeroed();
+            let mut result = None;
             components
                 .factory
                 .GetSystemFontCollection(false, &mut result, true)?;
-            result.unwrap()
+            result.context("Failed to get system font collection")?
         };
         let custom_font_set = unsafe { components.builder.CreateFontSet()? };
         let custom_font_collection = unsafe {
@@ -252,12 +252,9 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         if let Some(font_id) = lock.font_selections.get(font) {
             Ok(*font_id)
         } else {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let font_id = lock
-                .select_font(font)
-                .with_context(|| format!("Failed to select font: {:?}", font))?;
-            lock.font_selections.insert(font.clone(), font_id);
-            Ok(font_id)
+            RwLockUpgradableReadGuard::upgrade(lock)
+                .select_and_cache_font(font)
+                .with_context(|| format!("Failed to select font: {:?}", font))
         }
     }
 
@@ -317,6 +314,47 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 }
 
 impl DirectWriteState {
+    fn select_and_cache_font(&mut self, font: &Font) -> Option<FontId> {
+        let select_font = |this: &mut DirectWriteState, font: &Font| -> Option<FontId> {
+            let (info, ident) = [&this.custom_font_collection, &this.system_font_collection]
+                .into_iter()
+                .find_map(|font_collection| unsafe {
+                    DirectWriteState::make_font_from_font_collection(
+                        font,
+                        font_collection,
+                        &this.components.factory,
+                        &this.system_font_collection,
+                        &this.system_ui_font_name,
+                    )
+                })?;
+
+            let font_id = FontId(this.fonts.len());
+            this.fonts.push(info);
+            this.font_id_by_identifier.insert(ident, font_id);
+            Some(font_id)
+        };
+
+        let mut font_id = select_font(self, font);
+        if font_id.is_none() {
+            // try updating system fonts and reselect
+            let mut collection = None;
+            let font_collection_updated = unsafe {
+                self.components
+                    .factory
+                    .GetSystemFontCollection(false, &mut collection, true)
+            }
+            .log_err()
+            .is_some();
+            if font_collection_updated && let Some(collection) = collection {
+                self.system_font_collection = collection;
+            }
+            font_id = select_font(self, font);
+        };
+        let font_id = font_id?;
+        self.font_selections.insert(font.clone(), font_id);
+        Some(font_id)
+    }
+
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         for font_data in fonts {
             match font_data {
@@ -326,7 +364,7 @@ impl DirectWriteState {
                         .in_memory_loader
                         .CreateInMemoryFontFileReference(
                             &self.components.factory,
-                            data.as_ptr() as _,
+                            data.as_ptr().cast(),
                             data.len() as _,
                             None,
                         )?;
@@ -338,7 +376,7 @@ impl DirectWriteState {
                         .in_memory_loader
                         .CreateInMemoryFontFileReference(
                             &self.components.factory,
-                            data.as_ptr() as _,
+                            data.as_ptr().cast(),
                             data.len() as _,
                             None,
                         )?;
@@ -358,15 +396,16 @@ impl DirectWriteState {
     }
 
     fn generate_font_fallbacks(
-        &self,
         fallbacks: &FontFallbacks,
+        factory: &IDWriteFactory5,
+        system_font_collection: &IDWriteFontCollection1,
     ) -> Result<Option<IDWriteFontFallback>> {
         if fallbacks.fallback_list().is_empty() {
             return Ok(None);
         }
         unsafe {
-            let builder = self.components.factory.CreateFontFallbackBuilder()?;
-            let font_set = &self.system_font_collection.GetFontSet()?;
+            let builder = factory.CreateFontFallbackBuilder()?;
+            let font_set = &system_font_collection.GetFontSet()?;
             for family_name in fallbacks.fallback_list() {
                 let Some(fonts) = font_set
                     .GetMatchingFonts(
@@ -379,11 +418,10 @@ impl DirectWriteState {
                 else {
                     continue;
                 };
-                if fonts.GetFontCount() == 0 {
-                    log::error!("No matching font found for {}", family_name);
+                let Ok(font_face) = fonts.GetFontFaceReference(0) else {
                     continue;
-                }
-                let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
+                };
+                let font = font_face.CreateFontFace()?;
                 let mut count = 0;
                 font.GetUnicodeRanges(None, &mut count).ok();
                 if count == 0 {
@@ -406,175 +444,78 @@ impl DirectWriteState {
                     1.0,
                 )?;
             }
-            let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
+            let system_fallbacks = factory.GetSystemFontFallback()?;
             builder.AddMappings(&system_fallbacks)?;
             Ok(Some(builder.CreateFontFallback()?))
         }
     }
 
     unsafe fn generate_font_features(
-        &self,
+        factory: &IDWriteFactory5,
         font_features: &FontFeatures,
     ) -> Result<IDWriteTypography> {
-        let direct_write_features = unsafe { self.components.factory.CreateTypography()? };
+        let direct_write_features = unsafe { factory.CreateTypography()? };
         apply_font_features(&direct_write_features, font_features)?;
         Ok(direct_write_features)
     }
 
-    unsafe fn get_font_id_from_font_collection(
-        &mut self,
-        family_name: &str,
-        font_weight: FontWeight,
-        font_style: FontStyle,
-        font_features: &FontFeatures,
-        font_fallbacks: Option<&FontFallbacks>,
-        is_system_font: bool,
-    ) -> Option<FontId> {
-        let collection = if is_system_font {
-            &self.system_font_collection
+    unsafe fn make_font_from_font_collection(
+        &Font {
+            ref family,
+            ref features,
+            ref fallbacks,
+            weight,
+            style,
+        }: &Font,
+        collection: &IDWriteFontCollection1,
+        factory: &IDWriteFactory5,
+        system_font_collection: &IDWriteFontCollection1,
+        system_ui_font_name: &str,
+    ) -> Option<(FontInfo, FontIdentifier)> {
+        const SYSTEM_UI_FONT_NAME: &str = ".SystemUIFont";
+        let family = if family == SYSTEM_UI_FONT_NAME {
+            system_ui_font_name
         } else {
-            &self.custom_font_collection
+            font_name_with_fallbacks(&family, &system_ui_font_name)
         };
         let fontset = unsafe { collection.GetFontSet().log_err()? };
         let font = unsafe {
             fontset
                 .GetMatchingFonts(
-                    &HSTRING::from(family_name),
-                    font_weight.into(),
+                    &HSTRING::from(family),
+                    weight.into(),
                     DWRITE_FONT_STRETCH_NORMAL,
-                    font_style.into(),
+                    style.into(),
                 )
                 .log_err()?
         };
         let total_number = unsafe { font.GetFontCount() };
         for index in 0..total_number {
-            let Some(font_face_ref) = (unsafe { font.GetFontFaceReference(index).log_err() })
-            else {
-                continue;
-            };
-            let Some(font_face) = (unsafe { font_face_ref.CreateFontFace().log_err() }) else {
-                continue;
-            };
-            let Some(identifier) = get_font_identifier(&font_face) else {
-                continue;
-            };
-            let Some(direct_write_features) =
-                (unsafe { self.generate_font_features(font_features).log_err() })
-            else {
-                continue;
-            };
-            let fallbacks = font_fallbacks
-                .and_then(|fallbacks| self.generate_font_fallbacks(fallbacks).log_err().flatten());
-            let font_info = FontInfo {
-                font_family: family_name.to_owned(),
-                font_face,
-                features: direct_write_features,
-                fallbacks,
-                is_system_font,
-            };
-            let font_id = FontId(self.fonts.len());
-            self.fonts.push(font_info);
-            self.font_id_by_identifier.insert(identifier, font_id);
-            return Some(font_id);
-        }
-        None
-    }
-
-    unsafe fn update_system_font_collection(&mut self) {
-        let mut collection = unsafe { std::mem::zeroed() };
-        if unsafe {
-            self.components
-                .factory
-                .GetSystemFontCollection(false, &mut collection, true)
-                .log_err()
-                .is_some()
-        } {
-            self.system_font_collection = collection.unwrap();
-        }
-    }
-
-    fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
-        unsafe {
-            if target_font.family == ".SystemUIFont" {
-                let family = self.system_ui_font_name.clone();
-                self.find_font_id(
-                    family.as_ref(),
-                    target_font.weight,
-                    target_font.style,
-                    &target_font.features,
-                    target_font.fallbacks.as_ref(),
-                )
-            } else {
-                let family = self.system_ui_font_name.clone();
-                self.find_font_id(
-                    font_name_with_fallbacks(target_font.family.as_ref(), family.as_ref()),
-                    target_font.weight,
-                    target_font.style,
-                    &target_font.features,
-                    target_font.fallbacks.as_ref(),
-                )
-                .or_else(|| {
-                    #[cfg(any(test, feature = "test-support"))]
-                    {
-                        panic!("ERROR: {} font not found!", target_font.family);
-                    }
-                    #[cfg(not(any(test, feature = "test-support")))]
-                    {
-                        log::error!("{} not found, use {} instead.", target_font.family, family);
-                        self.get_font_id_from_font_collection(
-                            family.as_ref(),
-                            target_font.weight,
-                            target_font.style,
-                            &target_font.features,
-                            target_font.fallbacks.as_ref(),
-                            true,
-                        )
-                    }
-                })
+            let res = maybe!({
+                let font_face_ref = unsafe { font.GetFontFaceReference(index).log_err()? };
+                let font_face = unsafe { font_face_ref.CreateFontFace().log_err()? };
+                let identifier = get_font_identifier(&font_face)?;
+                let direct_write_features =
+                    unsafe { Self::generate_font_features(factory, features).log_err()? };
+                let fallbacks = fallbacks.as_ref().and_then(|fallbacks| {
+                    Self::generate_font_fallbacks(fallbacks, factory, system_font_collection)
+                        .log_err()
+                        .flatten()
+                });
+                let font_info = FontInfo {
+                    font_family: family.to_owned(),
+                    font_face,
+                    features: direct_write_features,
+                    fallbacks,
+                    font_collection: collection.clone(),
+                };
+                Some((font_info, identifier))
+            });
+            if res.is_some() {
+                return res;
             }
         }
-    }
-
-    unsafe fn find_font_id(
-        &mut self,
-        family_name: &str,
-        weight: FontWeight,
-        style: FontStyle,
-        features: &FontFeatures,
-        fallbacks: Option<&FontFallbacks>,
-    ) -> Option<FontId> {
-        // try to find target font in custom font collection first
-        unsafe {
-            self.get_font_id_from_font_collection(
-                family_name,
-                weight,
-                style,
-                features,
-                fallbacks,
-                false,
-            )
-            .or_else(|| {
-                self.get_font_id_from_font_collection(
-                    family_name,
-                    weight,
-                    style,
-                    features,
-                    fallbacks,
-                    true,
-                )
-            })
-            .or_else(|| {
-                self.update_system_font_collection();
-                self.get_font_id_from_font_collection(
-                    family_name,
-                    weight,
-                    style,
-                    features,
-                    fallbacks,
-                    true,
-                )
-            })
-        }
+        None
     }
 
     fn layout_line(
@@ -598,11 +539,7 @@ impl DirectWriteState {
             let text_layout = {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
-                let collection = if font_info.is_system_font {
-                    &self.system_font_collection
-                } else {
-                    &self.custom_font_collection
-                };
+                let collection = &font_info.font_collection;
                 let format: IDWriteTextFormat1 = self
                     .components
                     .factory
@@ -659,11 +596,7 @@ impl DirectWriteState {
                 utf8_offset += run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
-                let collection = if font_info.is_system_font {
-                    &self.system_font_collection
-                } else {
-                    &self.custom_font_collection
-                };
+                let collection = &font_info.font_collection;
                 let text_range = DWRITE_TEXT_RANGE {
                     startPosition: utf16_offset,
                     length: current_text_utf16_length,
@@ -1579,7 +1512,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             .get(&font_identifier)
         {
             *id
-        } else if let Some(id) = context.text_system.select_font(&font_struct) {
+        } else if let Some(id) = context.text_system.select_and_cache_font(&font_struct) {
             id
         } else {
             return Err(Error::new(DWRITE_E_NOFONT, "Failed to select font"));
