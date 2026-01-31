@@ -1,33 +1,41 @@
 use std::time::Duration;
 
-use gpui::{Animation, AnimationExt, AnyView, IntoElement, Window, pulsating_between};
+use acp_thread::MentionUri;
+use gpui::{
+    Animation, AnimationExt, AnyView, IntoElement, SharedString, Window, pulsating_between,
+};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{ButtonLike, TintColor, prelude::*};
+use ui::{ButtonLike, ElevationIndex, TintColor, Tooltip, prelude::*};
+use workspace::Workspace;
+
+use crate::acp::AcpThreadView;
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
     id: ElementId,
-    icon: SharedString,
-    label: SharedString,
+    mention: MentionUri,
+    icon: Option<SharedString>,
+    label: Option<SharedString>,
     is_toggled: bool,
     is_loading: bool,
+    tooltip: Option<SharedString>,
+    layer: Option<ElevationIndex>,
     image_preview: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl MentionCrease {
-    pub fn new(
-        id: impl Into<ElementId>,
-        icon: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-    ) -> Self {
+    pub fn new(id: impl Into<ElementId>, mention: MentionUri) -> Self {
         Self {
             id: id.into(),
-            icon: icon.into(),
-            label: label.into(),
+            mention,
+            icon: None,
+            label: None,
             is_toggled: false,
             is_loading: false,
+            tooltip: None,
             image_preview: None,
+            layer: None,
         }
     }
 
@@ -38,6 +46,21 @@ impl MentionCrease {
 
     pub fn is_loading(mut self, is_loading: bool) -> Self {
         self.is_loading = is_loading;
+        self
+    }
+
+    pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn layer(mut self, layer: ElevationIndex) -> Self {
+        self.layer = Some(layer);
         self
     }
 
@@ -60,15 +83,28 @@ impl RenderOnce for MentionCrease {
             px(window.line_height().into()) - px(1.),
         ));
 
-        ButtonLike::new(self.id)
+        let mention = self.mention.clone();
+        let icon = self.icon.clone().unwrap_or_else(|| mention.icon_path(cx));
+        let label = self.label.clone().unwrap_or_else(|| mention.name().into());
+        let tooltip = self.tooltip.clone().or_else(|| match &mention {
+            MentionUri::File { .. } => Some("Open File".into()),
+            MentionUri::Directory { .. } => Some("Reveal in Project Panel".into()),
+            MentionUri::Symbol { .. } => Some("Show Symbol location".into()),
+            MentionUri::Selection { .. } => Some("Show Selection location".into()),
+            MentionUri::Thread { .. } | MentionUri::TextThread { .. } => Some("Open Thread".into()),
+            MentionUri::Rule { .. } => Some("Open Rule".into()),
+            MentionUri::Fetch { .. } => Some("Open Link".into()),
+            MentionUri::PastedImage => Some("Open Image".into()),
+            MentionUri::TerminalSelection { .. } => Some("Show Terminal Selection".into()),
+            MentionUri::Diagnostics { .. } => None,
+        });
+        let image_preview = self.image_preview;
+        let button = ButtonLike::new(self.id.clone())
             .style(ButtonStyle::Outlined)
             .size(ButtonSize::Compact)
             .height(button_height)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(self.is_toggled)
-            .when_some(self.image_preview, |this, image_preview| {
-                this.hoverable_tooltip(image_preview)
-            })
             .child(
                 h_flex()
                     .pb_px()
@@ -76,11 +112,11 @@ impl RenderOnce for MentionCrease {
                     .font(buffer_font)
                     .text_size(font_size)
                     .child(
-                        Icon::from_path(self.icon.clone())
+                        Icon::from_path(icon.clone())
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .child(self.label.clone())
+                    .child(label.clone())
                     .map(|this| {
                         if self.is_loading {
                             this.with_animation(
@@ -96,5 +132,18 @@ impl RenderOnce for MentionCrease {
                         }
                     }),
             )
+            .when_some(self.layer, |b, layer| b.layer(layer))
+            .when_else(
+                image_preview.is_some(),
+                |b| b.hoverable_tooltip(image_preview.expect("checked preview presence")),
+                |b| b.when_some(tooltip, |b, t| b.tooltip(Tooltip::text(t))),
+            )
+            .on_click(move |_event, window, cx| {
+                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                    AcpThreadView::open_mention(&mention, &workspace.downgrade(), window, cx);
+                }
+            });
+
+        button
     }
 }
