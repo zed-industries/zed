@@ -184,6 +184,23 @@ When using `vtsls`:
 }
 ```
 
+## Workspace TypeScript version
+
+```json [settings]
+{
+  "lsp": {
+    "vtsls": {
+      "initialization_options": {
+        "vtsls": {
+          "autoUseWorkspaceTsdk": true,
+        },
+      },
+    },
+  },
+}
+
+```
+
 ## Debugging
 
 Zed supports debugging TypeScript code out of the box with `vscode-js-debug`.
