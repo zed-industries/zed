@@ -320,10 +320,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, ["/test".as_ref()], cx).await;
-        let window = cx.add_window({
-            let project = project.clone();
-            |window, cx| MultiWorkspace::test_new(project, window, cx)
-        });
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())

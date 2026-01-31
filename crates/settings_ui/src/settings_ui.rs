@@ -4627,7 +4627,7 @@ pub mod test {
             )
         });
 
-        let workspace2_handle = cx.window_handle().downcast::<Workspace>().unwrap();
+        let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
 
         cx.run_until_parked();
 
@@ -4756,7 +4756,7 @@ pub mod test {
             )
         });
 
-        let workspace1_handle = cx.window_handle().downcast::<Workspace>().unwrap();
+        let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
 
         cx.run_until_parked();
 

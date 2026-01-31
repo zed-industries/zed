@@ -918,13 +918,10 @@ impl TestClient {
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
         let project = self.build_test_project(cx).await;
         let app_state = self.app_state.clone();
-        let window = cx.add_window({
-            let project = project.clone();
-            |window, cx| {
-                window.activate_window();
-                let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-                MultiWorkspace::new(workspace, cx)
-            }
+        let window = cx.add_window(|window, cx| {
+            window.activate_window();
+            let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+            MultiWorkspace::new(workspace, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
         let workspace = window
