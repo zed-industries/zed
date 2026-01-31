@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     ffi::{c_uint, c_void},
     mem::ManuallyDrop,
-    sync::Arc,
 };
 
 use ::util::{ResultExt, maybe};
@@ -35,16 +34,29 @@ struct FontInfo {
     font_collection: IDWriteFontCollection1,
 }
 
-pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
+pub(crate) struct DirectWriteTextSystem {
+    components: DirectWriteComponents,
+    state: RwLock<DirectWriteState>,
+}
 
-struct DirectWriteComponent {
+struct DirectWriteComponents {
     locale: HSTRING,
     factory: IDWriteFactory5,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
-    text_renderer: Arc<TextRendererWrapper>,
+    text_renderer: TextRendererWrapper,
+    system_ui_font_name: SharedString,
+    system_subpixel_rendering: bool,
+}
 
-    gpu_state: GPUState,
+impl Drop for DirectWriteComponents {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self
+                .factory
+                .UnregisterFontFileLoader(&self.in_memory_loader);
+        }
+    }
 }
 
 struct GPUState {
@@ -57,42 +69,13 @@ struct GPUState {
 }
 
 struct DirectWriteState {
-    components: DirectWriteComponent,
-    system_ui_font_name: SharedString,
+    gpu_state: GPUState,
     system_font_collection: IDWriteFontCollection1,
     custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
     font_to_font_id: HashMap<Font, FontId>,
     font_info_cache: HashMap<usize, FontId>,
-    system_subpixel_rendering: bool,
     layout_line_scratch: Vec<u16>,
-}
-
-impl DirectWriteComponent {
-    pub fn new(directx_devices: &DirectXDevices) -> Result<Self> {
-        let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
-        // The `IDWriteInMemoryFontFileLoader` here is supported starting from
-        // Windows 10 Creators Update, which consequently requires the entire
-        // `DirectWriteTextSystem` to run on `win10 1703`+.
-        let in_memory_loader = unsafe { factory.CreateInMemoryFontFileLoader()? };
-        unsafe { factory.RegisterFontFileLoader(&in_memory_loader)? };
-        let builder = unsafe { factory.CreateFontSetBuilder()? };
-        let mut locale = [0u16; LOCALE_NAME_MAX_LENGTH as usize];
-        unsafe { GetUserDefaultLocaleName(&mut locale) };
-        let locale = HSTRING::from_wide(&locale);
-        let text_renderer = Arc::new(TextRendererWrapper::new(locale.clone()));
-
-        let gpu_state = GPUState::new(directx_devices)?;
-
-        Ok(DirectWriteComponent {
-            locale,
-            factory,
-            in_memory_loader,
-            builder,
-            text_renderer,
-            gpu_state,
-        })
-    }
 }
 
 impl GPUState {
@@ -180,7 +163,32 @@ impl GPUState {
 
 impl DirectWriteTextSystem {
     pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
-        let components = DirectWriteComponent::new(directx_devices)?;
+        let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
+        // The `IDWriteInMemoryFontFileLoader` here is supported starting from
+        // Windows 10 Creators Update, which consequently requires the entire
+        // `DirectWriteTextSystem` to run on `win10 1703`+.
+        let in_memory_loader = unsafe { factory.CreateInMemoryFontFileLoader()? };
+        unsafe { factory.RegisterFontFileLoader(&in_memory_loader)? };
+        let builder = unsafe { factory.CreateFontSetBuilder()? };
+        let mut locale = [0u16; LOCALE_NAME_MAX_LENGTH as usize];
+        unsafe { GetUserDefaultLocaleName(&mut locale) };
+        let locale = HSTRING::from_wide(&locale);
+        let text_renderer = TextRendererWrapper::new(locale.clone());
+
+        let gpu_state = GPUState::new(directx_devices)?;
+
+        let system_subpixel_rendering = get_system_subpixel_rendering();
+        let system_ui_font_name = get_system_ui_font_name();
+        let components = DirectWriteComponents {
+            locale,
+            factory,
+            in_memory_loader,
+            builder,
+            text_renderer,
+            system_ui_font_name,
+            system_subpixel_rendering,
+        };
+
         let system_font_collection = unsafe {
             let mut result = None;
             components
@@ -194,68 +202,67 @@ impl DirectWriteTextSystem {
                 .factory
                 .CreateFontCollectionFromFontSet(&custom_font_set)?
         };
-        let system_ui_font_name = get_system_ui_font_name();
-        let system_subpixel_rendering = get_system_subpixel_rendering();
 
-        Ok(Self(RwLock::new(DirectWriteState {
+        Ok(Self {
             components,
-            system_ui_font_name,
-            system_font_collection,
-            custom_font_collection,
-            fonts: Vec::new(),
-            font_to_font_id: HashMap::default(),
-            font_info_cache: HashMap::default(),
-            system_subpixel_rendering,
-            layout_line_scratch: Vec::new(),
-        })))
+            state: RwLock::new(DirectWriteState {
+                gpu_state,
+                system_font_collection,
+                custom_font_collection,
+                fonts: Vec::new(),
+                font_to_font_id: HashMap::default(),
+                font_info_cache: HashMap::default(),
+                layout_line_scratch: Vec::new(),
+            }),
+        })
     }
 
     pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
-        self.0.write().handle_gpu_lost(directx_devices)
+        self.state.write().handle_gpu_lost(directx_devices)
     }
 }
 
 impl PlatformTextSystem for DirectWriteTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.0.write().add_fonts(fonts)
+        self.state.write().add_fonts(&self.components, fonts)
     }
 
     fn all_font_names(&self) -> Vec<String> {
-        self.0.read().all_font_names()
+        self.state.read().all_font_names(&self.components)
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
-        let lock = self.0.upgradable_read();
+        let lock = self.state.upgradable_read();
         if let Some(font_id) = lock.font_to_font_id.get(font) {
             Ok(*font_id)
         } else {
             RwLockUpgradableReadGuard::upgrade(lock)
-                .select_and_cache_font(font)
+                .select_and_cache_font(&self.components, font)
                 .with_context(|| format!("Failed to select font: {:?}", font))
         }
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.read().font_metrics(font_id)
+        self.state.read().font_metrics(font_id)
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        self.0.read().get_typographic_bounds(font_id, glyph_id)
+        self.state.read().get_typographic_bounds(font_id, glyph_id)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
-        self.0.read().get_advance(font_id, glyph_id)
+        self.state.read().get_advance(font_id, glyph_id)
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.0.read().glyph_for_char(font_id, ch)
+        self.state.read().glyph_for_char(font_id, ch)
     }
 
     fn glyph_raster_bounds(
         &self,
         params: &RenderGlyphParams,
     ) -> anyhow::Result<Bounds<DevicePixels>> {
-        self.0.read().raster_bounds(params)
+        self.state.read().raster_bounds(&self.components, params)
     }
 
     fn rasterize_glyph(
@@ -263,13 +270,15 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
-        self.0.read().rasterize_glyph(params, raster_bounds)
+        self.state
+            .read()
+            .rasterize_glyph(&self.components, params, raster_bounds)
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        self.0
+        self.state
             .write()
-            .layout_line(text, font_size, runs)
+            .layout_line(&self.components, text, font_size, runs)
             .log_err()
             .unwrap_or(LineLayout {
                 font_size,
@@ -282,7 +291,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         _font_id: FontId,
         _font_size: Pixels,
     ) -> TextRenderingMode {
-        if self.0.read().system_subpixel_rendering {
+        if self.components.system_subpixel_rendering {
             TextRenderingMode::Subpixel
         } else {
             TextRenderingMode::Grayscale
@@ -291,7 +300,11 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 }
 
 impl DirectWriteState {
-    fn select_and_cache_font(&mut self, font: &Font) -> Option<FontId> {
+    fn select_and_cache_font(
+        &mut self,
+        components: &DirectWriteComponents,
+        font: &Font,
+    ) -> Option<FontId> {
         let select_font = |this: &mut DirectWriteState, font: &Font| -> Option<FontId> {
             let info = [&this.custom_font_collection, &this.system_font_collection]
                 .into_iter()
@@ -299,9 +312,9 @@ impl DirectWriteState {
                     DirectWriteState::make_font_from_font_collection(
                         font,
                         font_collection,
-                        &this.components.factory,
+                        &components.factory,
                         &this.system_font_collection,
-                        &this.system_ui_font_name,
+                        &components.system_ui_font_name,
                     )
                 })?;
 
@@ -317,7 +330,7 @@ impl DirectWriteState {
             // try updating system fonts and reselect
             let mut collection = None;
             let font_collection_updated = unsafe {
-                self.components
+                components
                     .factory
                     .GetSystemFontCollection(false, &mut collection, true)
             }
@@ -333,41 +346,39 @@ impl DirectWriteState {
         Some(font_id)
     }
 
-    fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+    fn add_fonts(
+        &mut self,
+        components: &DirectWriteComponents,
+        fonts: Vec<Cow<'static, [u8]>>,
+    ) -> Result<()> {
         for font_data in fonts {
             match font_data {
                 Cow::Borrowed(data) => unsafe {
-                    let font_file = self
-                        .components
+                    let font_file = components
                         .in_memory_loader
                         .CreateInMemoryFontFileReference(
-                            &self.components.factory,
+                            &components.factory,
                             data.as_ptr().cast(),
                             data.len() as _,
                             None,
                         )?;
-                    self.components.builder.AddFontFile(&font_file)?;
+                    components.builder.AddFontFile(&font_file)?;
                 },
                 Cow::Owned(data) => unsafe {
-                    let font_file = self
-                        .components
+                    let font_file = components
                         .in_memory_loader
                         .CreateInMemoryFontFileReference(
-                            &self.components.factory,
+                            &components.factory,
                             data.as_ptr().cast(),
                             data.len() as _,
                             None,
                         )?;
-                    self.components.builder.AddFontFile(&font_file)?;
+                    components.builder.AddFontFile(&font_file)?;
                 },
             }
         }
-        let set = unsafe { self.components.builder.CreateFontSet()? };
-        let collection = unsafe {
-            self.components
-                .factory
-                .CreateFontCollectionFromFontSet(&set)?
-        };
+        let set = unsafe { components.builder.CreateFontSet()? };
+        let collection = unsafe { components.factory.CreateFontCollectionFromFontSet(&set)? };
         self.custom_font_collection = collection;
 
         Ok(())
@@ -501,6 +512,7 @@ impl DirectWriteState {
 
     fn layout_line(
         &mut self,
+        components: &DirectWriteComponents,
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
@@ -512,7 +524,6 @@ impl DirectWriteState {
             });
         }
         unsafe {
-            let text_renderer = self.components.text_renderer.clone();
             self.layout_line_scratch.clear();
             self.layout_line_scratch.extend(text.encode_utf16());
             let text_wide = &*self.layout_line_scratch;
@@ -523,8 +534,7 @@ impl DirectWriteState {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
                 let collection = &font_info.font_collection;
-                let format: IDWriteTextFormat1 = self
-                    .components
+                let format: IDWriteTextFormat1 = components
                     .factory
                     .CreateTextFormat(
                         &font_info.font_family_h,
@@ -533,14 +543,14 @@ impl DirectWriteState {
                         font_info.font_face.GetStyle(),
                         DWRITE_FONT_STRETCH_NORMAL,
                         font_size.0,
-                        &self.components.locale,
+                        &components.locale,
                     )?
                     .cast()?;
                 if let Some(ref fallbacks) = font_info.fallbacks {
                     format.SetFontFallback(fallbacks)?;
                 }
 
-                let layout = self.components.factory.CreateTextLayout(
+                let layout = components.factory.CreateTextLayout(
                     text_wide,
                     &format,
                     f32::INFINITY,
@@ -599,13 +609,14 @@ impl DirectWriteState {
             let mut runs = Vec::new();
             let renderer_context = RendererContext {
                 text_system: self,
+                components,
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
                 width: 0.0,
             };
             text_layout.Draw(
                 Some((&raw const renderer_context).cast::<c_void>()),
-                &text_renderer.0,
+                &components.text_renderer.0,
                 0.0,
                 0.0,
             )?;
@@ -653,6 +664,7 @@ impl DirectWriteState {
 
     fn create_glyph_run_analysis(
         &self,
+        components: &DirectWriteComponents,
         params: &RenderGlyphParams,
     ) -> Result<IDWriteGlyphRunAnalysis> {
         let font = &self.fonts[params.font_id.0];
@@ -711,7 +723,7 @@ impl DirectWriteState {
         };
 
         let glyph_analysis = unsafe {
-            self.components.factory.CreateGlyphRunAnalysis(
+            components.factory.CreateGlyphRunAnalysis(
                 &glyph_run,
                 Some(&transform),
                 rendering_mode,
@@ -725,8 +737,12 @@ impl DirectWriteState {
         Ok(glyph_analysis)
     }
 
-    fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
+    fn raster_bounds(
+        &self,
+        components: &DirectWriteComponents,
+        params: &RenderGlyphParams,
+    ) -> Result<Bounds<DevicePixels>> {
+        let glyph_analysis = self.create_glyph_run_analysis(components, params)?;
 
         let texture_type = if params.subpixel_rendering {
             DWRITE_TEXTURE_CLEARTYPE_3x1
@@ -767,6 +783,7 @@ impl DirectWriteState {
 
     fn rasterize_glyph(
         &self,
+        components: &DirectWriteComponents,
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
@@ -775,17 +792,17 @@ impl DirectWriteState {
         }
 
         let bitmap_data = if params.is_emoji {
-            if let Ok(color) = self.rasterize_color(params, glyph_bounds) {
+            if let Ok(color) = self.rasterize_color(components, params, glyph_bounds) {
                 color
             } else {
-                let monochrome = self.rasterize_monochrome(params, glyph_bounds)?;
+                let monochrome = self.rasterize_monochrome(components, params, glyph_bounds)?;
                 monochrome
                     .into_iter()
                     .flat_map(|pixel| [0, 0, 0, pixel])
                     .collect::<Vec<_>>()
             }
         } else {
-            self.rasterize_monochrome(params, glyph_bounds)?
+            self.rasterize_monochrome(components, params, glyph_bounds)?
         };
 
         Ok((glyph_bounds.size, bitmap_data))
@@ -793,10 +810,11 @@ impl DirectWriteState {
 
     fn rasterize_monochrome(
         &self,
+        components: &DirectWriteComponents,
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
+        let glyph_analysis = self.create_glyph_run_analysis(components, params)?;
         if !params.subpixel_rendering {
             let mut bitmap_data =
                 vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
@@ -857,6 +875,7 @@ impl DirectWriteState {
 
     fn rasterize_color(
         &self,
+        components: &DirectWriteComponents,
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
@@ -896,7 +915,7 @@ impl DirectWriteState {
 
         // todo: support formats other than COLR
         let color_enumerator = unsafe {
-            self.components.factory.TranslateColorGlyphRun(
+            components.factory.TranslateColorGlyphRun(
                 Vector2::new(baseline_origin_x, baseline_origin_y),
                 &glyph_run,
                 None,
@@ -915,7 +934,7 @@ impl DirectWriteState {
             let image_format = color_run.glyphImageFormat & !DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE;
             if image_format == DWRITE_GLYPH_IMAGE_FORMATS_COLR {
                 let color_analysis = unsafe {
-                    self.components.factory.CreateGlyphRunAnalysis(
+                    components.factory.CreateGlyphRunAnalysis(
                         &color_run.Base.glyphRun as *const _,
                         Some(&transform),
                         DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
@@ -956,7 +975,7 @@ impl DirectWriteState {
                     };
                     let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
                     glyph_layers.push(GlyphLayerTexture::new(
-                        &self.components.gpu_state,
+                        &self.gpu_state,
                         run_color,
                         bounds,
                         &alpha_data,
@@ -972,7 +991,7 @@ impl DirectWriteState {
             }
         }
 
-        let gpu_state = &self.components.gpu_state;
+        let gpu_state = &self.gpu_state;
         let params_buffer = {
             let desc = D3D11_BUFFER_DESC {
                 ByteWidth: std::mem::size_of::<GlyphLayerTextureParams>() as u32,
@@ -1219,12 +1238,12 @@ impl DirectWriteState {
         }
     }
 
-    fn all_font_names(&self) -> Vec<String> {
+    fn all_font_names(&self, components: &DirectWriteComponents) -> Vec<String> {
         let mut result =
-            get_font_names_from_collection(&self.system_font_collection, &self.components.locale);
+            get_font_names_from_collection(&self.system_font_collection, &components.locale);
         result.extend(get_font_names_from_collection(
             &self.custom_font_collection,
-            &self.components.locale,
+            &components.locale,
         ));
         result
     }
@@ -1233,18 +1252,7 @@ impl DirectWriteState {
         try_to_recover_from_device_lost(|| {
             GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
         })
-        .map(|gpu_state| self.components.gpu_state = gpu_state)
-    }
-}
-
-impl Drop for DirectWriteState {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = self
-                .components
-                .factory
-                .UnregisterFontFileLoader(&self.components.in_memory_loader);
-        }
+        .map(|gpu_state| self.gpu_state = gpu_state)
     }
 }
 
@@ -1351,6 +1359,7 @@ impl TextRenderer {
 
 struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
+    components: &'a DirectWriteComponents,
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
     width: f32,
@@ -1494,7 +1503,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                         Some(&font_id) => font_id,
                         None => context
                             .text_system
-                            .select_and_cache_font(&font)
+                            .select_and_cache_font(context.components, &font)
                             .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?,
                     };
                     context
@@ -1529,8 +1538,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 .enumerate()
             {
                 let id = GlyphId(*glyph_id as u32);
-                let is_emoji = color_font
-                    && is_color_glyph(font_face, id, &context.text_system.components.factory);
+                let is_emoji =
+                    color_font && is_color_glyph(font_face, id, &context.components.factory);
                 let this_glyph_idx = glyph_idx + cluster_glyph_idx;
                 glyphs.push(ShapedGlyph {
                     id,
