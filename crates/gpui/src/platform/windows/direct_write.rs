@@ -7,7 +7,6 @@ use std::{
 use ::util::{ResultExt, maybe};
 use anyhow::{Context, Result};
 use collections::HashMap;
-use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use windows::{
     Win32::{
@@ -66,6 +65,7 @@ struct DirectWriteState {
     font_id_by_identifier: HashMap<FontIdentifier, FontId>,
     font_info_cache: HashMap<usize, (FontIdentifier, Font, bool)>,
     system_subpixel_rendering: bool,
+    layout_line_scratch: Vec<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,6 +230,7 @@ impl DirectWriteTextSystem {
             font_id_by_identifier: HashMap::default(),
             font_info_cache: HashMap::default(),
             system_subpixel_rendering,
+            layout_line_scratch: Vec::new(),
         })))
     }
 
@@ -536,8 +537,9 @@ impl DirectWriteState {
         }
         unsafe {
             let text_renderer = self.components.text_renderer.clone();
-            // todo lw: scratch space
-            let text_wide = text.encode_utf16().collect_vec();
+            self.layout_line_scratch.clear();
+            self.layout_line_scratch.extend(text.encode_utf16());
+            let text_wide = &*self.layout_line_scratch;
 
             let mut utf8_offset = 0usize;
             let mut utf16_offset = 0u32;
@@ -563,7 +565,7 @@ impl DirectWriteState {
                 }
 
                 let layout = self.components.factory.CreateTextLayout(
-                    &text_wide,
+                    text_wide,
                     &format,
                     f32::INFINITY,
                     f32::INFINITY,
@@ -791,7 +793,6 @@ impl DirectWriteState {
         .map(|_| GlyphId(glyph_indices as u32))
     }
 
-    // todo lw
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
@@ -818,17 +819,15 @@ impl DirectWriteState {
         Ok((glyph_bounds.size, bitmap_data))
     }
 
-    // todo lw
     fn rasterize_monochrome(
         &self,
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
+        let glyph_analysis = self.create_glyph_run_analysis(params)?;
         if !params.subpixel_rendering {
             let mut bitmap_data =
                 vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
-
-            let glyph_analysis = self.create_glyph_run_analysis(params)?;
             unsafe {
                 glyph_analysis.CreateAlphaTexture(
                     DWRITE_TEXTURE_ALIASED_1x1,
@@ -851,7 +850,6 @@ impl DirectWriteState {
 
         let mut bitmap_data = vec![0u8; pixel_count * 4];
 
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
                 DWRITE_TEXTURE_CLEARTYPE_3x1,
@@ -885,7 +883,6 @@ impl DirectWriteState {
         Ok(bitmap_data)
     }
 
-    // todo lw
     fn rasterize_color(
         &self,
         params: &RenderGlyphParams,
@@ -939,6 +936,7 @@ impl DirectWriteState {
         }?;
 
         let mut glyph_layers = Vec::new();
+        let mut alpha_data = Vec::new();
         loop {
             let color_run = unsafe { color_enumerator.GetCurrentRun() }?;
             let color_run = unsafe { &*color_run };
@@ -965,7 +963,8 @@ impl DirectWriteState {
                     color_bounds.bottom - color_bounds.top,
                 );
                 if color_size.width > 0 && color_size.height > 0 {
-                    let mut alpha_data = vec![0u8; (color_size.width * color_size.height) as usize];
+                    alpha_data.clear();
+                    alpha_data.resize((color_size.width * color_size.height) as usize, 0);
                     unsafe {
                         color_analysis.CreateAlphaTexture(
                             DWRITE_TEXTURE_ALIASED_1x1,
@@ -1018,7 +1017,7 @@ impl DirectWriteState {
                     .device
                     .CreateBuffer(&desc, None, Some(&mut buffer))
             }?;
-            [buffer]
+            buffer
         };
 
         let render_target_texture = {
@@ -1062,7 +1061,7 @@ impl DirectWriteState {
                     Some(&mut rtv),
                 )
             }?;
-            [rtv]
+            rtv
         };
 
         let staging_texture = {
@@ -1094,9 +1093,15 @@ impl DirectWriteState {
         unsafe { device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP) };
         unsafe { device_context.VSSetShader(&gpu_state.vertex_shader, None) };
         unsafe { device_context.PSSetShader(&gpu_state.pixel_shader, None) };
-        unsafe { device_context.VSSetConstantBuffers(0, Some(&params_buffer)) };
-        unsafe { device_context.PSSetConstantBuffers(0, Some(&params_buffer)) };
-        unsafe { device_context.OMSetRenderTargets(Some(&render_target_view), None) };
+        unsafe {
+            device_context.VSSetConstantBuffers(0, Some(std::slice::from_ref(&params_buffer)))
+        };
+        unsafe {
+            device_context.PSSetConstantBuffers(0, Some(std::slice::from_ref(&params_buffer)))
+        };
+        unsafe {
+            device_context.OMSetRenderTargets(Some(std::slice::from_ref(&render_target_view)), None)
+        };
         unsafe { device_context.PSSetSamplers(0, Some(std::slice::from_ref(&gpu_state.sampler))) };
         unsafe { device_context.OMSetBlendState(&gpu_state.blend_state, None, 0xffffffff) };
 
@@ -1117,7 +1122,7 @@ impl DirectWriteState {
             unsafe {
                 let mut dest = std::mem::zeroed();
                 gpu_state.device_context.Map(
-                    params_buffer[0].as_ref().unwrap(),
+                    params_buffer.as_ref().unwrap(),
                     0,
                     D3D11_MAP_WRITE_DISCARD,
                     0,
@@ -1126,7 +1131,7 @@ impl DirectWriteState {
                 std::ptr::copy_nonoverlapping(&params as *const _, dest.pData as *mut _, 1);
                 gpu_state
                     .device_context
-                    .Unmap(params_buffer[0].as_ref().unwrap(), 0);
+                    .Unmap(params_buffer.as_ref().unwrap(), 0);
             };
 
             let texture = [Some(layer.texture_view)];
