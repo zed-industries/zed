@@ -1162,8 +1162,9 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
+            let working_directory = working_directory?;
             let mut child = new_smol_command(&git_binary_path)
-                .current_dir(&working_directory?)
+                .current_dir(&working_directory)
                 .envs(env.iter())
                 .args([
                     "checkout",
@@ -1185,6 +1186,23 @@ impl GitRepository for RealGitRepository {
             drop(stdin);
 
             let output = child.output().await?;
+            if output.status.success() {
+                return Ok(());
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("pathspec-from-file") {
+                anyhow::bail!("Failed to checkout files:\n{}", stderr);
+            }
+
+            // Fallback for older git versions: pass paths as command-line arguments
+            let output = new_smol_command(&git_binary_path)
+                .current_dir(&working_directory)
+                .envs(env.iter())
+                .args(["checkout", &commit, "--"])
+                .args(paths.iter().map(|path| path.as_unix_str()))
+                .output()
+                .await?;
             anyhow::ensure!(
                 output.status.success(),
                 "Failed to checkout files:\n{}",
@@ -1912,8 +1930,9 @@ impl GitRepository for RealGitRepository {
                     return Ok(());
                 }
 
+                let working_directory = working_directory?;
                 let mut child = new_smol_command(&git_binary_path)
-                    .current_dir(&working_directory?)
+                    .current_dir(&working_directory)
                     .envs(env.iter())
                     .args([
                         "reset",
@@ -1935,6 +1954,24 @@ impl GitRepository for RealGitRepository {
                 drop(stdin);
 
                 let output = child.output().await?;
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("pathspec-from-file") {
+                    anyhow::bail!("Failed to unstage:\n{}", stderr);
+                }
+
+                // Fallback for older git versions: pass paths as command-line arguments
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .envs(env.iter())
+                    .args(["reset", "--quiet", "--"])
+                    .args(paths.iter().map(|p| p.as_std_path()))
+                    .output()
+                    .await?;
+
                 anyhow::ensure!(
                     output.status.success(),
                     "Failed to unstage:\n{}",
