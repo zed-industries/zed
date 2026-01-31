@@ -64,6 +64,7 @@ struct DirectWriteState {
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
     font_id_by_identifier: HashMap<FontIdentifier, FontId>,
+    font_info_cache: HashMap<usize, (FontIdentifier, Font, bool)>,
     system_subpixel_rendering: bool,
 }
 
@@ -227,6 +228,7 @@ impl DirectWriteTextSystem {
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_identifier: HashMap::default(),
+            font_info_cache: HashMap::default(),
             system_subpixel_rendering,
         })))
     }
@@ -1555,11 +1557,21 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         // This `cast()` action here should never fail since we are running on Win10+, and
         // `IDWriteFontFace3` requires Win10
         let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-        let Some((font_identifier, font_struct, color_font)) =
-            get_font_identifier_and_font_struct(font_face, &self.locale)
-        else {
-            return Ok(());
-        };
+        let font_face_key = font_face.as_raw().addr();
+        let (font_identifier, font_struct, color_font) =
+            match context.text_system.font_info_cache.entry(font_face_key) {
+                std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                    occupied_entry.into_mut()
+                }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    let Some(info) = get_font_identifier_and_font_struct(font_face, &self.locale)
+                    else {
+                        return Ok(());
+                    };
+                    &*vacant_entry.insert(info)
+                }
+            }
+            .clone();
 
         let font_id = if let Some(id) = context
             .text_system
