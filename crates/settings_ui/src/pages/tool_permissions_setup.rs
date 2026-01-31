@@ -253,7 +253,6 @@ pub(crate) fn render_tool_config_page(
         .child(
             v_flex()
                 .min_w_0()
-                .flex_1()
                 .child(Label::new(page_title).size(LabelSize::Large))
                 .child(
                     Label::new(tool.regex_explanation)
