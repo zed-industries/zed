@@ -77,14 +77,33 @@ pub(crate) fn render_tool_permissions_setup_page(
 ) -> AnyElement {
     let tool_items: Vec<AnyElement> = TOOLS
         .iter()
-        .map(|tool| render_tool_list_item(settings_window, tool, window, cx))
+        .enumerate()
+        .map(|(i, tool)| render_tool_list_item(settings_window, tool, i, window, cx))
         .collect();
 
     let page_description =
         "Configure regex patterns to control which tool actions require confirmation.";
 
+    let scroll_step = px(40.);
+
     v_flex()
         .id("tool-permissions-page")
+        .on_action({
+            let scroll_handle = scroll_handle.clone();
+            move |_: &menu::SelectNext, window, cx| {
+                window.focus_next(cx);
+                let current_offset = scroll_handle.offset();
+                scroll_handle.set_offset(point(current_offset.x, current_offset.y - scroll_step));
+            }
+        })
+        .on_action({
+            let scroll_handle = scroll_handle.clone();
+            move |_: &menu::SelectPrevious, window, cx| {
+                window.focus_prev(cx);
+                let current_offset = scroll_handle.offset();
+                scroll_handle.set_offset(point(current_offset.x, current_offset.y + scroll_step));
+            }
+        })
         .min_w_0()
         .size_full()
         .pt_2p5()
@@ -115,6 +134,7 @@ pub(crate) fn render_tool_permissions_setup_page(
 fn render_tool_list_item(
     _settings_window: &SettingsWindow,
     tool: &'static ToolInfo,
+    tool_index: usize,
     _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -155,6 +175,7 @@ fn render_tool_list_item(
         .child({
             let tool_name = tool.name;
             Button::new(format!("configure-{}", tool.id), "Configure")
+                .tab_index(tool_index as isize)
                 .style(ButtonStyle::OutlinedGhost)
                 .size(ButtonSize::Medium)
                 .icon(IconName::ChevronRight)
