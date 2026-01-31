@@ -357,8 +357,7 @@ impl DisplayMap {
                 old: WrapRow(0)..snapshot.max_point().row(),
                 new: WrapRow(0)..snapshot.max_point().row(),
             }]);
-            self.block_map
-                .read(snapshot.clone(), edits.clone(), None, None);
+            self.block_map.read(snapshot, edits, None, None);
             return;
         };
 
@@ -377,7 +376,7 @@ impl DisplayMap {
 
         let snapshot = self.unfold_intersecting([Anchor::min()..Anchor::max()], true, cx);
 
-        self.companion = Some((companion_display_map.clone(), companion.clone()));
+        self.companion = Some((companion_display_map.clone(), companion));
 
         let companion_wrap_data = companion_display_map
             .update(cx, |dm, cx| dm.sync_through_wrap(cx))
