@@ -10210,7 +10210,7 @@ impl Element for EditorElement {
 
                     self.editor.update(cx, |editor, cx| {
                         if editor.scroll_manager.clamp_scroll_left(scroll_max.x, cx) {
-                            scroll_position.x = editor.scroll_manager.offset(cx).x;
+                            scroll_position.x = scroll_max.x.min(scroll_position.x);
                         }
 
                         if needs_horizontal_autoscroll.0

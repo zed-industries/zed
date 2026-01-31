@@ -436,6 +436,7 @@ impl ScrollManager {
             anchor
         };
 
+        self.scroll_max_x.take();
         self.autoscroll_request.take();
 
         let current = self.anchor.read(cx);
