@@ -70,9 +70,11 @@ pub struct OngoingScroll {
     axis: Option<Axis>,
 }
 
-/// In the side-by-side diff view, we allow either side to set a scroll anchor from its own multibuffer.
+/// In the side-by-side diff view, the two sides share a ScrollAnchor using this struct.
+/// Either side can set a ScrollAnchor that points to its own multibuffer, and we store the ID of the display map
+/// that the last-written anchor came from so that we know how to resolve it to a DisplayPoint.
 ///
-/// We store the entity ID of the display map that matches the anchor, so that we know how to resolve it to a DisplayPoint.
+/// For normal editors, this just acts as a wrapper around a ScrollAnchor.
 #[derive(Clone, Copy, Debug)]
 pub struct SharedScrollAnchor {
     pub scroll_anchor: ScrollAnchor,
@@ -192,6 +194,11 @@ impl ActiveScrollbarState {
 pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: Entity<SharedScrollAnchor>,
+    /// Value to be used for clamping the x component of the SharedScrollAnchor's offset.
+    ///
+    /// We store this outside the SharedScrollAnchor so that the two sides of a side-by-side diff can share
+    /// a horizontal scroll offset that may be out of range for one of the editors (when one side is wider than the other).
+    /// Each side separately clamps the x component using its own scroll_max_x when reading from the SharedScrollAnchor.
     scroll_max_x: Option<f64>,
     ongoing: OngoingScroll,
     /// Number of sticky header lines currently being rendered for the current scroll position.
@@ -277,6 +284,12 @@ impl ScrollManager {
         offset
     }
 
+    /// Get a ScrollAnchor whose `anchor` field is guaranteed to point into the multibuffer for the provided snapshot.
+    ///
+    /// For normal editors, this just retrieves the internal ScrollAnchor and is lossless. When the editor is part of a side-by-side diff,
+    /// we may need to translate the anchor to point to the "native" multibuffer first. That translation is lossy,
+    /// so this method should be used sparingly---if you just need a scroll position or display point, call the appropriate helper method instead,
+    /// since they can losslessly handle the case where the ScrollAnchor was last set from the other side.
     pub fn native_anchor(&self, snapshot: &DisplaySnapshot, cx: &App) -> ScrollAnchor {
         let shared = self.anchor.read(cx);
 
