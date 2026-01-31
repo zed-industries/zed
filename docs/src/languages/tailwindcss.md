@@ -16,7 +16,7 @@ Languages which can be used with Tailwind CSS in Zed:
 - [JavaScript](./javascript.md)
 - [PHP](./php.md#using-the-tailwind-css-language-server-with-php)
 - [Svelte](./svelte.md#using-the-tailwind-css-language-server-with-svelte)
-- [Vue](./vue.md)
+- [Vue](./vue.md#using-the-tailwind-css-language-server-with-vue)
 
 ## Configuration
 
