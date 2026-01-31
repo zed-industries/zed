@@ -2421,6 +2421,7 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -2434,9 +2435,10 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) = ShellBuilder::new(&Shell::Program(shell))
-                    .redirect_stdin_to_dev_null()
-                    .build(Some(command.clone()), &args);
+                let (task_command, task_args) =
+                    ShellBuilder::new(&Shell::Program(shell), is_windows)
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2790,7 +2792,7 @@ mod tests {
         // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
         let (completion_tx, _completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System).build(
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
             &[],
         );

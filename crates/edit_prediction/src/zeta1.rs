@@ -129,6 +129,7 @@ pub(crate) fn request_prediction_with_zeta1(
         .await;
 
         let context_start_offset = context_range.start.to_offset(&snapshot);
+        let context_start_row = context_range.start.row;
         let editable_offset_range = editable_range.to_offset(&snapshot);
 
         let inputs = ZetaPromptInput {
@@ -142,6 +143,7 @@ pub(crate) fn request_prediction_with_zeta1(
             editable_range_in_excerpt: (editable_range.start - context_start_offset)
                 ..(editable_offset_range.end - context_start_offset),
             cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot) - context_start_offset,
+            excerpt_start_row: Some(context_start_row),
         };
 
         if let Some(debug_tx) = &debug_tx {

@@ -62,6 +62,8 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    /// The limit for the number of examples to process
+    /// Default is unlimited for processing local datasets, 5000 when pulling from snowflake
     #[clap(long, global = true)]
     limit: Option<usize>,
     #[clap(long, global = true)]

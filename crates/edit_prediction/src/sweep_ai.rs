@@ -214,6 +214,7 @@ impl SweepAi {
                 // we actually don't know
                 editable_range_in_excerpt: 0..inputs.snapshot.len(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
+                excerpt_start_row: Some(0),
             };
 
             send_started_event(
