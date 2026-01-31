@@ -20111,7 +20111,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
-            map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx)
+            map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx);
         });
         self.folds_did_change(cx);
     }
