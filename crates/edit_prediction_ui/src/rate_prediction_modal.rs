@@ -839,20 +839,21 @@ impl Render for RatePredictionsModal {
                     .border_color(border_color)
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .child(
+                    .child({
+                        let icons = self.ep_store.read(cx).icons();
                         h_flex()
                             .h_8()
                             .px_2()
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
-                            .child(Icon::new(IconName::ZedPredict).size(IconSize::Small))
+                            .child(Icon::new(icons.base).size(IconSize::Small))
                             .child(
                                 Label::new("From most recent to oldest")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
-                            ),
-                    )
+                            )
+                    })
                     .child(
                         div()
                             .id("completion_list")
