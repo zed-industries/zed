@@ -1885,12 +1885,18 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use editor::MultiBufferOffset;
+    use gpui::{TestAppContext, VisualTestContext};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_python};
     use project::{Entry, Project, ProjectPath, Worktree};
+    use serde_json::json;
     use std::path::Path;
+    use std::{ops::Deref, path::Path};
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
+    use util::{path, rel_path::RelPath};
     use workspace::AppState;
+    use workspace::{AppState, OpenOptions, OpenVisible, SendToTerminal};
 
     // Working directory calculation tests
 
@@ -2350,6 +2356,163 @@ mod tests {
                 "Tab should show terminal title, not whitespace; got: '{}'",
                 text
             );
+        });
+    }
+
+    fn python_language() -> Arc<Language> {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Python".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["py".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_python::LANGUAGE.into()),
+        ))
+    }
+
+    #[gpui::test]
+    async fn test_send_to_terminal(cx: &mut TestAppContext) {
+        let params = cx.update(AppState::test);
+        params
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "test.py": ""
+                }),
+            )
+            .await;
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+        cx.update(|cx| editor::init(cx));
+
+        let project = Project::test(params.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
+        cx.run_until_parked();
+
+        let python_lang = python_language();
+
+        project.update(cx, |project, _cx| {
+            project.languages().add(python_lang.clone());
+        });
+        let _res = window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from(path!("/root/test.py"))],
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        let editor = window
+            .update(cx, |workspace, _, cx| {
+                workspace.active_item_as::<Editor>(cx).unwrap()
+            })
+            .unwrap();
+
+        let code = r#"
+            import pandas as pd
+
+            df = pd.read_csv("data.csv")
+            print(df.head())
+
+            df.describe()
+        "#;
+
+        // Editor -> MultiBuffer -> Vec<Buffer>
+        // Buffer -> Text
+
+        window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.set_text(code, window, cx);
+                    editor.buffer().update(cx, |multi_buffer, cx| {
+                        multi_buffer
+                            .as_singleton()
+                            .unwrap()
+                            .update(cx, |buffer, cx| {
+                                buffer.set_language(Some(python_lang.clone()), cx);
+                            });
+                    });
+                })
+            })
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+
+        // Check selection moves to terminal
+        window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        // TODO: I hope this is getting the first 10 characters
+                        s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(10)]);
+                    });
+                })
+            })
+            .unwrap();
+
+        let buffer_text = editor.update(cx, |editor, cx| {
+            editor.buffer().read(cx).snapshot(cx).text()
+        });
+        // TODO: assert selected text
+        assert!(buffer_text.contains("import pandas as pd"));
+        assert!(buffer_text.contains("df.describe()"));
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        // TODO: Send text
+        // I don't think this works
+        cx.dispatch_action(SendToTerminal {
+            append_newline: false,
+        });
+        terminal_view.update(cx, |view, cx| {
+            let text = view.tab_content_text(0, cx);
+            assert!(
+                !text.is_empty() && text.as_ref() != "   ",
+                "Tab should show terminal title, not whitespace; got: '{}'",
+                text
+            );
+            view.terminal().update(cx, |t, _cx| {
+                let text = t.get_content();
+                //dbg!(&text);
+                assert!(
+                    text.contains("import pa"),
+                    "text should be sent, got: '{}'",
+                    text
+                );
+            });
         });
     }
 }
