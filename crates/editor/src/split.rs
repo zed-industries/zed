@@ -527,6 +527,17 @@ impl SplittableEditor {
             dm.set_companion(Some((rhs_display_map.downgrade(), companion)), cx);
         });
 
+        let shared_scroll_anchor = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .scroll_anchor_entity();
+        lhs.editor.update(cx, |editor, _cx| {
+            editor
+                .scroll_manager
+                .set_shared_scroll_anchor(shared_scroll_anchor);
+        });
+
         let this = cx.entity().downgrade();
         self.rhs_editor.update(cx, |editor, _cx| {
             let this = this.clone();
@@ -836,6 +847,16 @@ impl SplittableEditor {
         };
         self.panes.remove(&lhs.pane, cx).unwrap();
         self.rhs_editor.update(cx, |rhs, cx| {
+            let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
+            let native_anchor = rhs.scroll_manager.anchor(&rhs_snapshot, cx);
+            let rhs_display_map_id = rhs_snapshot.display_map_id;
+            rhs.scroll_manager
+                .scroll_anchor_entity()
+                .update(cx, |shared, _| {
+                    shared.scroll_anchor = native_anchor;
+                    shared.display_map_id = Some(rhs_display_map_id);
+                });
+
             rhs.set_on_local_selections_changed(None);
             rhs.set_delegate_expand_excerpts(false);
             rhs.buffer().update(cx, |buffer, cx| {
