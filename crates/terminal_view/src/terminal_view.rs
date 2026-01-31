@@ -2489,9 +2489,25 @@ df.describe()
         assert!(buffer_text.contains("import pandas as pd"));
         assert!(buffer_text.contains("df.describe()"));
         assert!(selected_text.eq("import pa"));
-        // Sends event with newline false
+        // I'm going to send three events. One with newline and two without.
+        // the terminal should then contain "import pa/nimport paimportpa".
+        // and we'll know both work
         window
             .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: true,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: false,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
                 window.dispatch_action(
                     SendToTerminal {
                         append_newline: false,
@@ -2513,12 +2529,11 @@ df.describe()
                 .unwrap()
                 .downcast::<TerminalView>()
                 .unwrap();
-            // TODO: The problem here is that because the terminal contains a bunch of newlines, it's hard to tell if a newline is injected when we ask it to be
             terminal_view.update(cx, |view, cx| {
                 view.terminal().update(cx, |t, _cx| {
                     let text = t.get_content();
                     assert!(
-                        text.contains("import pa"),
+                        text.contains("import pa\nimport paimport pa"),
                         "text should be sent, got: '{}'",
                         text
                     );
