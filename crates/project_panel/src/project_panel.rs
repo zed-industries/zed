@@ -1097,7 +1097,7 @@ impl ProjectPanel {
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
-            let has_git_repo = !is_dir && {
+            let has_git_repo = {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
@@ -1171,7 +1171,9 @@ impl ProjectPanel {
                                         "Add to .gitignore",
                                         Box::new(git::AddToGitignore),
                                     )
-                                    .action("View File History", Box::new(git::FileHistory))
+                                    .when(!is_dir, |menu| {
+                                        menu.action("View File History", Box::new(git::FileHistory))
+                                    })
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -2185,6 +2187,8 @@ impl ProjectPanel {
     ) {
         maybe!({
             let selection = self.state.selection?;
+            let (_, entry) = self.selected_sub_entry(cx)?;
+            let is_dir = entry.is_dir();
             let project = self.project.read(cx);
 
             let project_path = project.path_for_entry(selection.entry_id, cx)?;
@@ -2199,7 +2203,12 @@ impl ProjectPanel {
 
             cx.spawn(async move |panel, cx| {
                 let result: anyhow::Result<()> = async {
-                    let file_path_str = repo_path.as_ref().display(PathStyle::Posix);
+                    let path_display = repo_path.as_ref().display(PathStyle::Posix);
+                    let file_path_str = if is_dir {
+                        format!("{}/", path_display)
+                    } else {
+                        path_display.to_string()
+                    };
 
                     let repo_root = repository.read_with(cx, |repository, _| {
                         repository.snapshot().work_directory_abs_path
