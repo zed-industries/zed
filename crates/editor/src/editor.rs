@@ -25292,7 +25292,7 @@ fn comment_delimiter_for_newline(
         let block_start_trimmed = block_start.trim_end();
         if block_start_trimmed.starts_with(delimiter.trim_end()) {
             let line_content = snapshot
-                .chars_for_range(range)
+                .chars_for_range(range.clone())
                 .skip(num_of_whitespaces)
                 .take(block_start_trimmed.len())
                 .collect::<String>();
@@ -25306,6 +25306,21 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
+        // The REPL cell separator (e.g. '# %%') should not trigger comment auto-continuation
+        let jupytext_prefixes: Vec<String> = delimiters.iter().map(|d| format!("{d}%%")).collect();
+
+        let line_content_after_indent: String = snapshot
+            .chars_for_range(range)
+            .skip(num_of_whitespaces)
+            .collect();
+
+        if jupytext_prefixes
+            .iter()
+            .any(|prefix| line_content_after_indent.starts_with(prefix))
+        {
+            return None;
+        }
+
         Some(delimiter.clone())
     } else {
         None
