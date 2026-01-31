@@ -541,6 +541,10 @@ impl DisplayMap {
     /// Creates folds for the given creases.
     #[instrument(skip_all)]
     pub fn fold<T: Clone + ToOffset>(&mut self, creases: Vec<Crease<T>>, cx: &mut Context<Self>) {
+        if self.companion().is_some() {
+            return;
+        }
+
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
