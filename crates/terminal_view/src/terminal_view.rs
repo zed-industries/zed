@@ -1885,7 +1885,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, WindowHandle};
     use language::{Language, LanguageConfig, LanguageMatcher, PointUtf16, tree_sitter_python};
     use project::{Entry, Project, ProjectPath, Worktree};
     use serde_json::json;
@@ -2065,17 +2065,23 @@ mod tests {
     /// Creates a worktree with 1 file: /root.txt
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
+        let (project, workspace, _) = init_test_with_fs(cx, params).await;
+        (project, workspace)
+    }
+
+    pub async fn init_test_with_fs(
+        cx: &mut TestAppContext,
+        params: Arc<AppState>,
+    ) -> (Entity<Project>, Entity<Workspace>, WindowHandle<Workspace>) {
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let workspace = cx
-            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root(cx)
-            .unwrap();
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
 
-        (project, workspace)
+        (project, workspace, window)
     }
 
     /// Creates a worktree with 1 folder: /root{suffix}/
@@ -2373,7 +2379,6 @@ mod tests {
     #[gpui::test]
     async fn test_send_to_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-
         let params = cx.update(AppState::test);
         params
             .fs
@@ -2385,15 +2390,12 @@ mod tests {
                 }),
             )
             .await;
+
         cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
         });
-
-        let project = Project::test(params.fs.clone(), [path!("/root").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
+        let (project, _workspace, window) = init_test_with_fs(cx, params).await;
         let python_lang = python_language();
         project.update(cx, |project, _cx| {
             project.languages().add(python_lang.clone());
@@ -2439,7 +2441,6 @@ print(df.head())
 
 df.describe()
 "#;
-
         let editor = window
             .update(cx, |workspace, _, cx| {
                 workspace.active_item_as::<Editor>(cx).unwrap()
