@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
 use smol::{fs, io::AsyncReadExt};
+use std::fmt;
 use std::mem;
 use std::{
     env::{
@@ -385,18 +386,19 @@ impl AutoUpdater {
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
-                    this.status = match check_type {
-                        // Be quiet if the check was automated (e.g. when offline)
-                        UpdateCheckType::Automatic => {
-                            log::info!("auto-update check failed: error:{:?}", error);
-                            AutoUpdateStatus::Idle
+                    let should_surface = match check_type {
+                        UpdateCheckType::Automatic => Self::should_surface_error(&error),
+                        UpdateCheckType::Manual => true,
+                    };
+
+                    this.status = if should_surface {
+                        log::error!("auto-update failed: error:{:?}", error);
+                        AutoUpdateStatus::Errored {
+                            error: Arc::new(error),
                         }
-                        UpdateCheckType::Manual => {
-                            log::error!("auto-update failed: error:{:?}", error);
-                            AutoUpdateStatus::Errored {
-                                error: Arc::new(error),
-                            }
-                        }
+                    } else {
+                        log::info!("auto-update check failed: error:{:?}", error);
+                        AutoUpdateStatus::Idle
                     };
 
                     cx.notify();
@@ -705,6 +707,10 @@ impl AutoUpdater {
         Ok(())
     }
 
+    fn should_surface_error(error: &anyhow::Error) -> bool {
+        error.downcast_ref::<ReadOnlyVolumeError>().is_some()
+    }
+
     async fn target_path(installer_dir: &InstallerDir) -> Result<PathBuf> {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
@@ -941,12 +947,50 @@ async fn install_release_linux(
     Ok(Some(to.join(expected_suffix)))
 }
 
+#[derive(Debug)]
+struct ReadOnlyVolumeError;
+
+impl fmt::Display for ReadOnlyVolumeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "Zed is running from a read-only volume. Move Zed to /Applications and try again.",
+        )
+    }
+}
+
+impl std::error::Error for ReadOnlyVolumeError {}
+
+fn is_read_only_volume(path: &Path) -> Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+        let path = CString::new(path.as_os_str().as_bytes())
+            .context("failed to convert app path to C string")?;
+        let mut filesystem_status = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        let result = unsafe { libc::statfs(path.as_ptr(), filesystem_status.as_mut_ptr()) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error()).context("failed to stat app filesystem");
+        }
+        let filesystem_status = unsafe { filesystem_status.assume_init() };
+        Ok((filesystem_status.f_flags & libc::MNT_RDONLY as u32) != 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Ok(false)
+    }
+}
+
 async fn install_release_macos(
     temp_dir: &InstallerDir,
     downloaded_dmg: PathBuf,
     cx: &AsyncApp,
 ) -> Result<Option<PathBuf>> {
     let running_app_path = cx.update(|cx| cx.app_path())?;
+    if is_read_only_volume(&running_app_path)? {
+        return Err(ReadOnlyVolumeError.into());
+    }
     let running_app_filename = running_app_path
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
