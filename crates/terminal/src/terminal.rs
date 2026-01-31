@@ -2220,15 +2220,10 @@ impl Terminal {
     }
 
     fn shell_process_name(&self) -> Option<String> {
-        self.template
-            .shell
-            .shell_kind()
-            .map(|kind| kind.name().to_string())
-            .or_else(|| {
-                Path::new(&self.template.shell.program())
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
+        let program_name = Path::new(&self.template.shell.program())
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        program_name.or_else(|| Some(self.template.shell.shell_kind(cfg!(windows)).to_string()))
     }
 
     fn normalize_process_name(name: &str) -> String {
