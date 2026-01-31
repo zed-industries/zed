@@ -286,7 +286,7 @@ impl Render for MultiWorkspace {
                             app_state.languages.clone(),
                             app_state.fs.clone(),
                             None,
-                            true,
+                            project::LocalProjectFlags::default(),
                             cx,
                         );
                         let new_workspace =

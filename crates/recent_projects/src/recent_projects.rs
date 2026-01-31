@@ -236,6 +236,7 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let app_state = workspace.app_state().clone();
             let replace_window = window.window_handle().downcast::<MultiWorkspace>();
+            let is_local = workspace.project().read(cx).is_local();
 
             let Some(context) = DevContainerContext::from_workspace(workspace, cx) else {
                 log::error!("No active project directory for Dev Container");
@@ -243,6 +244,17 @@ pub fn init(cx: &mut App) {
             };
 
             cx.spawn_in(window, async move |_, mut cx| {
+                if !is_local {
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Cannot open Dev Container from remote project",
+                        None,
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                    return;
+                }
                 let (connection, starting_dir) = match start_dev_container(context).await {
                     Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {

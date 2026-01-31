@@ -19,6 +19,7 @@ test-support = [
     "http_client/test-support",
     "db/test-support",
     "project/test-support",
+    "remote/test-support",
     "session/test-support",
     "settings/test-support",
     "gpui/test-support",

@@ -12,6 +12,7 @@ use std::{
 use async_trait::async_trait;
 use collections::HashMap;
 use fs::Fs;
+use futures::future::BoxFuture;
 use gpui::{App, AsyncApp, SharedString};
 use settings::WorktreeId;
 use task::ShellKind;
@@ -113,7 +114,12 @@ pub trait ToolchainLister: Send + Sync + 'static {
         fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain>;
 
-    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String>;
+    fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        cx: &App,
+    ) -> BoxFuture<'static, Vec<String>>;
 
     /// Returns various "static" bits of information about this toolchain lister. This function should be pure.
     fn meta(&self) -> ToolchainMetadata;

@@ -5,19 +5,9 @@ title: Zed Editor Git integration documentation
 
 # Git
 
-Zed currently offers a set of fundamental Git features, with support coming in the future for more advanced ones, like conflict resolution tools, line by line staging, and more.
+Zed has built-in Git support that lets you manage version control without leaving the editor. The Git Panel shows your working tree state, staging area, and branch information. Changes you make on the command line are reflected immediately in Zed.
 
-Here's an overview of all currently supported features:
-
-- Committing
-- Staging, pushing, pulling, and fetching
-- Project Diff: A multibuffer view of all changes
-- Diff indicators in buffers and editor scrollbars
-- Inline diff toggle and reverts in the editor for unstaged changes
-- Git status in the Project Panel
-- Branch creating and switching
-- Git blame viewing
-- Git stash pop, apply, drop and view
+For operations that Zed doesn't support natively, you can use the integrated terminal.
 
 ## Git Panel
 
@@ -25,26 +15,36 @@ The Git Panel gives you a birds-eye view of the state of your working tree and o
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
-In the panel you can see the state of your project at a glance—which repository and branch are active, what files have changed and the current staging state of each file.
+In the panel you can see the state of your project at a glance: which repository and branch are active, what files have changed and the current staging state of each file.
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
 ### Configuration
 
-You can configure how Zed hard wraps commit messages with the `preferred-line-length` setting of the "Git Commit" language. The default is `72`, but it can be set to any number of characters `0` or more.
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) to customize Git behavior. Settings are spread across two pages:
 
-The Git Panel also allows configuring the `soft_wrap` setting to adjust how commit messages display while you are typing them in the Git Panel. The default setting is `editor_width`, however, `none`, `preferred_line_length`, and `bounded` are also options.
+- **Panels > Git Panel**: Panel position, tree vs flat view, status display style
+- **Version Control**: Gutter indicators, inline blame, hunk styles
 
-#### Example
+#### Moving the Git Panel
 
-```json
-"languages": {
-  "Git Commit": {
-    "soft_wrap": "editor_width",
-    "preferred_line_length": 72
-  },
-}
-```
+By default, the Git Panel docks on the left. Go to **Panels > Git Panel** and change **Git Panel Dock** to move it to the right or bottom.
+
+#### Switching to Tree View
+
+The Git Panel shows a flat list of changed files by default. To see files organized by folder hierarchy instead, toggle **Tree View** in the panel's context menu, or enable it in **Panels > Git Panel**.
+
+#### Inline Blame
+
+Zed shows Git blame information on the current line. To turn this off or add a delay before it appears, go to **Version Control > Inline Git Blame**.
+
+#### Hiding the Gutter Indicators
+
+The colored bars in the gutter that show added, modified, and deleted lines can be hidden. Go to **Version Control > Git Gutter** and set **Visibility** to "Hide".
+
+#### Commit Message Line Length
+
+Zed wraps commit messages at 72 characters (a Git convention). To change this, search for "Git Commit" in Settings and adjust **Preferred Line Length**.
 
 ## Project Diff
 
@@ -54,11 +54,50 @@ All of the changes displayed in the Project Diff behave exactly the same as any 
 
 You can stage or unstage each hunk as well as a whole file by hitting the buttons on the tab bar or their corresponding keybindings.
 
-<!-- Add media -->
+### Word Diff Highlighting
 
-## Fetch, push, and pull
+By default, Zed highlights changed words within modified lines to make it easier to spot exactly what changed. To disable this globally, open the Settings Editor and go to **Languages & Tools > Miscellaneous**, then turn off **Word Diff Enabled**.
+
+To disable word diff for specific languages only, add this to your settings.json:
+
+```json
+{
+  "languages": {
+    "Markdown": {
+      "word_diff_enabled": false
+    }
+  }
+}
+```
+
+## File History
+
+File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.
+
+To open File History:
+
+- Right-click on a file in the Project Panel and select "Open File History"
+- Right-click on a file in the Git Panel and select "Open File History"
+- Right-click on an editor tab and select "Open File History"
+- Use the Command Palette and search for "file history"
+
+## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
+
+### Push Configuration
+
+Zed respects Git's push configuration. When pushing, Zed checks the following in order:
+
+1. `pushRemote` configured for the current branch
+2. `remote.pushDefault` in your Git config
+3. The branch's tracking remote
+
+This matches Git's standard behavior, so if you've configured `pushRemote` or `pushDefault` in your `.gitconfig` or via `git config`, Zed will use those settings.
+
+## Remotes
+
+When your repository has multiple remotes, Zed shows a remote selector in the Git Panel. Click the remote button next to push/pull to choose which remote to use for that operation.
 
 ## Staging Workflow
 
@@ -98,6 +137,41 @@ By default, Zed sets the commit line length to `72` but it can be configured in 
 
 Find more information about setting the `preferred-line-length` in the [Configuration](#configuration) section.
 
+## Branch Management
+
+### Creating and Switching Branches
+
+Create a new branch using {#action git::Branch} or switch to an existing branch using {#action git::Switch} or {#action git::CheckoutBranch}.
+
+### Deleting Branches
+
+To delete a branch, open the branch switcher with {#action git::Switch}, find the branch you want to delete, and use the delete option. Zed will confirm before deleting to prevent accidental data loss.
+
+> **Note:** You cannot delete the branch you currently have checked out. Switch to a different branch first.
+
+## Merge Conflicts
+
+When you encounter merge conflicts after a merge, rebase, or pull, Zed highlights the conflicting regions in your files and displays resolution buttons above each conflict.
+
+### Viewing Conflicts
+
+Conflicting files appear in the Git Panel with a warning icon. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
+
+- Changes from your current branch are highlighted in green
+- Changes from the incoming branch are highlighted in blue
+
+### Resolving Conflicts
+
+Each conflict shows three buttons:
+
+- **Use [branch-name]**: Keep the changes from one branch (shows the actual branch name, like "main")
+- **Use [other-branch]**: Keep the changes from the other branch (like "feature-branch")
+- **Use Both**: Keep both sets of changes, with your branch's changes first
+
+Click a button to resolve that conflict. The conflict markers are removed and replaced with your chosen content. After resolving all conflicts in a file, stage it and commit to complete the merge.
+
+> **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
+
 ## Stashing
 
 Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
@@ -108,7 +182,7 @@ To stash all your current changes, use the {#action git::StashAll} action. This 
 
 ### Managing Stashes
 
-Zed provides a comprehensive stash picker accessible via {#action git::ViewStash}. From the stash picker, you can:
+Zed provides a stash picker accessible via {#action git::ViewStash} or from the Git Panel's overflow menu. From the stash picker, you can:
 
 - **View stash list**: Browse all your saved stashes with their descriptions and timestamps
 - **Open diffs**: See exactly what changes are stored in each stash
@@ -125,13 +199,13 @@ For faster workflows, Zed provides direct actions to work with the most recent s
 
 ### Stash Diff View
 
-When viewing a specific stash in the diff view, you have additional options available through the interface:
+To view a stash's contents, select it in the stash picker and press {#kb stash_picker::ShowStashItem}. From the diff view, you can use these keybindings:
 
-- Apply the current stash to your working directory
-- Pop the current stash (apply and remove)
-- Remove the stash without applying changes
-
-To open the stash diff view, select a stash from the stash picker and use the {#action stash_picker::ShowStashItem} ({#kb stash_picker::ShowStashItem}) keybinding.
+| Action                               | Keybinding                   |
+| ------------------------------------ | ---------------------------- |
+| Apply stash                          | {#kb git::ApplyCurrentStash} |
+| Pop stash (apply and remove)         | {#kb git::PopCurrentStash}   |
+| Drop stash (remove without applying) | {#kb git::DropCurrentStash}  |
 
 ## AI Support in Git
 
@@ -173,6 +247,8 @@ Zed currently supports links to the hosted versions of
 [SourceHut](https://sr.ht) and
 [Codeberg](https://codeberg.org).
 
+### Self-Hosted Instances
+
 For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
 
 ```json [settings]
@@ -186,6 +262,10 @@ For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hos
   ]
 }
 ```
+
+Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` field is optional and used for display purposes.
+
+### Permalinks
 
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.

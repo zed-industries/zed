@@ -204,7 +204,7 @@ Alternatively, you can configure the proxy in the remote machine's `~/.config/ze
 }
 ```
 
-See the [proxy documentation](./configuring-zed.md#network-proxy) for supported proxy types and additional configuration options.
+See the [proxy documentation](./reference/all-settings.md#network-proxy) for supported proxy types and additional configuration options.
 
 ## Initializing the remote server
 

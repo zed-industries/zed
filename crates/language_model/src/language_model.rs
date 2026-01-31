@@ -591,6 +591,11 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// Whether this model supports extended thinking.
+    fn supports_thinking(&self) -> bool {
+        false
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 

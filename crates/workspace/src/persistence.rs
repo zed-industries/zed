@@ -281,6 +281,25 @@ impl From<WindowBoundsJson> for WindowBounds {
     }
 }
 
+const DEFAULT_DOCK_STATE_KEY: &str = "default_dock_state";
+
+pub fn read_default_dock_state() -> Option<DockStructure> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(DEFAULT_DOCK_STATE_KEY)
+        .log_err()
+        .flatten()?;
+
+    serde_json::from_str::<DockStructure>(&json_str).ok()
+}
+
+pub async fn write_default_dock_state(docks: DockStructure) -> anyhow::Result<()> {
+    let json_str = serde_json::to_string(&docks)?;
+    KEY_VALUE_STORE
+        .write_kvp(DEFAULT_DOCK_STATE_KEY.to_string(), json_str)
+        .await?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Breakpoint {
     pub position: u32,
@@ -924,6 +943,12 @@ impl WorkspaceDb {
         // doesn't affect the workspace selection for existing workspaces
         let root_paths = PathList::new(worktree_roots);
 
+        // Empty workspaces cannot be matched by paths (all empty workspaces have paths = "").
+        // They should only be restored via workspace_for_id during session restoration.
+        if root_paths.is_empty() && remote_connection_id.is_none() {
+            return None;
+        }
+
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
         let (
@@ -988,6 +1013,96 @@ impl WorkspaceDb {
             order: paths_order,
         });
 
+        let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
+            self.remote_connection(remote_connection_id)
+                .context("Get remote connection")
+                .log_err()
+        } else {
+            None
+        };
+
+        Some(SerializedWorkspace {
+            id: workspace_id,
+            location: match remote_connection_options {
+                Some(options) => SerializedWorkspaceLocation::Remote(options),
+                None => SerializedWorkspaceLocation::Local,
+            },
+            paths,
+            center_group: self
+                .get_center_pane_group(workspace_id)
+                .context("Getting center group")
+                .log_err()?,
+            window_bounds,
+            centered_layout: centered_layout.unwrap_or(false),
+            display,
+            docks,
+            session_id: None,
+            breakpoints: self.breakpoints(workspace_id),
+            window_id,
+            user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+        })
+    }
+
+    /// Returns the workspace with the given ID, loading all associated data.
+    pub(crate) fn workspace_for_id(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<SerializedWorkspace> {
+        let (
+            paths,
+            paths_order,
+            window_bounds,
+            display,
+            centered_layout,
+            docks,
+            window_id,
+            remote_connection_id,
+        ): (
+            String,
+            String,
+            Option<SerializedWindowBounds>,
+            Option<Uuid>,
+            Option<bool>,
+            DockStructure,
+            Option<u64>,
+            Option<i32>,
+        ) = self
+            .select_row_bound(sql! {
+                SELECT
+                    paths,
+                    paths_order,
+                    window_state,
+                    window_x,
+                    window_y,
+                    window_width,
+                    window_height,
+                    display,
+                    centered_layout,
+                    left_dock_visible,
+                    left_dock_active_panel,
+                    left_dock_zoom,
+                    right_dock_visible,
+                    right_dock_active_panel,
+                    right_dock_zoom,
+                    bottom_dock_visible,
+                    bottom_dock_active_panel,
+                    bottom_dock_zoom,
+                    window_id,
+                    remote_connection_id
+                FROM workspaces
+                WHERE workspace_id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id))
+            .context("No workspace found for id")
+            .warn_on_err()
+            .flatten()?;
+
+        let paths = PathList::deserialize(&SerializedPathList {
+            paths,
+            order: paths_order,
+        });
+
+        let remote_connection_id = remote_connection_id.map(|id| RemoteConnectionId(id as u64));
         let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
             self.remote_connection(remote_connection_id)
                 .context("Get remote connection")
@@ -1215,19 +1330,24 @@ impl WorkspaceDb {
                     }
                 }
 
-                conn.exec_bound(sql!(
-                    DELETE
-                    FROM workspaces
-                    WHERE
-                        workspace_id != ?1 AND
-                        paths IS ?2 AND
-                        remote_connection_id IS ?3
-                ))?((
-                    workspace.id,
-                    paths.paths.clone(),
-                    remote_connection_id,
-                ))
-                .context("clearing out old locations")?;
+                // Clear out old workspaces with the same paths.
+                // Skip this for empty workspaces - they are identified by workspace_id, not paths.
+                // Multiple empty workspaces with different content should coexist.
+                if !paths.paths.is_empty() {
+                    conn.exec_bound(sql!(
+                        DELETE
+                        FROM workspaces
+                        WHERE
+                            workspace_id != ?1 AND
+                            paths IS ?2 AND
+                            remote_connection_id IS ?3
+                    ))?((
+                        workspace.id,
+                        paths.paths.clone(),
+                        remote_connection_id,
+                    ))
+                    .context("clearing out old locations")?;
+                }
 
                 // Upsert
                 let query = sql!(
@@ -1446,23 +1566,33 @@ impl WorkspaceDb {
     fn session_workspaces(
         &self,
         session_id: String,
-    ) -> Result<Vec<(PathList, Option<u64>, Option<RemoteConnectionId>)>> {
+    ) -> Result<
+        Vec<(
+            WorkspaceId,
+            PathList,
+            Option<u64>,
+            Option<RemoteConnectionId>,
+        )>,
+    > {
         Ok(self
             .session_workspaces_query(session_id)?
             .into_iter()
-            .map(|(paths, order, window_id, remote_connection_id)| {
-                (
-                    PathList::deserialize(&SerializedPathList { paths, order }),
-                    window_id,
-                    remote_connection_id.map(RemoteConnectionId),
-                )
-            })
+            .map(
+                |(workspace_id, paths, order, window_id, remote_connection_id)| {
+                    (
+                        WorkspaceId(workspace_id),
+                        PathList::deserialize(&SerializedPathList { paths, order }),
+                        window_id,
+                        remote_connection_id.map(RemoteConnectionId),
+                    )
+                },
+            )
             .collect())
     }
 
     query! {
-        fn session_workspaces_query(session_id: String) -> Result<Vec<(String, String, Option<u64>, Option<u64>)>> {
-            SELECT paths, paths_order, window_id, remote_connection_id
+        fn session_workspaces_query(session_id: String) -> Result<Vec<(i64, String, String, Option<u64>, Option<u64>)>> {
+            SELECT workspace_id, paths, paths_order, window_id, remote_connection_id
             FROM workspaces
             WHERE session_id = ?1
             ORDER BY timestamp DESC
@@ -1625,13 +1755,10 @@ impl WorkspaceDb {
         Ok(result)
     }
 
-    pub async fn last_workspace(&self) -> Result<Option<(SerializedWorkspaceLocation, PathList)>> {
-        Ok(self
-            .recent_workspaces_on_disk()
-            .await?
-            .into_iter()
-            .next()
-            .map(|(_, location, paths)| (location, paths)))
+    pub async fn last_workspace(
+        &self,
+    ) -> Result<Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+        Ok(self.recent_workspaces_on_disk().await?.into_iter().next())
     }
 
     // Returns the locations of the workspaces that were still opened when the last
@@ -1642,17 +1769,26 @@ impl WorkspaceDb {
         &self,
         last_session_id: &str,
         last_session_window_stack: Option<Vec<WindowId>>,
-    ) -> Result<Vec<(SerializedWorkspaceLocation, PathList)>> {
+    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
         let mut workspaces = Vec::new();
 
-        for (paths, window_id, remote_connection_id) in
+        for (workspace_id, paths, window_id, remote_connection_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
             if let Some(remote_connection_id) = remote_connection_id {
                 workspaces.push((
+                    workspace_id,
                     SerializedWorkspaceLocation::Remote(
                         self.remote_connection(remote_connection_id)?,
                     ),
+                    paths,
+                    window_id.map(WindowId::from),
+                ));
+            } else if paths.is_empty() {
+                // Empty workspace with items (drafts, files) - include for restoration
+                workspaces.push((
+                    workspace_id,
+                    SerializedWorkspaceLocation::Local,
                     paths,
                     window_id.map(WindowId::from),
                 ));
@@ -1660,6 +1796,7 @@ impl WorkspaceDb {
                 && paths.paths().iter().any(|path| path.is_dir())
             {
                 workspaces.push((
+                    workspace_id,
                     SerializedWorkspaceLocation::Local,
                     paths,
                     window_id.map(WindowId::from),
@@ -1668,7 +1805,7 @@ impl WorkspaceDb {
         }
 
         if let Some(stack) = last_session_window_stack {
-            workspaces.sort_by_key(|(_, _, window_id)| {
+            workspaces.sort_by_key(|(_, _, _, window_id)| {
                 window_id
                     .and_then(|id| stack.iter().position(|&order_id| order_id == id))
                     .unwrap_or(usize::MAX)
@@ -1677,7 +1814,7 @@ impl WorkspaceDb {
 
         Ok(workspaces
             .into_iter()
-            .map(|(location, paths, _)| (location, paths))
+            .map(|(workspace_id, location, paths, _)| (workspace_id, location, paths))
             .collect::<Vec<_>>())
     }
 
@@ -2852,26 +2989,31 @@ mod tests {
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, PathList::new(&["/tmp2"]));
-        assert_eq!(locations[0].1, Some(20));
-        assert_eq!(locations[1].0, PathList::new(&["/tmp1"]));
-        assert_eq!(locations[1].1, Some(10));
+        assert_eq!(locations[0].0, WorkspaceId(2));
+        assert_eq!(locations[0].1, PathList::new(&["/tmp2"]));
+        assert_eq!(locations[0].2, Some(20));
+        assert_eq!(locations[1].0, WorkspaceId(1));
+        assert_eq!(locations[1].1, PathList::new(&["/tmp1"]));
+        assert_eq!(locations[1].2, Some(10));
 
         let locations = db.session_workspaces("session-id-2".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].0, PathList::default());
-        assert_eq!(locations[0].1, Some(50));
-        assert_eq!(locations[0].2, Some(connection_id));
-        assert_eq!(locations[1].0, PathList::new(&["/tmp3"]));
-        assert_eq!(locations[1].1, Some(30));
+        assert_eq!(locations[0].0, WorkspaceId(5));
+        assert_eq!(locations[0].1, PathList::default());
+        assert_eq!(locations[0].2, Some(50));
+        assert_eq!(locations[0].3, Some(connection_id));
+        assert_eq!(locations[1].0, WorkspaceId(3));
+        assert_eq!(locations[1].1, PathList::new(&["/tmp3"]));
+        assert_eq!(locations[1].2, Some(30));
 
         let locations = db.session_workspaces("session-id-3".to_owned()).unwrap();
         assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].0, WorkspaceId(6));
         assert_eq!(
-            locations[0].0,
+            locations[0].1,
             PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
         );
-        assert_eq!(locations[0].1, Some(60));
+        assert_eq!(locations[0].2, Some(60));
     }
 
     fn default_workspace<P: AsRef<Path>>(
@@ -2949,26 +3091,32 @@ mod tests {
             locations,
             [
                 (
+                    WorkspaceId(4),
                     SerializedWorkspaceLocation::Local,
                     PathList::new(&[dir4.path()])
                 ),
                 (
+                    WorkspaceId(3),
                     SerializedWorkspaceLocation::Local,
                     PathList::new(&[dir3.path()])
                 ),
                 (
+                    WorkspaceId(2),
                     SerializedWorkspaceLocation::Local,
                     PathList::new(&[dir2.path()])
                 ),
                 (
+                    WorkspaceId(1),
                     SerializedWorkspaceLocation::Local,
                     PathList::new(&[dir1.path()])
                 ),
                 (
+                    WorkspaceId(5),
                     SerializedWorkspaceLocation::Local,
                     PathList::new(&[dir1.path(), dir2.path(), dir3.path()])
                 ),
                 (
+                    WorkspaceId(6),
                     SerializedWorkspaceLocation::Local,
                     PathList::new(&[dir4.path(), dir3.path(), dir2.path()])
                 ),
@@ -3045,6 +3193,7 @@ mod tests {
         assert_eq!(
             have[0],
             (
+                WorkspaceId(4),
                 SerializedWorkspaceLocation::Remote(remote_connections[3].clone()),
                 PathList::default()
             )
@@ -3052,6 +3201,7 @@ mod tests {
         assert_eq!(
             have[1],
             (
+                WorkspaceId(3),
                 SerializedWorkspaceLocation::Remote(remote_connections[2].clone()),
                 PathList::default()
             )
@@ -3059,6 +3209,7 @@ mod tests {
         assert_eq!(
             have[2],
             (
+                WorkspaceId(2),
                 SerializedWorkspaceLocation::Remote(remote_connections[1].clone()),
                 PathList::default()
             )
@@ -3066,6 +3217,7 @@ mod tests {
         assert_eq!(
             have[3],
             (
+                WorkspaceId(1),
                 SerializedWorkspaceLocation::Remote(remote_connections[0].clone()),
                 PathList::default()
             )
@@ -3386,8 +3538,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Retrieve it using empty paths
-        let retrieved = db.workspace_for_roots(empty_paths).unwrap();
+        // Empty workspaces cannot be retrieved by paths (they'd all match).
+        // They must be retrieved by workspace_id.
+        assert!(db.workspace_for_roots(empty_paths).is_none());
+
+        // Retrieve using workspace_for_id instead
+        let retrieved = db.workspace_for_id(id).unwrap();
 
         // Verify window bounds were persisted
         assert_eq!(retrieved.id, id);

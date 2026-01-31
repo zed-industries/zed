@@ -124,12 +124,32 @@ function BuildZedAndItsFriends {
     Copy-Item -Path ".\$CargoOutDir\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
 }
 
+function BuildRemoteServer {
+    Write-Output "Building remote_server for $target"
+    cargo build --release --package remote_server --target $target
+
+    # Create zipped remote server binary
+    $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
+
+    if ($env:CI) {
+        Write-Output "Code signing remote_server.exe"
+        & "$innoDir\sign.ps1" $remoteServerSrc
+    }
+
+    $remoteServerDst = "$env:ZED_WORKSPACE\target\zed-remote-server-windows-$Architecture.zip"
+    Write-Output "Compressing remote_server to $remoteServerDst"
+    Compress-Archive -Path $remoteServerSrc -DestinationPath $remoteServerDst -Force
+
+    Write-Output "Remote server compressed successfully"
+}
+
 function ZipZedAndItsFriendsDebug {
     $items = @(
         ".\$CargoOutDir\zed.pdb",
         ".\$CargoOutDir\cli.pdb",
         ".\$CargoOutDir\auto_update_helper.pdb",
-        ".\$CargoOutDir\explorer_command_injector.pdb"
+        ".\$CargoOutDir\explorer_command_injector.pdb",
+        ".\$CargoOutDir\remote_server.pdb"
     )
 
     Compress-Archive -Path $items -DestinationPath ".\$CargoOutDir\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip" -Force
@@ -352,6 +372,7 @@ CheckEnvironmentVariables
 PrepareForBundle
 GenerateLicenses
 BuildZedAndItsFriends
+BuildRemoteServer
 MakeAppx
 SignZedAndItsFriends
 ZipZedAndItsFriendsDebug

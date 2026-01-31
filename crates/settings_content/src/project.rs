@@ -199,6 +199,18 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `true`
     pub button: Option<bool>,
+    /// Settings for language server notifications
+    pub notifications: Option<LspNotificationSettingsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LspNotificationSettingsContent {
+    /// Timeout in milliseconds for automatically dismissing language server notifications.
+    /// Set to 0 to disable auto-dismiss.
+    ///
+    /// Default: 5000
+    pub dismiss_timeout_ms: Option<u64>,
 }
 
 #[with_fallible_options]
@@ -514,6 +526,8 @@ pub struct DiagnosticsSettingsContent {
     pub button: Option<bool>,
 
     /// Whether or not to include warning diagnostics.
+    ///
+    /// Default: true
     pub include_warnings: Option<bool>,
 
     /// Settings for using LSP pull diagnostics mechanism in Zed.

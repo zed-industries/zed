@@ -285,9 +285,11 @@ impl EditorconfigStore {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let config_path = dir_path.join(EDITORCONFIG_NAME);
-        let mut config_rx = watch_config_file(cx.background_executor(), fs, config_path);
+        let (mut config_rx, watcher_task) =
+            watch_config_file(cx.background_executor(), fs, config_path);
 
         cx.spawn(async move |this, cx| {
+            let _watcher_task = watcher_task;
             while let Some(content) = config_rx.next().await {
                 let content = Some(content).filter(|c| !c.is_empty());
                 let dir_path = dir_path.clone();

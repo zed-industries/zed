@@ -1,4 +1,5 @@
 use crate::prediction::EditPredictionResult;
+use crate::zeta1::compute_edits;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
@@ -34,6 +35,7 @@ pub fn request_prediction_with_zeta2(
         related_files,
         events,
         debug_tx,
+        trigger,
         ..
     }: EditPredictionModelInput,
     zeta_version: ZetaVersion,
@@ -110,6 +112,7 @@ pub fn request_prediction_with_zeta2(
                     client,
                     llm_token,
                     app_version,
+                    trigger,
                 )
                 .await?;
 
@@ -166,16 +169,12 @@ pub fn request_prediction_with_zeta2(
                 old_text.push('\n');
             }
 
-            let edits: Vec<_> = language::text_diff(&old_text, &output_text)
-                .into_iter()
-                .map(|(range, text)| {
-                    (
-                        snapshot.anchor_after(editable_offset_range.start + range.start)
-                            ..snapshot.anchor_before(editable_offset_range.start + range.end),
-                        text,
-                    )
-                })
-                .collect();
+            let edits = compute_edits(
+                old_text,
+                &output_text,
+                editable_offset_range.start,
+                &snapshot,
+            );
 
             anyhow::Ok((
                 Some((
@@ -250,6 +249,7 @@ pub fn zeta2_prompt_input(
     );
 
     let context_start_offset = context_range.start.to_offset(snapshot);
+    let context_start_row = context_range.start.row;
     let editable_offset_range = editable_range.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset - context_start_offset;
     let editable_range_in_excerpt = (editable_offset_range.start - context_start_offset)
@@ -263,6 +263,7 @@ pub fn zeta2_prompt_input(
             .into(),
         editable_range_in_excerpt,
         cursor_offset_in_excerpt,
+        excerpt_start_row: Some(context_start_row),
         events,
         related_files,
     };

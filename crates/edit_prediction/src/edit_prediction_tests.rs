@@ -12,12 +12,13 @@ use futures::{
     AsyncReadExt, StreamExt,
     channel::{mpsc, oneshot},
 };
+use gpui::App;
 use gpui::{
     Entity, TestAppContext,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::Point;
+use language::{Buffer, Point};
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
@@ -1443,6 +1444,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             cursor_excerpt: "".into(),
             editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
+            excerpt_start_row: None,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
