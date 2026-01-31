@@ -17,6 +17,7 @@ pub struct SettingsInputField {
     display_confirm_button: bool,
     display_clear_button: bool,
     action_slot: Option<AnyElement>,
+    color: Option<Color>,
 }
 
 impl SettingsInputField {
@@ -31,6 +32,7 @@ impl SettingsInputField {
             display_confirm_button: false,
             display_clear_button: false,
             action_slot: None,
+            color: None,
         }
     }
 
@@ -81,22 +83,23 @@ impl SettingsInputField {
         self.use_buffer_font = true;
         self
     }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
 }
 
 impl RenderOnce for SettingsInputField {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let use_buffer_font = self.use_buffer_font;
-        let styles = if use_buffer_font {
-            TextStyleRefinement {
-                font_family: Some(settings.buffer_font.family.clone()),
-                font_size: Some(rems(0.75).into()),
-                ..Default::default()
-            }
-        } else {
-            TextStyleRefinement {
-                ..Default::default()
-            }
+        let color = self.color.map(|c| c.color(cx));
+        let styles = TextStyleRefinement {
+            font_family: use_buffer_font.then(|| settings.buffer_font.family.clone()),
+            font_size: use_buffer_font.then(|| rems(0.75).into()),
+            color,
+            ..Default::default()
         };
 
         let editor = if let Some(id) = self.id {

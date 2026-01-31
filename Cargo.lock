@@ -15208,6 +15208,7 @@ dependencies = [
  "search",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "session",
  "settings",
  "strum 0.27.2",

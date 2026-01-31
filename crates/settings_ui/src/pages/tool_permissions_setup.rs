@@ -1,7 +1,7 @@
 use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
 use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prelude::*};
-use settings::{Settings as _, SettingsStore, ToolPermissionMode};
+use settings::{Settings as _, SettingsStore, ToolPermissionMode, default_settings};
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
@@ -223,7 +223,7 @@ pub(crate) fn render_tool_config_page(
     let tool = TOOLS.iter().find(|t| t.id == tool_id).unwrap();
     let rules = get_tool_rules(tool_id, cx);
     let page_title = format!("{} Tool", tool.name);
-    let scroll_step = px(40.);
+    let scroll_step = px(80.);
 
     v_flex()
         .id(format!("tool-config-page-{}", tool_id))
@@ -309,7 +309,7 @@ fn render_verification_section(
     let settings = AgentSettings::get_global(cx);
     let always_allow_enabled = settings.always_allow_tool_actions;
 
-    let editor = window.use_keyed_state(input_id.clone(), cx, |window, cx| {
+    let editor = window.use_keyed_state(input_id, cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
         editor.set_placeholder_text("Enter a rule to see how it applies…", window, cx);
 
@@ -533,9 +533,28 @@ fn render_rule_section(
 ) -> AnyElement {
     let section_id = format!("{}-{:?}-section", tool_id, rule_type);
 
+    let default_count = get_default_tool_rules(tool_id)
+        .map(|defaults| match rule_type {
+            RuleType::Allow => defaults.always_allow.len(),
+            RuleType::Deny => defaults.always_deny.len(),
+            RuleType::Confirm => defaults.always_confirm.len(),
+        })
+        .unwrap_or(0);
+
     v_flex()
         .id(section_id)
-        .child(Label::new(title))
+        .child(
+            h_flex()
+                .gap_1()
+                .child(Label::new(title))
+                .when(default_count > 0, |this| {
+                    this.child(
+                        Label::new(format!("{} default", default_count))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                }),
+        )
         .child(
             Label::new(description)
                 .size(LabelSize::Small)
@@ -545,7 +564,7 @@ fn render_rule_section(
             v_flex()
                 .mt_2()
                 .w_full()
-                .gap_1()
+                .gap_1p5()
                 .when(patterns.is_empty(), |this| {
                     this.child(render_pattern_empty_state(cx))
                 })
@@ -579,6 +598,42 @@ fn render_pattern_row(
     pattern: String,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    let is_default = is_default_pattern(tool_id, rule_type, &pattern);
+
+    if is_default {
+        render_default_pattern_row(&pattern, cx)
+    } else {
+        render_user_pattern_row(tool_id, rule_type, index, pattern, cx)
+    }
+}
+
+fn render_default_pattern_row(pattern: &str, cx: &mut Context<SettingsWindow>) -> AnyElement {
+    let theme_colors = cx.theme().colors();
+
+    h_flex()
+        .w_full()
+        .h_8()
+        .px_2()
+        .rounded_md()
+        .border_1()
+        .border_color(theme_colors.border.opacity(0.5))
+        .bg(theme_colors.editor_background.opacity(0.5))
+        .child(
+            Label::new(pattern.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .buffer_font(cx),
+        )
+        .into_any_element()
+}
+
+fn render_user_pattern_row(
+    tool_id: &'static str,
+    rule_type: RuleType,
+    index: usize,
+    pattern: String,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
     let pattern_for_delete = pattern.clone();
     let pattern_for_update = pattern.clone();
     let tool_id_for_delete = tool_id.to_string();
@@ -591,6 +646,7 @@ fn render_pattern_row(
         .with_initial_text(pattern)
         .tab_index(0)
         .with_buffer_font()
+        .color(Color::Default)
         .action_slot(
             IconButton::new(delete_id, IconName::Trash)
                 .icon_size(IconSize::Small)
@@ -743,6 +799,75 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
             always_confirm: Vec::new(),
         },
     }
+}
+
+fn get_default_tool_rules(tool_name: &str) -> Option<ToolRulesView> {
+    let default_json = default_settings();
+    let parsed: serde_json::Value = serde_json_lenient::from_str(&default_json).ok()?;
+
+    let tool_permissions = parsed.get("agent")?.get("tool_permissions")?.get("tools")?;
+    let tool_rules = tool_permissions.get(tool_name)?;
+
+    let default_mode = tool_rules
+        .get("default_mode")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "allow" => ToolPermissionMode::Allow,
+            "deny" => ToolPermissionMode::Deny,
+            _ => ToolPermissionMode::Confirm,
+        })
+        .unwrap_or(ToolPermissionMode::Confirm);
+
+    let always_allow: Vec<String> = tool_rules
+        .get("always_allow")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("pattern").and_then(|p| p.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let always_deny: Vec<String> = tool_rules
+        .get("always_deny")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("pattern").and_then(|p| p.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let always_confirm: Vec<String> = tool_rules
+        .get("always_confirm")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("pattern").and_then(|p| p.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(ToolRulesView {
+        default_mode,
+        always_allow,
+        always_deny,
+        always_confirm,
+    })
+}
+
+fn is_default_pattern(tool_name: &str, rule_type: RuleType, pattern: &str) -> bool {
+    let Some(defaults) = get_default_tool_rules(tool_name) else {
+        return false;
+    };
+
+    let patterns = match rule_type {
+        RuleType::Allow => &defaults.always_allow,
+        RuleType::Deny => &defaults.always_deny,
+        RuleType::Confirm => &defaults.always_confirm,
+    };
+
+    patterns.iter().any(|p| p == pattern)
 }
 
 fn save_pattern(tool_name: &str, rule_type: RuleType, pattern: String, cx: &mut App) {
