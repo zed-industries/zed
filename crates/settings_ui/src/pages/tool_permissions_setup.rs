@@ -669,6 +669,7 @@ fn render_default_mode_section(
             PopoverMenu::new(format!("default-mode-{}", tool_id))
                 .trigger(
                     Button::new(format!("mode-trigger-{}", tool_id), mode_label)
+                        .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
                         .icon(IconName::ChevronDown)
