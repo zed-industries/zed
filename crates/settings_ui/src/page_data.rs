@@ -6127,22 +6127,18 @@ fn terminal_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Confirm On Close",
-                description: "Whether to confirm before closing a terminal tab.",
+                title: "Confirm On Kill",
+                description: "Whether to confirm killing terminals when they have child processes.",
                 field: Box::new(SettingField {
-                    json_path: Some("terminal.confirm_on_close"),
+                    json_path: Some("terminal.confirm_on_kill"),
                     pick: |settings_content| {
-                        settings_content
-                            .terminal
-                            .as_ref()?
-                            .confirm_on_close
-                            .as_ref()
+                        settings_content.terminal.as_ref()?.confirm_on_kill.as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
-                            .confirm_on_close = value;
+                            .confirm_on_kill = value;
                     },
                 }),
                 metadata: None,

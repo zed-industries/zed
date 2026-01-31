@@ -12,8 +12,8 @@ use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, PromptLevel,
-    Render, SharedString, Task, WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, PromptLevel, Render,
+    SharedString, Task, WeakEntity, Window,
 };
 use language::Capability;
 use project::{Project, ProjectEntryId, ProjectPath};

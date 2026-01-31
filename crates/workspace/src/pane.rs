@@ -1960,13 +1960,7 @@ impl Pane {
                             PromptButton::cancel(cancel_button),
                         ];
                         let detail = detail.as_ref().map(|detail| detail.as_ref());
-                        window.prompt(
-                            level,
-                            message.as_ref(),
-                            detail,
-                            &buttons,
-                            cx,
-                        )
+                        window.prompt(level, message.as_ref(), detail, &buttons, cx)
                     })?;
                     match answer.await {
                         Ok(0) => {}

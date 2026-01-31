@@ -1656,9 +1656,9 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to confirm before closing a terminal tab.
-    // Options: "never", "always", "has_child_process"
-    "confirm_on_close": "never",
+    // Whether to confirm killing terminals when they have child processes.
+    // Options: "never", "always"
+    "confirm_on_kill": "never",
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar

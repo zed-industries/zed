@@ -18,7 +18,7 @@ use persistence::TERMINAL_DB;
 use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, TerminalBlink, TerminalConfirmOnClose, WorkingDirectory};
+use settings::{Settings, SettingsStore, TerminalBlink, TerminalConfirmOnKill, WorkingDirectory};
 use std::{
     cmp,
     ops::{Range, RangeInclusive},
@@ -1306,30 +1306,24 @@ impl Item for TerminalView {
     }
 
     fn close_confirmation(&self, cx: &App) -> Option<CloseConfirmation> {
-        let confirm_on_close = TerminalSettings::get_global(cx).confirm_on_close;
+        let confirm_on_kill = TerminalSettings::get_global(cx).confirm_on_kill;
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
 
-        let confirmation = CloseConfirmation {
-            level: PromptLevel::Warning,
-            message: "Close terminal tab?".into(),
-            detail: Some(title.into()),
-            confirm_button: "Close".into(),
-            cancel_button: "Cancel".into(),
-        };
-
-        match confirm_on_close {
-            TerminalConfirmOnClose::Never => None,
-            TerminalConfirmOnClose::Always => Some(confirmation),
-            TerminalConfirmOnClose::HasChildProcess => {
-                if terminal.has_running_process() {
-                    Some(CloseConfirmation {
-                        message: "The terminal still has a running process. If you close the tab the process will be killed.".into(),
-                        ..confirmation
-                    })
-                } else {
-                    None
+        match confirm_on_kill {
+            TerminalConfirmOnKill::Never => None,
+            TerminalConfirmOnKill::Always => {
+                if !terminal.has_running_process() {
+                    return None;
                 }
+                let message = "Do you want to terminate the active terminal session?";
+                Some(CloseConfirmation {
+                    level: PromptLevel::Warning,
+                    message: message.into(),
+                    detail: Some(title.into()),
+                    confirm_button: "Terminate".into(),
+                    cancel_button: "Cancel".into(),
+                })
             }
         }
     }
