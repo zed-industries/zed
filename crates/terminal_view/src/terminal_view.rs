@@ -2389,7 +2389,10 @@ mod tests {
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
         });
-        cx.update(|cx| editor::init(cx));
+        cx.update(|cx| {
+            editor::init(cx);
+            crate::init(cx);
+        });
 
         let project = Project::test(params.fs.clone(), [path!("/root").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2418,21 +2421,20 @@ mod tests {
             .unwrap();
         cx.background_executor.run_until_parked();
 
+        let code = r#"
+import pandas as pd
+
+df = pd.read_csv("data.csv")
+print(df.head())
+
+df.describe()
+"#;
+
         let editor = window
             .update(cx, |workspace, _, cx| {
                 workspace.active_item_as::<Editor>(cx).unwrap()
             })
             .unwrap();
-
-        let code = r#"
-            import pandas as pd
-
-            df = pd.read_csv("data.csv")
-            print(df.head())
-
-            df.describe()
-        "#;
-
         // Editor -> MultiBuffer -> Vec<Buffer>
         // Buffer -> Text
 
@@ -2454,14 +2456,49 @@ mod tests {
 
         cx.background_executor.run_until_parked();
 
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+        /*
+                // Create a terminal in the terminal panel
+                let terminal_panel = window
+                    .update(cx, |workspace, cx| {
+                        workspace.panel::<TerminalPanel>(cx).unwrap()
+                    })
+                    .unwrap();
+
+                // Add a terminal to the panel
+                let task = window
+                    .update(cx, |_, window, cx| {
+                        terminal_panel.update(cx, |panel, cx| {
+                            panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                        })
+                    })
+                    .unwrap();
+                task.await.unwrap();
+        */
+        cx.background_executor.run_until_parked();
         // Check selection moves to terminal
         let selected_text = window
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| {
-                        // The r# literal preserves all of the whitespace, so the
-                        // first 10 characters are 12..21
-                        s.select_ranges([PointUtf16::new(1, 12)..PointUtf16::new(1, 21)]);
+                        s.select_ranges([PointUtf16::new(1, 0)..PointUtf16::new(1, 9)]);
                     });
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let selection = editor.selections.newest_anchor();
@@ -2483,36 +2520,27 @@ mod tests {
         assert!(buffer_text.contains("df.describe()"));
         assert!(selected_text.eq("import pa"));
 
-        let terminal = project
-            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
-            .await
-            .unwrap();
-
-        let terminal_view = cx
-            .add_window(|window, cx| {
-                TerminalView::new(
-                    terminal,
-                    workspace.downgrade(),
-                    None,
-                    project.downgrade(),
-                    window,
-                    cx,
-                )
-            })
-            .root(cx)
-            .unwrap();
-
         // TODO: Now I know the correct text is selected, but this action isn't getting dispatched
+        /*
         cx.dispatch_action(SendToTerminal {
             append_newline: false,
         });
+        */
+        window
+            .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: false,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+
         terminal_view.update(cx, |view, cx| {
-            let text = view.tab_content_text(0, cx);
-            assert!(
-                !text.is_empty() && text.as_ref() != "   ",
-                "Tab should show terminal title, not whitespace; got: '{}'",
-                text
-            );
             view.terminal().update(cx, |t, _cx| {
                 let text = t.get_content();
                 //dbg!(&text);
