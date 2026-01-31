@@ -616,6 +616,10 @@ impl ScrollManager {
 }
 
 impl Editor {
+    pub fn has_autoscroll_request(&self) -> bool {
+        self.scroll_manager.has_autoscroll_request()
+    }
+
     pub fn vertical_scroll_margin(&self) -> usize {
         self.scroll_manager.vertical_scroll_margin as usize
     }
