@@ -174,8 +174,8 @@ impl RenderOnce for SplitEditorView {
 
         let buffer_headers = SplitBufferHeadersElement::new(rhs_editor.clone(), self.style.clone());
 
-        let lhs_editor_for_order = lhs_editor.clone();
-        let rhs_editor_for_order = rhs_editor.clone();
+        let lhs_editor_for_order = lhs_editor;
+        let rhs_editor_for_order = rhs_editor;
 
         div()
             .id("split-editor-view-container")
