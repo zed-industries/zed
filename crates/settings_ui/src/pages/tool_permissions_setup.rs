@@ -1,9 +1,10 @@
 use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
-use gpui::{Focusable, ReadGlobal, ScrollHandle, prelude::*};
+use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
-use ui::{ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
+use theme::ThemeSettings;
+use ui::{Banner, ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
 use util::shell::ShellKind;
 
 use crate::{SettingsWindow, components::SettingsInputField};
@@ -222,7 +223,7 @@ pub(crate) fn render_tool_config_page(
                         .color(Color::Muted),
                 ),
         )
-        // .child(render_verification_section(tool_id, window, cx))
+        .child(render_verification_section(tool_id, window, cx))
         .child(
             v_flex()
                 .mt_6()
@@ -273,7 +274,15 @@ fn render_verification_section(
 
     let editor = window.use_keyed_state(input_id.clone(), cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
-        editor.set_placeholder_text("Enter a test input to see how rules apply...", window, cx);
+        editor.set_placeholder_text("Enter a rule to see how it applies…", window, cx);
+
+        let global_settings = ThemeSettings::get_global(cx);
+        editor.set_text_style_refinement(TextStyleRefinement {
+            font_family: Some(global_settings.buffer_font.family.clone()),
+            font_size: Some(rems(0.75).into()),
+            ..Default::default()
+        });
+
         editor
     });
 
@@ -291,30 +300,55 @@ fn render_verification_section(
         (Some(decision), matches)
     };
 
+    let always_allow_description = "The Always Allow Tool Actions setting is enabled: all tools will be allowed regardless of these rules.";
     let theme_colors = cx.theme().colors();
 
     v_flex()
-        .id(format!("{}-verification-section", tool_id))
-        .mt_4()
-        .p_3()
-        .rounded_md()
-        .bg(cx.theme().colors().surface_background)
-        .border_1()
-        .border_color(cx.theme().colors().border_variant)
+        .mt_3()
+        .min_w_0()
+        .gap_2()
+        .when(always_allow_enabled, |this| {
+            this.child(
+                Banner::new()
+                    .severity(Severity::Warning)
+                    .wrap_content(false)
+                    .child(
+                        Label::new(always_allow_description)
+                            .size(LabelSize::Small)
+                            .mt(px(3.))
+                            .mr_8(),
+                    )
+                    .action_slot(
+                        Button::new("configure_setting", "Configure Setting")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.navigate_to_setting(
+                                    "agent.always_allow_tool_actions",
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+        })
         .child(
-            Label::new("Test Your Rules")
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
-        .child(
-            h_flex()
-                .mt_2()
-                .gap_3()
-                .items_start()
+            v_flex()
+                .p_2p5()
+                .gap_1p5()
+                .bg(theme_colors.surface_background.opacity(0.15))
+                .border_1()
+                .border_dashed()
+                .border_color(theme_colors.border_variant)
+                .rounded_sm()
                 .child(
-                    div()
-                        .flex_1()
-                        .py_1()
+                    Label::new("Test Your Rules")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .h_8()
                         .px_2()
                         .rounded_md()
                         .border_1()
@@ -322,57 +356,18 @@ fn render_verification_section(
                         .bg(theme_colors.editor_background)
                         .child(editor),
                 )
-                .child(render_verification_result(decision.as_ref(), cx)),
-        )
-        .when(decision.is_some(), |this| {
-            if matched_patterns.is_empty() {
-                this.child(
-                    Label::new("(No regex matches, using Default Action)")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            } else {
-                this.child(render_matched_patterns(&matched_patterns, cx))
-            }
-        })
-        .when(always_allow_enabled, |this| {
-            this.child(
-                h_flex()
-                    .mt_2()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .child({
-                        div()
-                            .id("always-allow-link")
-                            .cursor_pointer()
-                            .text_color(Color::Warning.color(cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.navigate_to_setting(
-                                    "agent.always_allow_tool_actions",
-                                    window,
-                                    cx,
-                                );
-                            }))
-                            .child(
-                                Label::new("Always allow tool actions")
-                                    .size(LabelSize::Small)
-                                    .underline(),
-                            )
-                    })
-                    .child(
-                        Label::new(
-                            "is enabled — all tools will be allowed regardless of these rules.",
+                .when(decision.is_some(), |this| {
+                    if matched_patterns.is_empty() {
+                        this.child(
+                            Label::new("No regex matches, using the default action (confirm).")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                         )
-                        .size(LabelSize::Small)
-                        .color(Color::Warning),
-                    ),
-            )
-        })
+                    } else {
+                        this.child(render_matched_patterns(&matched_patterns, cx))
+                    }
+                }),
+        )
         .into_any_element()
 }
 
@@ -431,19 +426,12 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
 
 fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement {
     v_flex()
-        .mt_2()
         .gap_1()
         .children(patterns.iter().map(|pattern| {
             let (type_label, color) = match pattern.rule_type {
                 RuleType::Deny => ("Always Deny", Color::Error),
                 RuleType::Confirm => ("Always Confirm", Color::Warning),
                 RuleType::Allow => ("Always Allow", Color::Success),
-            };
-
-            let pattern_color = if pattern.is_overridden {
-                Color::Muted
-            } else {
-                Color::Default
             };
 
             let type_color = if pattern.is_overridden {
@@ -453,25 +441,26 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
             };
 
             h_flex()
-                .gap_2()
+                .gap_1()
                 .child(
-                    div()
-                        .when(pattern.is_overridden, |this| this.line_through())
-                        .child(
-                            Label::new(pattern.pattern.clone())
-                                .size(LabelSize::Small)
-                                .color(pattern_color)
-                                .buffer_font(cx),
-                        ),
+                    Label::new(pattern.pattern.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .buffer_font(cx)
+                        .when(pattern.is_overridden, |this| this.strikethrough()),
                 )
                 .child(
-                    div()
-                        .when(pattern.is_overridden, |this| this.line_through())
-                        .child(
-                            Label::new(type_label)
-                                .size(LabelSize::XSmall)
-                                .color(type_color),
-                        ),
+                    Icon::new(IconName::Dash)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.4))),
+                )
+                .child(
+                    Label::new(type_label)
+                        .size(LabelSize::XSmall)
+                        .color(type_color)
+                        .when(pattern.is_overridden, |this| {
+                            this.strikethrough().alpha(0.5)
+                        }),
                 )
         }))
         .into_any_element()
@@ -495,30 +484,6 @@ fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDe
         false,
         shell_kind,
     )
-}
-
-fn render_verification_result(decision: Option<&ToolPermissionDecision>, cx: &App) -> AnyElement {
-    let (label, color, icon) = match decision {
-        Some(ToolPermissionDecision::Allow) => ("Allowed", Color::Success, IconName::Check),
-        Some(ToolPermissionDecision::Deny(_)) => ("Denied", Color::Error, IconName::XCircle),
-        Some(ToolPermissionDecision::Confirm) => ("Confirm", Color::Warning, IconName::Info),
-        None => ("", Color::Muted, IconName::Dash),
-    };
-
-    let has_result = decision.is_some();
-
-    h_flex()
-        .h_7()
-        .px_2()
-        .gap_1()
-        .items_center()
-        .rounded_md()
-        .when(has_result, |this| this.bg(color.color(cx).opacity(0.1)))
-        .when(has_result, |this| {
-            this.child(Icon::new(icon).size(IconSize::Small).color(color))
-                .child(Label::new(label).size(LabelSize::Small).color(color))
-        })
-        .into_any_element()
 }
 
 fn render_rule_section(
