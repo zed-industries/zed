@@ -8,7 +8,7 @@ use ui::{
     Render, Styled, StyledExt, Toggleable, Window, div, h_flex, rems, v_flex,
 };
 use util::ResultExt as _;
-use workspace::{ModalView, MultiWorkspace, Workspace};
+use workspace::{ModalView, MultiWorkspace};
 
 use crate::open_remote_project;
 
