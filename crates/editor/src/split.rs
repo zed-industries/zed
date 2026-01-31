@@ -3570,11 +3570,11 @@ mod tests {
             lhs_editor.update_in(cx, |e, window, cx| e.snapshot(window, cx).scroll_position());
 
         assert!(
-            dbg!(rhs_pos.y) > 0.,
+            rhs_pos.y > 0.,
             "RHS should have scrolled vertically to show cursor at row 25"
         );
         assert!(
-            dbg!(rhs_pos.x) > 0.,
+            rhs_pos.x > 0.,
             "RHS should have scrolled horizontally to show cursor at column 150"
         );
         assert_eq!(
