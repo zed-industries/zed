@@ -22,7 +22,9 @@ pub const MAX_CONTEXT_TOKENS: usize = 350;
 pub fn max_editable_tokens(version: ZetaVersion) -> usize {
     match version {
         ZetaVersion::V0112MiddleAtEnd | ZetaVersion::V0113Ordered => 150,
-        ZetaVersion::V0114180EditableRegion | ZetaVersion::V0120GitMergeMarkers => 180,
+        ZetaVersion::V0114180EditableRegion => 180,
+        ZetaVersion::V0120GitMergeMarkers => 180,
+        ZetaVersion::V0131GitMergeMarkersPrefix => 180,
     }
 }
 
