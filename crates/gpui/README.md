@@ -39,6 +39,36 @@ On macOS, GPUI uses Metal for rendering. In order to use Metal, you need to do t
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
   ```
 
+#### Windows ARM64
+
+On Windows ARM64, GPUI requires specific build environment setup:
+
+- Visual Studio 2022 with C++ workload, ARM64 tools, ClangCL component
+- LLVM with clang-cl in PATH
+- CMake 4.0+
+- Ninja
+- Rust toolchain (aarch64-pc-windows-msvc)
+
+Build script:
+
+```batch
+@echo off
+call "C:\Program Files\Microsoft Visual Studio\2022\Preview\VC\Auxiliary\Build\vcvarsall.bat" arm64
+set CMAKE_GENERATOR=Ninja
+set CC=clang-cl
+set CXX=clang-cl
+set AWS_LC_SYS_NO_ASM=1
+set RUSTFLAGS=-C link-arg=/NODEFAULTLIB:libcmt -C link-arg=/DEFAULTLIB:msvcrtd
+cargo run -p gpui --example external_drop
+```
+
+Environment variables explained:
+- `vcvarsall.bat arm64` - Sets Visual Studio build environment
+- `CMAKE_GENERATOR=Ninja` - Uses Ninja instead of Visual Studio generator
+- `CC=clang-cl`, `CXX=clang-cl` - Uses clang-cl compiler
+- `AWS_LC_SYS_NO_ASM=1` - Disables assembly in aws-lc-sys (debug builds only)
+- `RUSTFLAGS` - Forces dynamic CRT, prevents libcmt/msvcrtd conflict
+
 ## The Big Picture
 
 GPUI offers three different [registers](<https://en.wikipedia.org/wiki/Register_(sociolinguistics)>) depending on your needs:

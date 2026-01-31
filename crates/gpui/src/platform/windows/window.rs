@@ -20,7 +20,7 @@ use windows::{
         Foundation::*,
         Graphics::Dwm::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{Com::*, LibraryLoader::*, Memory::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
