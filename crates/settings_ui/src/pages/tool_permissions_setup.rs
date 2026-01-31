@@ -288,8 +288,7 @@ fn render_verification_section(
 
     cx.observe(&editor, |_, _, cx| cx.notify()).detach();
 
-    let focus_handle = editor.focus_handle(cx);
-    window.focus(&focus_handle, cx);
+    let focus_handle = editor.focus_handle(cx).tab_index(0).tab_stop(true);
 
     let current_text = editor.read(cx).text(cx);
     let (decision, matched_patterns) = if current_text.is_empty() {
@@ -354,6 +353,7 @@ fn render_verification_section(
                         .border_1()
                         .border_color(theme_colors.border)
                         .bg(theme_colors.editor_background)
+                        .track_focus(&focus_handle)
                         .child(editor),
                 )
                 .when(decision.is_some(), |this| {
