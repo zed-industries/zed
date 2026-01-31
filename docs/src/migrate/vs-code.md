@@ -98,6 +98,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `terminal.integrated.cursorStyle`     | `terminal.cursor_shape`             |
 | `terminal.integrated.cursorBlinking`  | `terminal.blinking`                 |
 | `terminal.integrated.copyOnSelection` | `terminal.copy_on_select`           |
+| `terminal.integrated.confirmOnKill`   | `terminal.confirm_on_kill`          |
 | `terminal.integrated.scrollback`      | `terminal.max_scroll_history_lines` |
 | `terminal.integrated.macOptionIsMeta` | `terminal.option_as_meta`           |
 | `terminal.integrated.{platform}Exec`  | `terminal.shell`                    |

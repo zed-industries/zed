@@ -225,6 +225,20 @@ By default, text stays selected after copying. To clear the selection:
 }
 ```
 
+### Confirm On Kill
+
+Prompt before terminating a terminal tab when it has child processes:
+
+```json [settings]
+{
+  "terminal": {
+    "confirm_on_kill": "always"
+  }
+}
+```
+
+Values: `"never"` (default) or `"always"`.
+
 ## Search
 
 Search terminal content with `Cmd+F` (macOS) or `Ctrl+Shift+F` (Linux/Windows). This opens the same search bar used in the editor.
