@@ -64,6 +64,32 @@ You can customize various [formatting options](https://code.visualstudio.com/doc
   }
 ```
 
+## Using the Tailwind CSS Language Server with HTML
+
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in HTML files, you need to configure the language server so that it knows about where to look for CSS classes by adding the following to your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "experimental": {
+          "classRegex": ["class=\"([^\"]*)\""]
+        }
+      }
+    }
+  }
+}
+```
+
+With these settings, you will get completions for Tailwind CSS classes in HTML `class` attributes. Examples:
+
+```html
+<div class="flex items-center <completion here>">
+  <p class="text-lg font-bold <completion here>">Hello World</p>
+</div>
+```
+
 ## See also
 
 - [CSS](./css.md)
