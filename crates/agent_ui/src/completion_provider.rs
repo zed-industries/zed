@@ -645,6 +645,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                         mention_uri.name().into(),
                                         mention_uri.icon_path(cx),
                                         range,
+                                        mention_uri.clone(),
                                         editor.downgrade(),
                                     );
 

@@ -25,11 +25,12 @@ use std::time::Duration;
 
 use collections::{HashMap, HashSet};
 use gpui::{
-    AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
-    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText,
-    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
+    AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges,
+    ElementId, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox,
+    Hsla, Image, ImageFormat, Inline, InlineBuilder, InlineLayout, KeyContext, Length, MouseButton,
+    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful,
+    StrikethroughStyle, StyleRefinement, Task, TextRun, TextStyle, TextStyleRefinement, actions,
+    img, inline, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -67,6 +68,7 @@ pub struct MarkdownStyle {
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub link_callback: Option<LinkStyleCallback>,
+    pub link_renderer: LinkRenderer,
     pub rule_color: Hsla,
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
@@ -89,6 +91,7 @@ impl Default for MarkdownStyle {
             block_quote: Default::default(),
             link: Default::default(),
             link_callback: None,
+            link_renderer: LinkRenderer::Default,
             rule_color: Default::default(),
             block_quote_border_color: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
@@ -232,7 +235,6 @@ impl MarkdownStyle {
 pub struct Markdown {
     source: SharedString,
     selection: Selection,
-    pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -279,6 +281,87 @@ pub type CodeBlockRenderFn = Arc<
 pub type CodeBlockTransformFn =
     Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
+pub struct LinkLabel {
+    pub items: Vec<LinkLabelItem>,
+    pub logical_len: usize,
+}
+
+pub enum LinkLabelItem {
+    Text {
+        text: String,
+        runs: Vec<TextRun>,
+    },
+    Element {
+        element: AnyElement,
+        logical_len: usize,
+    },
+}
+
+impl LinkLabel {
+    pub fn plain_text(&self) -> SharedString {
+        let mut text = String::new();
+        for item in &self.items {
+            if let LinkLabelItem::Text {
+                text: item_text, ..
+            } = item
+            {
+                text.push_str(item_text);
+            }
+        }
+        text.into()
+    }
+
+    pub fn into_inline(self) -> Inline {
+        let mut builder = inline();
+        for item in self.items {
+            builder = match item {
+                LinkLabelItem::Text { text, runs } => builder.text_runs(text.into(), runs),
+                LinkLabelItem::Element {
+                    element,
+                    logical_len,
+                } => builder.child_with_logical_len(element, logical_len),
+            };
+        }
+        builder.into_element()
+    }
+}
+
+pub type LinkRenderFn =
+    Arc<dyn Fn(LinkLabel, LinkRenderContext, &mut Window, &mut App) -> AnyElement>;
+
+#[derive(Clone)]
+pub enum LinkRenderer {
+    Default,
+    Custom { render: LinkRenderFn },
+}
+
+pub struct LinkRenderContext {
+    pub url: SharedString,
+    pub element_id: ElementId,
+    pub on_url_click: Option<Arc<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    pub is_selected: bool,
+}
+
+pub fn render_link_element(
+    label: LinkLabel,
+    element_id: ElementId,
+    url: SharedString,
+    on_url_click: Option<Arc<dyn Fn(SharedString, &mut Window, &mut App)>>,
+) -> AnyElement {
+    label
+        .into_inline()
+        .id(element_id)
+        .cursor_pointer()
+        .on_click(move |_, window, cx| {
+            if let Some(handler) = on_url_click.as_ref() {
+                handler(url.clone(), window, cx);
+            } else {
+                cx.open_url(&url);
+            }
+        })
+        .into_any_element()
+}
+
 actions!(
     markdown,
     [
@@ -300,7 +383,7 @@ impl Markdown {
         let mut this = Self {
             source,
             selection: Selection::default(),
-            pressed_link: None,
+
             autoscroll_request: None,
             should_reparse: false,
             images_by_source_offset: Default::default(),
@@ -325,7 +408,7 @@ impl Markdown {
         let mut this = Self {
             source,
             selection: Selection::default(),
-            pressed_link: None,
+
             autoscroll_request: None,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
@@ -671,7 +754,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Arc<dyn Fn(SharedString, &mut Window, &mut App)>>,
 }
 
 impl MarkdownElement {
@@ -704,7 +787,7 @@ impl MarkdownElement {
         text.text
             .lines
             .iter()
-            .map(|line| line.layout.wrapped_text())
+            .map(|line| line.layout.text())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -714,11 +797,16 @@ impl MarkdownElement {
         self
     }
 
+    pub fn link_renderer(mut self, renderer: LinkRenderer) -> Self {
+        self.style.link_renderer = renderer;
+        self
+    }
+
     pub fn on_url_click(
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Box::new(handler));
+        self.on_url_click = Some(Arc::new(handler));
         self
     }
 
@@ -800,21 +888,9 @@ impl MarkdownElement {
             return;
         }
 
-        let is_hovering_link = hitbox.is_hovered(window)
-            && !self.markdown.read(cx).selection.pending
-            && rendered_text
-                .link_for_position(window.mouse_position())
-                .is_some();
-
-        if !self.style.prevent_mouse_interaction {
-            if is_hovering_link {
-                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-            } else {
-                window.set_cursor_style(CursorStyle::IBeam, hitbox);
-            }
-        }
-
-        let on_open_url = self.on_url_click.take();
+        // Links are now interactive inline elements that handle their own clicks
+        // So we only need to handle text selection here
+        window.set_cursor_style(CursorStyle::IBeam, hitbox);
 
         self.on_mouse_event(window, cx, {
             let hitbox = hitbox.clone();
@@ -834,61 +910,53 @@ impl MarkdownElement {
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
-                    if phase.bubble() {
-                        if let Some(link) = rendered_text.link_for_position(event.position) {
-                            markdown.pressed_link = Some(link.clone());
-                        } else {
-                            let source_index =
-                                match rendered_text.source_index_for_position(event.position) {
-                                    Ok(ix) | Err(ix) => ix,
-                                };
-                            let (range, mode) = match event.click_count {
-                                1 => {
-                                    let range = source_index..source_index;
-                                    (range, SelectMode::Character)
-                                }
-                                2 => {
-                                    let range = rendered_text.surrounding_word_range(source_index);
-                                    (range.clone(), SelectMode::Word(range))
-                                }
-                                3 => {
-                                    let range = rendered_text.surrounding_line_range(source_index);
-                                    (range.clone(), SelectMode::Line(range))
-                                }
-                                _ => {
-                                    let range = 0..rendered_text
-                                        .lines
-                                        .last()
-                                        .map(|line| line.source_end)
-                                        .unwrap_or(0);
-                                    (range, SelectMode::All)
-                                }
+                    if phase.bubble() && !window.default_prevented() {
+                        let source_index =
+                            match rendered_text.source_index_for_position(event.position) {
+                                Ok(ix) | Err(ix) => ix,
                             };
-                            markdown.selection = Selection {
-                                start: range.start,
-                                end: range.end,
-                                reversed: false,
-                                pending: true,
-                                mode,
-                            };
-                            window.focus(&markdown.focus_handle, cx);
-                        }
-
+                        let (range, mode) = match event.click_count {
+                            1 => {
+                                let range = source_index..source_index;
+                                (range, SelectMode::Character)
+                            }
+                            2 => {
+                                let range = rendered_text.surrounding_word_range(source_index);
+                                (range.clone(), SelectMode::Word(range))
+                            }
+                            3 => {
+                                let range = rendered_text.surrounding_line_range(source_index);
+                                (range.clone(), SelectMode::Line(range))
+                            }
+                            _ => {
+                                let range = 0..rendered_text
+                                    .lines
+                                    .last()
+                                    .map(|line| line.source_end)
+                                    .unwrap_or(0);
+                                (range, SelectMode::All)
+                            }
+                        };
+                        markdown.selection = Selection {
+                            start: range.start,
+                            end: range.end,
+                            reversed: false,
+                            pending: true,
+                            mode,
+                        };
+                        window.focus(&markdown.focus_handle, cx);
                         window.prevent_default();
                         cx.notify();
                     }
                 } else if phase.capture() && event.button == MouseButton::Left {
                     markdown.selection = Selection::default();
-                    markdown.pressed_link = None;
                     cx.notify();
                 }
             }
         });
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
-            let hitbox = hitbox.clone();
-            let was_hovering_link = is_hovering_link;
-            move |markdown, event: &MouseMoveEvent, phase, window, cx| {
+            move |markdown, event: &MouseMoveEvent, phase, _window, cx| {
                 if phase.capture() {
                     return;
                 }
@@ -901,33 +969,17 @@ impl MarkdownElement {
                     markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
-                } else {
-                    let is_hovering_link = hitbox.is_hovered(window)
-                        && rendered_text.link_for_position(event.position).is_some();
-                    if is_hovering_link != was_hovering_link {
-                        cx.notify();
-                    }
                 }
             }
         });
         self.on_mouse_event(window, cx, {
-            let rendered_text = rendered_text.clone();
-            move |markdown, event: &MouseUpEvent, phase, window, cx| {
-                if phase.bubble() {
-                    if let Some(pressed_link) = markdown.pressed_link.take()
-                        && Some(&pressed_link) == rendered_text.link_for_position(event.position)
-                    {
-                        if let Some(open_url) = on_open_url.as_ref() {
-                            open_url(pressed_link.destination_url, window, cx);
-                        } else {
-                            cx.open_url(&pressed_link.destination_url);
-                        }
-                    }
-                } else if markdown.selection.pending {
+            let _rendered_text = rendered_text.clone();
+            move |markdown, _event: &MouseUpEvent, phase, _window, cx| {
+                if markdown.selection.pending && !phase.capture() {
                     markdown.selection.pending = false;
                     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                     {
-                        let text = rendered_text
+                        let text = _rendered_text
                             .text_for_range(markdown.selection.start..markdown.selection.end);
                         cx.write_to_primary(ClipboardItem::new_string(text))
                     }
@@ -1002,18 +1054,21 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(
-            &self.style.container_style,
-            self.style.base_text_style.clone(),
-            self.style.syntax.clone(),
-        );
-        let (parsed_markdown, images) = {
+        let (parsed_markdown, images, selection) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
                 markdown.images_by_source_offset.clone(),
+                &markdown.selection,
             )
         };
+        let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
+            self.style.base_text_style.clone(),
+            self.style.syntax.clone(),
+            selection.clone(),
+            Arc::new(ElementId::from(("md-link", self.markdown.entity_id()))),
+        );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -1036,12 +1091,19 @@ impl Element for MarkdownElement {
                         MarkdownTag::Image { .. } => {
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
-                                builder.modify_current_div(|el| {
-                                    el.items_center()
-                                        .flex()
-                                        .flex_row()
-                                        .child(img(image.clone()))
-                                });
+                                if builder.link_stack.is_empty() {
+                                    builder.modify_current_div(|el| {
+                                        el.items_center()
+                                            .flex()
+                                            .flex_row()
+                                            .child(img(image.clone()))
+                                    });
+                                } else {
+                                    builder.push_inline_child(
+                                        img(image.clone()).into_any_element(),
+                                        1,
+                                    );
+                                }
                             }
                         }
                         MarkdownTag::Paragraph => {
@@ -1225,14 +1287,16 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
-                                builder.push_link(dest_url.clone(), range.clone());
-                                let style = self
+                                let resolved_link_style = self
                                     .style
                                     .link_callback
                                     .as_ref()
                                     .and_then(|callback| callback(dest_url, cx))
                                     .unwrap_or_else(|| self.style.link.clone());
-                                builder.push_text_style(style)
+                                builder.push_link(dest_url.clone(), range.start);
+                                if matches!(self.style.link_renderer, LinkRenderer::Default) {
+                                    builder.push_text_style(resolved_link_style)
+                                }
                             }
                         }
                         MarkdownTag::MetadataBlock(_) => {}
@@ -1308,6 +1372,7 @@ impl Element for MarkdownElement {
                         builder.pop_text_style()
                     }
                     MarkdownTagEnd::BlockQuote(_kind) => {
+                        builder.trim_trailing_newline();
                         builder.pop_text_style();
                         builder.pop_div()
                     }
@@ -1387,6 +1452,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Item => {
+                        builder.trim_trailing_newline();
                         builder.pop_div();
                         builder.pop_div();
                     }
@@ -1395,7 +1461,14 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
-                            builder.pop_text_style()
+                            builder.pop_text_style();
+                            builder.pop_link(
+                                range.end,
+                                window,
+                                cx,
+                                &self.style.link_renderer,
+                                &self.on_url_click,
+                            );
                         }
                     }
                     MarkdownTagEnd::Table => {
@@ -1707,10 +1780,15 @@ impl TableState {
 struct MarkdownElementBuilder {
     div_stack: Vec<AnyDiv>,
     rendered_lines: Vec<RenderedLine>,
-    pending_line: PendingLine,
-    rendered_links: Vec<RenderedLink>,
+    inline_stack: Vec<PendingInline>,
+    flat_text_len: usize,
+    pending_source_mappings: Vec<SourceMapping>,
+    link_stack: Vec<LinkStackEntry>,
+    next_element_id: usize,
     current_source_index: usize,
     html_comment: bool,
+    selection: Selection,
+    element_id: Arc<ElementId>,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -1719,15 +1797,85 @@ struct MarkdownElementBuilder {
     syntax_theme: Arc<SyntaxTheme>,
 }
 
+/// Represents either text or a child element in an inline context.
+/// Used to preserve correct ordering of text and nested inline elements (like links).
+enum PendingItem {
+    Text {
+        text: String,
+        runs: Vec<TextRun>,
+    },
+    Child {
+        element: AnyElement,
+        logical_len: usize,
+    },
+}
+
+/// Accumulator for inline content being built.
 #[derive(Default)]
-struct PendingLine {
-    text: String,
-    runs: Vec<TextRun>,
-    source_mappings: Vec<SourceMapping>,
+struct PendingInline {
+    items: Vec<PendingItem>,
+    logical_len: usize,
+}
+
+impl PendingInline {
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    fn push_text(&mut self, text: String, runs: Vec<TextRun>) {
+        self.logical_len += text.len();
+        self.items.push(PendingItem::Text { text, runs });
+    }
+
+    fn push_child(&mut self, element: AnyElement, logical_len: usize) {
+        self.logical_len += logical_len.max(1);
+        self.items.push(PendingItem::Child {
+            element,
+            logical_len,
+        });
+    }
+
+    fn into_inline_builder(self) -> InlineBuilder {
+        let mut builder = inline();
+        for item in self.items {
+            builder = match item {
+                PendingItem::Text { text, runs } => builder.text_runs(text.into(), runs),
+                PendingItem::Child {
+                    element,
+                    logical_len,
+                } => builder.child_with_logical_len(element, logical_len),
+            };
+        }
+        builder
+    }
+
+    fn into_link_label(self) -> LinkLabel {
+        let logical_len = self.logical_len;
+        let items = self
+            .items
+            .into_iter()
+            .map(|item| match item {
+                PendingItem::Text { text, runs } => LinkLabelItem::Text { text, runs },
+                PendingItem::Child {
+                    element,
+                    logical_len,
+                } => LinkLabelItem::Element {
+                    element,
+                    logical_len,
+                },
+            })
+            .collect();
+        LinkLabel { items, logical_len }
+    }
 }
 
 struct ListStackEntry {
     bullet_index: Option<u64>,
+}
+
+struct LinkStackEntry {
+    url: SharedString,
+    source_start: usize,
 }
 
 impl MarkdownElementBuilder {
@@ -1735,6 +1883,8 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        selection: Selection,
+        element_id: Arc<ElementId>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -1743,10 +1893,15 @@ impl MarkdownElementBuilder {
                 base_div.debug_selector(|| "inner".into()).into()
             }],
             rendered_lines: Vec::new(),
-            pending_line: PendingLine::default(),
-            rendered_links: Vec::new(),
+            inline_stack: vec![PendingInline::default()],
+            flat_text_len: 0,
+            pending_source_mappings: Vec::new(),
+            link_stack: Vec::new(),
+            next_element_id: 0,
             current_source_index: 0,
             html_comment: false,
+            selection,
+            element_id,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -1758,6 +1913,11 @@ impl MarkdownElementBuilder {
 
     fn push_text_style(&mut self, style: TextStyleRefinement) {
         self.text_style_stack.push(style);
+    }
+
+    fn push_inline_child(&mut self, element: AnyElement, logical_len: usize) {
+        let current = self.inline_stack.last_mut().expect("no inline context");
+        current.push_child(element, logical_len);
     }
 
     fn text_style(&self) -> TextStyle {
@@ -1841,74 +2001,166 @@ impl MarkdownElementBuilder {
         self.code_block_stack.pop();
     }
 
-    fn push_link(&mut self, destination_url: SharedString, source_range: Range<usize>) {
-        self.rendered_links.push(RenderedLink {
-            source_range,
-            destination_url,
+    fn push_link(&mut self, destination_url: SharedString, source_start: usize) {
+        self.inline_stack.push(PendingInline::default());
+        self.link_stack.push(LinkStackEntry {
+            url: destination_url,
+            source_start,
         });
     }
 
+    fn selection_overlaps(&self, range: Range<usize>) -> bool {
+        let sel_start = self.selection.start.min(self.selection.end);
+        let sel_end = self.selection.start.max(self.selection.end);
+        sel_start != sel_end && sel_start < range.end && sel_end > range.start
+    }
+
+    fn next_child_element_id(&mut self, prefix: &str) -> ElementId {
+        let id = self.next_element_id;
+        self.next_element_id += 1;
+        ElementId::NamedChild(self.element_id.clone(), format!("{prefix}-{id}").into())
+    }
+
+    fn build_link_element(
+        &self,
+        link_label: LinkLabel,
+        context: LinkRenderContext,
+        link_renderer: &LinkRenderer,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        match link_renderer {
+            LinkRenderer::Custom { render } => render(link_label, context, window, cx),
+            LinkRenderer::Default => render_link_element(
+                link_label,
+                context.element_id,
+                context.url,
+                context.on_url_click,
+            ),
+        }
+    }
+
+    fn pop_link(
+        &mut self,
+        source_end: usize,
+        window: &mut Window,
+        cx: &mut App,
+        link_renderer: &LinkRenderer,
+        on_url_click: &Option<Arc<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    ) {
+        let link = self.inline_stack.pop().expect("pop_link without push_link");
+        let LinkStackEntry { url, source_start } =
+            self.link_stack.pop().expect("pop_link without push_link");
+        let is_selected = self.selection_overlaps(source_start..source_end);
+
+        let link_label = link.into_link_label();
+        let link_logical_len = link_label.logical_len.max(1);
+
+        let link_element_id = self.next_child_element_id("link");
+
+        let context = LinkRenderContext {
+            url: url.clone(),
+            element_id: link_element_id.clone(),
+            on_url_click: on_url_click.clone(),
+            is_selected,
+        };
+
+        let link_element = self.build_link_element(link_label, context, link_renderer, window, cx);
+
+        // Add to parent inline as child
+        let parent_inline = self
+            .inline_stack
+            .last_mut()
+            .expect("no parent inline for link");
+        parent_inline.push_child(link_element, link_logical_len);
+    }
+
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
-        self.pending_line.source_mappings.push(SourceMapping {
-            rendered_index: self.pending_line.text.len(),
+        self.pending_source_mappings.push(SourceMapping {
+            rendered_index: self.flat_text_len,
             source_index: source_range.start,
         });
-        self.pending_line.text.push_str(text);
+        self.flat_text_len += text.len();
         self.current_source_index = source_range.end;
 
-        if let Some(Some(language)) = self.code_block_stack.last() {
+        // Compute runs for this text
+        let runs = if let Some(Some(language)) = self.code_block_stack.last() {
+            let mut runs = Vec::new();
             let mut offset = 0;
             for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
                 if range.start > offset {
-                    self.pending_line
-                        .runs
-                        .push(self.text_style().to_run(range.start - offset));
+                    runs.push(self.text_style().to_run(range.start - offset));
                 }
 
                 let mut run_style = self.text_style();
                 if let Some(highlight) = highlight_id.style(&self.syntax_theme) {
                     run_style = run_style.highlight(highlight);
                 }
-                self.pending_line.runs.push(run_style.to_run(range.len()));
+                runs.push(run_style.to_run(range.len()));
                 offset = range.end;
             }
 
             if offset < text.len() {
-                self.pending_line
-                    .runs
-                    .push(self.text_style().to_run(text.len() - offset));
+                runs.push(self.text_style().to_run(text.len() - offset));
             }
+            runs
         } else {
-            self.pending_line
-                .runs
-                .push(self.text_style().to_run(text.len()));
+            vec![self.text_style().to_run(text.len())]
+        };
+
+        // Add to current inline (top of stack)
+        let current = self.inline_stack.last_mut().expect("no inline context");
+        if let Some(PendingItem::Text { text: t, runs: r }) = current.items.last_mut() {
+            // Append to existing text item
+            t.push_str(text);
+            r.extend(runs);
+            current.logical_len += text.len();
+        } else {
+            // Create new text item
+            current.push_text(text.to_string(), runs);
         }
     }
 
     fn trim_trailing_newline(&mut self) {
-        if self.pending_line.text.ends_with('\n') {
-            self.pending_line
-                .text
-                .truncate(self.pending_line.text.len() - 1);
-            self.pending_line.runs.last_mut().unwrap().len -= 1;
-            self.current_source_index -= 1;
+        let current = self.inline_stack.last_mut().expect("no inline context");
+        if let Some(PendingItem::Text { text, runs }) = current.items.last_mut() {
+            if text.ends_with('\n') {
+                text.truncate(text.len() - 1);
+                if let Some(run) = runs.last_mut() {
+                    run.len -= 1;
+                }
+                self.flat_text_len -= 1;
+                self.current_source_index -= 1;
+                current.logical_len = current.logical_len.saturating_sub(1);
+            }
         }
     }
 
     fn flush_text(&mut self) {
-        let line = mem::take(&mut self.pending_line);
-        if line.text.is_empty() {
+        let pending = mem::take(&mut self.inline_stack);
+        let pending = pending.into_iter().next().unwrap_or_default();
+        if pending.is_empty() {
+            self.inline_stack.push(PendingInline::default());
             return;
         }
 
-        let text = StyledText::new(line.text).with_runs(line.runs);
+        let inline_element = pending.into_inline_builder().into_element();
+
+        let layout_store = inline_element.layout();
         self.rendered_lines.push(RenderedLine {
-            layout: text.layout().clone(),
-            source_mappings: line.source_mappings,
+            layout: layout_store,
+            source_mappings: mem::take(&mut self.pending_source_mappings),
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
         });
-        self.div_stack.last_mut().unwrap().extend([text.into_any()]);
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([inline_element.into_any()]);
+
+        // Reset for next paragraph
+        self.inline_stack.push(PendingInline::default());
+        self.flat_text_len = 0;
     }
 
     fn build(mut self) -> RenderedMarkdown {
@@ -1918,22 +2170,33 @@ impl MarkdownElementBuilder {
             element: self.div_stack.pop().unwrap().into_any_element(),
             text: RenderedText {
                 lines: self.rendered_lines.into(),
-                links: self.rendered_links.into(),
             },
         }
     }
 }
 
 struct RenderedLine {
-    layout: TextLayout,
+    layout: InlineLayout,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
 }
 
 impl RenderedLine {
+    fn logical_index_for_text_index(&self, text_index: usize) -> usize {
+        text_index.min(self.layout.len())
+    }
+
+    fn text_index_for_logical_index(&self, logical_index: usize) -> usize {
+        logical_index.min(self.layout.len())
+    }
+
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
         if source_index >= self.source_end {
+            return self.layout.len();
+        }
+
+        if self.source_mappings.is_empty() {
             return self.layout.len();
         }
 
@@ -1944,7 +2207,8 @@ impl RenderedLine {
             Ok(ix) => &self.source_mappings[ix],
             Err(ix) => &self.source_mappings[ix - 1],
         };
-        mapping.rendered_index + (source_index - mapping.source_index)
+        let text_index = mapping.rendered_index + (source_index - mapping.source_index);
+        self.logical_index_for_text_index(text_index)
     }
 
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
@@ -1952,14 +2216,19 @@ impl RenderedLine {
             return self.source_end;
         }
 
+        if self.source_mappings.is_empty() {
+            return self.source_end;
+        }
+
+        let text_index = self.text_index_for_logical_index(rendered_index);
         let mapping = match self
             .source_mappings
-            .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
+            .binary_search_by_key(&text_index, |probe| probe.rendered_index)
         {
             Ok(ix) => &self.source_mappings[ix],
             Err(ix) => &self.source_mappings[ix - 1],
         };
-        mapping.source_index + (rendered_index - mapping.rendered_index)
+        mapping.source_index + (text_index - mapping.rendered_index)
     }
 
     /// Returns the source index for use as an exclusive range end at a word/selection boundary.
@@ -2032,13 +2301,6 @@ pub struct RenderedMarkdown {
 #[derive(Clone)]
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
-    links: Rc<[RenderedLink]>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct RenderedLink {
-    source_range: Range<usize>,
-    destination_url: SharedString,
 }
 
 impl RenderedText {
@@ -2048,16 +2310,16 @@ impl RenderedText {
         while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
-                if let Some(next_line) = lines.peek()
-                    && position.y < next_line.layout.bounds().top()
-                {
-                    return Err(line.source_end);
+                if let Some(next_line) = lines.peek() {
+                    if position.y < next_line.layout.bounds().top() {
+                        return Err(line.source_end);
+                    }
                 }
-
                 continue;
             }
 
-            return line.source_index_for_position(position);
+            let result = line.source_index_for_position(position);
+            return result;
         }
 
         Err(self.lines.last().map_or(0, |line| line.source_end))
@@ -2071,8 +2333,10 @@ impl RenderedText {
             } else if source_index > line.source_end {
                 continue;
             } else {
-                let line_height = line.layout.line_height();
                 let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
+                let line_height = line
+                    .layout
+                    .line_height_for_index(rendered_index_within_line);
                 let position = line.layout.position_for_index(rendered_index_within_line)?;
                 return Some((position, line_height));
             }
@@ -2086,9 +2350,7 @@ impl RenderedText {
                 continue;
             }
 
-            let line_rendered_start = line.source_mappings.first().unwrap().rendered_index;
-            let rendered_index_in_line =
-                line.rendered_index_for_source_index(source_index) - line_rendered_start;
+            let rendered_index_in_line = line.rendered_index_for_source_index(source_index);
             let text = line.layout.text();
 
             let scope = line.language.as_ref().map(|l| l.default_scope());
@@ -2120,8 +2382,8 @@ impl RenderedText {
                 }
             }
 
-            return line.source_index_for_rendered_index(line_rendered_start + start)
-                ..line.source_index_for_exclusive_rendered_end(line_rendered_start + end);
+            return line.source_index_for_rendered_index(start)
+                ..line.source_index_for_exclusive_rendered_end(end);
         }
 
         source_index..source_index
@@ -2165,19 +2427,12 @@ impl RenderedText {
             }
             .min(text.len());
 
-            accumulator.push_str(&text[start..end]);
+            accumulator.push_str(line.layout.plain_text_range(start..end).as_ref());
             accumulator.push('\n');
         }
         // Remove trailing newline
         accumulator.pop();
         accumulator
-    }
-
-    fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
-        let source_index = self.source_index_for_position(position).ok()?;
-        self.links
-            .iter()
-            .find(|link| link.source_range.contains(&source_index))
     }
 }
 
