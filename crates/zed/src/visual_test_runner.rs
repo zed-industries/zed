@@ -180,9 +180,19 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         image_viewer::init(cx);
         search::init(cx);
         prompt_store::init(cx);
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        project::AgentRegistryStore::init_global(cx);
+        agent_ui::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            prompt_builder,
+            app_state.languages.clone(),
+            false,
+            cx,
+        );
 
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
