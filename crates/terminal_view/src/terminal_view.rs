@@ -1887,7 +1887,7 @@ mod tests {
     use super::*;
     use editor::MultiBufferOffset;
     use gpui::{TestAppContext, VisualTestContext};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_python};
+    use language::{Language, LanguageConfig, LanguageMatcher, PointUtf16, tree_sitter_python};
     use project::{Entry, Project, ProjectPath, Worktree};
     use serde_json::json;
     use std::path::Path;
@@ -2455,13 +2455,23 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         // Check selection moves to terminal
-        window
+        let selected_text = window
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| {
-                        // TODO: I hope this is getting the first 10 characters
-                        s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(10)]);
+                        // The r# literal preserves all of the whitespace, so the
+                        // first 10 characters are 12..21
+                        s.select_ranges([PointUtf16::new(1, 12)..PointUtf16::new(1, 21)]);
                     });
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let selection = editor.selections.newest_anchor();
+                    let selection_range =
+                        selection.start.to_offset(&buffer)..selection.end.to_offset(&buffer);
+                    let expression_text = buffer
+                        .text_for_range(selection_range.clone())
+                        .collect::<String>();
+
+                    expression_text.trim().to_string()
                 })
             })
             .unwrap();
@@ -2469,9 +2479,9 @@ mod tests {
         let buffer_text = editor.update(cx, |editor, cx| {
             editor.buffer().read(cx).snapshot(cx).text()
         });
-        // TODO: assert selected text
         assert!(buffer_text.contains("import pandas as pd"));
         assert!(buffer_text.contains("df.describe()"));
+        assert!(selected_text.eq("import pa"));
 
         let terminal = project
             .update(cx, |project, cx| project.create_terminal_shell(None, cx))
@@ -2492,8 +2502,7 @@ mod tests {
             .root(cx)
             .unwrap();
 
-        // TODO: Send text
-        // I don't think this works
+        // TODO: Now I know the correct text is selected, but this action isn't getting dispatched
         cx.dispatch_action(SendToTerminal {
             append_newline: false,
         });
