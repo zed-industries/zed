@@ -634,6 +634,10 @@ pub(crate) enum EditDisplayMode {
 enum EditPrediction {
     Edit {
         edits: Vec<(Range<Anchor>, Arc<str>)>,
+        /// Predicted cursor position as (anchor, offset_from_anchor).
+        /// The anchor is in multibuffer coordinates; after applying edits,
+        /// resolve the anchor and add the offset to get the final cursor position.
+        cursor_position: Option<(Anchor, usize)>,
         edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
@@ -7872,7 +7876,11 @@ impl Editor {
                         .detach_and_log_err(cx);
                 }
             }
-            EditPrediction::Edit { edits, .. } => {
+            EditPrediction::Edit {
+                edits,
+                cursor_position,
+                ..
+            } => {
                 self.report_edit_prediction_event(
                     active_edit_prediction.completion_id.clone(),
                     true,
@@ -7886,15 +7894,32 @@ impl Editor {
                         }
 
                         let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
-                        let snapshot = self.buffer.read(cx).snapshot(cx);
-                        let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
+
+                        // Compute fallback cursor position BEFORE applying the edit,
+                        // so the anchor tracks through the edit correctly
+                        let fallback_cursor_target = {
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            edits.last().unwrap().0.end.bias_right(&snapshot)
+                        };
 
                         self.buffer.update(cx, |buffer, cx| {
                             buffer.edit(edits.iter().cloned(), None, cx)
                         });
 
+                        // Resolve cursor position after the edit is applied
+                        let cursor_target = if let Some((anchor, offset)) = cursor_position {
+                            // The anchor tracks through the edit, then we add the offset
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            let base_offset = anchor.to_offset(&snapshot).0;
+                            let target_offset =
+                                MultiBufferOffset((base_offset + offset).min(snapshot.len().0));
+                            snapshot.anchor_after(target_offset)
+                        } else {
+                            fallback_cursor_target
+                        };
+
                         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_anchor_ranges([last_edit_end..last_edit_end]);
+                            s.select_anchor_ranges([cursor_target..cursor_target]);
                         });
 
                         let selections = self.selections.disjoint_anchors_arc();
@@ -8358,12 +8383,14 @@ impl Editor {
 
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
 
-        let (completion_id, edits, edit_preview) = match edit_prediction {
+        let (completion_id, edits, predicted_cursor_position, edit_preview) = match edit_prediction
+        {
             edit_prediction_types::EditPrediction::Local {
                 id,
                 edits,
+                cursor_position,
                 edit_preview,
-            } => (id, edits, edit_preview),
+            } => (id, edits, cursor_position, edit_preview),
             edit_prediction_types::EditPrediction::Jump {
                 id,
                 snapshot,
@@ -8396,6 +8423,11 @@ impl Editor {
         if edits.is_empty() {
             return None;
         }
+
+        let cursor_position = predicted_cursor_position.and_then(|predicted| {
+            let anchor = multibuffer.anchor_in_excerpt(excerpt_id, predicted.anchor)?;
+            Some((anchor, predicted.offset))
+        });
 
         let first_edit_start = edits.first().unwrap().0.start;
         let first_edit_start_point = first_edit_start.to_point(&multibuffer);
@@ -8491,6 +8523,7 @@ impl Editor {
 
             EditPrediction::Edit {
                 edits,
+                cursor_position,
                 edit_preview,
                 display_mode,
                 snapshot,
@@ -9179,6 +9212,7 @@ impl Editor {
                 edit_preview,
                 display_mode: EditDisplayMode::DiffPopover,
                 snapshot,
+                ..
             } => self.render_edit_prediction_diff_popover(
                 text_bounds,
                 content_origin,
@@ -10129,7 +10163,7 @@ impl Editor {
                 edits,
                 edit_preview,
                 snapshot,
-                display_mode: _,
+                ..
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(snapshot).row;
 

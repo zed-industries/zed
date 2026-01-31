@@ -9017,6 +9017,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
             provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
+                cursor_position: None,
                 edit_preview: None,
             }))
         })
