@@ -6,7 +6,7 @@ Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previ
 
 Languages which can be used with Tailwind CSS in Zed:
 
-- [Astro](./astro.md)
+- [Astro](./astro.md#using-the-tailwind-css-language-server-with-astro)
 - [CSS](./css.md)
 - [ERB](./ruby.md)
 - [Gleam](./gleam.md)
