@@ -368,7 +368,7 @@ impl Platform for WindowsPlatform {
             .set(Some(callback));
     }
 
-    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut(ThermalState)>) {}
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal

@@ -26,7 +26,7 @@ use crate::{
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
-    RunnableVariant, Task, WindowAppearance, WindowParams, px,
+    RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
