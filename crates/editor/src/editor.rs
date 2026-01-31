@@ -1972,7 +1972,7 @@ impl Editor {
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
             .scroll_manager
-            .anchor(display_snapshot, cx)
+            .native_anchor(display_snapshot, cx)
             .anchor
             .to_point(&multi_buffer_snapshot);
         let max_row = multi_buffer_snapshot.max_point().row;
@@ -2576,8 +2576,9 @@ impl Editor {
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                         editor.inline_blame_popover.take();
                         let snapshot = editor.snapshot(window, cx);
-                        let new_anchor =
-                            editor.scroll_manager.anchor(&snapshot.display_snapshot, cx);
+                        let new_anchor = editor
+                            .scroll_manager
+                            .native_anchor(&snapshot.display_snapshot, cx);
                         editor.update_restoration_data(cx, move |data| {
                             data.scroll_position = (
                                 new_anchor.top_row(snapshot.buffer_snapshot()),
@@ -5580,7 +5581,7 @@ impl Editor {
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
             .scroll_manager
-            .anchor(&display_snapshot, cx)
+            .native_anchor(&display_snapshot, cx)
             .anchor
             .to_point(&multi_buffer_snapshot);
         let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
@@ -7552,7 +7553,7 @@ impl Editor {
         if on_buffer_edit || query_changed {
             let multi_buffer_visible_start = self
                 .scroll_manager
-                .anchor(&display_snapshot, cx)
+                .native_anchor(&display_snapshot, cx)
                 .anchor
                 .to_point(&multi_buffer_snapshot);
             let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
@@ -14968,7 +14969,7 @@ impl Editor {
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).read(cx);
         let cursor_position = cursor_anchor.to_point(&buffer);
-        let scroll_anchor = self.scroll_manager.anchor(&display_snapshot, cx);
+        let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
         let scroll_top_row = scroll_anchor.top_row(&buffer);
         drop(buffer);
 

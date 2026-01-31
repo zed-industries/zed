@@ -201,7 +201,7 @@ impl Editor {
                 .last_autoscroll
                 .as_ref()
                 .filter(|(offset, last_target_top, last_target_bottom, _)| {
-                    self.scroll_manager.anchor(&display_map, cx).offset == *offset
+                    self.scroll_manager.offset(cx) == *offset
                         && target_top == *last_target_top
                         && target_bottom == *last_target_bottom
                 })
@@ -264,7 +264,7 @@ impl Editor {
         };
 
         self.scroll_manager.last_autoscroll = Some((
-            self.scroll_manager.anchor(&display_map, cx).offset,
+            self.scroll_manager.offset(cx),
             target_top,
             target_bottom,
             strategy,
@@ -334,7 +334,7 @@ impl Editor {
             return None;
         }
 
-        let scroll_left = self.scroll_manager.anchor(&display_map, cx).offset.x * em_advance;
+        let scroll_left = self.scroll_manager.offset(cx).x * em_advance;
         let scroll_right = scroll_left + viewport_width;
 
         let was_scrolled = if target_left < scroll_left {

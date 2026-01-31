@@ -940,7 +940,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             editor.set_scroll_position(gpui::Point::<f64>::new(5.5, 5.5), window, cx);
             let original_scroll_position = editor
                 .scroll_manager
-                .anchor(&editor.display_snapshot(cx), cx);
+                .native_anchor(&editor.display_snapshot(cx), cx);
 
             // Jump to the end of the document and adjust scroll
             editor.move_to_end(&MoveToEnd, window, cx);
@@ -948,7 +948,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             assert_ne!(
                 editor
                     .scroll_manager
-                    .anchor(&editor.display_snapshot(cx), cx),
+                    .native_anchor(&editor.display_snapshot(cx), cx),
                 original_scroll_position
             );
 
@@ -957,14 +957,14 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             assert_eq!(
                 editor
                     .scroll_manager
-                    .anchor(&editor.display_snapshot(cx), cx),
+                    .native_anchor(&editor.display_snapshot(cx), cx),
                 original_scroll_position
             );
 
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
             let mut invalid_anchor = editor
                 .scroll_manager
-                .anchor(&editor.display_snapshot(cx), cx)
+                .native_anchor(&editor.display_snapshot(cx), cx)
                 .anchor;
             invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);

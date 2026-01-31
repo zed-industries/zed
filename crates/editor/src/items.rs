@@ -216,7 +216,7 @@ impl FollowableItem for Editor {
         }
 
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let scroll_anchor = self.scroll_manager.anchor(&display_snapshot, cx);
+        let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
         let buffer = self.buffer.read(cx);
         let excerpts = buffer
             .read(cx)
@@ -310,7 +310,7 @@ impl FollowableItem for Editor {
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
                     let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
                     let snapshot = self.buffer.read(cx).snapshot(cx);
-                    let scroll_anchor = self.scroll_manager.anchor(&display_snapshot, cx);
+                    let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
                     update.scroll_top_anchor =
                         Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
                     update.scroll_x = scroll_anchor.offset.x;

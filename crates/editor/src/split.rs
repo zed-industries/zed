@@ -848,7 +848,7 @@ impl SplittableEditor {
         self.panes.remove(&lhs.pane, cx).unwrap();
         self.rhs_editor.update(cx, |rhs, cx| {
             let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
-            let native_anchor = rhs.scroll_manager.anchor(&rhs_snapshot, cx);
+            let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
             let rhs_display_map_id = rhs_snapshot.display_map_id;
             rhs.scroll_manager
                 .scroll_anchor_entity()

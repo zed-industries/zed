@@ -70,6 +70,9 @@ pub struct OngoingScroll {
     axis: Option<Axis>,
 }
 
+/// In the side-by-side diff view, we allow either side to set a scroll anchor from its own multibuffer.
+///
+/// We store the entity ID of the display map that matches the anchor, so that we know how to resolve it to a DisplayPoint.
 #[derive(Clone, Copy, Debug)]
 pub struct SharedScrollAnchor {
     pub scroll_anchor: ScrollAnchor,
@@ -78,34 +81,31 @@ pub struct SharedScrollAnchor {
 
 impl SharedScrollAnchor {
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
-        let resolve_snapshot = if self.display_map_id.is_none()
-            || self.display_map_id == Some(snapshot.display_map_id)
+        let snapshot = if let Some(display_map_id) = self.display_map_id
+            && display_map_id != snapshot.display_map_id
         {
-            snapshot
-        } else if let Some(companion) = snapshot.companion_snapshot() {
-            companion
+            let companion_snapshot = snapshot.companion_snapshot().unwrap();
+            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            companion_snapshot
         } else {
             snapshot
         };
 
-        self.scroll_anchor.scroll_position(resolve_snapshot)
+        self.scroll_anchor.scroll_position(snapshot)
     }
 
     pub fn scroll_top_display_point(&self, snapshot: &DisplaySnapshot) -> DisplayPoint {
-        if self.display_map_id.is_none() || self.display_map_id == Some(snapshot.display_map_id) {
-            self.scroll_anchor.anchor.to_display_point(snapshot)
-        } else if let Some(companion) = snapshot.companion_snapshot() {
-            let companion_display_point = self.scroll_anchor.anchor.to_display_point(companion);
-            let row_only = DisplayPoint::new(companion_display_point.row(), 0);
-            let buffer_point = snapshot.display_point_to_point(row_only, Bias::Left);
-            snapshot.point_to_display_point(buffer_point, Bias::Left)
+        let snapshot = if let Some(display_map_id) = self.display_map_id
+            && display_map_id != snapshot.display_map_id
+        {
+            let companion_snapshot = snapshot.companion_snapshot().unwrap();
+            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            companion_snapshot
         } else {
-            self.scroll_anchor.anchor.to_display_point(snapshot)
-        }
-    }
+            snapshot
+        };
 
-    pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
-        self.scroll_anchor.top_row(buffer)
+        self.scroll_anchor.anchor.to_display_point(snapshot)
     }
 }
 
@@ -258,7 +258,7 @@ impl ScrollManager {
         my_snapshot: &DisplaySnapshot,
         cx: &mut Context<Editor>,
     ) {
-        let native_anchor = other.anchor(other_snapshot, cx);
+        let native_anchor = other.native_anchor(other_snapshot, cx);
         self.anchor.update(cx, |this, _| {
             this.scroll_anchor = native_anchor;
             this.display_map_id = Some(my_snapshot.display_map_id);
@@ -267,27 +267,32 @@ impl ScrollManager {
         self.sticky_header_line_count = other.sticky_header_line_count;
     }
 
-    pub fn anchor(&self, snapshot: &DisplaySnapshot, cx: &App) -> ScrollAnchor {
+    pub fn offset(&self, cx: &App) -> gpui::Point<f64> {
+        self.anchor.read(cx).scroll_anchor.offset
+    }
+
+    pub fn native_anchor(&self, snapshot: &DisplaySnapshot, cx: &App) -> ScrollAnchor {
         let shared = self.anchor.read(cx);
 
-        if shared.display_map_id.is_none() || shared.display_map_id == Some(snapshot.display_map_id)
+        if let Some(display_map_id) = shared.display_map_id
+            && display_map_id != snapshot.display_map_id
         {
-            return shared.scroll_anchor;
+            let companion_snapshot = snapshot.companion_snapshot().unwrap();
+            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let mut display_point = shared
+                .scroll_anchor
+                .anchor
+                .to_display_point(companion_snapshot);
+            *display_point.column_mut() = 0;
+            let buffer_point = snapshot.display_point_to_point(display_point, Bias::Left);
+            let anchor = snapshot.buffer_snapshot().anchor_before(buffer_point);
+            return ScrollAnchor {
+                anchor,
+                offset: shared.scroll_anchor.offset,
+            };
         }
 
-        let Some(companion) = snapshot.companion_snapshot() else {
-            return shared.scroll_anchor;
-        };
-
-        let display_point = shared.scroll_anchor.anchor.to_display_point(companion);
-        let row_only = DisplayPoint::new(display_point.row(), 0);
-        let buffer_point = snapshot.display_point_to_point(row_only, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot().anchor_before(buffer_point);
-
-        ScrollAnchor {
-            anchor: new_anchor,
-            offset: shared.scroll_anchor.offset,
-        }
+        shared.scroll_anchor
     }
 
     pub fn shared_scroll_anchor(&self, cx: &App) -> SharedScrollAnchor {
@@ -320,19 +325,7 @@ impl ScrollManager {
         snapshot: &DisplaySnapshot,
         cx: &App,
     ) -> gpui::Point<ScrollOffset> {
-        let shared = self.anchor.read(cx);
-
-        let resolve_snapshot = if shared.display_map_id.is_none()
-            || shared.display_map_id == Some(snapshot.display_map_id)
-        {
-            snapshot
-        } else if let Some(companion) = snapshot.companion_snapshot() {
-            companion
-        } else {
-            snapshot
-        };
-
-        shared.scroll_anchor.scroll_position(resolve_snapshot)
+        self.anchor.read(cx).scroll_position(snapshot)
     }
 
     pub fn sticky_header_line_count(&self) -> usize {
