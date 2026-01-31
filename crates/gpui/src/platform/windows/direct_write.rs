@@ -67,11 +67,24 @@ struct DirectWriteState {
     system_subpixel_rendering: bool,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct FontIdentifier {
-    postscript_name: String,
+    postscript_name: IDWriteLocalizedStrings,
     weight: i32,
     style: i32,
+}
+
+impl std::hash::Hash for FontIdentifier {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.postscript_name
+            .cast::<IUnknown>()
+            .unwrap()
+            .as_raw()
+            .addr()
+            .hash(state);
+        self.weight.hash(state);
+        self.style.hash(state);
+    }
 }
 
 impl DirectWriteComponent {
@@ -440,7 +453,7 @@ impl DirectWriteState {
             let Some(font_face) = (unsafe { font_face_ref.CreateFontFace().log_err() }) else {
                 continue;
             };
-            let Some(identifier) = get_font_identifier(&font_face, &self.components.locale) else {
+            let Some(identifier) = get_font_identifier(&font_face) else {
                 continue;
             };
             let Some(direct_write_features) =
@@ -1746,7 +1759,7 @@ fn get_font_identifier_and_font_struct(
     font_face: &IDWriteFontFace3,
     locale: &str,
 ) -> Option<(FontIdentifier, Font, bool)> {
-    let postscript_name = get_postscript_name(font_face, locale).log_err()?;
+    let postscript_name = get_postscript_name(font_face).log_err()?;
     let localized_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
     let family_name = get_name(localized_family_name, locale).log_err()?;
     let weight = unsafe { font_face.GetWeight() };
@@ -1768,10 +1781,10 @@ fn get_font_identifier_and_font_struct(
 }
 
 #[inline]
-fn get_font_identifier(font_face: &IDWriteFontFace3, locale: &str) -> Option<FontIdentifier> {
+fn get_font_identifier(font_face: &IDWriteFontFace3) -> Option<FontIdentifier> {
     let weight = unsafe { font_face.GetWeight().0 };
     let style = unsafe { font_face.GetStyle().0 };
-    get_postscript_name(font_face, locale)
+    get_postscript_name(font_face)
         .log_err()
         .map(|postscript_name| FontIdentifier {
             postscript_name,
@@ -1781,7 +1794,7 @@ fn get_font_identifier(font_face: &IDWriteFontFace3, locale: &str) -> Option<Fon
 }
 
 #[inline]
-fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Result<String> {
+fn get_postscript_name(font_face: &IDWriteFontFace3) -> Result<IDWriteLocalizedStrings> {
     let mut info = None;
     let mut exists = BOOL(0);
     unsafe {
@@ -1791,11 +1804,10 @@ fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Result<Str
             &mut exists,
         )?
     };
-    if !exists.as_bool() || info.is_none() {
+    if !exists.as_bool() {
         anyhow::bail!("No postscript name found for font face");
     }
-
-    get_name(info.unwrap(), locale)
+    info.ok_or_else(|| anyhow::anyhow!("No postscript name found for font face"))
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
