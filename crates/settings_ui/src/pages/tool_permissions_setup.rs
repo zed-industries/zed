@@ -1,6 +1,6 @@
 use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
-use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, prelude::*};
+use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -202,9 +202,26 @@ pub(crate) fn render_tool_config_page(
     let tool = TOOLS.iter().find(|t| t.id == tool_id).unwrap();
     let rules = get_tool_rules(tool_id, cx);
     let page_title = format!("{} Tool", tool.name);
+    let scroll_step = px(40.);
 
     v_flex()
         .id(format!("tool-config-page-{}", tool_id))
+        .on_action({
+            let scroll_handle = scroll_handle.clone();
+            move |_: &menu::SelectNext, window, cx| {
+                window.focus_next(cx);
+                let current_offset = scroll_handle.offset();
+                scroll_handle.set_offset(point(current_offset.x, current_offset.y - scroll_step));
+            }
+        })
+        .on_action({
+            let scroll_handle = scroll_handle.clone();
+            move |_: &menu::SelectPrevious, window, cx| {
+                window.focus_prev(cx);
+                let current_offset = scroll_handle.offset();
+                scroll_handle.set_offset(point(current_offset.x, current_offset.y + scroll_step));
+            }
+        })
         .min_w_0()
         .size_full()
         .pt_2p5()
