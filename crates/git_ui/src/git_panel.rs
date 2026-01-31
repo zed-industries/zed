@@ -2199,7 +2199,7 @@ impl GitPanel {
             return false;
         }
     }
-    
+
     pub fn head_commit(&self, cx: &App) -> Option<CommitDetails> {
         self.active_repository
             .as_ref()
@@ -7485,5 +7485,123 @@ mod tests {
         // "Update tracked"
         let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
         assert_eq!(message, Some("Update tracked".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_commit_editor_history_basic_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        // Build up history by adding entries directly (not through buffer)
+        panel.update(cx, |panel, cx| {
+            panel.add_commit_history_entry("First commit message".to_string(), cx);
+            panel.add_commit_history_entry("Second commit message".to_string(), cx);
+            panel.add_commit_history_entry("Third commit message".to_string(), cx);
+        });
+
+        // Test first prev - should get the most recent (Third)
+        panel.update_in(cx, |panel, window, cx| {
+            panel.prev_commit_editor_history_entry(&PrevCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Third commit message"
+            );
+        });
+
+        // Test second prev - should get Second
+        panel.update_in(cx, |panel, window, cx| {
+            panel.prev_commit_editor_history_entry(&PrevCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Second commit message"
+            );
+        });
+
+        // Test third prev - should get First
+        panel.update_in(cx, |panel, window, cx| {
+            panel.prev_commit_editor_history_entry(&PrevCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "First commit message"
+            );
+        });
+
+        // Test prev at end - should stay at First
+        panel.update_in(cx, |panel, window, cx| {
+            panel.prev_commit_editor_history_entry(&PrevCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "First commit message"
+            );
+        });
+
+        // Test first next - should get Second
+        panel.update_in(cx, |panel, window, cx| {
+            panel.next_commit_editor_history_entry(&NextCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Second commit message"
+            );
+        });
+
+        // Test second next - should get Third
+        panel.update_in(cx, |panel, window, cx| {
+            panel.next_commit_editor_history_entry(&NextCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Third commit message"
+            );
+        });
+
+        // Test next at beginning - should return to pending edit (empty)
+        panel.update_in(cx, |panel, window, cx| {
+            panel.next_commit_editor_history_entry(&NextCommitEditorHistoryEntry, window, cx);
+        });
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(panel.commit_message_buffer(cx).read(cx).text(), "");
+        });
     }
 }
