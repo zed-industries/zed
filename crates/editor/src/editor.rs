@@ -58,8 +58,8 @@ pub use editor_settings::{
     HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
 pub use element::{
-    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, OverlayPainter,
-    OverlayPainterData, PointForPosition, render_breadcrumb_text,
+    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
+    render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
