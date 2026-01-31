@@ -325,7 +325,9 @@ mod tests {
             |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
         let cx = VisualTestContext::from_window(*window, cx).into_mut();
-        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());

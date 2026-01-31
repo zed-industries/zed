@@ -23,7 +23,10 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
-pub use multi_workspace::MultiWorkspace;
+pub use multi_workspace::{
+    MultiWorkspace, NewWorkspaceInWindow, NextWorkspaceInWindow, PreviousWorkspaceInWindow,
+    ToggleWorkspaceSidebar,
+};
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
@@ -247,14 +250,6 @@ actions!(
         NewSearch,
         /// Opens a new window.
         NewWindow,
-        /// Creates a new workspace within the current window.
-        NewWorkspaceInWindow,
-        /// Switches to the next workspace within the current window.
-        NextWorkspaceInWindow,
-        /// Switches to the previous workspace within the current window.
-        PreviousWorkspaceInWindow,
-        /// Toggles the workspace switcher modal.
-        ToggleWorkspaceSidebar,
         /// Opens a file or directory.
         Open,
         /// Opens multiple files.

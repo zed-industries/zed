@@ -9,7 +9,9 @@ use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
-use workspace::{AppState, CloseActiveItem, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace, open_paths};
+use workspace::{
+    AppState, CloseActiveItem, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace, open_paths,
+};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -2539,7 +2541,9 @@ async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui
         |window, cx| MultiWorkspace::test_new(project, window, cx)
     });
     let cx = VisualTestContext::from_window(*window, cx).into_mut();
-    let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
 
     cx.update(|_, cx| {
         open_paths(

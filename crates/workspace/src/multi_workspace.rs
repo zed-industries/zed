@@ -1,14 +1,26 @@
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
-use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, px};
+use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, actions, px};
 use project::Project;
 use theme::ActiveTheme;
 use ui::{IconButton, IconName, IconSize, Label, LabelSize, ListItem, SharedString, prelude::*};
 
 use crate::{
-    DockPosition, Item, ModalView, NewWorkspaceInWindow, NextWorkspaceInWindow, Panel,
-    PreviousWorkspaceInWindow, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
-    client_side_decorations,
+    DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
 };
+
+actions!(
+    multi_workspace,
+    [
+        /// Creates a new workspace within the current window.
+        NewWorkspaceInWindow,
+        /// Switches to the next workspace within the current window.
+        NextWorkspaceInWindow,
+        /// Switches to the previous workspace within the current window.
+        PreviousWorkspaceInWindow,
+        /// Toggles the workspace switcher sidebar.
+        ToggleWorkspaceSidebar,
+    ]
+);
 
 pub struct MultiWorkspace {
     workspaces: Vec<Entity<Workspace>>,
