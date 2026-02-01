@@ -1571,15 +1571,7 @@ impl Terminal {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .last_content
-            .terminal_bounds
-            .bounds
-            .contains(&window.mouse_position())
-            && modifiers.secondary()
-        {
-            self.refresh_hovered_word(window);
-        }
+        self.schedule_find_hyperlink(*modifiers, window.mouse_position());
         cx.notify();
     }
 
@@ -1602,10 +1594,15 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
 
-        self.last_content = Self::make_content(&terminal, &self.last_content);
+        self.last_content = Self::make_content(&terminal, &self.last_content, cx);
+        self.refresh_hovered_word(window);
     }
 
-    fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
+    fn make_content(
+        term: &Term<ZedListener>,
+        last_content: &TerminalContent,
+        cx: &mut Context<Self>,
+    ) -> TerminalContent {
         let content = term.renderable_content();
 
         // Pre-allocate with estimated size to reduce reallocations
@@ -1623,6 +1620,33 @@ impl Terminal {
             None
         };
 
+        // Only use the existing last_hovered_word if the text at the range specified is still the same
+        let adjusted_last_hovered_word = last_content.last_hovered_word.as_ref().and_then(
+            |HoveredWord {
+                 word,
+                 word_match,
+                 id,
+             }| {
+                let display_offset_delta =
+                    content.display_offset as i32 - last_content.display_offset as i32;
+                let mut start = *word_match.start();
+                start.line -= display_offset_delta;
+                let mut end = *word_match.end();
+                end.line -= display_offset_delta;
+                let last_word = term.bounds_to_string(start, end);
+                if &last_word != word {
+                    cx.emit(Event::NewNavigationTarget(None));
+                    None
+                } else {
+                    Some(HoveredWord {
+                        word: word.clone(),
+                        word_match: start..=end,
+                        id: *id,
+                    })
+                }
+            },
+        );
+
         TerminalContent {
             cells,
             mode: content.mode,
@@ -1632,7 +1656,7 @@ impl Terminal {
             cursor: content.cursor,
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
-            last_hovered_word: last_content.last_hovered_word.clone(),
+            last_hovered_word: adjusted_last_hovered_word,
             scrolled_to_top: content.display_offset == term.history_size(),
             scrolled_to_bottom: content.display_offset == 0,
         }
@@ -1750,40 +1774,63 @@ impl Terminal {
                 self.write_to_pty(bytes);
             }
         } else {
-            self.schedule_find_hyperlink(e.modifiers, e.position);
+            // Throttle hyperlink searches to avoid excessive processing
+            let now = Instant::now();
+            if self
+                .last_hyperlink_search_position
+                .map_or(true, |last_pos| {
+                    // Only search if mouse moved significantly or enough time passed
+                    let distance_moved = ((e.position.x - last_pos.x).abs()
+                        + (e.position.y - last_pos.y).abs())
+                        > FIND_HYPERLINK_THROTTLE_PX;
+                    let time_elapsed =
+                        now.duration_since(self.last_mouse_move_time).as_millis() > 100;
+                    distance_moved || time_elapsed
+                })
+            {
+                if self.schedule_find_hyperlink(e.modifiers, e.position) {
+                    self.last_mouse_move_time = now;
+                    self.last_hyperlink_search_position = Some(e.position);
+                }
+            }
         }
         cx.notify();
     }
 
-    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: Point<Pixels>) {
-        if self.selection_phase == SelectionPhase::Selecting
-            || !modifiers.secondary()
-            || !self.last_content.terminal_bounds.bounds.contains(&position)
-        {
+    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: Point<Pixels>) -> bool {
+        if !self.last_content.terminal_bounds.bounds.contains(&position) {
             self.last_content.last_hovered_word = None;
-            return;
+            return false;
         }
 
-        // Throttle hyperlink searches to avoid excessive processing
-        let now = Instant::now();
-        if self
-            .last_hyperlink_search_position
-            .map_or(true, |last_pos| {
-                // Only search if mouse moved significantly or enough time passed
-                let distance_moved = ((position.x - last_pos.x).abs()
-                    + (position.y - last_pos.y).abs())
-                    > FIND_HYPERLINK_THROTTLE_PX;
-                let time_elapsed = now.duration_since(self.last_mouse_move_time).as_millis() > 100;
-                distance_moved || time_elapsed
-            })
-        {
-            self.last_mouse_move_time = now;
-            self.last_hyperlink_search_position = Some(position);
-            self.events.push_back(InternalEvent::FindHyperlink(
-                position - self.last_content.terminal_bounds.bounds.origin,
-                false,
-            ));
+        if self.selection_phase == SelectionPhase::Selecting {
+            self.last_content.last_hovered_word = None;
+            return false;
         }
+
+        if !modifiers.secondary() {
+            self.last_content.last_hovered_word = None;
+            return false;
+        }
+
+        let position = position - self.last_content.terminal_bounds.bounds.origin;
+
+        if let Some(hovered_word) = &self.last_content.last_hovered_word {
+            let point = grid_point(
+                position,
+                self.last_content.terminal_bounds,
+                self.last_content.display_offset,
+            );
+
+            if hovered_word.word_match.contains(&point) {
+                return false;
+            }
+        }
+
+        self.events
+            .push_back(InternalEvent::FindHyperlink(position, false));
+
+        true
     }
 
     pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent) {
@@ -2615,9 +2662,9 @@ mod tests {
 
         cx.run_until_parked();
 
-        terminal.update(cx, |terminal, _cx| {
+        terminal.update(cx, |terminal, cx| {
             let term_lock = terminal.term.lock();
-            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content, cx);
             drop(term_lock);
 
             let terminal_bounds = TerminalBounds::new(
@@ -3002,9 +3049,9 @@ mod tests {
         });
 
         // Get the content by directly accessing the term
-        let content = terminal.update(cx, |terminal, _cx| {
+        let content = terminal.update(cx, |terminal, cx| {
             let term = terminal.term.lock_unfair();
-            Terminal::make_content(&term, &terminal.last_content)
+            Terminal::make_content(&term, &terminal.last_content, cx)
         });
 
         // If LF is properly converted to CRLF, each line should start at column 0
@@ -3050,9 +3097,9 @@ mod tests {
         });
 
         // Get the content by directly accessing the term
-        let content = terminal.update(cx, |terminal, _cx| {
+        let content = terminal.update(cx, |terminal, cx| {
             let term = terminal.term.lock_unfair();
-            Terminal::make_content(&term, &terminal.last_content)
+            Terminal::make_content(&term, &terminal.last_content, cx)
         });
 
         let cells = &content.cells;
@@ -3092,9 +3139,9 @@ mod tests {
         });
 
         // Get the content by directly accessing the term
-        let content = terminal.update(cx, |terminal, _cx| {
+        let content = terminal.update(cx, |terminal, cx| {
             let term = terminal.term.lock_unfair();
-            Terminal::make_content(&term, &terminal.last_content)
+            Terminal::make_content(&term, &terminal.last_content, cx)
         });
 
         let cells = &content.cells;
