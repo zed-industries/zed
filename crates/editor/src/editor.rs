@@ -22748,7 +22748,7 @@ impl Editor {
             };
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-            let (mut translated, _, _) = buffer_diff_snapshot.points_to_base_text_points(
+            let (mut translated, _, _) = buffer_diff_snapshot.edits_intersecting_point_range(
                 [
                     Point::new(start_row_in_buffer, 0),
                     Point::new(end_row_in_buffer, 0),

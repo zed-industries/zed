@@ -150,10 +150,8 @@ type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Ancho
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
-pub struct MultiBufferRowMapping {
-    pub first_group: Option<Range<MultiBufferPoint>>,
-    pub boundaries: Vec<(MultiBufferPoint, Range<MultiBufferPoint>)>,
-    pub prev_boundary: Option<(MultiBufferPoint, Range<MultiBufferPoint>)>,
+pub struct CompanionExcerptEdits {
+    pub edits: Vec<text::Edit<MultiBufferPoint>>,
     pub source_excerpt_end: MultiBufferPoint,
     pub target_excerpt_end: MultiBufferPoint,
 }
@@ -163,7 +161,7 @@ pub type ConvertMultiBufferRows = fn(
     &MultiBufferSnapshot,
     &MultiBufferSnapshot,
     (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-) -> Vec<MultiBufferRowMapping>;
+) -> Vec<CompanionExcerptEdits>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -233,7 +231,7 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         our_snapshot: &MultiBufferSnapshot,
         bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-    ) -> Vec<MultiBufferRowMapping> {
+    ) -> Vec<CompanionExcerptEdits> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         } else {
@@ -248,7 +246,7 @@ impl Companion {
         our_snapshot: &MultiBufferSnapshot,
         companion_snapshot: &MultiBufferSnapshot,
         bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-    ) -> Vec<MultiBufferRowMapping> {
+    ) -> Vec<CompanionExcerptEdits> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
         } else {

@@ -18,7 +18,7 @@ use ui::{
 };
 
 use crate::{
-    display_map::MultiBufferRowMapping,
+    display_map::CompanionExcerptEdits,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
 use workspace::{ActivatePaneLeft, ActivatePaneRight, Item, Workspace};
@@ -35,16 +35,15 @@ pub(crate) fn convert_lhs_rows_to_rhs(
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
     lhs_bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-) -> Vec<MultiBufferRowMapping> {
+) -> Vec<CompanionExcerptEdits> {
     convert_rows(
         lhs_excerpt_to_rhs_excerpt,
         lhs_snapshot,
         rhs_snapshot,
         lhs_bounds,
-        |diff, points, buffer| {
-            let (points, first_group, prev_boundary) =
-                diff.base_text_points_to_points(points, buffer);
-            (points.collect(), first_group, prev_boundary)
+        |diff, range, buffer| {
+            diff.edits_intersecting_base_text_point_range(range, buffer)
+                .collect()
         },
     )
 }
@@ -54,17 +53,13 @@ pub(crate) fn convert_rhs_rows_to_lhs(
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
     rhs_bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-) -> Vec<MultiBufferRowMapping> {
+) -> Vec<CompanionExcerptEdits> {
     convert_rows(
         rhs_excerpt_to_lhs_excerpt,
         rhs_snapshot,
         lhs_snapshot,
         rhs_bounds,
-        |diff, points, buffer| {
-            let (points, first_group, prev_boundary) =
-                diff.points_to_base_text_points(points, buffer);
-            (points.collect(), first_group, prev_boundary)
-        },
+        |diff, range, buffer| diff.edits_intersecting_point_range(range, buffer).collect(),
     )
 }
 
@@ -74,17 +69,9 @@ fn convert_rows<F>(
     target_snapshot: &MultiBufferSnapshot,
     source_bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
     translate_fn: F,
-) -> Vec<MultiBufferRowMapping>
+) -> Vec<CompanionExcerptEdits>
 where
-    F: Fn(
-        &BufferDiffSnapshot,
-        Vec<Point>,
-        &text::BufferSnapshot,
-    ) -> (
-        Vec<Range<Point>>,
-        Option<Range<Point>>,
-        Option<(Point, Range<Point>)>,
-    ),
+    F: Fn(&BufferDiffSnapshot, Range<Point>, &text::BufferSnapshot) -> Vec<text::Edit<Point>>,
 {
     let mut result = Vec::new();
 
@@ -115,17 +102,9 @@ fn convert_excerpt_rows<F>(
     source_buffer: &text::BufferSnapshot,
     source_buffer_range: Range<BufferOffset>,
     translate_fn: F,
-) -> Option<MultiBufferRowMapping>
+) -> Option<CompanionExcerptEdits>
 where
-    F: Fn(
-        &BufferDiffSnapshot,
-        Vec<Point>,
-        &text::BufferSnapshot,
-    ) -> (
-        Vec<Range<Point>>,
-        Option<Range<Point>>,
-        Option<(Point, Range<Point>)>,
-    ),
+    F: Fn(&BufferDiffSnapshot, Range<Point>, &text::BufferSnapshot) -> Vec<text::Edit<Point>>,
 {
     let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied()?;
     let target_buffer = target_snapshot.buffer_for_excerpt(target_excerpt_id)?;
@@ -137,18 +116,11 @@ where
         source_buffer
     };
 
-    let local_start = source_buffer.offset_to_point(source_buffer_range.start.0);
-    let local_end = source_buffer.offset_to_point(source_buffer_range.end.0);
-
-    let mut input_points: Vec<Point> = (local_start.row..=local_end.row)
-        .map(|row| Point::new(row, 0))
-        .collect();
-    if local_end.column > 0 {
-        input_points.push(local_end);
-    }
-
-    let (translated_ranges, first_group, prev_boundary) =
-        translate_fn(&diff, input_points.clone(), rhs_buffer);
+    let edits = translate_fn(
+        &diff,
+        source_buffer_range.to_point(&source_buffer),
+        rhs_buffer,
+    );
 
     let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
@@ -161,70 +133,46 @@ where
     let target_excerpt_start_in_buffer = target_context_range.start.to_point(&target_buffer);
     let target_excerpt_end_in_buffer = target_context_range.end.to_point(&target_buffer);
 
-    let boundaries: Vec<_> = input_points
+    let edits = edits
         .into_iter()
-        .zip(translated_ranges)
-        .map(|(source_buffer_point, target_range)| {
-            let source_multibuffer_point = source_excerpt_start_in_multibuffer
-                + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
-
-            let clamped_target_start = target_range
+        .map(|edit| {
+            let clamped_source_start = edit
+                .old
+                .start
+                .max(source_excerpt_start_in_buffer)
+                .min(source_excerpt_end_in_buffer);
+            let clamped_source_end = edit
+                .old
+                .end
+                .max(source_excerpt_start_in_buffer)
+                .min(source_excerpt_end_in_buffer);
+            let source_multibuffer_start = source_excerpt_start_in_multibuffer
+                + (clamped_source_start - source_excerpt_start_in_buffer);
+            let source_multibuffer_end = source_excerpt_start_in_multibuffer
+                + (clamped_source_end - source_excerpt_start_in_buffer);
+            let clamped_target_start = edit
+                .new
                 .start
                 .max(target_excerpt_start_in_buffer)
                 .min(target_excerpt_end_in_buffer);
-            let clamped_target_end = target_range
+            let clamped_target_end = edit
+                .new
                 .end
                 .max(target_excerpt_start_in_buffer)
                 .min(target_excerpt_end_in_buffer);
-
             let target_multibuffer_start = target_excerpt_start_in_multibuffer
                 + (clamped_target_start - target_excerpt_start_in_buffer);
-
             let target_multibuffer_end = target_excerpt_start_in_multibuffer
                 + (clamped_target_end - target_excerpt_start_in_buffer);
-
-            (
-                source_multibuffer_point,
-                target_multibuffer_start..target_multibuffer_end,
-            )
+            text::Edit {
+                old: source_multibuffer_start..source_multibuffer_end,
+                new: target_multibuffer_start..target_multibuffer_end,
+            }
         })
         .collect();
-    let first_group = first_group.map(|first_group| {
-        let start = source_excerpt_start_in_multibuffer
-            + (first_group.start - source_excerpt_start_in_buffer.min(first_group.start));
-        let end = source_excerpt_start_in_multibuffer
-            + (first_group.end - source_excerpt_start_in_buffer.min(first_group.end));
-        start..end
-    });
 
-    let prev_boundary = prev_boundary.map(|(source_buffer_point, target_range)| {
-        let source_multibuffer_point = source_excerpt_start_in_multibuffer
-            + (source_buffer_point - source_excerpt_start_in_buffer.min(source_buffer_point));
-
-        let clamped_target_start = target_range
-            .start
-            .max(target_excerpt_start_in_buffer)
-            .min(target_excerpt_end_in_buffer);
-        let clamped_target_end = target_range
-            .end
-            .max(target_excerpt_start_in_buffer)
-            .min(target_excerpt_end_in_buffer);
-
-        let target_multibuffer_start = target_excerpt_start_in_multibuffer
-            + (clamped_target_start - target_excerpt_start_in_buffer);
-        let target_multibuffer_end = target_excerpt_start_in_multibuffer
-            + (clamped_target_end - target_excerpt_start_in_buffer);
-
-        (
-            source_multibuffer_point,
-            target_multibuffer_start..target_multibuffer_end,
-        )
-    });
-
-    Some(MultiBufferRowMapping {
-        boundaries,
-        first_group,
-        prev_boundary,
+    Some(CompanionExcerptEdits {
+        edits,
         source_excerpt_end: source_excerpt_start_in_multibuffer
             + (source_excerpt_end_in_buffer - source_excerpt_start_in_buffer),
         target_excerpt_end: target_excerpt_start_in_multibuffer
@@ -1499,7 +1447,7 @@ impl LhsEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let (mut translated, _, _) = diff_snapshot.points_to_base_text_points(
+                    let (mut translated, _, _) = diff_snapshot.edits_intersecting_point_range(
                         [Point::new(range.start.row, 0), Point::new(range.end.row, 0)],
                         main_buffer,
                     );

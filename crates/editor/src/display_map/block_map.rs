@@ -646,8 +646,8 @@ impl BlockMap {
                             ),
                         )
                         .first()
-                        .and_then(|t| t.boundaries.first())
-                        .map(|(_, range)| range.start)
+                        .and_then(|t| t.edits.first())
+                        .map(|edit| edit.new.start)
                         .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
                     let my_end = companion
                         .convert_rows_from_companion(
@@ -660,12 +660,13 @@ impl BlockMap {
                             ),
                         )
                         .first()
-                        .and_then(|t| t.boundaries.last())
-                        .map(|(_, range)| range.end)
+                        .and_then(|t| t.edits.last())
+                        .map(|edit| edit.new.end)
                         .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
 
                     let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
+                    // FIXME hsou
                     if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
                         *my_end.row_mut() += 1;
                         *my_end.column_mut() = 0;
