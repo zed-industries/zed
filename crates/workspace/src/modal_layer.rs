@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use gpui::{
-    AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable as _, ManagedView,
-    MouseButton, Subscription,
+    Animation, AnimationExt, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable as _, ManagedView, MouseButton, Subscription, Task,
 };
 use ui::prelude::*;
 
@@ -60,9 +62,17 @@ pub struct ActiveModal {
     focus_handle: FocusHandle,
 }
 
+struct ClosingModal {
+    modal_view: AnyView,
+    fade_out_background: bool,
+}
+
 pub struct ModalLayer {
     active_modal: Option<ActiveModal>,
     dismiss_on_focus_lost: bool,
+    closing_modal: Option<ClosingModal>,
+    animation_generation: usize,
+    _close_task: Option<Task<()>>,
 }
 
 pub(crate) struct ModalOpenedEvent;
@@ -80,6 +90,9 @@ impl ModalLayer {
         Self {
             active_modal: None,
             dismiss_on_focus_lost: false,
+            closing_modal: None,
+            animation_generation: 0,
+            _close_task: None,
         }
     }
 
@@ -102,9 +115,15 @@ impl ModalLayer {
                 return;
             }
         }
+        self.cancel_close_animation();
         let new_modal = cx.new(|cx| build_view(window, cx));
         self.show_modal(new_modal, window, cx);
         cx.emit(ModalOpenedEvent);
+    }
+
+    fn cancel_close_animation(&mut self) {
+        self.closing_modal = None;
+        self._close_task = None;
     }
 
     /// Shows a modal and sets up subscriptions for dismiss events and focus tracking.
@@ -113,6 +132,9 @@ impl ModalLayer {
     where
         V: ModalView,
     {
+        self.cancel_close_animation();
+        self.animation_generation += 1;
+
         let focus_handle = cx.focus_handle();
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
@@ -166,11 +188,35 @@ impl ModalLayer {
         }
 
         if let Some(active_modal) = self.active_modal.take() {
-            if let Some(previous_focus) = active_modal.previous_focus_handle
-                && active_modal.focus_handle.contains_focused(window, cx)
-            {
-                previous_focus.focus(window, cx);
+            if let Some(previous_focus) = &active_modal.previous_focus_handle {
+                if active_modal.focus_handle.contains_focused(window, cx) {
+                    previous_focus.focus(window, cx);
+                }
             }
+
+            let fade_out_background = active_modal.modal.fade_out_background(cx);
+            let render_bare = active_modal.modal.render_bare(cx);
+
+            if !render_bare {
+                self.closing_modal = Some(ClosingModal {
+                    modal_view: active_modal.modal.view(),
+                    fade_out_background,
+                });
+                self.animation_generation += 1;
+                let generation = self.animation_generation;
+
+                self._close_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    this.update(cx, |this, cx| {
+                        if this.animation_generation == generation {
+                            this.closing_modal = None;
+                            this._close_task = None;
+                            cx.notify();
+                        }
+                    }).ok();
+                }));
+            }
+
             cx.notify();
         }
         self.dismiss_on_focus_lost = false;
@@ -193,43 +239,75 @@ impl ModalLayer {
 
 impl Render for ModalLayer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(active_modal) = &self.active_modal else {
-            return div().into_any_element();
-        };
+        let is_closing = self.closing_modal.is_some() && self.active_modal.is_none();
+        let generation = self.animation_generation;
 
-        if active_modal.modal.render_bare(cx) {
-            return active_modal.modal.view().into_any_element();
+        if let Some(active_modal) = &self.active_modal {
+            if active_modal.modal.render_bare(cx) {
+                return active_modal.modal.view().into_any_element();
+            }
         }
+
+        let (modal_view, fade_out_background, focus_handle) =
+            if let Some(active_modal) = &self.active_modal {
+                (
+                    active_modal.modal.view(),
+                    active_modal.modal.fade_out_background(cx),
+                    Some(active_modal.focus_handle.clone()),
+                )
+            } else if let Some(closing_modal) = &self.closing_modal {
+                (
+                    closing_modal.modal_view.clone(),
+                    closing_modal.fade_out_background,
+                    None,
+                )
+            } else {
+                return div().into_any_element();
+            };
+
+        let duration = if is_closing { 100 } else { 150 };
 
         div()
             .absolute()
             .size_full()
             .inset_0()
             .occlude()
-            .when(active_modal.modal.fade_out_background(cx), |this| {
+            .when(fade_out_background, |this| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
                 this.bg(background)
             })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.hide_modal(window, cx);
-                }),
-            )
+            .when(!is_closing, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.hide_modal(window, cx);
+                    }),
+                )
+            })
             .child(
                 v_flex()
                     .h(px(0.0))
                     .top_20()
                     .items_center()
-                    .track_focus(&active_modal.focus_handle)
+                    .when_some(focus_handle, |this, handle| this.track_focus(&handle))
                     .child(
                         h_flex()
                             .occlude()
-                            .child(active_modal.modal.view())
+                            .child(modal_view)
                             .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
-                            }),
+                            })
+                            .with_animation(
+                                ("modal-anim", generation as u64),
+                                Animation::new(Duration::from_millis(duration))
+                                    .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
+                                move |this, delta| {
+                                    let progress = if is_closing { 1.0 - delta } else { delta };
+                                    let slide = -6.0 * (1.0 - progress);
+                                    this.opacity(progress).top(px(slide))
+                                },
+                            ),
                     ),
             )
             .into_any_element()
