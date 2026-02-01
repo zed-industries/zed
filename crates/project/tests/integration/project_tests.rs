@@ -50,7 +50,7 @@ use language::{
 use lsp::{
     CodeActionKind, DiagnosticSeverity, DocumentChanges, FileOperationFilter, LanguageServerId,
     LanguageServerName, NumberOrString, TextDocumentEdit, Uri, WillRenameFiles,
-    notification::DidRenameFiles,
+    notification::{DidRenameFiles, Notification},
 };
 use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
@@ -12084,4 +12084,93 @@ mod disable_ai_settings_tests {
             );
         });
     }
+}
+
+#[gpui::test]
+async fn test_deleted_file_not_registered_with_language_server(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "test.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(rust_lang());
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: lsp::ServerCapabilities {
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    // Open the buffer with LSP registration
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+
+    // Verify DidOpenTextDocument was sent initially
+    let open_notification = fake_rust_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        open_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap()
+    );
+
+    // Delete the file from disk (simulating git branch switch where file doesn't exist)
+    // This marks the buffer's file as DiskState::Deleted
+    fs.remove_file(path!("/dir/test.rs").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    // Verify that the buffer's file is now marked as deleted
+    buffer.read_with(cx, |buffer, _| {
+        let file = buffer.file().expect("Buffer should still have a file");
+        assert!(
+            file.disk_state().is_deleted(),
+            "File should be marked as deleted"
+        );
+    });
+
+    // Attempt to re-register the buffer with language servers
+    // This simulates what happens during BufferChangedFilePath event handling
+    // where register_buffer_with_language_servers is called after unregister
+    project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // Verify no DidOpenTextDocument was sent after attempting re-registration
+    // (the deleted file should not be re-registered)
+    let pending = fake_rust_server.collect_pending_notifications();
+    let has_reopen = pending
+        .iter()
+        .any(|(method, _)| method == lsp::notification::DidOpenTextDocument::METHOD);
+    assert!(
+        !has_reopen,
+        "Deleted file should not be re-registered with language server"
+    );
 }

@@ -2593,6 +2593,9 @@ impl LocalLspStore {
         if !file.is_local() {
             return;
         }
+        if file.disk_state().is_deleted() {
+            return;
+        }
 
         let abs_path = file.abs_path(cx);
         let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
