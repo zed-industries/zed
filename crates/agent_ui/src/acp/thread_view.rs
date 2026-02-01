@@ -1010,12 +1010,13 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            self.thread_state = ThreadState::LoadError(load_err.clone());
+        let load_error = if let Some(load_err) = err.downcast_ref::<LoadError>() {
+            load_err.clone()
         } else {
-            self.thread_state =
-                ThreadState::LoadError(LoadError::Other(format!("{:#}", err).into()))
-        }
+            LoadError::Other(format!("{:#}", err).into())
+        };
+        self.emit_load_error_telemetry(&load_error);
+        self.thread_state = ThreadState::LoadError(load_error);
         if self.message_editor.focus_handle(cx).is_focused(window) {
             self.focus_handle.focus(window, cx)
         }
@@ -1701,6 +1702,7 @@ impl AcpThreadView {
             }
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
+                self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
@@ -5204,6 +5206,65 @@ impl AcpThreadView {
             )
             .into_any_element()
     }
+
+    fn emit_token_limit_telemetry_if_needed(
+        &mut self,
+        thread: &Entity<AcpThread>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active) = self.as_active_thread_mut() else {
+            return;
+        };
+
+        let thread_data = thread.read(cx);
+        let Some(token_usage) = thread_data.token_usage() else {
+            return;
+        };
+
+        let ratio = token_usage.ratio();
+
+        let kind = match ratio {
+            acp_thread::TokenUsageRatio::Normal => {
+                active.token_limit_telemetry_emitted = false;
+                return;
+            }
+            acp_thread::TokenUsageRatio::Warning => "warning",
+            acp_thread::TokenUsageRatio::Exceeded => "exceeded",
+        };
+
+        if active.token_limit_telemetry_emitted {
+            return;
+        }
+
+        active.token_limit_telemetry_emitted = true;
+
+        let agent_telemetry_id = thread_data.connection().telemetry_id();
+        let session_id = thread_data.session_id().clone();
+
+        telemetry::event!(
+            "Agent Token Limit Warning",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = kind,
+        );
+    }
+
+    fn emit_load_error_telemetry(&self, error: &LoadError) {
+        let error_kind = match error {
+            LoadError::Unsupported { .. } => "unsupported",
+            LoadError::FailedToInstall(_) => "failed_to_install",
+            LoadError::Exited { .. } => "exited",
+            LoadError::Other(_) => "other",
+        };
+
+        let agent_name = self.agent.name();
+
+        telemetry::event!(
+            "Agent Panel Error Shown",
+            agent = agent_name,
+            kind = error_kind,
+            message = error.to_string(),
+        );
 
     fn render_load_error(
         &self,
