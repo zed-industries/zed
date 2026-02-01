@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use gpui_macros::Action;
 pub use no_action::{NoAction, is_no_action};
+pub use unbind::{Unbind, is_unbind};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -446,5 +447,25 @@ mod no_action {
     /// Returns whether or not this action represents a removed key binding.
     pub fn is_no_action(action: &dyn gpui::Action) -> bool {
         action.as_any().type_id() == (NoAction {}).type_id()
+    }
+}
+
+mod unbind {
+    use crate as gpui;
+    use std::any::Any as _;
+
+    actions!(
+        zed,
+        [
+            /// Action that removes a keybinding and allows the keystroke to fall through
+            /// to less specific bindings. Unlike `NoAction` which blocks the keystroke,
+            /// `Unbind` allows the key event to continue propagating to find other matches.
+            Unbind
+        ]
+    );
+
+    /// Returns whether or not this action represents an unbound key that should fall through.
+    pub fn is_unbind(action: &dyn gpui::Action) -> bool {
+        action.as_any().type_id() == (Unbind {}).type_id()
     }
 }
