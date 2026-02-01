@@ -10,13 +10,53 @@ use util::command::new_smol_command;
 
 pub(crate) struct CargoLocator;
 
+/// Result of checking if an executable uses the libtest harness.
+struct ExecutableInfo {
+    path: String,
+    /// Whether the executable uses libtest (supports --list, --nocapture, etc.)
+    uses_libtest_harness: bool,
+}
+
+/// Check if an executable supports the libtest harness by running --list.
+/// Returns true if --list succeeds (indicating libtest is used), false otherwise.
+async fn check_libtest_harness(executable: &str, executor: BackgroundExecutor) -> bool {
+    let Some(child) = new_smol_command(executable)
+        .arg("--list")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+    else {
+        return false;
+    };
+
+    let result = smol::future::race(
+        async {
+            let output = child.output().await?;
+            Ok(output.status.success())
+        },
+        async {
+            executor.timer(Duration::from_secs(3)).await;
+            anyhow::bail!("Timed out waiting for executable")
+        },
+    )
+    .await;
+
+    result.unwrap_or(false)
+}
+
 async fn find_best_executable(
     executables: &[String],
     test_name: &str,
     executor: BackgroundExecutor,
-) -> Option<String> {
+) -> Option<ExecutableInfo> {
     if executables.len() == 1 {
-        return executables.first().cloned();
+        let executable = executables.first()?.clone();
+        let uses_harness = check_libtest_harness(&executable, executor).await;
+        return Some(ExecutableInfo {
+            path: executable,
+            uses_libtest_harness: uses_harness,
+        });
     }
     for executable in executables {
         let Some(mut child) = new_smol_command(&executable)
@@ -46,7 +86,10 @@ async fn find_best_executable(
         } else {
             for line in test_lines.lines() {
                 if line.contains(&test_name) {
-                    return Some(executable.clone());
+                    return Some(ExecutableInfo {
+                        path: executable.clone(),
+                        uses_libtest_harness: true,
+                    });
                 }
             }
         }
@@ -192,24 +235,41 @@ impl DapLocator for CargoLocator {
                 .find(|name| !name.starts_with("-"))
                 .cloned();
         }
-        let executable = {
+        let executable_info = {
             if let Some(name) = test_name.as_ref().and_then(|name| {
                 name.strip_prefix('$')
                     .map(|name| build_config.env.get(name))
                     .unwrap_or(Some(name))
             }) {
-                find_best_executable(&executables, name, executor).await
+                find_best_executable(&executables, name, executor.clone()).await
             } else {
                 None
             }
         };
 
-        let Some(executable) = executable.or_else(|| executables.first().cloned()) else {
-            anyhow::bail!("Couldn't get executable in cargo locator");
+        let (executable, uses_harness) = match executable_info {
+            Some(info) => (info.path, info.uses_libtest_harness),
+            None => {
+                let Some(path) = executables.first().cloned() else {
+                    anyhow::bail!("Couldn't get executable in cargo locator");
+                };
+                // Check if this fallback executable uses libtest harness
+                let uses_harness = if is_test {
+                    check_libtest_harness(&path, executor).await
+                } else {
+                    false
+                };
+                (path, uses_harness)
+            }
         };
 
-        let mut args: Vec<_> = test_name.into_iter().collect();
-        if is_test {
+        // Only pass test arguments if the executable uses the libtest harness.
+        // Tests with `harness = false` in Cargo.toml don't understand these args.
+        let mut args = Vec::new();
+        if is_test && uses_harness {
+            if let Some(name) = test_name {
+                args.push(name);
+            }
             args.push("--nocapture".to_owned());
             if is_ignored {
                 args.push("--include-ignored".to_owned());
