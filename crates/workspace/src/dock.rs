@@ -10,7 +10,7 @@ use gpui::{
     MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, Task,
     WeakEntity, Window, deferred, div, px,
 };
-use settings::SettingsStore;
+use settings::{ReduceMotionSetting, Settings, SettingsStore};
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
@@ -507,26 +507,33 @@ impl Dock {
                 return;
             }
             self.is_open = false;
-            self.is_closing = true;
-            self.animation_generation = self.animation_generation.wrapping_add(1);
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(false, window, cx);
             }
-            let close_gen = self.animation_generation;
-            self._close_task = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |dock, cx| {
-                        if dock.animation_generation == close_gen {
-                            dock.is_closing = false;
-                            dock._close_task = None;
-                            cx.notify();
-                        }
-                    });
-                }
-            }));
+            let reduce_motion = ReduceMotionSetting::get_global(cx)
+                .should_reduce_motion(cx);
+            if reduce_motion {
+                self.is_closing = false;
+                self._close_task = None;
+            } else {
+                self.is_closing = true;
+                self.animation_generation = self.animation_generation.wrapping_add(1);
+                let close_gen = self.animation_generation;
+                self._close_task = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |dock, cx| {
+                            if dock.animation_generation == close_gen {
+                                dock.is_closing = false;
+                                dock._close_task = None;
+                                cx.notify();
+                            }
+                        });
+                    }
+                }));
+            }
             cx.notify();
         }
     }
@@ -954,8 +961,10 @@ impl Render for Dock {
 
             let is_closing = self.is_closing;
             let animation_generation = self.animation_generation;
+            let reduce_motion = ReduceMotionSetting::get_global(cx)
+                .should_reduce_motion(cx);
 
-            div()
+            let dock_div = div()
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
                 .flex()
@@ -986,7 +995,9 @@ impl Render for Dock {
                 )
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())
-                })
+                });
+
+            dock_div
                 .with_animation(
                     ("dock-anim", animation_generation as u64),
                     Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
@@ -995,7 +1006,11 @@ impl Render for Dock {
                         let position = self.position;
                         let target_size = f32::from(size);
                         move |this, delta| {
-                            let progress = if is_closing { 1.0 - delta } else { delta };
+                            if reduce_motion {
+                                return this;
+                            }
+                            let progress =
+                                if is_closing { 1.0 - delta } else { delta };
                             let animated_size = px(target_size * progress);
                             match position.axis() {
                                 Axis::Horizontal => this.w(animated_size),

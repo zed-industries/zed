@@ -1236,6 +1236,11 @@ impl App {
         self.platform.should_auto_hide_scrollbars()
     }
 
+    /// Returns whether the platform's accessibility settings request reduced motion.
+    pub fn should_reduce_motion(&self) -> bool {
+        self.platform.should_reduce_motion()
+    }
+
     /// Restarts the application.
     pub fn restart(&mut self) {
         self.restart_observers

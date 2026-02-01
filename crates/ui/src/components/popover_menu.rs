@@ -7,6 +7,7 @@ use gpui::{
     ParentElement, Pixels, Point, Style, Window, anchored, deferred, div, ease_out_quint, point,
     prelude::FluentBuilder, px, size,
 };
+use settings::{ReduceMotionSetting, Settings};
 
 use crate::prelude::*;
 
@@ -364,6 +365,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let element_state = element_state.unwrap_or_default();
                 let mut menu_layout_id = None;
 
+                let reduce_motion = ReduceMotionSetting::get_global(cx)
+                    .should_reduce_motion(cx);
+
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
                     let offset = self.resolved_offset(window);
                     let mut anchored = anchored()
@@ -375,17 +379,21 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                             anchored.position(child_bounds.corner(self.resolved_attach()) + offset);
                     }
                     let menu_entity_id = menu.entity_id();
+                    let menu_div = div()
+                        .relative()
+                        .occlude()
+                        .child(menu.clone());
                     let mut element = deferred(
                         anchored.child(
-                            div()
-                                .relative()
-                                .occlude()
-                                .child(menu.clone())
+                            menu_div
                                 .with_animation(
                                     ("popover-menu-animate", menu_entity_id),
                                     Animation::new(AnimationDuration::Fast.into())
                                         .with_easing(ease_out_quint()),
                                     move |this, delta| {
+                                        if reduce_motion {
+                                            return this;
+                                        }
                                         const SLIDE_OFFSET: f32 = -6.0;
                                         let slide = SLIDE_OFFSET * (1.0 - delta);
                                         this.opacity(delta).top(px(slide))

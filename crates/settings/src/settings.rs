@@ -3,6 +3,7 @@ mod content_into_gpui;
 mod editable_setting_control;
 mod editorconfig_store;
 mod keymap_file;
+mod reduce_motion_setting;
 mod settings_file;
 mod settings_store;
 mod vscode_import;
@@ -33,6 +34,7 @@ use util::asset_str;
 pub use ::settings_content::*;
 pub use base_keymap_setting::*;
 pub use content_into_gpui::IntoGpui;
+pub use reduce_motion_setting::*;
 pub use editable_setting_control::*;
 pub use editorconfig_store::{
     Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,

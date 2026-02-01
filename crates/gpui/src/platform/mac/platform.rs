@@ -1006,6 +1006,14 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn should_reduce_motion(&self) -> bool {
+        unsafe {
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let reduce: BOOL = msg_send![workspace, accessibilityDisplayShouldReduceMotion];
+            reduce != NO
+        }
+    }
+
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
         state.general_pasteboard.read()

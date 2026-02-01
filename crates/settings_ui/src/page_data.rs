@@ -1213,12 +1213,34 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn reduce_motion_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Motion"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Reduce Motion",
+                description: "Controls whether animations are reduced. When set to System, follows your OS accessibility preference.",
+                field: Box::new(SettingField {
+                    json_path: Some("reduce_motion"),
+                    pick: |settings_content| {
+                        settings_content.workspace.reduce_motion.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.reduce_motion = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     let items: Box<[SettingsPageItem]> = concat_sections!(
         theme_section(),
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
         text_rendering_section(),
+        reduce_motion_section(),
         cursor_section(),
         highlighting_section(),
         guides_section(),

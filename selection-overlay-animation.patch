@@ -1,0 +1,208 @@
+diff --git a/crates/picker/src/picker.rs b/crates/picker/src/picker.rs
+index 716653d896..975db22f26 100644
+--- a/crates/picker/src/picker.rs
++++ b/crates/picker/src/picker.rs
+@@ -5,10 +5,10 @@ pub mod popover_menu;
+ use anyhow::Result;
+ 
+ use gpui::{
+-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
+-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
+-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
+-    uniform_list,
++    Action, Animation, AnimationExt, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent,
++    EventEmitter, FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton,
++    MouseUpEvent, Pixels, Point, Render, ScrollStrategy, Task, UniformListDecoration,
++    UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
+ };
+ use head::Head;
+ use schemars::JsonSchema;
+@@ -35,6 +35,82 @@ pub enum Direction {
+     Down,
+ }
+ 
++const MAX_ANIMATED_DISTANCE: usize = 3;
++
++struct SelectionIndicator {
++    selected_index: usize,
++    previous_selected_index: Option<usize>,
++    generation: usize,
++}
++
++impl UniformListDecoration for SelectionIndicator {
++    fn compute(
++        &self,
++        _visible_range: Range<usize>,
++        bounds: Bounds<Pixels>,
++        _scroll_offset: Point<Pixels>,
++        item_height: Pixels,
++        _item_count: usize,
++        _window: &mut Window,
++        cx: &mut App,
++    ) -> AnyElement {
++        let selected_top = item_height * self.selected_index;
++        let background = cx.theme().colors().ghost_element_selected;
++
++        match self.previous_selected_index {
++            Some(previous_index) => {
++                let previous_top = item_height * previous_index;
++                let distance = if self.selected_index > previous_index {
++                    self.selected_index - previous_index
++                } else {
++                    previous_index - self.selected_index
++                };
++                let clamped_previous_top = if distance > MAX_ANIMATED_DISTANCE {
++                    let clamped_previous_index = if self.selected_index > previous_index {
++                        self.selected_index - MAX_ANIMATED_DISTANCE
++                    } else {
++                        self.selected_index + MAX_ANIMATED_DISTANCE
++                    };
++                    item_height * clamped_previous_index
++                } else {
++                    previous_top
++                };
++
++                let generation = self.generation;
++                let origin_y = bounds.origin.y;
++
++                div()
++                    .absolute()
++                    .left(bounds.origin.x)
++                    .w(bounds.size.width)
++                    .h(item_height)
++                    .bg(background)
++                    .rounded_sm()
++                    .with_animation(
++                        ("sel-overlay", generation as u64),
++                        Animation::new(Duration::from_millis(80))
++                            .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
++                        move |this, delta| {
++                            let top = clamped_previous_top
++                                + (selected_top - clamped_previous_top) * delta;
++                            this.top(origin_y + top)
++                        },
++                    )
++                    .into_any_element()
++            }
++            None => div()
++                .absolute()
++                .left(bounds.origin.x)
++                .top(bounds.origin.y + selected_top)
++                .w(bounds.size.width)
++                .h(item_height)
++                .bg(background)
++                .rounded_sm()
++                .into_any_element(),
++        }
++    }
++}
++
+ actions!(
+     picker,
+     [
+@@ -76,6 +152,8 @@ pub struct Picker<D: PickerDelegate> {
+     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
+     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
++    previous_selected_index: Option<usize>,
++    selection_generation: usize,
+ }
+ 
+ #[derive(Debug, Default, Clone, Copy, PartialEq)]
+@@ -342,6 +420,8 @@ impl<D: PickerDelegate> Picker<D> {
+             is_modal: true,
+             picker_bounds: Rc::new(Cell::new(None)),
+             item_bounds: Rc::new(RefCell::new(HashMap::default())),
++            previous_selected_index: None,
++            selection_generation: 0,
+         };
+         this.update_matches("".to_string(), window, cx);
+         // give the delegate 4ms to render the first set of suggestions.
+@@ -458,6 +538,8 @@ impl<D: PickerDelegate> Picker<D> {
+         let current_index = self.delegate.selected_index();
+ 
+         if previous_index != current_index {
++            self.previous_selected_index = Some(previous_index);
++            self.selection_generation += 1;
+             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
+                 action(window, cx);
+             }
+@@ -714,6 +796,8 @@ impl<D: PickerDelegate> Picker<D> {
+             state.reset(self.delegate.match_count());
+         }
+ 
++        self.previous_selected_index = None;
++
+         let index = self.delegate.selected_index();
+         self.scroll_to_item_index(index);
+         self.pending_update_matches = None;
+@@ -784,12 +868,12 @@ impl<D: PickerDelegate> Picker<D> {
+                     this.handle_click(ix, event.modifiers.platform, window, cx)
+                 }),
+             )
+-            .children(self.delegate.render_match(
+-                ix,
+-                ix == self.delegate.selected_index(),
+-                window,
+-                cx,
+-            ))
++            .children({
++                let selected = ix == self.delegate.selected_index();
++                let use_overlay = matches!(self.element_container, ElementContainer::UniformList(_));
++                let visual_selected = if use_overlay { false } else { selected };
++                self.delegate.render_match(ix, visual_selected, window, cx)
++            })
+             .when(
+                 self.delegate.separators_after_indices().contains(&ix),
+                 |picker| {
+@@ -809,23 +893,33 @@ impl<D: PickerDelegate> Picker<D> {
+         };
+ 
+         match &self.element_container {
+-            ElementContainer::UniformList(scroll_handle) => uniform_list(
+-                "candidates",
+-                self.delegate.match_count(),
+-                cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
+-                    visible_range
+-                        .map(|ix| picker.render_element(window, cx, ix))
+-                        .collect()
+-                }),
+-            )
+-            .with_sizing_behavior(sizing_behavior)
+-            .when_some(self.widest_item, |el, widest_item| {
+-                el.with_width_from_item(Some(widest_item))
+-            })
+-            .flex_grow()
+-            .py_1()
+-            .track_scroll(&scroll_handle)
+-            .into_any_element(),
++            ElementContainer::UniformList(scroll_handle) => {
++                let match_count = self.delegate.match_count();
++                uniform_list(
++                    "candidates",
++                    match_count,
++                    cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
++                        visible_range
++                            .map(|ix| picker.render_element(window, cx, ix))
++                            .collect()
++                    }),
++                )
++                .with_sizing_behavior(sizing_behavior)
++                .when_some(self.widest_item, |el, widest_item| {
++                    el.with_width_from_item(Some(widest_item))
++                })
++                .when(match_count > 0, |el| {
++                    el.with_decoration(SelectionIndicator {
++                        selected_index: self.delegate.selected_index(),
++                        previous_selected_index: self.previous_selected_index,
++                        generation: self.selection_generation,
++                    })
++                })
++                .flex_grow()
++                .py_1()
++                .track_scroll(&scroll_handle)
++                .into_any_element()
++            }
+             ElementContainer::List(state) => list(
+                 state.clone(),
+                 cx.processor(|this, ix, window, cx| {

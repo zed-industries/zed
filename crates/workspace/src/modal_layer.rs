@@ -4,6 +4,7 @@ use gpui::{
     Animation, AnimationExt, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable as _, ManagedView, MouseButton, Subscription, Task,
 };
+use settings::{ReduceMotionSetting, Settings};
 use ui::prelude::*;
 
 #[derive(Debug)]
@@ -197,7 +198,10 @@ impl ModalLayer {
             let fade_out_background = active_modal.modal.fade_out_background(cx);
             let render_bare = active_modal.modal.render_bare(cx);
 
-            if !render_bare {
+            let reduce_motion = ReduceMotionSetting::get_global(cx)
+                .should_reduce_motion(cx);
+
+            if !render_bare && !reduce_motion {
                 self.closing_modal = Some(ClosingModal {
                     modal_view: active_modal.modal.view(),
                     fade_out_background,
@@ -266,6 +270,15 @@ impl Render for ModalLayer {
             };
 
         let duration = if is_closing { 100 } else { 150 };
+        let reduce_motion = ReduceMotionSetting::get_global(cx)
+            .should_reduce_motion(cx);
+
+        let modal_content = h_flex()
+            .occlude()
+            .child(modal_view)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation();
+            });
 
         div()
             .absolute()
@@ -292,22 +305,22 @@ impl Render for ModalLayer {
                     .items_center()
                     .when_some(focus_handle, |this, handle| this.track_focus(&handle))
                     .child(
-                        h_flex()
-                            .occlude()
-                            .child(modal_view)
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation();
-                            })
+                        modal_content
                             .with_animation(
                                 ("modal-anim", generation as u64),
                                 Animation::new(Duration::from_millis(duration))
                                     .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
                                 move |this, delta| {
-                                    let progress = if is_closing { 1.0 - delta } else { delta };
+                                    if reduce_motion {
+                                        return this;
+                                    }
+                                    let progress =
+                                        if is_closing { 1.0 - delta } else { delta };
                                     let slide = -6.0 * (1.0 - progress);
                                     this.opacity(progress).top(px(slide))
                                 },
-                            ),
+                            )
+                            .into_any_element(),
                     ),
             )
             .into_any_element()
