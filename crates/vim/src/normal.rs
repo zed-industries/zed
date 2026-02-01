@@ -593,16 +593,45 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx)
             };
 
+            let beam_jump_primary_only = match &motion {
+                Motion::BeamJumpFind { .. } => true,
+                Motion::RepeatFind { last_find } | Motion::RepeatFindReversed { last_find } => {
+                    matches!(last_find.as_ref(), Motion::BeamJumpFind { .. })
+                }
+                _ => false,
+            };
+
             editor.change_selections(
                 SelectionEffects::default().nav_history(motion.push_to_jump_list()),
                 window,
                 cx,
                 |s| {
-                    s.move_cursors_with(|map, cursor, goal| {
-                        motion
-                            .move_point(map, cursor, goal, times, &text_layout_details)
-                            .unwrap_or((cursor, goal))
-                    })
+                    if beam_jump_primary_only {
+                        let newest_id = s.newest_anchor().id;
+                        s.move_with(|map, selection| {
+                            if selection.id != newest_id {
+                                return;
+                            }
+
+                            let Some((new_point, new_goal)) = motion.move_point(
+                                map,
+                                selection.head(),
+                                selection.goal,
+                                times,
+                                &text_layout_details,
+                            ) else {
+                                return;
+                            };
+
+                            selection.collapse_to(new_point, new_goal);
+                        });
+                    } else {
+                        s.move_cursors_with(|map, cursor, goal| {
+                            motion
+                                .move_point(map, cursor, goal, times, &text_layout_details)
+                                .unwrap_or((cursor, goal))
+                        })
+                    }
                 },
             );
 
