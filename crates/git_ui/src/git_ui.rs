@@ -432,8 +432,14 @@ fn render_remote_button(
     branch: &Branch,
     keybinding_target: Option<FocusHandle>,
     show_fetch_button: bool,
+    needs_reconciliation: bool,
 ) -> Option<impl IntoElement> {
     let id = id.into();
+
+    if needs_reconciliation {
+        return Some(remote_button::render_sync_button(keybinding_target, id));
+    }
+
     let upstream = branch.upstream.as_ref();
     match upstream {
         Some(Upstream {
@@ -601,6 +607,32 @@ mod remote_button {
                     "Re-publish branch to remote",
                     &git::Push,
                     "git push --set-upstream",
+                    keybinding_target.clone(),
+                    cx,
+                )
+            },
+        )
+    }
+
+    pub fn render_sync_button(
+        keybinding_target: Option<FocusHandle>,
+        id: SharedString,
+    ) -> SplitButton {
+        split_button(
+            id,
+            "Sync",
+            0,
+            0,
+            Some(IconName::Warning),
+            keybinding_target.clone(),
+            move |_, window, cx| {
+                window.dispatch_action(Box::new(git::Pull), cx);
+            },
+            move |_window, cx| {
+                git_action_tooltip(
+                    "Pull changes to reconcile with remote",
+                    &git::Pull,
+                    "git pull",
                     keybinding_target.clone(),
                     cx,
                 )

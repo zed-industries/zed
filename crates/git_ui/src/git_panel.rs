@@ -615,6 +615,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    push_rejected_for_branch: Option<SharedString>,
     _settings_subscription: Subscription,
 }
 
@@ -784,6 +785,7 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                push_rejected_for_branch: None,
                 _settings_subscription,
             };
 
@@ -2961,7 +2963,10 @@ impl GitPanel {
 
             let action = RemoteAction::Pull(remote);
             this.update(cx, |this, cx| match remote_message {
-                Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
+                Ok(remote_message) => {
+                    this.push_rejected_for_branch = None;
+                    this.show_remote_output(action, remote_message, cx)
+                }
                 Err(e) => {
                     log::error!("Error while pulling {:?}", e);
                     this.show_error_toast(action.name(), e, cx)
@@ -3052,7 +3057,7 @@ impl GitPanel {
                     log::error!("Error while pushing {:?}", e);
                     let error_message = e.to_string();
                     if is_non_fast_forward_error(&error_message) {
-                        this.show_push_rejected_toast(repo.clone(), branch.clone(), remote, cx);
+                        this.show_push_rejected_toast(branch.clone(), cx);
                     } else {
                         this.show_error_toast(action.name(), e, cx)
                     }
@@ -3736,120 +3741,24 @@ impl GitPanel {
         show_error_toast(workspace, action, e, cx)
     }
 
-    fn show_push_rejected_toast(
-        &mut self,
-        repo: Entity<Repository>,
-        branch: Branch,
-        remote: Remote,
-        cx: &mut Context<Self>,
-    ) {
+    fn show_push_rejected_toast(&mut self, branch: Branch, cx: &mut Context<Self>) {
+        self.push_rejected_for_branch = Some(branch.name().to_owned().into());
+        cx.notify();
+
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
-        let this = cx.entity().downgrade();
         workspace.update(cx, |workspace, cx| {
             let toast = StatusToast::new(
                 "Push rejected: remote has newer commits",
                 cx,
-                move |this_toast, _cx| {
-                    this_toast
-                        .icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                        .action("Pull & Push", {
-                            let this = this.clone();
-                            let repo = repo.clone();
-                            let branch = branch.clone();
-                            move |window, cx| {
-                                if let Some(this) = this.upgrade() {
-                                    this.update(cx, |this, cx| {
-                                        this.pull_and_push(
-                                            repo.clone(),
-                                            branch.clone(),
-                                            remote.clone(),
-                                            window,
-                                            cx,
-                                        );
-                                    });
-                                }
-                            }
-                        })
+                |this_toast, _cx| {
+                    this_toast.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
                 },
             );
             workspace.toggle_status_toast(toast, cx);
         });
-    }
-
-    fn pull_and_push(
-        &mut self,
-        repo: Entity<Repository>,
-        branch: Branch,
-        remote: Remote,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn_in(window, async move |this, cx| {
-            let branch_name = branch
-                .upstream
-                .is_none()
-                .then(|| branch.name().to_owned().into());
-
-            let pull_askpass = this.update_in(cx, |this, window, cx| {
-                this.askpass_delegate(format!("git pull {}", remote.name), window, cx)
-            })?;
-
-            let pull = repo.update(cx, |repo, cx| {
-                repo.pull(branch_name, remote.name.clone(), false, pull_askpass, cx)
-            });
-
-            let pull_result = pull.await?;
-
-            match pull_result {
-                Ok(_) => {}
-                Err(e) => {
-                    log::error!("Error while pulling {:?}", e);
-                    this.update(cx, |this, cx| {
-                        this.show_error_toast("pull", e, cx);
-                    })?;
-                    return anyhow::Ok(());
-                }
-            }
-
-            let push_askpass = this.update_in(cx, |this, window, cx| {
-                this.askpass_delegate(format!("git push {}", remote.name), window, cx)
-            })?;
-
-            let push = repo.update(cx, |repo, cx| {
-                repo.push(
-                    branch.name().to_owned().into(),
-                    branch
-                        .upstream
-                        .as_ref()
-                        .filter(|u| matches!(u.tracking, UpstreamTracking::Tracked(_)))
-                        .and_then(|u| u.branch_name())
-                        .unwrap_or_else(|| branch.name())
-                        .to_owned()
-                        .into(),
-                    remote.name.clone(),
-                    None,
-                    push_askpass,
-                    cx,
-                )
-            });
-
-            let push_result = push.await?;
-
-            let action = RemoteAction::Push(branch.name().to_owned().into(), remote);
-            this.update(cx, |this, cx| match push_result {
-                Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
-                Err(e) => {
-                    log::error!("Error while pushing {:?}", e);
-                    this.show_error_toast(action.name(), e, cx)
-                }
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
     }
 
     fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)
@@ -4292,6 +4201,18 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return None;
         }
+
+        let needs_reconciliation = self
+            .push_rejected_for_branch
+            .as_ref()
+            .map(|rejected| {
+                branch
+                    .as_ref()
+                    .map(|b| b.name() == rejected.as_ref())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
         Some(
             h_flex()
                 .gap_1()
@@ -4304,6 +4225,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
+                        needs_reconciliation,
                     ))
                 })
                 .into_any_element(),
