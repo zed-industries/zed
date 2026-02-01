@@ -8,7 +8,7 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, Axis, Context, Corner, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent,
     MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, Task,
-    WeakEntity, Window, deferred, div, ease_out_quint, px,
+    WeakEntity, Window, deferred, div, px,
 };
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -517,7 +517,7 @@ impl Dock {
             let close_gen = self.close_generation;
             self._close_task = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor()
-                    .timer(Duration::from_millis(150))
+                    .timer(Duration::from_millis(100))
                     .await;
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |dock, cx| {
@@ -995,8 +995,8 @@ impl Render for Dock {
                 })
                 .with_animation(
                     ("dock-anim", animation_gen as u64),
-                    Animation::new(AnimationDuration::Fast.into())
-                        .with_easing(ease_out_quint()),
+                    Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
+                        .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
                     {
                         let position = self.position;
                         let target_size = f32::from(size);
