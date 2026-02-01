@@ -164,17 +164,21 @@ export APP_ICON="zed"
 export APP_ARGS="%U"
 if [[ "$channel" == "preview" ]]; then
   export APP_NAME="Zed Preview"
+  APP_ID="dev.zed.Zed-Preview"
 elif [[ "$channel" == "nightly" ]]; then
   export APP_NAME="Zed Nightly"
+  APP_ID="dev.zed.Zed-Nightly"
 elif [[ "$channel" == "dev" ]]; then
   export APP_NAME="Zed Devel"
+  APP_ID="dev.zed.Zed-Dev"
 else
   export APP_NAME="Zed"
+  APP_ID="dev.zed.Zed"
 fi
 
 mkdir -p "${zed_dir}/share/applications"
-envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/zed$suffix.desktop"
-chmod +x "${zed_dir}/share/applications/zed$suffix.desktop"
+envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/applications/$APP_ID.desktop"
+chmod +x "${zed_dir}/share/applications/$APP_ID.desktop"
 
 # Copy generated licenses so they'll end up in archive too
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
