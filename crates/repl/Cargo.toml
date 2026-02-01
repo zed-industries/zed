@@ -54,6 +54,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+wry = "0.54.1"
 picker.workspace = true
 
 [dev-dependencies]
