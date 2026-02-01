@@ -1,5 +1,6 @@
 use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
+use ollama_edit_prediction::OllamaEditPredictionDelegate;
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{
@@ -193,6 +194,12 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Codestral => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
+        }
+        EditPredictionProvider::Ollama => {
+            log::info!("Ollama: Registering edit prediction provider");
+            let http_client = client.http_client();
+            let provider = cx.new(|_| OllamaEditPredictionDelegate::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {

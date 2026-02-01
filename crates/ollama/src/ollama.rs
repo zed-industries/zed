@@ -378,6 +378,79 @@ pub async fn show_model(
     Ok(details)
 }
 
+/// Request for the /api/generate endpoint (Fill-in-the-Middle support)
+#[derive(Serialize, Debug)]
+pub struct GenerateRequest {
+    pub model: String,
+    pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
+    pub stream: bool,
+    /// When true, no formatting will be applied to the prompt (use for FIM with manual tokens)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<bool>,
+    pub keep_alive: KeepAlive,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<GenerateOptions>,
+}
+
+/// Options for the generate endpoint
+#[derive(Serialize, Default, Debug)]
+pub struct GenerateOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_predict: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<String>>,
+}
+
+/// Response from the /api/generate endpoint
+#[derive(Deserialize, Debug)]
+pub struct GenerateResponse {
+    pub response: String,
+    pub done: bool,
+    #[serde(default)]
+    pub eval_count: Option<u64>,
+}
+
+/// Fetch a completion from the Ollama /api/generate endpoint (non-streaming)
+pub async fn generate_completion(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<&str>,
+    request: GenerateRequest,
+) -> Result<GenerateResponse> {
+    let uri = format!("{api_url}/api/generate");
+    let http_request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+
+    let mut response = client.send(http_request).await?;
+    if response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        let generate_response: GenerateResponse =
+            serde_json::from_str(&body).context("Unable to parse generate response")?;
+        Ok(generate_response)
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        anyhow::bail!(
+            "Failed to connect to Ollama API: {} {}",
+            response.status(),
+            body,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -656,5 +729,34 @@ mod tests {
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);
+    }
+
+    #[test]
+    fn parse_generate_response() {
+        let response = serde_json::json!({
+            "model": "qwen2.5-coder:7b",
+            "created_at": "2024-01-15T10:30:00.000000Z",
+            "response": "    println!(\"Hello, world!\");",
+            "done": true,
+            "eval_count": 15
+        });
+        let result: GenerateResponse = serde_json::from_value(response).unwrap();
+        assert_eq!(result.response, "    println!(\"Hello, world!\");");
+        assert!(result.done);
+        assert_eq!(result.eval_count, Some(15));
+    }
+
+    #[test]
+    fn parse_generate_response_without_eval_count() {
+        let response = serde_json::json!({
+            "model": "qwen2.5-coder:7b",
+            "created_at": "2024-01-15T10:30:00.000000Z",
+            "response": "fn main() {}",
+            "done": true
+        });
+        let result: GenerateResponse = serde_json::from_value(response).unwrap();
+        assert_eq!(result.response, "fn main() {}");
+        assert!(result.done);
+        assert_eq!(result.eval_count, None);
     }
 }

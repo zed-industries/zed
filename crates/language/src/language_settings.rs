@@ -388,6 +388,8 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
+    /// Settings specific to Ollama.
+    pub ollama: OllamaSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -435,6 +437,18 @@ pub struct CodestralSettings {
     pub max_tokens: Option<u32>,
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OllamaSettings {
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<i32>,
+    /// API URL to use for Ollama.
+    pub api_url: Option<String>,
+    /// Optional API key for authentication.
+    pub api_key: Option<String>,
 }
 
 impl AllLanguageSettings {
@@ -663,6 +677,14 @@ impl settings::Settings for AllLanguageSettings {
             api_url: codestral.api_url,
         };
 
+        let ollama = edit_predictions.ollama.unwrap();
+        let ollama_settings = OllamaSettings {
+            model: ollama.model,
+            max_tokens: ollama.max_tokens,
+            api_url: ollama.api_url,
+            api_key: ollama.api_key,
+        };
+
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -700,6 +722,7 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
+                ollama: ollama_settings,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
                 example_capture_rate: edit_predictions.example_capture_rate,

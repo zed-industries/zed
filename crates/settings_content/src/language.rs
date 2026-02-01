@@ -96,6 +96,7 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    Ollama,
     Experimental(&'static str),
 }
 
@@ -116,6 +117,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Supermaven,
             Zed,
             Codestral,
+            Ollama,
             Experimental(String),
         }
 
@@ -125,6 +127,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Ollama => EditPredictionProvider::Ollama,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
             {
@@ -164,6 +167,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Ollama
             | EditPredictionProvider::Experimental(_) => false,
         }
     }
@@ -174,6 +178,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Supermaven => Some("Supermaven"),
             EditPredictionProvider::Codestral => Some("Codestral"),
+            EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::Experimental(
                 EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
             ) => Some("Sweep"),
@@ -203,6 +208,8 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
+    /// Settings specific to Ollama edit predictions.
+    pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -248,6 +255,27 @@ pub struct CodestralSettingsContent {
     ///
     /// Default: "https://codestral.mistral.ai"
     pub api_url: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct OllamaEditPredictionSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: "qwen2.5-coder:7b"
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 150
+    pub max_tokens: Option<i32>,
+    /// API URL to use for completions.
+    ///
+    /// Default: "http://localhost:11434"
+    pub api_url: Option<String>,
+    /// Optional API key for authentication.
+    ///
+    /// Default: null
+    pub api_key: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.

@@ -172,6 +172,7 @@ members = [
     "crates/supermaven",
     "crates/supermaven_api",
     "crates/codestral",
+    "crates/ollama_edit_prediction",
     "crates/svg_preview",
     "crates/system_specs",
     "crates/tab_switcher",
@@ -409,6 +410,7 @@ sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
 codestral = { path = "crates/codestral" }
+ollama_edit_prediction = { path = "crates/ollama_edit_prediction" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }

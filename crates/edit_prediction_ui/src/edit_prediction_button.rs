@@ -306,7 +306,7 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed | EditPredictionProvider::Ollama) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let ep_icon;
@@ -337,6 +337,14 @@ impl Render for EditPredictionButton {
                         } else {
                             "Powered by Mercury"
                         };
+                    }
+                    EditPredictionProvider::Ollama => {
+                        ep_icon = if enabled {
+                            IconName::ZedPredict
+                        } else {
+                            IconName::ZedPredictDisabled
+                        };
+                        tooltip_meta = "Powered by Ollama"
                     }
                     _ => {
                         ep_icon = if enabled {

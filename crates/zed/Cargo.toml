@@ -82,6 +82,7 @@ clap.workspace = true
 cli.workspace = true
 client.workspace = true
 codestral.workspace = true
+ollama_edit_prediction.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
