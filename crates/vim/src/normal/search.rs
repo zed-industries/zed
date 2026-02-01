@@ -244,8 +244,7 @@ impl Vim {
             cx.focus_self(window);
 
             search_bar.set_replacement(None, cx);
-            let mut options =
-                SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+            let mut options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
             if let Some(regex) = action.regex {
                 options.set(SearchOptions::REGEX, regex);
             }
