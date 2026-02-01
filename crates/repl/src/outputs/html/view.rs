@@ -2,10 +2,11 @@ use anyhow::Result;
 use gpui::{App, ClipboardItem, Context, Entity, Window, div, prelude::*, px};
 use language::Buffer;
 use std::sync::{Arc, Mutex};
-use ui::Pixels;
 
 use crate::components::webview::WebView;
 use crate::outputs::OutputContent;
+
+use super::template::wrap_html_with_theme;
 
 pub struct HtmlView {
     webview: Entity<WebView>,
@@ -18,47 +19,22 @@ impl HtmlView {
         let content_size = Arc::new(Mutex::new(None));
         let content_size_clone = content_size.clone();
 
-        // Wrap HTML in a document with size measurement script
-        let html_with_script = format!(
-            r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{ margin: 0; padding: 8px; overflow: auto; }}
-    </style>
-</head>
-<body>
-    {}
-    <script>
-        function measureContent() {{
-            const width = Math.max(
-                document.documentElement.scrollWidth,
-                document.body.scrollWidth
-            );
-            const height = Math.max(
-                document.documentElement.scrollHeight,
-                document.body.scrollHeight
-            );
-            window.ipc.postMessage(JSON.stringify({{ width: width, height: height }}));
-        }}
+        // Get theme background color to prevent white flash
+        let theme = theme::GlobalTheme::theme(cx);
+        let bg_color = theme.colors().editor_background;
+        let bg_rgba = bg_color.to_rgb();
 
-        if (document.readyState === 'loading') {{
-            document.addEventListener('DOMContentLoaded', measureContent);
-        }} else {{
-            measureContent();
-        }}
-
-        window.addEventListener('resize', measureContent);
-    </script>
-</body>
-</html>"#,
-            html
-        );
+        // Wrap HTML content with themed template
+        let html_with_theme = wrap_html_with_theme(&html, cx);
 
         let wry_webview = wry::WebViewBuilder::new()
-            .with_html(&html_with_script)
-            .with_transparent(true)
+            .with_html(&html_with_theme)
+            .with_background_color((
+                (bg_rgba.r * 255.0) as u8,
+                (bg_rgba.g * 255.0) as u8,
+                (bg_rgba.b * 255.0) as u8,
+                255,
+            ))
             .with_visible(true)
             .with_ipc_handler(move |message: wry::http::Request<String>| {
                 if let Ok(size_data) = serde_json::from_str::<serde_json::Value>(message.body()) {
