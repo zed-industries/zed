@@ -2609,6 +2609,7 @@ impl Editor {
                                         cx,
                                     );
                                     editor.colorize_brackets(false, cx);
+                                    editor.refresh_code_lenses(window, cx);
                                 })
                                 .ok();
                         });

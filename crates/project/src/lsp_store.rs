@@ -863,7 +863,7 @@ impl LocalLspStore {
                             new_scope_uri.insert(workspace_config);
                         }
 
-                        Ok(params
+                        let result: Vec<_> = params
                             .items
                             .into_iter()
                             .filter_map(|item| {
@@ -880,7 +880,8 @@ impl LocalLspStore {
                                     Some(workspace_config.clone())
                                 }
                             })
-                            .collect())
+                            .collect();
+                        Ok(result)
                     }
                 }
             })
@@ -6081,6 +6082,7 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
+
         let existing_servers = self.as_local().map(|local| {
             local
                 .buffers_opened_in_servers
@@ -6089,26 +6091,9 @@ impl LspStore {
                 .unwrap_or_default()
         });
 
-        if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
-            if let Some(cached_lens) = &lsp_data.code_lens {
-                if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let has_different_servers = existing_servers.is_some_and(|existing_servers| {
-                        existing_servers != cached_lens.lens.keys().copied().collect()
-                    });
-                    if !has_different_servers {
-                        return Task::ready(Ok(Some(
-                            cached_lens.lens.values().flatten().cloned().collect(),
-                        )))
-                        .shared();
-                    }
-                } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
-                    if !version_queried_for.changed_since(updating_for) {
-                        return running_update.clone();
-                    }
-                }
-            }
-        }
-
+        // TODO: Re-enable cache after fixing timing issues with rust-analyzer
+        // Cache is disabled to ensure fresh code lens requests after indexing completes
+        let _ = (existing_servers, version_queried_for.clone());
         let lens_lsp_data = self
             .latest_lsp_data(buffer, cx)
             .code_lens
@@ -6148,19 +6133,23 @@ impl LspStore {
                     .update(cx, |lsp_store, _| {
                         let lsp_data = lsp_store.current_lsp_data(buffer_id)?;
                         let code_lens = lsp_data.code_lens.as_mut()?;
-                        if let Some(fetched_lens) = fetched_lens {
+                        if let Some(fetched_lens) = &fetched_lens {
                             if lsp_data.buffer_version == query_version_queried_for {
-                                code_lens.lens.extend(fetched_lens);
+                                code_lens.lens.extend(fetched_lens.clone());
                             } else if !lsp_data
                                 .buffer_version
                                 .changed_since(&query_version_queried_for)
                             {
                                 lsp_data.buffer_version = query_version_queried_for;
-                                code_lens.lens = fetched_lens;
+                                code_lens.lens = fetched_lens.clone();
                             }
+                            code_lens.update = None;
+                            Some(code_lens.lens.values().flatten().cloned().collect())
+                        } else {
+                            code_lens.update = None;
+                            lsp_data.code_lens = None;
+                            None
                         }
-                        code_lens.update = None;
-                        Some(code_lens.lens.values().flatten().cloned().collect())
                     })
                     .map_err(Arc::new)
             })
@@ -6231,8 +6220,34 @@ impl LspStore {
         } else {
             let code_lens_actions_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, GetCodeLens, cx);
-            cx.background_spawn(async move {
-                Ok(Some(code_lens_actions_task.await.into_iter().collect()))
+            cx.spawn(async move |lsp_store, cx| {
+                let result = code_lens_actions_task.await;
+                if result.is_empty() {
+                    return Ok(None);
+                }
+
+                let mut resolved_result: HashMap<LanguageServerId, Vec<CodeAction>> =
+                    HashMap::default();
+                for (server_id, mut actions) in result {
+                    let language_server = lsp_store.update(cx, |lsp_store, _| {
+                        lsp_store
+                            .as_local()
+                            .and_then(|local| local.language_server_for_id(server_id))
+                    })?;
+
+                    if let Some(language_server) = language_server {
+                        for action in &mut actions {
+                            if let Err(e) =
+                                LocalLspStore::try_resolve_code_action(&language_server, action)
+                                    .await
+                            {
+                                log::warn!("Failed to resolve code lens: {e:#}");
+                            }
+                        }
+                    }
+                    resolved_result.insert(server_id, actions);
+                }
+                Ok(Some(resolved_result))
             })
         }
     }
@@ -10205,13 +10220,16 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            if let Some(work) = status.pending_work.remove(&token)
-                && !work.is_disk_based_diagnostics_progress
-            {
-                cx.emit(LspStoreEvent::RefreshInlayHints {
-                    server_id: language_server_id,
-                    request_id: None,
-                });
+            if let Some(work) = status.pending_work.remove(&token) {
+                eprintln!("[DEBUG] on_lsp_work_end: token={:?}, is_disk_based={}", token, work.is_disk_based_diagnostics_progress);
+                if !work.is_disk_based_diagnostics_progress {
+                    eprintln!("[DEBUG] Emitting RefreshCodeLens event");
+                    cx.emit(LspStoreEvent::RefreshInlayHints {
+                        server_id: language_server_id,
+                        request_id: None,
+                    });
+                    cx.emit(LspStoreEvent::RefreshCodeLens);
+                }
             }
             cx.notify();
         }

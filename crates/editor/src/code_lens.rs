@@ -1,24 +1,28 @@
 use std::ops::Range;
 
 use collections::HashMap;
-use gpui::{App, SharedString, Task};
+use gpui::{App, SharedString, Task, WeakEntity};
 use language::BufferId;
-use multi_buffer::{Anchor, ToOffset as _};
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint as _};
 use project::CodeAction;
 use settings::Settings;
-use text;
 use ui::{Context, Window, div, prelude::*};
 
 use crate::{
-    Editor,
+    Editor, FindAllReferences, GoToImplementation, SelectionEffects,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 
 #[derive(Clone, Debug)]
-pub struct CodeLensData {
-    pub position: Anchor,
+pub struct CodeLensItem {
     pub text: SharedString,
     pub action: Option<CodeAction>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CodeLensData {
+    pub position: Anchor,
+    pub items: Vec<CodeLensItem>,
 }
 
 #[derive(Default)]
@@ -88,6 +92,150 @@ impl CodeLensCache {
     }
 }
 
+fn group_lenses_by_row(
+    lenses: Vec<(Anchor, CodeLensItem)>,
+    snapshot: &MultiBufferSnapshot,
+) -> Vec<CodeLensData> {
+    let mut grouped: HashMap<u32, (Anchor, Vec<CodeLensItem>)> = HashMap::default();
+
+    for (position, item) in lenses {
+        let row = position.to_point(snapshot).row;
+        grouped
+            .entry(row)
+            .or_insert_with(|| (position, Vec::new()))
+            .1
+            .push(item);
+    }
+
+    let mut result: Vec<CodeLensData> = grouped
+        .into_iter()
+        .map(|(_, (position, items))| CodeLensData { position, items })
+        .collect();
+
+    result.sort_by_key(|lens| lens.position.to_point(snapshot).row);
+    result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodeLensKind {
+    References,
+    Implementations,
+    Other,
+}
+
+fn detect_lens_kind(title: &str) -> CodeLensKind {
+    let title_lower = title.to_lowercase();
+    if title_lower.contains("reference") {
+        CodeLensKind::References
+    } else if title_lower.contains("implementation") {
+        CodeLensKind::Implementations
+    } else {
+        CodeLensKind::Other
+    }
+}
+
+fn render_code_lens_line(
+    lens: CodeLensData,
+    editor: WeakEntity<Editor>,
+) -> impl Fn(&mut crate::display_map::BlockContext) -> gpui::AnyElement {
+    move |cx| {
+        let mut children: Vec<gpui::AnyElement> = Vec::new();
+
+        for (i, item) in lens.items.iter().enumerate() {
+            if i > 0 {
+                children.push(
+                    div()
+                        .text_ui_xs(cx.app)
+                        .text_color(cx.app.theme().colors().text_muted)
+                        .child(" | ")
+                        .into_any_element(),
+                );
+            }
+
+            let text = item.text.clone();
+            let action = item.action.clone();
+            let editor_clone = editor.clone();
+            let position = lens.position;
+
+            children.push(
+                div()
+                    .id(SharedString::from(format!("code-lens-{}-{}", i, text)))
+                    .text_ui_xs(cx.app)
+                    .text_color(cx.app.theme().colors().text_muted)
+                    .cursor_pointer()
+                    .hover(|style| style.text_color(cx.app.theme().colors().text))
+                    .child(text.clone())
+                    .on_click({
+                        let text = text.clone();
+                        move |_event, window, cx| {
+                            let kind = detect_lens_kind(&text);
+                            if let Some(editor) = editor_clone.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::default(),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_anchor_ranges([position..position]);
+                                        },
+                                    );
+
+                                    match kind {
+                                        CodeLensKind::References => {
+                                            let _ = editor.find_all_references(
+                                                &FindAllReferences,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                        CodeLensKind::Implementations => {
+                                            let _ = editor.go_to_implementation(
+                                                &GoToImplementation,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                        CodeLensKind::Other => {
+                                            if let Some(action) = &action {
+                                                if let Some(workspace) = editor.workspace() {
+                                                    let project =
+                                                        workspace.read(cx).project().clone();
+                                                    let action = action.clone();
+                                                    let buffer = editor.buffer().clone();
+                                                    if let Some(excerpt_buffer) =
+                                                        buffer.read(cx).as_singleton()
+                                                    {
+                                                        let _ =
+                                                            project.update(cx, |project, cx| {
+                                                                project.apply_code_action(
+                                                                    excerpt_buffer.clone(),
+                                                                    action,
+                                                                    true,
+                                                                    cx,
+                                                                )
+                                                            });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    })
+                    .into_any_element(),
+            );
+        }
+
+        div()
+            .pl(cx.anchor_x)
+            .flex()
+            .flex_row()
+            .children(children)
+            .into_any_element()
+    }
+}
+
 impl Editor {
     pub fn code_lens_enabled(&self, cx: &App) -> bool {
         crate::EditorSettings::get_global(cx).code_lens.enabled
@@ -103,24 +251,24 @@ impl Editor {
         }
 
         let buffer = self.buffer().read(cx);
-        let excerpt_buffer = buffer.as_singleton()?;
+        let excerpt_buffer = match buffer.as_singleton() {
+            Some(b) => b,
+            None => return None,
+        };
         let buffer_id = excerpt_buffer.read(cx).remote_id();
+        let excerpt_buffer = excerpt_buffer.clone();
 
-        let Some(project) = self.project.as_ref() else {
+        let Some(project) = self.project.clone() else {
             return None;
         };
 
         let text_range = text::Anchor::MIN..text::Anchor::MAX;
-
-        let project = project.clone();
-        let excerpt_buffer = excerpt_buffer.clone();
         let multibuffer = self.buffer().clone();
 
         let task = cx.spawn_in(window, async move |editor, cx| {
-            let actions_task = match project
-                .update(cx, |project, cx| {
-                    project.code_lens_actions::<text::Anchor>(&excerpt_buffer, text_range.clone(), cx)
-                }) {
+            let actions_task = match project.update(cx, |project, cx| {
+                project.code_lens_actions::<text::Anchor>(&excerpt_buffer, text_range.clone(), cx)
+            }) {
                 Ok(task) => task,
                 Err(_) => return,
             };
@@ -128,67 +276,66 @@ impl Editor {
             let actions: anyhow::Result<Option<Vec<CodeAction>>> = actions_task.await;
 
             if let Ok(Some(actions)) = actions {
-                let lenses: Vec<CodeLensData> = match multibuffer
-                    .update(cx, |multibuffer, cx| -> Vec<CodeLensData> {
-                        let snapshot = multibuffer.snapshot(cx);
-                        actions
-                            .into_iter()
-                            .filter_map(|action| {
-                                let position = snapshot
-                                    .anchor_in_excerpt(snapshot.excerpts().next()?.0, action.range.start)?;
+                let lenses: Vec<CodeLensData> = match multibuffer.update(cx, |multibuffer, cx| {
+                    let snapshot = multibuffer.snapshot(cx);
 
-                                let text = match &action.lsp_action {
-                                    project::LspAction::CodeLens(lens) => {
-                                        if let Some(command) = &lens.command {
-                                            Some(format!("↪ {}", command.title))
-                                        } else {
-                                            Some("↪ CodeLens".to_string())
-                                        }
-                                    }
-                                    _ => None,
-                                };
+                    let individual_lenses: Vec<(Anchor, CodeLensItem)> = actions
+                        .into_iter()
+                        .filter_map(|action| {
+                            let position = snapshot.anchor_in_excerpt(
+                                snapshot.excerpts().next()?.0,
+                                action.range.start,
+                            )?;
 
-                                text.map(|text| CodeLensData {
+                            let text = match &action.lsp_action {
+                                project::LspAction::CodeLens(lens) => {
+                                    lens.command.as_ref().map(|cmd| cmd.title.clone())
+                                }
+                                _ => None,
+                            };
+
+                            text.map(|text| {
+                                (
                                     position,
-                                    text: text.into(),
-                                    action: Some(action),
-                                })
+                                    CodeLensItem {
+                                        text: text.into(),
+                                        action: Some(action),
+                                    },
+                                )
                             })
-                            .collect()
-                    }) {
+                        })
+                        .collect();
+
+                    group_lenses_by_row(individual_lenses, &snapshot)
+                }) {
                     Ok(lenses) => lenses,
                     Err(_) => return,
                 };
 
                 editor
                     .update(cx, |editor, cx| {
-                        if let Some(old_block_ids) = editor.code_lens_cache.get_block_ids(&buffer_id) {
+                        if let Some(old_block_ids) =
+                            editor.code_lens_cache.get_block_ids(&buffer_id)
+                        {
                             editor.remove_blocks(old_block_ids.iter().copied().collect(), None, cx);
                         }
 
-                        editor.code_lens_cache.set_lenses_for_buffer(buffer_id, lenses.clone());
+                        editor
+                            .code_lens_cache
+                            .set_lenses_for_buffer(buffer_id, lenses.clone());
+
+                        let editor_handle = cx.entity().downgrade();
 
                         let blocks = lenses
                             .into_iter()
                             .map(|lens| {
-                                let text = lens.text.clone();
                                 let position = lens.position;
+                                let render_fn = render_code_lens_line(lens, editor_handle.clone());
                                 BlockProperties {
                                     placement: BlockPlacement::Above(position),
                                     height: Some(1),
                                     style: BlockStyle::Sticky,
-                                    render: std::sync::Arc::new(move |cx| {
-                                        div()
-                                            .text_ui_xs(cx.app)
-                                            .text_color(cx.app.theme().colors().text_muted)
-                                            .pl_8()
-                                            .child(text.clone())
-                                            .cursor_pointer()
-                                            .hover(|style| {
-                                                style.text_color(cx.app.theme().colors().text)
-                                            })
-                                            .into_any_element()
-                                    }),
+                                    render: std::sync::Arc::new(render_fn),
                                     priority: 0,
                                 }
                             })
@@ -252,14 +399,14 @@ impl Editor {
             return Vec::new();
         };
 
-        let start_offset = range.start.to_offset(&snapshot);
-        let end_offset = range.end.to_offset(&snapshot);
+        let start_point = range.start.to_point(&snapshot);
+        let end_point = range.end.to_point(&snapshot);
 
         lenses
             .iter()
             .filter(|lens| {
-                let offset = lens.position.to_offset(&snapshot);
-                offset >= start_offset && offset <= end_offset
+                let point = lens.position.to_point(&snapshot);
+                point.row >= start_point.row && point.row <= end_point.row
             })
             .cloned()
             .collect()

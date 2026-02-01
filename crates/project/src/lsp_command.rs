@@ -3525,7 +3525,7 @@ impl LspCommand for GetCodeLens {
             .as_ref()
             .map(|options| options.commands.as_slice())
             .unwrap_or_default();
-        Ok(message
+        let result: Vec<CodeAction> = message
             .unwrap_or_default()
             .into_iter()
             .filter(|code_lens| {
@@ -3546,7 +3546,8 @@ impl LspCommand for GetCodeLens {
                     resolved: false,
                 }
             })
-            .collect())
+            .collect();
+        Ok(result)
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeLens {
