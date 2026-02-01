@@ -67,8 +67,14 @@ actions!(
     [
         /// Deploys the search and replace interface.
         DeployReplace,
-        /// Dismisses the search bar.
+        /// Dismisses the search bar. In vim/helix mode, preserves highlights.
         Dismiss,
+        /// Dismisses the search bar but keeps search highlights visible.
+        /// Used in vim mode where highlights persist until :nohlsearch.
+        DismissKeepingHighlights,
+        /// Dismisses the search bar and clears search highlights.
+        /// Used by :nohlsearch command in vim mode.
+        DismissAndClearHighlights,
         /// Focuses back on the editor.
         FocusEditor
     ]
@@ -715,6 +721,29 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, _: &Dismiss, window, cx| {
             this.dismiss(&Dismiss, window, cx);
         }));
+        registrar.register_handler(ForDeployed(
+            |this, _: &DismissKeepingHighlights, window, cx| {
+                this.dismiss_keeping_highlights(&DismissKeepingHighlights, window, cx);
+            },
+        ));
+        registrar.register_handler(ForDeployed(
+            |this, _: &DismissAndClearHighlights, window, cx| {
+                this.dismiss_and_clear_highlights(&DismissAndClearHighlights, window, cx);
+            },
+        ));
+        registrar.register_handler(ForDismissed(
+            |this, _: &DismissAndClearHighlights, window, cx| {
+                // Even when already dismissed, clear all highlights
+                for searchable_item in this.searchable_items_with_matches.keys() {
+                    if let Some(searchable_item) =
+                        WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
+                    {
+                        searchable_item.clear_matches(window, cx);
+                    }
+                }
+                this.searchable_items_with_matches.clear();
+            },
+        ));
 
         // register deploy buffer search for both search bar states, since we want to focus into the search bar
         // when the deploy action is triggered in the buffer.
@@ -826,16 +855,53 @@ impl BufferSearchBar {
     }
 
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        // In vim/helix mode, preserve search highlights when dismissing (like real Vim).
+        // Use :nohlsearch to clear highlights explicitly.
+        let vim_mode_enabled = vim_mode_setting::VimModeSetting::try_get(cx)
+            .map(|s| s.0)
+            .unwrap_or(false)
+            || vim_mode_setting::HelixModeSetting::try_get(cx)
+                .map(|s| s.0)
+                .unwrap_or(false);
+        self.dismiss_internal(!vim_mode_enabled, window, cx);
+    }
+
+    pub fn dismiss_keeping_highlights(
+        &mut self,
+        _: &DismissKeepingHighlights,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_internal(false, window, cx);
+    }
+
+    pub fn dismiss_and_clear_highlights(
+        &mut self,
+        _: &DismissAndClearHighlights,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_internal(true, window, cx);
+    }
+
+    fn dismiss_internal(
+        &mut self,
+        clear_highlights: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.dismissed = true;
         cx.emit(Event::Dismissed);
         self.query_error = None;
         self.sync_select_next_case_sensitivity(cx);
 
-        for searchable_item in self.searchable_items_with_matches.keys() {
-            if let Some(searchable_item) =
-                WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
-            {
-                searchable_item.clear_matches(window, cx);
+        if clear_highlights {
+            for searchable_item in self.searchable_items_with_matches.keys() {
+                if let Some(searchable_item) =
+                    WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
+                {
+                    searchable_item.clear_matches(window, cx);
+                }
             }
         }
 

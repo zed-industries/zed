@@ -1405,4 +1405,48 @@ mod test {
         // The cursor should be at the match location on line 3 (row 2).
         cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_search_highlights_persist_after_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nhello again\nhello there\n", Mode::Normal);
+
+        // Search with * to highlight all matches
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+
+        // Verify highlights exist (3 matches for "hello")
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert_eq!(3, highlights.len(), "Expected 3 highlights for 'hello'");
+        });
+
+        // Press Escape to dismiss search bar - highlights should persist in vim mode
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Verify highlights still exist after Escape (like real Vim)
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert_eq!(
+                3,
+                highlights.len(),
+                "Highlights should persist after Escape in vim mode"
+            );
+        });
+
+        // Use :nohlsearch to clear highlights
+        cx.simulate_keystrokes(": n o h l enter");
+        cx.run_until_parked();
+
+        // Verify highlights are cleared after :nohlsearch
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert_eq!(
+                0,
+                highlights.len(),
+                "Highlights should be cleared after :nohlsearch"
+            );
+        });
+    }
 }
