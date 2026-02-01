@@ -59,5 +59,7 @@
       };
       PROTOC = "${protobuf}/bin/protoc";
       ZED_ZSTD_MUSL_LIB = "${pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
+      # For aws-lc-sys musl cross-compilation
+      CC_x86_64_unknown_linux_musl = "${pkgsCross.musl64.stdenv.cc}/bin/x86_64-unknown-linux-musl-gcc";
     };
 }
