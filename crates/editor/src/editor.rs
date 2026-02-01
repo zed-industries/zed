@@ -25306,25 +25306,19 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
-        // The REPL cell separator (e.g. '# %%') should not trigger comment auto-continuation
-        // but only if the cursor is at the end of the line or followed only by whitespace
-        let jupytext_prefixes: Vec<String> = delimiters.iter().map(|d| format!("{d}%%")).collect();
+        let repl_prefix = format!("{}%%", delimiter);
 
         let line_content_after_indent: String = snapshot
             .chars_for_range(range)
             .skip(num_of_whitespaces)
             .collect();
 
-        if jupytext_prefixes
-            .iter()
-            .any(|prefix| line_content_after_indent.starts_with(prefix))
-        {
-            // Check if cursor is at end of line or followed only by whitespace
+        if line_content_after_indent.starts_with(&repl_prefix) {
             let content_after_cursor: String = line_content_after_indent
                 .chars()
                 .skip(start_point.column as usize - num_of_whitespaces)
                 .collect();
-            
+
             if content_after_cursor.trim().is_empty() {
                 return None;
             }
