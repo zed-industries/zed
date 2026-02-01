@@ -437,6 +437,43 @@
     },
   },
   {
+    "context": "QuickSearch || (QuickSearch > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "up": "editor::MoveUp",
+      "down": "editor::MoveDown",
+      "alt-cmd-c": "search::ToggleCaseSensitive",
+      "alt-cmd-w": "search::ToggleWholeWord",
+      "alt-cmd-x": "search::ToggleRegex",
+      "alt-cmd-f": "quick_search::ToggleFilters",
+      "alt-cmd-r": "search::ToggleReplace",
+      "cmd-g": "search::SelectNextMatch",
+      "cmd-shift-g": "search::SelectPreviousMatch",
+      "cmd-shift-a": "quick_search::ToggleSplitMenu",
+      "alt-h": "quick_search::ToggleHistory",
+      "alt-cmd-l": "quick_search::ToggleLayout",
+    },
+  },
+  {
+    "context": "QuickSearch || (QuickSearch > Picker > Editor) || (QuickSearch > Picker > menu)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-alt-left": "pane::SplitLeft",
+      "ctrl-alt-right": "pane::SplitRight",
+      "ctrl-alt-up": "pane::SplitUp",
+      "ctrl-alt-down": "pane::SplitDown",
+    },
+  },
+  {
+    "context": "QuickSearch && in_replace",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "quick_search::ReplaceNext",
+      "cmd-enter": "quick_search::ReplaceAll",
+    },
+  },
+  {
     "context": "ProjectSearchBar",
     "use_key_equivalents": true,
     "bindings": {
