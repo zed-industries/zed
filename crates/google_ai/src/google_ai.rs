@@ -20,8 +20,7 @@ pub async fn stream_generate_content(
     // The `model` field is emptied as it is provided as a path parameter.
     let model_id = mem::take(&mut request.model.model_id);
 
-    let uri =
-        format!("{api_url}/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={api_key}",);
+    let uri = build_uri(api_url, &model_id, "streamGenerateContent", api_key);
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -71,17 +70,15 @@ pub async fn count_tokens(
 ) -> Result<CountTokensResponse> {
     validate_generate_content_request(&request.generate_content_request)?;
 
-    let uri = format!(
-        "{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",
-        model_id = &request.generate_content_request.model.model_id,
-    );
+    let model_id = &request.generate_content_request.model.model_id;
+    let uri = build_uri(api_url, model_id, "countTokens", api_key);
 
-    let request = serde_json::to_string(&request)?;
+    let request_payload = serde_json::to_string(&request)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(&uri)
         .header("Content-Type", "application/json");
-    let http_request = request_builder.body(AsyncBody::from(request))?;
+    let http_request = request_builder.body(AsyncBody::from(request_payload))?;
 
     let mut response = client.send(http_request).await?;
     let mut text = String::new();
@@ -116,6 +113,21 @@ pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Re
     Ok(())
 }
 
+fn build_uri(api_url: &str, model_id: &str, action: &str, api_key: &str) -> String {
+    let base_url = api_url.trim_end_matches('/');
+    let base_url = if base_url.split('/').count() <= 3 {
+        format!("{base_url}/v1beta/models")
+    } else {
+        base_url.to_string()
+    };
+
+    if action == "streamGenerateContent" {
+        format!("{base_url}/{model_id}:streamGenerateContent?alt=sse&key={api_key}")
+    } else {
+        format!("{base_url}/{model_id}:{action}?key={api_key}")
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Task {
     #[serde(rename = "generateContent")]
@@ -130,6 +142,7 @@ pub enum Task {
     BatchEmbedContents,
 }
 
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentRequest {
@@ -175,7 +188,8 @@ pub struct GenerateContentCandidate {
     pub citation_metadata: Option<CitationMetadata>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Content {
     #[serde(default)]
@@ -183,20 +197,23 @@ pub struct Content {
     pub role: Role,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemInstruction {
     pub parts: Vec<Part>,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone, Copy, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
     Model,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Part {
     TextPart(TextPart),
@@ -206,26 +223,30 @@ pub enum Part {
     ThoughtPart(ThoughtPart),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TextPart {
     pub text: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineDataPart {
     pub inline_data: GenerativeContentBlob,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerativeContentBlob {
     pub mime_type: String,
     pub data: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionCallPart {
     pub function_call: FunctionCall,
@@ -235,13 +256,15 @@ pub struct FunctionCallPart {
     pub thought_signature: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub function_response: FunctionResponse,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThoughtPart {
     pub thought: bool,
@@ -294,13 +317,15 @@ pub struct UsageMetadata {
     pub total_token_count: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
     pub thinking_budget: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -319,14 +344,16 @@ pub struct GenerationConfig {
     pub thinking_config: Option<ThinkingConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SafetySetting {
     pub category: HarmCategory,
     pub threshold: HarmBlockThreshold,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum HarmCategory {
     #[serde(rename = "HARM_CATEGORY_UNSPECIFIED")]
     Unspecified,
@@ -352,7 +379,8 @@ pub enum HarmCategory {
     DangerousContent,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HarmBlockThreshold {
     #[serde(rename = "HARM_BLOCK_THRESHOLD_UNSPECIFIED")]
@@ -363,7 +391,7 @@ pub enum HarmBlockThreshold {
     BlockNone,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HarmProbability {
     #[serde(rename = "HARM_PROBABILITY_UNSPECIFIED")]
@@ -393,31 +421,38 @@ pub struct CountTokensResponse {
     pub total_tokens: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct FunctionResponse {
     pub name: String,
     pub response: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub function_declarations: Vec<FunctionDeclaration>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfig {
     pub function_calling_config: FunctionCallingConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionCallingConfig {
     pub mode: FunctionCallingMode,
@@ -425,7 +460,8 @@ pub struct FunctionCallingConfig {
     pub allowed_function_names: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FunctionCallingMode {
     Auto,
@@ -433,14 +469,17 @@ pub enum FunctionCallingMode {
     None,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct FunctionDeclaration {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
 }
 
-#[derive(Debug, Default)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ModelName {
     pub model_id: String,
 }
