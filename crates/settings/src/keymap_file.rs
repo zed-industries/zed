@@ -4,7 +4,7 @@ use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
     KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString, generate_list_of_all_registered_actions, register_action,
+    NoAction, SharedString, Unbind, generate_list_of_all_registered_actions, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -410,6 +410,8 @@ impl KeymapFile {
                     None => (Err(ActionSequence::expected_array_error()), None),
                 }
             }
+            // "unbind" removes the binding and allows fallthrough to other bindings
+            Some((name, None)) if name == "unbind" => (Ok(Unbind.boxed_clone()), None),
             Some((name, Some(action_input))) => {
                 let action_input_string = action_input.to_string();
                 (
@@ -658,6 +660,18 @@ impl KeymapFile {
             );
             keymap_action_alternatives.push(actions_with_empty_input);
         }
+
+        // Add "unbind" as a special action that removes the binding and allows fallthrough
+        let mut unbind_action = json_schema!({
+            "type": "string",
+            "const": "unbind"
+        });
+        add_description(
+            &mut unbind_action,
+            "Removes this keybinding and allows the keystroke to fall through to other bindings. \
+             Unlike `null` which blocks the keystroke, `unbind` lets it propagate to less specific contexts.",
+        );
+        keymap_action_alternatives.push(unbind_action);
 
         // Placing null first causes json-language-server to default assuming actions should be
         // null, so place it last.

@@ -4,7 +4,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{Action, AsKeystroke, Keystroke, is_no_action};
+use crate::{Action, AsKeystroke, Keystroke, is_no_action, is_unbind};
 use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -172,6 +172,13 @@ impl Keymap {
         let mut first_binding_index = None;
 
         for (_, ix, binding) in matched_bindings {
+            // Unbind removes this specific binding but allows fallthrough to other bindings.
+            // Unlike NoAction which blocks the keystroke entirely, Unbind just skips this
+            // binding and continues searching for matches at shallower contexts.
+            if is_unbind(&*binding.action) {
+                continue;
+            }
+
             if is_no_action(&*binding.action) {
                 // Only break if this is a user-defined NoAction binding
                 // This allows user keymaps to override base keymap NoAction bindings
@@ -195,6 +202,10 @@ impl Keymap {
             if let Some(binding_ix) = first_binding_index
                 && binding_ix > ix
             {
+                continue;
+            }
+            // Unbind should not affect pending state - just skip it
+            if is_unbind(&*binding.action) {
                 continue;
             }
             if is_no_action(&*binding.action) {
@@ -256,7 +267,7 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::NoAction;
+    use gpui::{NoAction, Unbind};
 
     actions!(
         test_only,
@@ -575,6 +586,97 @@ mod tests {
             ],
         );
         assert_eq!(result.len(), 0);
+        assert!(!pending);
+    }
+
+    #[test]
+    fn test_unbind_allows_fallthrough() {
+        // Unbind at deeper context should allow fallthrough to shallower binding
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("ctrl-x", Unbind {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        // With Unbind at editor level, the workspace binding should be found
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        // Should find the workspace binding (fallthrough works)
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+        assert!(!pending);
+    }
+
+    #[test]
+    fn test_unbind_vs_noaction() {
+        // Compare Unbind (fallthrough) vs NoAction (block)
+        // First test NoAction blocks
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("ctrl-x", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let (result, _) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        // NoAction blocks - no binding found
+        assert!(result.is_empty());
+
+        // Now test Unbind allows fallthrough
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("ctrl-x", Unbind {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let (result, _) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        // Unbind allows fallthrough - workspace binding found
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+    }
+
+    #[test]
+    fn test_unbind_same_context() {
+        // Unbind at same context as another binding
+        let bindings = [
+            KeyBinding::new("ctrl-x", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("ctrl-x", Unbind {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings);
+
+        let (result, pending) = keymap.bindings_for_input(
+            &[Keystroke::parse("ctrl-x").unwrap()],
+            &[KeyContext::parse("editor").unwrap()],
+        );
+        // Unbind skips itself, ActionAlpha should still match
+        // (bindings are processed in reverse order, later bindings take precedence,
+        // but Unbind just skips so ActionAlpha is found)
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
         assert!(!pending);
     }
 
