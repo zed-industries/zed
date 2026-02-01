@@ -75,8 +75,8 @@ pub(crate) struct SearchUnderCursorPrevious {
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
-    #[serde(default = "default_true")]
-    regex: bool,
+    #[serde(default)]
+    regex: Option<bool>,
 }
 
 /// Executes a find command to search for patterns in the buffer.
@@ -244,15 +244,13 @@ impl Vim {
             cx.focus_self(window);
 
             search_bar.set_replacement(None, cx);
-            let mut options = SearchOptions::NONE;
-            if action.regex {
-                options |= SearchOptions::REGEX;
+            let mut options =
+                SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+            if let Some(regex) = action.regex {
+                options.set(SearchOptions::REGEX, regex);
             }
             if action.backwards {
                 options |= SearchOptions::BACKWARDS;
-            }
-            if EditorSettings::get_global(cx).search.case_sensitive {
-                options |= SearchOptions::CASE_SENSITIVE;
             }
             search_bar.set_search_options(options, cx);
             true
