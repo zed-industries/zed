@@ -1,10 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId,
-    Entity, Focusable as _, GlobalElementId, HitboxBehavior, HitboxId, InteractiveElement,
-    IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point,
-    Style, Window, anchored, deferred, div, point, prelude::FluentBuilder, px, size,
+    Animation, AnimationExt, AnyElement, AnyView, App, Bounds, Corner, DismissEvent,
+    DispatchPhase, Element, ElementId, Entity, Focusable as _, GlobalElementId, HitboxBehavior,
+    HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView, MouseDownEvent,
+    ParentElement, Pixels, Point, Style, Window, anchored, deferred, div, ease_out_quint, point,
+    prelude::FluentBuilder, px, size,
 };
 
 use crate::prelude::*;
@@ -373,9 +374,39 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         anchored =
                             anchored.position(child_bounds.corner(self.resolved_attach()) + offset);
                     }
-                    let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
-                        .with_priority(1)
-                        .into_any();
+                    let menu_entity_id = menu.entity_id();
+                    let mut element = deferred(
+                        anchored.child(
+                            div()
+                                .relative()
+                                .occlude()
+                                .child(menu.clone())
+                                .with_animation(
+                                    ("popover-menu-animate", menu_entity_id),
+                                    Animation::new(AnimationDuration::Fast.duration())
+                                        .with_easing(ease_out_quint()),
+                                    move |this, delta| {
+                                        const START_OPACITY: f32 = 0.4;
+                                        const MAX_UNFOLD_HEIGHT: f32 = 500.0;
+                                        const ANIMATION_COMPLETE_THRESHOLD: f32 = 0.999;
+
+                                        let opacity =
+                                            START_OPACITY + delta * (1.0 - START_OPACITY);
+                                        let unfold_height = delta * delta * MAX_UNFOLD_HEIGHT;
+
+                                        this.opacity(opacity).when(
+                                            delta < ANIMATION_COMPLETE_THRESHOLD,
+                                            |this| {
+                                                this.overflow_y_hidden()
+                                                    .max_h(px(unfold_height))
+                                            },
+                                        )
+                                    },
+                                ),
+                        ),
+                    )
+                    .with_priority(1)
+                    .into_any();
 
                     menu_layout_id = Some(element.request_layout(window, cx));
                     element
