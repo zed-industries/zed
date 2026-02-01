@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
+use agent_client_protocol as acp;
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
@@ -55,6 +56,32 @@ impl AcpModelSelectorPopover {
         self.selector.update(cx, |selector, cx| {
             selector.delegate.cycle_favorite_models(window, cx);
         });
+    }
+
+    pub fn is_deployed(&self) -> bool {
+        self.menu_handle.is_deployed()
+    }
+
+    /// Returns the list of favourite models, limited to at most 10.
+    pub fn get_favourite_models(&self, cx: &App) -> Vec<AgentModelInfo> {
+        self.selector.read(cx).delegate.get_favourite_models()
+    }
+
+    /// Returns the current model ID if one is selected.
+    pub fn current_model_id(&self, cx: &App) -> Option<acp::ModelId> {
+        self.selector
+            .read(cx)
+            .delegate
+            .active_model()
+            .map(|m| m.id.clone())
+    }
+
+    /// Selects a favourite model by its index (0-9).
+    /// Returns true if a model was selected, false if the index is out of range.
+    pub fn select_favourite_by_index(&self, index: usize, cx: &mut Context<Self>) -> bool {
+        self.selector.update(cx, |selector, cx| {
+            selector.delegate.select_favourite_by_index(index, cx)
+        })
     }
 }
 

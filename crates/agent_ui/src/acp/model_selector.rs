@@ -142,6 +142,51 @@ impl AcpModelPickerDelegate {
         self.favorites.len()
     }
 
+    /// Returns the list of favourite models, limited to at most 10.
+    /// Models are returned in the order they appear in the model list,
+    /// filtered to only include those marked as favourites.
+    pub fn get_favourite_models(&self) -> Vec<AgentModelInfo> {
+        let Some(models) = &self.models else {
+            return Vec::new();
+        };
+
+        let all_models: Vec<&AgentModelInfo> = match models {
+            AgentModelList::Flat(list) => list.iter().collect(),
+            AgentModelList::Grouped(index_map) => index_map.values().flatten().collect(),
+        };
+
+        all_models
+            .into_iter()
+            .filter(|model| self.favorites.contains(&model.id))
+            .unique_by(|model| &model.id)
+            .take(10)
+            .cloned()
+            .collect()
+    }
+
+    /// Selects a favourite model by its index (0-9).
+    /// Returns true if a model was selected, false if the index is out of range.
+    pub fn select_favourite_by_index(
+        &mut self,
+        index: usize,
+        cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        let favourite_models = self.get_favourite_models();
+
+        let Some(model) = favourite_models.get(index) else {
+            return false;
+        };
+
+        self.selector
+            .select_model(model.id.clone(), cx)
+            .detach_and_log_err(cx);
+
+        self.selected_model = Some(model.clone());
+        cx.notify();
+
+        true
+    }
+
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if self.favorites.is_empty() {
             return;

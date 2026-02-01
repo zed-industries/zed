@@ -326,7 +326,18 @@ pub mod settings_profile_selector {
 }
 
 pub mod agent {
-    use gpui::actions;
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Selects a favourite model by its index (0-9).
+    /// Index 0 corresponds to key "1", index 9 corresponds to key "0".
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct SelectFavouriteByIndex {
+        pub index: usize,
+    }
 
     actions!(
         agent,

@@ -25,11 +25,12 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
+    Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem, Corner,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, ObjectFit, PlatformDisplay, SharedString, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, img, linear_color_stop, linear_gradient, list, point, pulsating_between,
+    ListOffset, ListState, ModifiersChangedEvent, ObjectFit, PlatformDisplay, SharedString,
+    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle,
+    WeakEntity, Window, WindowHandle, anchored, deferred, div, ease_in_out, img, linear_color_stop,
+    linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -55,7 +56,7 @@ use ui::{
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
-use zed_actions::agent::{Chat, ToggleModelSelector};
+use zed_actions::agent::{Chat, SelectFavouriteByIndex, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
@@ -67,7 +68,9 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
+use crate::ui::{
+    AgentNotification, AgentNotificationEvent, BurnModeTooltip, FavouritesOverlay, UsageCallout,
+};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ClearMessageQueue, ContinueThread,
     ContinueWithBurnMode, CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow,
@@ -354,6 +357,8 @@ pub struct AcpThreadView {
     last_turn_duration: Option<Duration>,
     turn_generation: usize,
     _turn_timer_task: Option<Task<()>>,
+    favourites_overlay_visible: bool,
+    _ctrl_hold_timer: Option<Task<()>>,
 }
 
 struct QueuedMessage {
@@ -532,6 +537,8 @@ impl AcpThreadView {
             last_turn_duration: None,
             turn_generation: 0,
             _turn_timer_task: None,
+            favourites_overlay_visible: false,
+            _ctrl_hold_timer: None,
         }
     }
 
@@ -553,6 +560,8 @@ impl AcpThreadView {
         self.turn_started_at = None;
         self.last_turn_duration = None;
         self._turn_timer_task = None;
+        self.favourites_overlay_visible = false;
+        self._ctrl_hold_timer = None;
         cx.notify();
     }
 
@@ -5137,6 +5146,7 @@ impl AcpThreadView {
                     )
                     .child(
                         h_flex()
+                            .relative()
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .children(self.profile_selector.clone())
@@ -5146,7 +5156,25 @@ impl AcpThreadView {
                                 this.children(self.mode_selector().cloned())
                                     .children(self.model_selector.clone())
                             })
-                            .child(self.render_send_button(cx)),
+                            .child(self.render_send_button(cx))
+                            .when(self.favourites_overlay_visible, |this| {
+                                let favourite_models = self
+                                    .model_selector
+                                    .as_ref()
+                                    .map(|s| s.read(cx).get_favourite_models(cx))
+                                    .unwrap_or_default();
+                                let current_model_id = self
+                                    .model_selector
+                                    .as_ref()
+                                    .and_then(|s| s.read(cx).current_model_id(cx));
+
+                                this.child(
+                                    deferred(anchored().anchor(Corner::BottomRight).child(
+                                        FavouritesOverlay::new(favourite_models, current_model_id),
+                                    ))
+                                    .with_priority(100),
+                                )
+                            }),
                     ),
             )
             .when(!enable_editor, |this| this.child(backdrop))
@@ -6575,6 +6603,110 @@ impl AcpThreadView {
         }
     }
 
+    /// Handles modifier key changes to show/hide the favourites overlay.
+    ///
+    /// ## Limitations and Future Work
+    ///
+    /// **Modifier Detection vs Keybinding Remapping:**
+    /// This function hardcodes the trigger modifier to `secondary()` (Cmd on macOS, Ctrl elsewhere)
+    /// to match the default keybindings. However, this creates a coupling issue:
+    /// - If users remap `cmd-1` through `cmd-0` to different keys (e.g., `alt-1`), the overlay
+    ///   will still only show on Cmd/Ctrl hold, not on the remapped modifier.
+    /// - Unlike action-based keybindings, modifier-hold behavior cannot be remapped through
+    ///   `keymap.json` because it's raw modifier detection, not an action dispatch.
+    ///
+    /// **Prior Art:**
+    /// The editor has a similar pattern with `multi_cursor_modifier` setting (see
+    /// `EditorSettings::multi_cursor_modifier` in `editor_settings.rs`), which allows users to
+    /// configure whether Alt or Cmd/Ctrl is used for multi-cursor operations. A similar setting
+    /// could be added here if needed.
+    ///
+    /// **Known Issues:**
+    /// - Overlay can get "stuck" open when using other key combinations with the modifier
+    ///   (e.g., holding Ctrl then pressing Ctrl+Tab doesn't hide the overlay)
+    /// - The overlay positioning (BottomRight anchor) is not ideal and subject to change
+    /// - General flakiness in modifier detection edge cases
+    ///
+    /// **Future Improvements:**
+    /// - Add a setting like `favourite_model_selector_modifier` to make this configurable
+    /// - Track model usage statistics (MRU/frequency) to intelligently order favourites
+    /// - Improve overlay dismissal logic to handle all modifier+key combinations
+    /// - Reconsider the overlay UI pattern entirely - alternatives could include:
+    ///   * Command palette integration
+    ///   * Quick-switch menu on first keypress
+    ///   * Status bar indicators
+    ///
+    /// For now, this implementation assumes users keep the default keybindings or understand
+    /// that custom keybindings won't trigger the overlay preview.
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Use the platform's "secondary" modifier (Cmd on macOS, Ctrl on Linux/Windows)
+        // to match the keybindings (cmd-1/ctrl-1, cmd-2/ctrl-2, etc.)
+        let modifier_only =
+            event.modifiers.secondary() && !event.modifiers.alt && !event.modifiers.shift;
+
+        if modifier_only {
+            // Modifier pressed - start timer if not already running
+            if self._ctrl_hold_timer.is_none() && !self.favourites_overlay_visible {
+                // Don't show overlay if model selector is already open
+                let model_selector_open = self
+                    .model_selector
+                    .as_ref()
+                    .is_some_and(|s| s.read(cx).is_deployed());
+
+                if !model_selector_open {
+                    self._ctrl_hold_timer = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(500))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            // Check we still have favourites to show
+                            let has_favourites = this
+                                .model_selector
+                                .as_ref()
+                                .is_some_and(|s| !s.read(cx).get_favourite_models(cx).is_empty());
+
+                            if has_favourites {
+                                this.favourites_overlay_visible = true;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }));
+                }
+            }
+        } else {
+            // Modifier released - cancel timer and hide overlay
+            self._ctrl_hold_timer = None;
+            if self.favourites_overlay_visible {
+                self.favourites_overlay_visible = false;
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_favourite_by_index(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        let Some(model_selector) = self.model_selector.as_ref() else {
+            return false;
+        };
+
+        let selected = model_selector.update(cx, |selector, cx| {
+            selector.select_favourite_by_index(index, cx)
+        });
+
+        if selected {
+            self.favourites_overlay_visible = false;
+            self._ctrl_hold_timer = None;
+            cx.notify();
+        }
+
+        selected
+    }
+
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
         let model_or_agent_name = self.current_model_name(cx);
         let refusal_message = format!(
@@ -7035,6 +7167,10 @@ impl Render for AcpThreadView {
                     });
                 }
             }))
+            .on_action(cx.listener(|this, action: &SelectFavouriteByIndex, _, cx| {
+                this.select_favourite_by_index(action.index, cx);
+            }))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
