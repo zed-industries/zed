@@ -483,6 +483,7 @@ impl GitRepository for FakeGitRepository {
             Ok(git::repository::FileHistory {
                 entries: Vec::new(),
                 path,
+                total_count: 0,
             })
         }
         .boxed()

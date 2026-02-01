@@ -318,6 +318,7 @@ message GitFileHistory {
 message GitFileHistoryResponse {
     repeated FileHistoryEntry entries = 1;
     string path = 2;
+    uint64 total_count = 3;
 }
 
 message FileHistoryEntry {

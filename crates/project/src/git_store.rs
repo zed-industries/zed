@@ -2524,6 +2524,7 @@ impl GitStore {
                 })
                 .collect(),
             path: file_history.path.to_proto(),
+            total_count: file_history.total_count as u64,
         })
     }
 
@@ -4348,6 +4349,7 @@ impl Repository {
                             })
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
+                        total_count: response.total_count as usize,
                     })
                 }
             }
