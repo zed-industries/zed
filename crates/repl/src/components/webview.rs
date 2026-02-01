@@ -41,7 +41,7 @@ impl WebView {
     }
 
     /// Show the webview.
-    pub fn show(&mut self) {
+    pub fn _show(&mut self) {
         let _ = self.webview.set_visible(true);
         self.visible = true;
     }
@@ -56,26 +56,6 @@ impl WebView {
     /// Get whether the webview is visible.
     pub fn visible(&self) -> bool {
         self.visible
-    }
-
-    /// Get the current bounds of the webview.
-    pub fn bounds(&self) -> Bounds<Pixels> {
-        self.bounds
-    }
-
-    /// Go back in the webview history.
-    pub fn back(&mut self) -> anyhow::Result<()> {
-        Ok(self.webview.evaluate_script("history.back();")?)
-    }
-
-    /// Load a URL in the webview.
-    pub fn load_url(&mut self, url: &str) {
-        self.webview.load_url(url).unwrap();
-    }
-
-    /// Get the raw wry webview.
-    pub fn raw(&self) -> &wry::WebView {
-        &self.webview
     }
 }
 

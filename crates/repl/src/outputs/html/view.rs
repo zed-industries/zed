@@ -25,7 +25,7 @@ impl HtmlView {
         let bg_rgba = bg_color.to_rgb();
 
         // Wrap HTML content with themed template
-        let html_with_theme = wrap_html_with_theme(&html, cx);
+        let html_with_theme = wrap_html_with_theme(&html, window, cx);
 
         let wry_webview = wry::WebViewBuilder::new()
             .with_html(&html_with_theme)
