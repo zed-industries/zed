@@ -12833,6 +12833,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rayon",
+ "recent_projects",
  "schemars",
  "search",
  "serde",
