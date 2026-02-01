@@ -5,11 +5,11 @@ use std::{
 };
 
 use crate::{
-    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
-    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
-    point, quad, rems, size,
+    AbsoluteLength, App, Background, BackgroundTag, BlendMode, BorderStyle, Bounds, ContentMask,
+    Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement,
+    Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels,
+    Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window,
+    black, phi, point, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -275,6 +275,9 @@ pub struct Style {
 
     /// The grid location of this element
     pub grid_location: Option<GridLocation>,
+
+    /// The blend mode of this element
+    pub blend_mode: Option<BlendMode>,
 
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
@@ -657,6 +660,7 @@ impl Style {
                 Edges::default(),
                 border_color,
                 self.border_style,
+                self.blend_mode.unwrap_or_default() as u32,
             ));
         }
 
@@ -701,6 +705,7 @@ impl Style {
                 border_widths,
                 self.border_color.unwrap_or_default(),
                 self.border_style,
+                self.blend_mode.unwrap_or_default() as u32,
             );
 
             window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
@@ -790,6 +795,7 @@ impl Default for Style {
             grid_cols: None,
             grid_cols_min_content: None,
             grid_location: None,
+            blend_mode: None,
 
             #[cfg(debug_assertions)]
             debug: false,
