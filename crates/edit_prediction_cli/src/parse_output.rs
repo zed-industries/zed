@@ -19,14 +19,14 @@ pub fn run_parse_output(example: &mut Example) -> Result<()> {
         .enumerate()
         .filter(|(_, p)| !p.actual_output.is_empty())
         .map(|(ix, prediction)| {
-            let actual_patch =
-                parse_prediction_output(example, &prediction.actual_output, provider);
-            actual_patch.map(|patch| (ix, patch))
+            let result = parse_prediction_output(example, &prediction.actual_output, provider);
+            result.map(|(patch, cursor_offset)| (ix, patch, cursor_offset))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    for (ix, actual_patch) in parsed_patches {
+    for (ix, actual_patch, actual_cursor_offset) in parsed_patches {
         example.predictions[ix].actual_patch = Some(actual_patch);
+        example.predictions[ix].actual_cursor_offset = actual_cursor_offset;
         example.predictions[ix].provider = provider;
     }
 
@@ -37,7 +37,7 @@ pub fn parse_prediction_output(
     example: &Example,
     actual_output: &str,
     provider: PredictionProvider,
-) -> Result<String> {
+) -> Result<(String, Option<usize>)> {
     match provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             TeacherPrompt::parse(example, actual_output)
@@ -83,7 +83,7 @@ fn parse_zeta2_output(
     example: &Example,
     actual_output: &str,
     version: ZetaVersion,
-) -> Result<String> {
+) -> Result<(String, Option<usize>)> {
     let prompt = &example.prompt.as_ref().context("prompt required")?.input;
     let prompt_inputs = example
         .prompt_inputs
@@ -92,7 +92,13 @@ fn parse_zeta2_output(
 
     let old_text = extract_zeta2_current_region(prompt, version)?;
 
-    let mut new_text = actual_output.replace(CURSOR_MARKER, "");
+    let mut new_text = actual_output.to_string();
+    let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
+        new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
+        Some(offset)
+    } else {
+        None
+    };
 
     if version == ZetaVersion::V0120GitMergeMarkers {
         if let Some(stripped) =
@@ -126,11 +132,14 @@ fn parse_zeta2_output(
         .matches('\n')
         .count();
 
-    let diff = language::unified_diff_with_offsets(
+    // Use full context so cursor offset (relative to editable region start) aligns with diff content
+    let editable_region_lines = old_text_normalized.lines().count() as u32;
+    let diff = language::unified_diff_with_context(
         &old_text_normalized,
         &new_text,
         editable_region_start_line as u32,
         editable_region_start_line as u32,
+        editable_region_lines,
     );
 
     let formatted_diff = format!(
@@ -138,7 +147,7 @@ fn parse_zeta2_output(
         path = example.spec.cursor_path.to_string_lossy(),
     );
 
-    Ok(formatted_diff)
+    Ok((formatted_diff, cursor_offset))
 }
 
 #[cfg(test)]

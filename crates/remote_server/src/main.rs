@@ -1,5 +1,6 @@
 use clap::Parser;
 use remote_server::Commands;
+use std::io::Write as _;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -38,15 +39,14 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    #[cfg(not(windows))]
     if let Some(command) = cli.command {
-        use remote_server::unix::ExecuteProxyError;
+        use remote_server::ExecuteProxyError;
 
         let res = remote_server::run(command);
         if let Err(e) = &res
             && let Some(e) = e.downcast_ref::<ExecuteProxyError>()
         {
-            eprintln!("{e:#}");
+            std::io::stderr().write_fmt(format_args!("{e:#}\n")).ok();
             // It is important for us to report the proxy spawn exit code here
             // instead of the generic 1 that result returns
             // The client reads the exit code to determine if the server process has died when trying to reconnect
@@ -55,16 +55,9 @@ fn main() -> anyhow::Result<()> {
         }
         res
     } else {
-        eprintln!("usage: remote <run|proxy|version>");
-        std::process::exit(1);
-    }
-
-    #[cfg(windows)]
-    if let Some(_) = cli.command {
-        eprintln!("run is not supported on Windows");
-        std::process::exit(2);
-    } else {
-        eprintln!("usage: remote <run|proxy|version>");
+        std::io::stderr()
+            .write_all(b"usage: remote <run|proxy|version>\n")
+            .ok();
         std::process::exit(1);
     }
 }

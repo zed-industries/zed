@@ -129,9 +129,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
-                    );
+                    let future =
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                    return Some(future.await);
                 }
                 None
             })
@@ -199,14 +199,7 @@ impl Project {
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
-                                    let mut arg =
-                                        format!("{activation_script}{separator} {to_run}");
-                                    if shell_kind == ShellKind::Cmd {
-                                        // We need to put the entire command in quotes since otherwise CMD tries to execute them
-                                        // as separate commands rather than chaining one after another.
-                                        arg = format!("\"{arg}\"");
-                                    }
-
+                                    let arg = format!("{activation_script}{separator} {to_run}");
                                     let args = shell_kind.args_for_shell(false, arg);
 
                                     (
@@ -379,9 +372,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
-                    );
+                    let future =
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                    return Some(future.await);
                 }
                 None
             })

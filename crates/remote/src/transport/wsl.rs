@@ -176,7 +176,7 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
@@ -200,7 +200,7 @@ impl WslRemoteConnection {
         )
         .await?
         {
-            let tmp_path = paths::remote_wsl_server_dir_relative().join(
+            let tmp_path = paths::remote_server_dir_relative().join(
                 &RelPath::unix(&format!(
                     "download-{}-{}",
                     std::process::id(),

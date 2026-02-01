@@ -199,6 +199,7 @@ pub struct DisplayMap {
 
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
+    rhs_folded_buffers: HashSet<BufferId>,
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
     lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
     rhs_excerpt_to_lhs_excerpt: HashMap<ExcerptId, ExcerptId>,
@@ -210,11 +211,13 @@ pub(crate) struct Companion {
 impl Companion {
     pub(crate) fn new(
         rhs_display_map_id: EntityId,
+        rhs_folded_buffers: HashSet<BufferId>,
         rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
         lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
     ) -> Self {
         Self {
             rhs_display_map_id,
+            rhs_folded_buffers,
             rhs_buffer_to_lhs_buffer: Default::default(),
             lhs_buffer_to_rhs_buffer: Default::default(),
             rhs_excerpt_to_lhs_excerpt: Default::default(),
@@ -347,41 +350,56 @@ impl DisplayMap {
         companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
-        self.companion = companion;
+        let Some((companion_display_map, companion)) = companion else {
+            self.companion = None;
+            let (snapshot, edits) = self.sync_through_wrap(cx);
+            let edits = edits.compose([text::Edit {
+                old: WrapRow(0)..snapshot.max_point().row(),
+                new: WrapRow(0)..snapshot.max_point().row(),
+            }]);
+            self.block_map.read(snapshot, edits, None, None);
+            return;
+        };
 
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let edits = Patch::new(edits)
-            .compose([text::Edit {
-                old: MultiBufferOffset(0)..buffer_snapshot.len(),
-                new: MultiBufferOffset(0)..buffer_snapshot.len(),
-            }])
-            .into_inner();
+        let rhs_display_map_id = companion.read(cx).rhs_display_map_id;
+        if self.entity_id != rhs_display_map_id {
+            let buffer_mapping = companion
+                .read(cx)
+                .buffer_to_companion_buffer(rhs_display_map_id);
+            self.block_map.folded_buffers = companion
+                .read(cx)
+                .rhs_folded_buffers
+                .iter()
+                .filter_map(|id| buffer_mapping.get(id).copied())
+                .collect();
+        }
 
-        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let snapshot = self.unfold_intersecting([Anchor::min()..Anchor::max()], true, cx);
 
-        let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
-            companion_dm
-                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
-                .ok()
-        });
+        self.companion = Some((companion_display_map.clone(), companion));
+
+        let companion_wrap_data = companion_display_map
+            .update(cx, |dm, cx| dm.sync_through_wrap(cx))
+            .ok();
 
         let companion_wrap_edits = companion_wrap_data
             .as_ref()
             .map(|(snapshot, edits)| (snapshot, edits));
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion = self.companion.as_ref().map(|(_, c)| c.read(cx));
 
+        let edits = Patch::new(
+            [text::Edit {
+                old: WrapRow(0)..snapshot.max_point().row(),
+                new: WrapRow(0)..snapshot.max_point().row(),
+            }]
+            .into_iter()
+            .collect(),
+        );
         self.block_map.read(
             snapshot.clone(),
             edits.clone(),
             companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion.map(|c| (c, self.entity_id)),
         );
 
         if let Some((companion_dm, _)) = &self.companion {
@@ -465,7 +483,37 @@ impl DisplayMap {
             });
         }
 
+        let companion_display_snapshot = self.companion.as_ref().and_then(|(companion_dm, _)| {
+            companion_dm
+                .update(cx, |dm, cx| Arc::new(dm.snapshot_simple(cx)))
+                .ok()
+        });
+
         DisplaySnapshot {
+            display_map_id: self.entity_id,
+            companion_display_snapshot,
+            block_snapshot,
+            diagnostics_max_severity: self.diagnostics_max_severity,
+            crease_snapshot: self.crease_map.snapshot(),
+            text_highlights: self.text_highlights.clone(),
+            inlay_highlights: self.inlay_highlights.clone(),
+            clip_at_line_ends: self.clip_at_line_ends,
+            masked: self.masked,
+            fold_placeholder: self.fold_placeholder.clone(),
+        }
+    }
+
+    fn snapshot_simple(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
+        let (wrap_snapshot, wrap_edits) = self.sync_through_wrap(cx);
+
+        let block_snapshot = self
+            .block_map
+            .read(wrap_snapshot, wrap_edits, None, None)
+            .snapshot;
+
+        DisplaySnapshot {
+            display_map_id: self.entity_id,
+            companion_display_snapshot: None,
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
@@ -496,6 +544,10 @@ impl DisplayMap {
     /// Creates folds for the given creases.
     #[instrument(skip_all)]
     pub fn fold<T: Clone + ToOffset>(&mut self, creases: Vec<Crease<T>>, cx: &mut Context<Self>) {
+        if self.companion().is_some() {
+            return;
+        }
+
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -688,7 +740,7 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> WrapSnapshot {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let offset_ranges = ranges
             .into_iter()
@@ -738,7 +790,7 @@ impl DisplayMap {
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
 
         let mut block_map = self.block_map.write(
-            self_new_wrap_snapshot,
+            self_new_wrap_snapshot.clone(),
             self_new_wrap_edits,
             companion_wrap_edits,
             companion_ref.map(|c| (c, self.entity_id)),
@@ -758,6 +810,8 @@ impl DisplayMap {
                 }
             });
         }
+
+        self_new_wrap_snapshot
     }
 
     #[instrument(skip_all)]
@@ -805,6 +859,21 @@ impl DisplayMap {
         cx: &mut App,
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
+
+        if let Some((_, companion_entity)) = &self.companion {
+            companion_entity.update(cx, |companion, _| {
+                if self.entity_id == companion.rhs_display_map_id {
+                    companion
+                        .rhs_folded_buffers
+                        .extend(buffer_ids.iter().copied());
+                } else {
+                    let rhs_ids = buffer_ids
+                        .iter()
+                        .filter_map(|id| companion.lhs_buffer_to_rhs_buffer.get(id).copied());
+                    companion.rhs_folded_buffers.extend(rhs_ids);
+                }
+            });
+        }
 
         let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
@@ -860,6 +929,22 @@ impl DisplayMap {
         cx: &mut Context<Self>,
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
+
+        if let Some((_, companion_entity)) = &self.companion {
+            companion_entity.update(cx, |companion, _| {
+                if self.entity_id == companion.rhs_display_map_id {
+                    for id in &buffer_ids {
+                        companion.rhs_folded_buffers.remove(id);
+                    }
+                } else {
+                    for id in &buffer_ids {
+                        if let Some(rhs_id) = companion.lhs_buffer_to_rhs_buffer.get(id) {
+                            companion.rhs_folded_buffers.remove(rhs_id);
+                        }
+                    }
+                }
+            });
+        }
 
         let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
@@ -1501,6 +1586,8 @@ impl<'a> HighlightedChunk<'a> {
 
 #[derive(Clone)]
 pub struct DisplaySnapshot {
+    pub display_map_id: EntityId,
+    pub companion_display_snapshot: Option<Arc<DisplaySnapshot>>,
     pub crease_snapshot: CreaseSnapshot,
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
@@ -1512,6 +1599,10 @@ pub struct DisplaySnapshot {
 }
 
 impl DisplaySnapshot {
+    pub fn companion_snapshot(&self) -> Option<&DisplaySnapshot> {
+        self.companion_display_snapshot.as_deref()
+    }
+
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
@@ -2687,7 +2778,7 @@ pub mod tests {
 
         _ = cx.update_window(window, |_, window, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, _cx| editor.text_layout_details(window));
+                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
 
             let font_size = px(12.0);
             let wrap_width = Some(px(96.));

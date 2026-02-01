@@ -271,27 +271,26 @@ impl GlobalCopilotAuth {
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         cx: &mut App,
-    ) {
+    ) -> GlobalCopilotAuth {
         let auth =
             GlobalCopilotAuth(cx.new(|cx| Copilot::new(None, server_id, fs, node_runtime, cx)));
-        cx.set_global(auth);
+        cx.set_global(auth.clone());
+        auth
     }
     pub fn try_global(cx: &mut App) -> Option<&GlobalCopilotAuth> {
         cx.try_global()
     }
 
-    pub fn get_or_init(cx: &mut App) -> Option<GlobalCopilotAuth> {
+    pub fn get_or_init(app_state: Arc<AppState>, cx: &mut App) -> GlobalCopilotAuth {
         if let Some(copilot) = cx.try_global::<Self>() {
-            Some(copilot.clone())
+            copilot.clone()
         } else {
-            let app_state = AppState::global(cx).upgrade()?;
             Self::set_global(
                 app_state.languages.next_language_server_id(),
                 app_state.fs.clone(),
                 app_state.node_runtime.clone(),
                 cx,
-            );
-            cx.try_global::<Self>().cloned()
+            )
         }
     }
 }

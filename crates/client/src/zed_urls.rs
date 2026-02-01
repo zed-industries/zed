@@ -68,6 +68,14 @@ pub fn edit_prediction_docs(cx: &App) -> String {
     )
 }
 
+/// Returns the URL to Zed's ACP registry blog post.
+pub fn acp_registry_blog(cx: &App) -> String {
+    format!(
+        "{server_url}/blog/acp-registry",
+        server_url = server_url(cx)
+    )
+}
+
 pub fn shared_agent_thread_url(session_id: &str) -> String {
     format!("zed://agent/shared/{}", session_id)
 }
