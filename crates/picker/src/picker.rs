@@ -5,14 +5,15 @@ pub mod popover_menu;
 use anyhow::Result;
 
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    Action, Animation, AnimationExt, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent,
+    EventEmitter, FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton,
+    MouseUpEvent, Pixels, Point, Render, ScrollStrategy, Task, UniformListDecoration,
+    UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::should_reduce_motion;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
@@ -33,6 +34,83 @@ enum ElementContainer {
 pub enum Direction {
     Up,
     Down,
+}
+
+const MAX_ANIMATED_DISTANCE: usize = 3;
+
+struct SelectionIndicator {
+    selected_index: usize,
+    previous_selected_index: Option<usize>,
+    generation: usize,
+    reduce_motion: bool,
+}
+
+impl UniformListDecoration for SelectionIndicator {
+    fn compute(
+        &self,
+        _visible_range: Range<usize>,
+        _bounds: Bounds<Pixels>,
+        _scroll_offset: Point<Pixels>,
+        item_height: Pixels,
+        _item_count: usize,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let selected_top = item_height * self.selected_index;
+        let background = cx.theme().colors().ghost_element_selected;
+
+        let indicator = match self.previous_selected_index {
+            Some(previous_index) if !self.reduce_motion => {
+                let distance = self.selected_index.abs_diff(previous_index);
+                let clamped_previous_top = if distance > MAX_ANIMATED_DISTANCE {
+                    let clamped_previous_index = if self.selected_index > previous_index {
+                        self.selected_index - MAX_ANIMATED_DISTANCE
+                    } else {
+                        self.selected_index + MAX_ANIMATED_DISTANCE
+                    };
+                    item_height * clamped_previous_index
+                } else {
+                    item_height * previous_index
+                };
+
+                let generation = self.generation;
+
+                div()
+                    .absolute()
+                    .left_0()
+                    .w_full()
+                    .h(item_height)
+                    .bg(background)
+                    .rounded_sm()
+                    .with_animation(
+                        ("sel-overlay", generation as u64),
+                        Animation::new(Duration::from_millis(80))
+                            .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
+                        move |this, delta| {
+                            let offset = clamped_previous_top
+                                + (selected_top - clamped_previous_top) * delta;
+                            this.top(offset)
+                        },
+                    )
+                    .into_any_element()
+            }
+            _ => div()
+                .absolute()
+                .left_0()
+                .top(selected_top)
+                .w_full()
+                .h(item_height)
+                .bg(background)
+                .rounded_sm()
+                .into_any_element(),
+        };
+
+        div()
+            .relative()
+            .size_full()
+            .child(indicator)
+            .into_any_element()
+    }
 }
 
 actions!(
@@ -76,6 +154,8 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    previous_selected_index: Option<usize>,
+    selection_generation: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -342,6 +422,8 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
+            previous_selected_index: None,
+            selection_generation: 0,
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -458,6 +540,8 @@ impl<D: PickerDelegate> Picker<D> {
         let current_index = self.delegate.selected_index();
 
         if previous_index != current_index {
+            self.previous_selected_index = Some(previous_index);
+            self.selection_generation = self.selection_generation.wrapping_add(1);
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
@@ -714,6 +798,8 @@ impl<D: PickerDelegate> Picker<D> {
             state.reset(self.delegate.match_count());
         }
 
+        self.previous_selected_index = None;
+
         let index = self.delegate.selected_index();
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
@@ -784,12 +870,12 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
-            .children(self.delegate.render_match(
-                ix,
-                ix == self.delegate.selected_index(),
-                window,
-                cx,
-            ))
+            .children({
+                let selected = ix == self.delegate.selected_index();
+                let use_overlay = matches!(self.element_container, ElementContainer::UniformList(_));
+                let visual_selected = if use_overlay { false } else { selected };
+                self.delegate.render_match(ix, visual_selected, window, cx)
+            })
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {
@@ -809,23 +895,34 @@ impl<D: PickerDelegate> Picker<D> {
         };
 
         match &self.element_container {
-            ElementContainer::UniformList(scroll_handle) => uniform_list(
-                "candidates",
-                self.delegate.match_count(),
-                cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
-                    visible_range
-                        .map(|ix| picker.render_element(window, cx, ix))
-                        .collect()
-                }),
-            )
-            .with_sizing_behavior(sizing_behavior)
-            .when_some(self.widest_item, |el, widest_item| {
-                el.with_width_from_item(Some(widest_item))
-            })
-            .flex_grow()
-            .py_1()
-            .track_scroll(&scroll_handle)
-            .into_any_element(),
+            ElementContainer::UniformList(scroll_handle) => {
+                let match_count = self.delegate.match_count();
+                uniform_list(
+                    "candidates",
+                    match_count,
+                    cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
+                        visible_range
+                            .map(|ix| picker.render_element(window, cx, ix))
+                            .collect()
+                    }),
+                )
+                .with_sizing_behavior(sizing_behavior)
+                .when_some(self.widest_item, |el, widest_item| {
+                    el.with_width_from_item(Some(widest_item))
+                })
+                .when(match_count > 0, |el| {
+                    el.with_decoration(SelectionIndicator {
+                        selected_index: self.delegate.selected_index(),
+                        previous_selected_index: self.previous_selected_index,
+                        generation: self.selection_generation,
+                        reduce_motion: should_reduce_motion(cx),
+                    })
+                })
+                .flex_grow()
+                .py_1()
+                .track_scroll(&scroll_handle)
+                .into_any_element()
+            }
             ElementContainer::List(state) => list(
                 state.clone(),
                 cx.processor(|this, ix, window, cx| {
