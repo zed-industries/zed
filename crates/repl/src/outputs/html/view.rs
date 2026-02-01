@@ -92,7 +92,7 @@ impl Render for HtmlView {
 
         let height: f64 = content_size
             .as_ref()
-            .map_or(50.0, |(_content_width, content_height)| *content_height);
+            .map_or(0.0, |(_content_width, content_height)| *content_height);
 
         div()
             .w(viewport_size.width * 0.80)
