@@ -39,6 +39,22 @@ pub struct UtilityPaneState {
     right_slot: Option<UtilityPaneSlotState>,
 }
 
+impl UtilityPaneState {
+    fn slot(&self, slot: UtilityPaneSlot) -> &Option<UtilityPaneSlotState> {
+        match slot {
+            UtilityPaneSlot::Left => &self.left_slot,
+            UtilityPaneSlot::Right => &self.right_slot,
+        }
+    }
+
+    fn slot_mut(&mut self, slot: UtilityPaneSlot) -> &mut Option<UtilityPaneSlotState> {
+        match slot {
+            UtilityPaneSlot::Left => &mut self.left_slot,
+            UtilityPaneSlot::Right => &mut self.right_slot,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct DraggedUtilityPane(pub UtilityPaneSlot);
 
@@ -58,18 +74,10 @@ pub fn utility_slot_for_dock_position(position: DockPosition) -> UtilityPaneSlot
 
 impl Workspace {
     pub fn utility_pane(&self, slot: UtilityPaneSlot) -> Option<&dyn UtilityPaneHandle> {
-        match slot {
-            UtilityPaneSlot::Left => self
-                .utility_panes
-                .left_slot
-                .as_ref()
-                .map(|s| s.utility_pane.as_ref()),
-            UtilityPaneSlot::Right => self
-                .utility_panes
-                .right_slot
-                .as_ref()
-                .map(|s| s.utility_pane.as_ref()),
-        }
+        self.utility_panes
+            .slot(slot)
+            .as_ref()
+            .map(|state| state.utility_pane.as_ref())
     }
 
     pub fn toggle_utility_pane(
@@ -109,37 +117,25 @@ impl Workspace {
         let boxed_handle: Box<dyn UtilityPaneHandle> = Box::new(handle);
 
         let next_generation = self
-            .utility_pane_slot_state(slot)
+            .utility_panes
+            .slot(slot)
+            .as_ref()
             .map(|state| state.animation_generation.wrapping_add(1))
             .unwrap_or(0);
 
-        let new_state = UtilityPaneSlotState {
+        *self.utility_panes.slot_mut(slot) = Some(UtilityPaneSlotState {
             panel_id,
             utility_pane: boxed_handle,
             animation_generation: next_generation,
             is_closing: false,
             _close_task: None,
             _subscriptions: subscriptions,
-        };
-
-        match slot {
-            UtilityPaneSlot::Left => {
-                self.utility_panes.left_slot = Some(new_state);
-            }
-            UtilityPaneSlot::Right => {
-                self.utility_panes.right_slot = Some(new_state);
-            }
-        }
+        });
         cx.notify();
     }
 
     pub fn clear_utility_pane(&mut self, slot: UtilityPaneSlot, cx: &mut Context<Self>) {
-        let slot_state = match slot {
-            UtilityPaneSlot::Left => self.utility_panes.left_slot.as_mut(),
-            UtilityPaneSlot::Right => self.utility_panes.right_slot.as_mut(),
-        };
-
-        let Some(state) = slot_state else {
+        let Some(state) = self.utility_panes.slot_mut(slot).as_mut() else {
             return;
         };
 
@@ -147,48 +143,34 @@ impl Workspace {
             return;
         }
 
-        if !should_reduce_motion(cx) {
-            state.is_closing = true;
-            state.animation_generation = state.animation_generation.wrapping_add(1);
-            let close_generation = state.animation_generation;
-            state._close_task = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                if let Some(this) = this.upgrade() {
-                    this.update(cx, |workspace, cx| {
-                        let slot_state = match slot {
-                            UtilityPaneSlot::Left => workspace.utility_panes.left_slot.as_mut(),
-                            UtilityPaneSlot::Right => workspace.utility_panes.right_slot.as_mut(),
-                        };
-                        if let Some(state) = slot_state {
-                            if state.animation_generation == close_generation {
-                                match slot {
-                                    UtilityPaneSlot::Left => {
-                                        workspace.utility_panes.left_slot = None;
-                                    }
-                                    UtilityPaneSlot::Right => {
-                                        workspace.utility_panes.right_slot = None;
-                                    }
-                                }
-                                cx.notify();
-                            }
-                        }
-                    });
-                }
-            }));
+        if should_reduce_motion(cx) {
+            *self.utility_panes.slot_mut(slot) = None;
             cx.notify();
-        } else {
-            match slot {
-                UtilityPaneSlot::Left => {
-                    self.utility_panes.left_slot = None;
-                }
-                UtilityPaneSlot::Right => {
-                    self.utility_panes.right_slot = None;
-                }
-            }
-            cx.notify();
+            return;
         }
+
+        state.is_closing = true;
+        state.animation_generation = state.animation_generation.wrapping_add(1);
+        let close_generation = state.animation_generation;
+        state._close_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |workspace, cx| {
+                    let matches_generation = workspace
+                        .utility_panes
+                        .slot(slot)
+                        .as_ref()
+                        .is_some_and(|state| state.animation_generation == close_generation);
+                    if matches_generation {
+                        *workspace.utility_panes.slot_mut(slot) = None;
+                        cx.notify();
+                    }
+                });
+            }
+        }));
+        cx.notify();
     }
 
     pub fn clear_utility_pane_if_provider(
@@ -197,28 +179,14 @@ impl Workspace {
         provider_panel_id: EntityId,
         cx: &mut Context<Self>,
     ) {
-        let should_clear = match slot {
-            UtilityPaneSlot::Left => self
-                .utility_panes
-                .left_slot
-                .as_ref()
-                .is_some_and(|s| s.panel_id == provider_panel_id && !s.is_closing),
-            UtilityPaneSlot::Right => self
-                .utility_panes
-                .right_slot
-                .as_ref()
-                .is_some_and(|s| s.panel_id == provider_panel_id && !s.is_closing),
-        };
+        let should_clear = self
+            .utility_panes
+            .slot(slot)
+            .as_ref()
+            .is_some_and(|state| state.panel_id == provider_panel_id && !state.is_closing);
 
         if should_clear {
             self.clear_utility_pane(slot, cx);
-        }
-    }
-
-    fn utility_pane_slot_state(&self, slot: UtilityPaneSlot) -> Option<&UtilityPaneSlotState> {
-        match slot {
-            UtilityPaneSlot::Left => self.utility_panes.left_slot.as_ref(),
-            UtilityPaneSlot::Right => self.utility_panes.right_slot.as_ref(),
         }
     }
 
@@ -227,7 +195,7 @@ impl Workspace {
         slot: UtilityPaneSlot,
         cx: &mut Context<Self>,
     ) -> Option<UtilityPaneFrame> {
-        let state = self.utility_pane_slot_state(slot)?;
+        let state = self.utility_panes.slot(slot).as_ref()?;
         let pane = &state.utility_pane;
         let should_show = pane.expanded(cx) || state.is_closing;
         if !should_show {
@@ -325,8 +293,8 @@ impl RenderOnce for UtilityPaneFrame {
                 })
                 .on_mouse_up(
                     MouseButton::Left,
-                    move |e: &gpui::MouseUpEvent, window, cx| {
-                        if e.click_count == 2 {
+                    move |event: &gpui::MouseUpEvent, window, cx| {
+                        if event.click_count == 2 {
                             workspace_handle
                                 .update(cx, |workspace, cx| {
                                     workspace.reset_utility_pane_width(slot, window, cx);
@@ -336,28 +304,20 @@ impl RenderOnce for UtilityPaneFrame {
                         }
                     },
                 )
-                .occlude();
+                .occlude()
+                .absolute()
+                .top(px(0.))
+                .h_full()
+                .w(UTILITY_PANE_RESIZE_HANDLE_SIZE)
+                .cursor_col_resize()
+                .when(slot == UtilityPaneSlot::Left, |this| {
+                    this.right(-UTILITY_PANE_RESIZE_HANDLE_SIZE / 2.)
+                })
+                .when(slot == UtilityPaneSlot::Right, |this| {
+                    this.left(-UTILITY_PANE_RESIZE_HANDLE_SIZE / 2.)
+                });
 
-            match slot {
-                UtilityPaneSlot::Left => deferred(
-                    handle
-                        .absolute()
-                        .right(-UTILITY_PANE_RESIZE_HANDLE_SIZE / 2.)
-                        .top(px(0.))
-                        .h_full()
-                        .w(UTILITY_PANE_RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize(),
-                ),
-                UtilityPaneSlot::Right => deferred(
-                    handle
-                        .absolute()
-                        .left(-UTILITY_PANE_RESIZE_HANDLE_SIZE / 2.)
-                        .top(px(0.))
-                        .h_full()
-                        .w(UTILITY_PANE_RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize(),
-                ),
-            }
+            deferred(handle)
         };
 
         let pane_div = div()
