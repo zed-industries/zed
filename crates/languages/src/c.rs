@@ -289,6 +289,7 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
+        _container_name: Option<&str>,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
