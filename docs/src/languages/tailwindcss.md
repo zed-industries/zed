@@ -11,11 +11,11 @@ Languages which can be used with Tailwind CSS in Zed:
 - [ERB](./ruby.md)
 - [Gleam](./gleam.md)
 - [HEEx](./elixir.md#heex)
-- [HTML](./html.md)
+- [HTML](./html.md#using-the-tailwind-css-language-server-with-html)
 - [TypeScript](./typescript.md)
 - [JavaScript](./javascript.md)
-- [PHP](./php.md)
-- [Svelte](./svelte.md)
+- [PHP](./php.md#using-the-tailwind-css-language-server-with-php)
+- [Svelte](./svelte.md#using-the-tailwind-css-language-server-with-svelte)
 - [Vue](./vue.md)
 
 ## Configuration
