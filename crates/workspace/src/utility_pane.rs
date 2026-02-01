@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use gpui::{
-    AppContext as _, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement,
-    Subscription, WeakEntity, deferred, px,
+    Animation, AnimationExt as _, AppContext as _, EntityId, MouseButton, Pixels, Render,
+    StatefulInteractiveElement, Subscription, Task, WeakEntity, deferred, px,
 };
+use settings::should_reduce_motion;
 use ui::{
     ActiveTheme as _, Context, FluentBuilder as _, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Styled as _, Window, div,
@@ -24,6 +27,9 @@ pub enum UtilityPaneSlot {
 struct UtilityPaneSlotState {
     panel_id: EntityId,
     utility_pane: Box<dyn UtilityPaneHandle>,
+    animation_generation: usize,
+    is_closing: bool,
+    _close_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -102,35 +108,87 @@ impl Workspace {
         let subscriptions = vec![minimize_subscription, close_subscription];
         let boxed_handle: Box<dyn UtilityPaneHandle> = Box::new(handle);
 
+        let next_generation = self
+            .utility_pane_slot_state(slot)
+            .map(|state| state.animation_generation.wrapping_add(1))
+            .unwrap_or(0);
+
+        let new_state = UtilityPaneSlotState {
+            panel_id,
+            utility_pane: boxed_handle,
+            animation_generation: next_generation,
+            is_closing: false,
+            _close_task: None,
+            _subscriptions: subscriptions,
+        };
+
         match slot {
             UtilityPaneSlot::Left => {
-                self.utility_panes.left_slot = Some(UtilityPaneSlotState {
-                    panel_id,
-                    utility_pane: boxed_handle,
-                    _subscriptions: subscriptions,
-                });
+                self.utility_panes.left_slot = Some(new_state);
             }
             UtilityPaneSlot::Right => {
-                self.utility_panes.right_slot = Some(UtilityPaneSlotState {
-                    panel_id,
-                    utility_pane: boxed_handle,
-                    _subscriptions: subscriptions,
-                });
+                self.utility_panes.right_slot = Some(new_state);
             }
         }
         cx.notify();
     }
 
     pub fn clear_utility_pane(&mut self, slot: UtilityPaneSlot, cx: &mut Context<Self>) {
-        match slot {
-            UtilityPaneSlot::Left => {
-                self.utility_panes.left_slot = None;
-            }
-            UtilityPaneSlot::Right => {
-                self.utility_panes.right_slot = None;
-            }
+        let slot_state = match slot {
+            UtilityPaneSlot::Left => self.utility_panes.left_slot.as_mut(),
+            UtilityPaneSlot::Right => self.utility_panes.right_slot.as_mut(),
+        };
+
+        let Some(state) = slot_state else {
+            return;
+        };
+
+        if state.is_closing {
+            return;
         }
-        cx.notify();
+
+        if !should_reduce_motion(cx) {
+            state.is_closing = true;
+            state.animation_generation = state.animation_generation.wrapping_add(1);
+            let close_generation = state.animation_generation;
+            state._close_task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |workspace, cx| {
+                        let slot_state = match slot {
+                            UtilityPaneSlot::Left => workspace.utility_panes.left_slot.as_mut(),
+                            UtilityPaneSlot::Right => workspace.utility_panes.right_slot.as_mut(),
+                        };
+                        if let Some(state) = slot_state {
+                            if state.animation_generation == close_generation {
+                                match slot {
+                                    UtilityPaneSlot::Left => {
+                                        workspace.utility_panes.left_slot = None;
+                                    }
+                                    UtilityPaneSlot::Right => {
+                                        workspace.utility_panes.right_slot = None;
+                                    }
+                                }
+                                cx.notify();
+                            }
+                        }
+                    });
+                }
+            }));
+            cx.notify();
+        } else {
+            match slot {
+                UtilityPaneSlot::Left => {
+                    self.utility_panes.left_slot = None;
+                }
+                UtilityPaneSlot::Right => {
+                    self.utility_panes.right_slot = None;
+                }
+            }
+            cx.notify();
+        }
     }
 
     pub fn clear_utility_pane_if_provider(
@@ -144,17 +202,44 @@ impl Workspace {
                 .utility_panes
                 .left_slot
                 .as_ref()
-                .is_some_and(|slot| slot.panel_id == provider_panel_id),
+                .is_some_and(|s| s.panel_id == provider_panel_id && !s.is_closing),
             UtilityPaneSlot::Right => self
                 .utility_panes
                 .right_slot
                 .as_ref()
-                .is_some_and(|slot| slot.panel_id == provider_panel_id),
+                .is_some_and(|s| s.panel_id == provider_panel_id && !s.is_closing),
         };
 
         if should_clear {
             self.clear_utility_pane(slot, cx);
         }
+    }
+
+    fn utility_pane_slot_state(&self, slot: UtilityPaneSlot) -> Option<&UtilityPaneSlotState> {
+        match slot {
+            UtilityPaneSlot::Left => self.utility_panes.left_slot.as_ref(),
+            UtilityPaneSlot::Right => self.utility_panes.right_slot.as_ref(),
+        }
+    }
+
+    pub(crate) fn utility_pane_frame(
+        &self,
+        slot: UtilityPaneSlot,
+        cx: &mut Context<Self>,
+    ) -> Option<UtilityPaneFrame> {
+        let state = self.utility_pane_slot_state(slot)?;
+        let pane = &state.utility_pane;
+        let should_show = pane.expanded(cx) || state.is_closing;
+        if !should_show {
+            return None;
+        }
+        Some(UtilityPaneFrame::new(
+            slot,
+            pane.box_clone(),
+            state.animation_generation,
+            state.is_closing,
+            cx,
+        ))
     }
 
     pub fn resize_utility_pane(
@@ -192,12 +277,16 @@ pub struct UtilityPaneFrame {
     workspace: WeakEntity<Workspace>,
     slot: UtilityPaneSlot,
     handle: Box<dyn UtilityPaneHandle>,
+    animation_generation: usize,
+    is_closing: bool,
 }
 
 impl UtilityPaneFrame {
     pub fn new(
         slot: UtilityPaneSlot,
         handle: Box<dyn UtilityPaneHandle>,
+        animation_generation: usize,
+        is_closing: bool,
         cx: &mut Context<Workspace>,
     ) -> Self {
         let workspace = cx.weak_entity();
@@ -205,6 +294,8 @@ impl UtilityPaneFrame {
             workspace,
             slot,
             handle,
+            animation_generation,
+            is_closing,
         }
     }
 }
@@ -214,6 +305,9 @@ impl RenderOnce for UtilityPaneFrame {
         let workspace = self.workspace.clone();
         let slot = self.slot;
         let width = self.handle.width(cx);
+        let is_closing = self.is_closing;
+        let animation_generation = self.animation_generation;
+        let reduce_motion = should_reduce_motion(cx);
 
         let create_resize_handle = || {
             let workspace_handle = workspace.clone();
@@ -266,17 +360,41 @@ impl RenderOnce for UtilityPaneFrame {
             }
         };
 
-        div()
+        let pane_div = div()
             .h_full()
             .bg(cx.theme().colors().tab_bar_background)
             .w(width)
             .border_color(cx.theme().colors().border)
+            .overflow_hidden()
             .when(self.slot == UtilityPaneSlot::Left, |this| this.border_r_1())
             .when(self.slot == UtilityPaneSlot::Right, |this| {
                 this.border_l_1()
             })
-            .child(create_resize_handle())
-            .child(self.handle.to_any())
+            .child(
+                div()
+                    .min_w(width)
+                    .h_full()
+                    .child(self.handle.to_any()),
+            )
+            .when(!is_closing, |this| this.child(create_resize_handle()));
+
+        pane_div
+            .with_animation(
+                ("utility-pane-anim", animation_generation as u64),
+                Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
+                    .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
+                {
+                    let target_width = f32::from(width);
+                    move |this, delta| {
+                        if reduce_motion {
+                            return this;
+                        }
+                        let progress = if is_closing { 1.0 - delta } else { delta };
+                        let animated_width = px(target_width * progress);
+                        this.w(animated_width)
+                    }
+                },
+            )
             .into_any_element()
     }
 }
