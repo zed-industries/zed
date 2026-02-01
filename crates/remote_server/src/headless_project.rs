@@ -887,7 +887,6 @@ impl HeadlessProject {
         let child = this.update(&mut cx, |this, _| this.kernels.remove(&kernel_id));
         if let Some(mut child) = child {
             child.kill().log_err();
-            let _ = child.status().await; // Perhaps kill should be enough, should we wait?
         }
         Ok(proto::Ack {})
     }
