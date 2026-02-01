@@ -28,6 +28,8 @@ pub use entity_map::*;
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
+pub use test_app::*;
+#[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::{ResultExt, debug_panic};
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -52,6 +54,8 @@ use crate::{
 mod async_context;
 mod context;
 mod entity_map;
+#[cfg(any(test, feature = "test-support"))]
+mod test_app;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
