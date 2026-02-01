@@ -1437,7 +1437,7 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        cx.update_entity(search_bar.clone(), |bar, _window, _cx| {
+        cx.update_entity(search_bar, |bar, _window, _cx| {
             // Should have WHOLE_WORD and CASE_SENSITIVE from settings
             assert!(
                 bar.has_search_option(search::SearchOptions::WHOLE_WORD),
