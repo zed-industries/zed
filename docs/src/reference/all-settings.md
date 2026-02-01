@@ -4737,6 +4737,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "dock": "left",
     "default_width": 360,
     "status_style": "icon",
+    "untracked_changes": "separate",
     "fallback_branch_name": "main",
     "sort_by_path": false,
     "collapse_untracked_diff": false,
@@ -4753,6 +4754,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `dock`: Where to dock the git panel. Can be `left` or `right`
 - `default_width`: Default width of the git panel
 - `status_style`: How to display git status. Can be `label_color` or `icon`
+- `untracked_changes`: How untracked files are displayed and staged. Can be `mixed`, `separate`, or `hidden`
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel

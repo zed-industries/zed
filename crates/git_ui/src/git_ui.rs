@@ -180,6 +180,14 @@ pub fn init(cx: &mut App) {
                 panel.stage_all(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, action: &git::StageUntracked, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stage_untracked(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::UnstageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
