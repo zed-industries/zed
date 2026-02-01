@@ -101,7 +101,6 @@ use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile, OpenZedUrl,
     Quit,
 };
-
 actions!(
     zed,
     [
@@ -1826,11 +1825,15 @@ fn show_markdown_app_notification<F>(
                 let primary_button_on_click = primary_button_on_click.clone();
                 cx.new(move |cx| {
                     MessageNotification::new_from_builder(cx, move |window, cx| {
+                        let latex_renderer = std::sync::Arc::new(latex_render::LatexRenderer::new(
+                            cx.background_executor().clone(),
+                        ));
                         image_cache(retain_all("notification-cache"))
                             .child(div().text_ui(cx).child(
                                 markdown_preview::markdown_renderer::render_parsed_markdown(
                                     &parsed_markdown.clone(),
                                     Some(workspace_handle.clone()),
+                                    latex_renderer,
                                     window,
                                     cx,
                                 ),

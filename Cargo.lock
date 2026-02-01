@@ -9283,6 +9283,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "latex_render"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "image",
+ "parking_lot",
+ "regex",
+ "rex",
+ "smallvec",
+ "tiny-skia",
+ "ttf-parser 0.20.0",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9875,6 +9891,7 @@ dependencies = [
  "gpui",
  "html5ever 0.27.0",
  "language",
+ "latex_render",
  "linkify",
  "log",
  "markup5ever_rcdom",
@@ -13949,6 +13966,19 @@ dependencies = [
  "svgtypes",
  "tiny-skia",
  "usvg",
+]
+
+[[package]]
+name = "rex"
+version = "0.1.2"
+source = "git+https://github.com/KenyC/ReX#a779adebe63e70ef3b078090373c3af23c8b1083"
+dependencies = [
+ "log",
+ "serde",
+ "serde_derive",
+ "tiny-skia",
+ "ttf-parser 0.20.0",
+ "unicode-math",
 ]
 
 [[package]]
@@ -18203,6 +18233,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
+name = "unicode-math"
+version = "0.1.0"
+source = "git+https://github.com/KenyC/ReX#a779adebe63e70ef3b078090373c3af23c8b1083"
+dependencies = [
+ "nom 7.1.3",
+ "regex",
+]
+
+[[package]]
 name = "unicode-normalization"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21035,6 +21074,7 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
+ "latex_render",
  "line_ending_selector",
  "log",
  "markdown",

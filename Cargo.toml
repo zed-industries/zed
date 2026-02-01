@@ -104,6 +104,7 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/latex_render",
     "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
@@ -343,6 +344,7 @@ language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+latex_render = { path = "crates/latex_render" }
 line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }

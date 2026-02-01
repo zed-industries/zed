@@ -1,0 +1,37 @@
+[package]
+name = "latex_render"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/latex_render.rs"
+doctest = false
+
+[[example]]
+name = "latex_demo"
+path = "examples/latex_demo.rs"
+
+[features]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+gpui.workspace = true
+image = { workspace = true }
+parking_lot.workspace = true
+smallvec.workspace = true
+regex.workspace = true
+tiny-skia = "0.11"
+ttf-parser = "0.20"
+
+# ReX library from the fork
+rex = { git = "https://github.com/KenyC/ReX", features = ["tinyskia-renderer", "ttfparser-fontparser"] }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
