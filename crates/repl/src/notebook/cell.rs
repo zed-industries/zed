@@ -1170,6 +1170,9 @@ impl Render for CodeCell {
                                                 Output::Json { content, .. } => {
                                                     Some(content.clone().into_any_element())
                                                 }
+                                                Output::Html { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
                                                 Output::ErrorOutput(error_view) => {
                                                     error_view.render(window, cx)
                                                 }

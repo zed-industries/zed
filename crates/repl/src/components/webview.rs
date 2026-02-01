@@ -41,7 +41,7 @@ impl WebView {
     }
 
     /// Show the webview.
-    pub fn show(&mut self) {
+    pub fn _show(&mut self) {
         let _ = self.webview.set_visible(true);
         self.visible = true;
     }
@@ -56,26 +56,6 @@ impl WebView {
     /// Get whether the webview is visible.
     pub fn visible(&self) -> bool {
         self.visible
-    }
-
-    /// Get the current bounds of the webview.
-    pub fn bounds(&self) -> Bounds<Pixels> {
-        self.bounds
-    }
-
-    /// Go back in the webview history.
-    pub fn back(&mut self) -> anyhow::Result<()> {
-        Ok(self.webview.evaluate_script("history.back();")?)
-    }
-
-    /// Load a URL in the webview.
-    pub fn load_url(&mut self, url: &str) {
-        self.webview.load_url(url).unwrap();
-    }
-
-    /// Get the raw wry webview.
-    pub fn raw(&self) -> &wry::WebView {
-        &self.webview
     }
 }
 
@@ -101,13 +81,13 @@ impl Render for WebView {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let view = cx.entity().clone();
+        let view = cx.entity();
 
         div()
             .track_focus(&self.focus_handle)
             .size_full()
             .child({
-                let view = cx.entity().clone();
+                let view = cx.entity();
                 canvas(
                     move |bounds, _, cx| view.update(cx, |r, _| r.bounds = bounds),
                     |_, _, _, _| {},
@@ -188,19 +168,34 @@ impl Element for WebViewElement {
 
         if !self.parent.read(cx).visible() {
             log::warn!("WebViewElement: parent not visible, skipping prepaint");
+            let _ = self.view.set_visible(false);
             return None;
         }
 
+        // Clip the webview bounds to the current content mask to prevent the
+        // native webview from rendering outside scrollable/clipped regions
+        let content_mask = window.content_mask();
+        let clipped_bounds = bounds.intersect(&content_mask.bounds);
+
+        // If the clipped bounds are empty (element is fully outside the visible area),
+        // hide the webview entirely
+        if clipped_bounds.size.width <= Pixels::ZERO || clipped_bounds.size.height <= Pixels::ZERO {
+            log::info!("WebViewElement: bounds fully clipped, hiding webview");
+            let _ = self.view.set_visible(false);
+            return None;
+        }
+
+        let _ = self.view.set_visible(true);
         log::info!("WebViewElement: parent visible, setting wry bounds");
 
         let wry_rect = Rect {
             size: dpi::Size::Logical(LogicalSize {
-                width: bounds.size.width.into(),
-                height: bounds.size.height.into(),
+                width: clipped_bounds.size.width.into(),
+                height: clipped_bounds.size.height.into(),
             }),
             position: dpi::Position::Logical(dpi::LogicalPosition::new(
-                bounds.origin.x.into(),
-                bounds.origin.y.into(),
+                clipped_bounds.origin.x.into(),
+                clipped_bounds.origin.y.into(),
             )),
         };
 
@@ -208,7 +203,7 @@ impl Element for WebViewElement {
         self.view.set_bounds(wry_rect).unwrap();
 
         // Create a hitbox to handle mouse event
-        let hitbox = window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal);
+        let hitbox = window.insert_hitbox(clipped_bounds, gpui::HitboxBehavior::Normal);
         log::info!("WebViewElement: created hitbox");
         Some(hitbox)
     }
