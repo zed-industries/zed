@@ -34,6 +34,9 @@ workspace.workspace = true
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 which.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 ctor.workspace = true
 clock= { workspace = true, "features" = ["test-support"] }
