@@ -31,6 +31,8 @@ self-hosted-runner:
     - namespace-profile-8x32-ubuntu-2004-arm-m4
     # Namespace mac
     - namespace-profile-mac-large
+    # Namespace Windows
+    - namespace-profile-windows-large
     # Self Hosted Runners
     - self-mini-macos
     - self-32vcpu-windows-2022
