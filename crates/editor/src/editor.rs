@@ -24952,6 +24952,11 @@ impl Editor {
                 if !valid_folds.is_empty() {
                     self.fold_ranges(valid_folds, false, window, cx);
 
+                    // Invalidate bracket colorization cache after restoring folds.
+                    // The cache stores which buffer row ranges have been processed,
+                    // and folding changes what's visible. See: #47846
+                    self.colorize_brackets(true, cx);
+
                     // Migrate folds to current entity_id before workspace cleanup runs.
                     // Entity IDs change between sessions, but workspace cleanup deletes
                     // old editor rows (cascading to folds) based on current entity IDs.
