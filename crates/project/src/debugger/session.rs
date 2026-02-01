@@ -61,7 +61,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::TaskContext;
+use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
 use util::command::new_smol_command;
@@ -711,7 +711,7 @@ pub struct Session {
     data_breakpoints: BTreeMap<String, DataBreakpointState>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
-    task_context: TaskContext,
+    task_context: SharedTaskContext,
     memory: memory::Memory,
     quirks: SessionQuirks,
     remote_client: Option<Entity<RemoteClient>>,
@@ -833,7 +833,7 @@ impl Session {
         parent_session: Option<Entity<Session>>,
         label: Option<SharedString>,
         adapter: DebugAdapterName,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         quirks: SessionQuirks,
         remote_client: Option<Entity<RemoteClient>>,
         node_runtime: Option<NodeRuntime>,
@@ -897,7 +897,7 @@ impl Session {
         })
     }
 
-    pub fn task_context(&self) -> &TaskContext {
+    pub fn task_context(&self) -> &SharedTaskContext {
         &self.task_context
     }
 

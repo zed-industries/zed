@@ -192,7 +192,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
+use task::{ResolvedTask, RunnableTag, SharedTaskContext, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
@@ -6787,7 +6787,7 @@ impl Editor {
                 }))
             }
             CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context;
+                let context: SharedTaskContext = std::sync::Arc::new(actions_menu.actions.context);
 
                 workspace.update(cx, |workspace, cx| {
                     dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
