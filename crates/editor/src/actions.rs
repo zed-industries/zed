@@ -928,3 +928,9 @@ pub struct ConfirmEditReviewComment {
 pub struct CancelEditReviewComment {
     pub id: usize,
 }
+
+/// Undoes the most recent review comment deletion.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct UndoDeleteReviewComment;
