@@ -67,6 +67,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 zed_actions.workspace = true
+focus_follows_mouse = { version = "0.1.0", path = "../focus_follows_mouse" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
