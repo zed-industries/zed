@@ -5,10 +5,10 @@ use anyhow::Context as _;
 use client::proto;
 
 use gpui::{
-    Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
-    px,
+    Action, Animation, AnimationExt, AnyView, App, Axis, Context, Corner, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent,
+    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription,
+    WeakEntity, Window, deferred, div, ease_out_quint, px,
 };
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -273,6 +273,7 @@ pub struct Dock {
     pub(crate) serialized_dock: Option<DockData>,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
+    open_generation: usize,
     _subscriptions: [Subscription; 2],
 }
 
@@ -369,6 +370,7 @@ impl Dock {
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
+                open_generation: 0,
             }
         });
 
@@ -483,6 +485,9 @@ impl Dock {
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if open != self.is_open {
             self.is_open = open;
+            if open {
+                self.open_generation = self.open_generation.wrapping_add(1);
+            }
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, window, cx);
             }
@@ -930,6 +935,7 @@ impl Render for Dock {
                 })
                 .child(
                     div()
+                        .relative()
                         .map(|this| match self.position().axis() {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
@@ -939,6 +945,24 @@ impl Render for Dock {
                                 .panel
                                 .to_any()
                                 .cached(StyleRefinement::default().v_flex().size_full()),
+                        )
+                        .with_animation(
+                            ("dock-slide-in", self.open_generation as u64),
+                            Animation::new(AnimationDuration::Fast.into())
+                                .with_easing(ease_out_quint()),
+                            {
+                                let position = self.position;
+                                move |this, delta| {
+                                    const SLIDE_OFFSET: f32 = 16.0;
+                                    let offset = SLIDE_OFFSET * (1.0 - delta);
+                                    let this = this.opacity(delta);
+                                    match position {
+                                        DockPosition::Left => this.left(px(-offset)),
+                                        DockPosition::Right => this.left(px(offset)),
+                                        DockPosition::Bottom => this.top(px(offset)),
+                                    }
+                                }
+                            },
                         ),
                 )
                 .when(self.resizable(cx), |this| {
