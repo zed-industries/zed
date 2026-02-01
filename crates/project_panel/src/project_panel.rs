@@ -3120,6 +3120,8 @@ impl ProjectPanel {
         });
 
         let fs = self.fs.clone();
+        let notification_id =
+            workspace::notifications::NotificationId::Named("download-progress".into());
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(mut paths))) = destination_dir.await {
                 if let Some(dest_dir) = paths.pop() {
@@ -3128,9 +3130,7 @@ impl ProjectPanel {
                         .update(cx, |workspace, cx| {
                             workspace.show_toast(
                                 workspace::Toast::new(
-                                    workspace::notifications::NotificationId::Named(
-                                        "download-progress".into(),
-                                    ),
+                                    notification_id.clone(),
                                     format!("Downloading 0/{} files...", total_files),
                                 ),
                                 cx,
@@ -3146,9 +3146,7 @@ impl ProjectPanel {
                             .update(cx, |workspace, cx| {
                                 workspace.show_toast(
                                     workspace::Toast::new(
-                                        workspace::notifications::NotificationId::Named(
-                                            "download-progress".into(),
-                                        ),
+                                        notification_id.clone(),
                                         format!(
                                             "Downloading {}/{} files...",
                                             index + 1,
@@ -3185,9 +3183,7 @@ impl ProjectPanel {
                         .update(cx, |workspace, cx| {
                             workspace.show_toast(
                                 workspace::Toast::new(
-                                    workspace::notifications::NotificationId::Named(
-                                        "download-progress".into(),
-                                    ),
+                                    notification_id.clone(),
                                     format!("Downloaded {} files", total_files),
                                 ),
                                 cx,

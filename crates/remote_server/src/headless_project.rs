@@ -693,7 +693,6 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::DownloadFileByPath>,
         mut cx: AsyncApp,
     ) -> Result<proto::DownloadFileResponse> {
-        static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(1);
         log::debug!(
             "handle_download_file_by_path: received request: {:?}",
             message.payload
@@ -702,10 +701,12 @@ impl HeadlessProject {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let path = RelPath::from_proto(&message.payload.path)?;
         let project_id = message.payload.project_id;
+        let file_id = message.payload.file_id;
         log::debug!(
-            "handle_download_file_by_path: worktree_id={:?}, path={:?}",
+            "handle_download_file_by_path: worktree_id={:?}, path={:?}, file_id={}",
             worktree_id,
-            path
+            path,
+            file_id
         );
         use proto::create_file_for_peer::Variant;
 
@@ -731,8 +732,10 @@ impl HeadlessProject {
         );
 
         let proto_file = worktree.read_with(&cx, |_worktree: &Worktree, cx| file.to_proto(cx));
-        let file_id = NEXT_FILE_ID.fetch_add(1, Ordering::SeqCst);
-        log::debug!("handle_download_file_by_path: assigned file_id={}", file_id);
+        log::debug!(
+            "handle_download_file_by_path: using client-provided file_id={}",
+            file_id
+        );
 
         let state = proto::FileState {
             id: file_id,

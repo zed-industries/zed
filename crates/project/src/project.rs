@@ -2914,20 +2914,29 @@ impl Project {
         };
 
         let proto_client = remote_client.read(cx).proto_client();
-        let project_id = proto::REMOTE_SERVER_PROJECT_ID;
+        // For SSH remote projects, use REMOTE_SERVER_PROJECT_ID instead of remote_id()
+        // because SSH projects have client_state: Local but still need to communicate with remote server
+        let project_id = self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID);
         let downloading_files = self.downloading_files.clone();
         let path_str = path.as_ref().as_unix_str().to_string();
 
+        static NEXT_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let file_id = NEXT_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
         // Register BEFORE sending request to avoid race condition
         let key = (worktree_id, path_str.clone());
-        log::debug!("download_file: pre-registering download with key={:?}", key);
+        log::debug!(
+            "download_file: pre-registering download with key={:?}, file_id={}",
+            key,
+            file_id
+        );
         downloading_files.lock().insert(
             key.clone(),
             DownloadingFile {
                 destination_path: destination_path.clone(),
                 chunks: Vec::new(),
                 total_size: 0,
-                file_id: None,
+                file_id: Some(file_id),
             },
         );
         log::debug!(
@@ -2936,12 +2945,13 @@ impl Project {
         );
 
         cx.spawn(async move |_this, _cx| {
-            log::debug!("download_file: sending request...");
+            log::debug!("download_file: sending request with file_id={}...", file_id);
             let response = proto_client
                 .request(proto::DownloadFileByPath {
                     project_id,
                     worktree_id: worktree_id.to_proto(),
                     path: path_str.clone(),
+                    file_id,
                 })
                 .await?;
 
