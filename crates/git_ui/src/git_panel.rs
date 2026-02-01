@@ -3896,8 +3896,7 @@ impl GitPanel {
     }
 
     pub fn can_unstage_all(&self) -> bool {
-        let (staged_count, _) = self.stage_scope_counts();
-        staged_count > 0
+        self.has_staged_changes()
     }
 
     fn status_width_estimate(
