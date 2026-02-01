@@ -14,7 +14,7 @@ pub fn wrap_html_with_theme(html: &str, cx: &App) -> String {
 
     // Convert GPUI Hsla colors to CSS hsla() format
     // The Display impl on Hsla already formats as "hsla(h, s%, l%, a)"
-    let bg_color = format!("{}", colors.editor_background);
+    let bg_color = format!("{}", colors.background);
     let text_color = format!("{}", colors.text);
     let text_muted = format!("{}", colors.text_muted);
     let border_color = format!("{}", colors.border);

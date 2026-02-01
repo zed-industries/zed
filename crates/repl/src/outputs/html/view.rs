@@ -21,7 +21,7 @@ impl HtmlView {
 
         // Get theme background color to prevent white flash
         let theme = theme::GlobalTheme::theme(cx);
-        let bg_color = theme.colors().editor_background;
+        let bg_color = theme.colors().background;
         let bg_rgba = bg_color.to_rgb();
 
         // Wrap HTML content with themed template
