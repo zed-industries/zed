@@ -21103,6 +21103,11 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_number_deleted_lines(&mut self, number: bool, cx: &mut Context<Self>) {
+        self.number_deleted_lines = number;
+        cx.notify();
+    }
+
     pub fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
     }

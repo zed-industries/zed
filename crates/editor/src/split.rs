@@ -384,8 +384,10 @@ impl SplittableEditor {
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
-            editor.number_deleted_lines = true;
+            editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
 
@@ -2772,10 +2774,10 @@ mod tests {
             aaaa bbbb\x20
             cccc dddd\x20
             eeee ffff
-            deleted\x20
-            line one
-            deleted\x20
-            line two
+            deleted line\x20
+            one
+            deleted line\x20
+            two
             after"
                 .unindent(),
             &mut cx,
