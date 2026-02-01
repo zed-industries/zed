@@ -147,7 +147,15 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
-                        selection.end = movement::right(map, selection.end)
+                        let new_end = movement::right(map, selection.end);
+                        // Don't extend selection across excerpt boundaries in multibuffers.
+                        // This prevents delete from jumping to the next buffer when at the
+                        // end of an excerpt. See: #47879
+                        let current_anchor = map.display_point_to_anchor(selection.end, Bias::Left);
+                        let new_anchor = map.display_point_to_anchor(new_end, Bias::Left);
+                        if current_anchor.excerpt_id == new_anchor.excerpt_id {
+                            selection.end = new_end;
+                        }
                     }
                 })
             })
