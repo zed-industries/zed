@@ -45,6 +45,31 @@ struct SelectionIndicator {
     reduce_motion: bool,
 }
 
+impl SelectionIndicator {
+    /// When the previous index was visible, compute the pixel offset to
+    /// animate from, clamping the distance to avoid overly long slides.
+    fn animated_origin(&self, item_height: Pixels, visible_range: &Range<usize>) -> Option<Pixels> {
+        if self.reduce_motion {
+            return None;
+        }
+        let previous_index = self.previous_selected_index?;
+        if !visible_range.contains(&previous_index) {
+            return None;
+        }
+        let distance = self.selected_index.abs_diff(previous_index);
+        let clamped_index = if distance > MAX_ANIMATED_DISTANCE {
+            if self.selected_index > previous_index {
+                self.selected_index - MAX_ANIMATED_DISTANCE
+            } else {
+                self.selected_index + MAX_ANIMATED_DISTANCE
+            }
+        } else {
+            previous_index
+        };
+        Some(item_height * clamped_index)
+    }
+}
+
 impl UniformListDecoration for SelectionIndicator {
     fn compute(
         &self,
@@ -60,57 +85,29 @@ impl UniformListDecoration for SelectionIndicator {
         let background = cx.theme().colors().ghost_element_selected;
         let inset = DynamicSpacing::Base04.rems(cx);
 
-        let should_animate = match self.previous_selected_index {
-            Some(previous_index) if !self.reduce_motion => {
-                visible_range.contains(&previous_index)
-            }
-            _ => false,
-        };
+        let base = div()
+            .absolute()
+            .left(inset)
+            .right(inset)
+            .h(item_height)
+            .bg(background)
+            .rounded_sm();
 
-        let indicator = if should_animate {
-            let previous_index = self.previous_selected_index.unwrap();
-            let distance = self.selected_index.abs_diff(previous_index);
-            let clamped_previous_top = if distance > MAX_ANIMATED_DISTANCE {
-                let clamped_previous_index = if self.selected_index > previous_index {
-                    self.selected_index - MAX_ANIMATED_DISTANCE
-                } else {
-                    self.selected_index + MAX_ANIMATED_DISTANCE
-                };
-                item_height * clamped_previous_index
-            } else {
-                item_height * previous_index
-            };
-
-            let generation = self.generation;
-
-            div()
-                .absolute()
-                .left(inset)
-                .right(inset)
-                .h(item_height)
-                .bg(background)
-                .rounded_sm()
-                .with_animation(
+        let indicator = match self.animated_origin(item_height, &visible_range) {
+            Some(origin_top) => {
+                let generation = self.generation;
+                base.with_animation(
                     ("sel-overlay", generation as u64),
                     Animation::new(Duration::from_millis(150))
                         .with_easing(gpui::ease_in_out),
                     move |this, delta| {
-                        let offset = clamped_previous_top
-                            + (selected_top - clamped_previous_top) * delta;
+                        let offset = origin_top + (selected_top - origin_top) * delta;
                         this.top(offset)
                     },
                 )
                 .into_any_element()
-        } else {
-            div()
-                .absolute()
-                .left(inset)
-                .right(inset)
-                .top(selected_top)
-                .h(item_height)
-                .bg(background)
-                .rounded_sm()
-                .into_any_element()
+            }
+            None => base.top(selected_top).into_any_element(),
         };
 
         div()
@@ -550,28 +547,12 @@ impl<D: PickerDelegate> Picker<D> {
         let current_index = self.delegate.selected_index();
 
         if previous_index != current_index {
-            let visible = self.last_visible_range.borrow().clone();
-            // The first and last items in the visible range may be only
-            // partially visible. Exclude them so we don't animate when
-            // scrolling is needed to fully reveal the item.
-            let safe_start = if visible.start > 0 {
-                visible.start + 1
-            } else {
-                visible.start
-            };
-            let match_count = self.delegate.match_count();
-            let safe_end = if visible.end < match_count {
-                visible.end.saturating_sub(1)
-            } else {
-                visible.end
-            };
-            if safe_start < safe_end
-                && (safe_start..safe_end).contains(&current_index)
-            {
-                self.previous_selected_index = Some(previous_index);
-            } else {
-                self.previous_selected_index = None;
-            }
+            self.previous_selected_index =
+                if self.is_fully_visible(current_index, match_count) {
+                    Some(previous_index)
+                } else {
+                    None
+                };
             self.selection_generation = self.selection_generation.wrapping_add(1);
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
@@ -580,6 +561,25 @@ impl<D: PickerDelegate> Picker<D> {
                 self.scroll_to_item_index(ix);
             }
         }
+    }
+
+    /// Returns true if the given index is fully visible (not partially
+    /// obscured at the edges of the scroll viewport). Items at the very
+    /// first or last position of the visible range may be only partially
+    /// shown, so we exclude them unless they sit at the list boundary.
+    fn is_fully_visible(&self, index: usize, match_count: usize) -> bool {
+        let visible = self.last_visible_range.borrow().clone();
+        let safe_start = if visible.start > 0 {
+            visible.start + 1
+        } else {
+            visible.start
+        };
+        let safe_end = if visible.end < match_count {
+            visible.end.saturating_sub(1)
+        } else {
+            visible.end
+        };
+        safe_start < safe_end && (safe_start..safe_end).contains(&index)
     }
 
     pub fn select_next(
@@ -902,10 +902,14 @@ impl<D: PickerDelegate> Picker<D> {
                 }),
             )
             .children({
-                let selected = ix == self.delegate.selected_index();
-                let use_overlay = matches!(self.element_container, ElementContainer::UniformList(_));
-                let visual_selected = if use_overlay { false } else { selected };
-                self.delegate.render_match(ix, visual_selected, window, cx)
+                // When using a uniform list, the SelectionIndicator decoration
+                // handles the highlight, so individual items should not render
+                // their own selected background.
+                let has_selection_overlay =
+                    matches!(self.element_container, ElementContainer::UniformList(_));
+                let selected =
+                    ix == self.delegate.selected_index() && !has_selection_overlay;
+                self.delegate.render_match(ix, selected, window, cx)
             })
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
