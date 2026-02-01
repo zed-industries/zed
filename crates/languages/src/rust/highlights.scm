@@ -197,6 +197,10 @@
   "?"
 ] @operator
 
+; Self keyword
+((type_identifier) @keyword (#eq? @keyword "Self"))
+((identifier) @keyword (#eq? @keyword "Self"))
+
 ; Avoid highlighting these as operators when used in doc comments.
 (unary_expression "!" @operator)
 operator: "/" @operator
