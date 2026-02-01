@@ -4,7 +4,7 @@ use gpui::{
     Animation, AnimationExt, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable as _, ManagedView, MouseButton, Subscription, Task,
 };
-use settings::{ReduceMotionSetting, Settings};
+use settings::should_reduce_motion;
 use ui::prelude::*;
 
 #[derive(Debug)]
@@ -198,10 +198,7 @@ impl ModalLayer {
             let fade_out_background = active_modal.modal.fade_out_background(cx);
             let render_bare = active_modal.modal.render_bare(cx);
 
-            let reduce_motion = ReduceMotionSetting::get_global(cx)
-                .should_reduce_motion(cx);
-
-            if !render_bare && !reduce_motion {
+            if !render_bare && !should_reduce_motion(cx) {
                 self.closing_modal = Some(ClosingModal {
                     modal_view: active_modal.modal.view(),
                     fade_out_background,
@@ -270,8 +267,7 @@ impl Render for ModalLayer {
             };
 
         let duration = if is_closing { 100 } else { 150 };
-        let reduce_motion = ReduceMotionSetting::get_global(cx)
-            .should_reduce_motion(cx);
+        let reduce_motion = should_reduce_motion(cx);
 
         let modal_content = h_flex()
             .occlude()

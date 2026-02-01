@@ -7,7 +7,7 @@ use gpui::{
     ParentElement, Pixels, Point, Style, Window, anchored, deferred, div, ease_out_quint, point,
     prelude::FluentBuilder, px, size,
 };
-use settings::{ReduceMotionSetting, Settings};
+use settings::should_reduce_motion;
 
 use crate::prelude::*;
 
@@ -365,8 +365,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let element_state = element_state.unwrap_or_default();
                 let mut menu_layout_id = None;
 
-                let reduce_motion = ReduceMotionSetting::get_global(cx)
-                    .should_reduce_motion(cx);
+                let reduce_motion = should_reduce_motion(cx);
 
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
                     let offset = self.resolved_offset(window);

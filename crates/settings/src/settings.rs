@@ -34,8 +34,8 @@ use util::asset_str;
 pub use ::settings_content::*;
 pub use base_keymap_setting::*;
 pub use content_into_gpui::IntoGpui;
-pub use reduce_motion_setting::*;
 pub use editable_setting_control::*;
+pub use reduce_motion_setting::*;
 pub use editorconfig_store::{
     Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
 };
