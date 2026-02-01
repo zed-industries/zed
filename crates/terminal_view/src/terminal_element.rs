@@ -1131,12 +1131,21 @@ impl Element for TerminalElement {
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
+                // Keep cursor visible when blinking is disabled or view is unfocused.
+                let blink_opacity = if self.cursor_visible
+                    || self.terminal_view.read(cx).blink_manager.read(cx).visible()
+                {
+                    1.0
+                } else {
+                    0.0
+                };
+
                 let cursor_point = DisplayCursor::from(cursor.point, display_offset);
                 let cursor_text = {
-                    let str_trxt = cursor_char.to_string();
-                    let len = str_trxt.len();
+                    let str_txt = cursor_char.to_string();
+                    let len = str_txt.len();
                     window.text_system().shape_line(
-                        str_trxt.into(),
+                        str_txt.into(),
                         text_style.font_size.to_pixels(window.rem_size()),
                         &[TextRun {
                             len,
@@ -1178,6 +1187,7 @@ impl Element for TerminalElement {
                             shape,
                             text,
                         )
+                        .with_opacity(blink_opacity)
                     })
                 };
 
