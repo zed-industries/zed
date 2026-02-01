@@ -526,8 +526,9 @@ impl Render for ErrorMessagePrompt {
                                             .tooltip_label("Copy Error Message"),
                                     )
                                     .child(
-                                        ui::IconButton::new("close", ui::IconName::Close)
-                                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                                        ui::IconButton::new("close", ui::IconName::Close).on_click(
+                                            cx.listener(|_, _, _, cx| cx.emit(DismissEvent)),
+                                        ),
                                     ),
                             ),
                     )
