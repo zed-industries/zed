@@ -1,14 +1,14 @@
 use std::{ops::Deref, rc::Rc};
 
 use wry::{
-    dpi::{self, LogicalSize},
     Rect,
+    dpi::{self, LogicalSize},
 };
 
 use gpui::{
-    canvas, div, App, Bounds, ContentMask, DismissEvent, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
-    MouseDownEvent, ParentElement as _, Pixels, Render, Size, Style, Styled as _, Window,
+    App, Bounds, ContentMask, DismissEvent, Element, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, MouseDownEvent,
+    ParentElement as _, Pixels, Render, Size, Style, Styled as _, Window, canvas, div,
 };
 
 /// A webview based on wry WebView.
@@ -184,25 +184,33 @@ impl Element for WebViewElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        log::info!("WebViewElement::prepaint called with bounds: {:?}", bounds);
+
         if !self.parent.read(cx).visible() {
+            log::warn!("WebViewElement: parent not visible, skipping prepaint");
             return None;
         }
 
-        self.view
-            .set_bounds(Rect {
-                size: dpi::Size::Logical(LogicalSize {
-                    width: bounds.size.width.into(),
-                    height: bounds.size.height.into(),
-                }),
-                position: dpi::Position::Logical(dpi::LogicalPosition::new(
-                    bounds.origin.x.into(),
-                    bounds.origin.y.into(),
-                )),
-            })
-            .unwrap();
+        log::info!("WebViewElement: parent visible, setting wry bounds");
+
+        let wry_rect = Rect {
+            size: dpi::Size::Logical(LogicalSize {
+                width: bounds.size.width.into(),
+                height: bounds.size.height.into(),
+            }),
+            position: dpi::Position::Logical(dpi::LogicalPosition::new(
+                bounds.origin.x.into(),
+                bounds.origin.y.into(),
+            )),
+        };
+
+        log::info!("WebViewElement: setting wry bounds to {:?}", wry_rect);
+        self.view.set_bounds(wry_rect).unwrap();
 
         // Create a hitbox to handle mouse event
-        Some(window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal))
+        let hitbox = window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal);
+        log::info!("WebViewElement: created hitbox");
+        Some(hitbox)
     }
 
     fn paint(
@@ -216,6 +224,11 @@ impl Element for WebViewElement {
         _: &mut App,
     ) {
         let bounds = hitbox.clone().map(|h| h.bounds).unwrap_or(bounds);
+        log::info!(
+            "WebViewElement::paint called with bounds: {:?}, hitbox present: {}",
+            bounds,
+            hitbox.is_some()
+        );
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let webview = self.view.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, _, _, _| {
