@@ -665,7 +665,9 @@ impl ToolPermissionContext {
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
         let shell_supports_always_allow = if tool_name == TerminalTool::name() {
-            ShellKind::system().supports_posix_chaining()
+            ShellKind::system()
+                .map(|k| k.supports_posix_chaining())
+                .unwrap_or(false)
         } else {
             true
         };

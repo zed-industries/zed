@@ -46,7 +46,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
+use task::{PosixShell, ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1168,13 +1168,15 @@ fn wr_distance(
     }
 }
 
-fn micromamba_shell_name(kind: ShellKind) -> &'static str {
+fn micromamba_shell_name(kind: Option<ShellKind>) -> &'static str {
     match kind {
-        ShellKind::Csh => "csh",
-        ShellKind::Fish => "fish",
-        ShellKind::Nushell => "nu",
-        ShellKind::PowerShell => "powershell",
-        ShellKind::Cmd => "cmd.exe",
+        Some(ShellKind::Csh) => "csh",
+        Some(ShellKind::Fish) => "fish",
+        Some(ShellKind::Nushell) => "nu",
+        Some(ShellKind::PowerShell) | Some(ShellKind::Pwsh) => "powershell",
+        Some(ShellKind::Cmd) => "cmd.exe",
+        #[cfg(windows)]
+        None => "powershell",
         // default / catch-all:
         _ => "posix",
     }
@@ -1339,7 +1341,7 @@ impl ToolchainLister for PythonToolchainProvider {
     fn activation_script(
         &self,
         toolchain: &Toolchain,
-        shell: ShellKind,
+        shell: Option<ShellKind>,
         cx: &App,
     ) -> BoxFuture<'static, Vec<String>> {
         let settings = TerminalSettings::get_global(cx);
@@ -1406,10 +1408,21 @@ impl ToolchainLister for PythonToolchainProvider {
                     | PythonEnvironmentKind::Poetry,
                 ) => {
                     if let Some(activation_scripts) = &toolchain.activation_scripts {
-                        if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                            let activate_keyword = shell.activate_keyword();
+                        // For unknown shells, fall back to platform-appropriate defaults:
+                        // POSIX (sh) on Unix, PowerShell on Windows
+                        #[cfg(unix)]
+                        let fallback_shell = ShellKind::Posix(PosixShell::Sh);
+                        #[cfg(windows)]
+                        let fallback_shell = ShellKind::PowerShell;
+
+                        let shell_kind = shell.unwrap_or(fallback_shell);
+                        // Use activation_script_key() to normalize POSIX shells (e.g., Bash, Zsh)
+                        // to Posix(Sh) for lookup, since activation scripts are stored with Posix(Sh) key
+                        let lookup_key = shell_kind.activation_script_key();
+                        if let Some(activate_script_path) = activation_scripts.get(&lookup_key) {
+                            let activate_keyword = shell_kind.activate_keyword();
                             if let Some(quoted) =
-                                shell.try_quote(&activate_script_path.to_string_lossy())
+                                shell_kind.try_quote(&activate_script_path.to_string_lossy())
                             {
                                 activation_script.push(format!("{activate_keyword} {quoted}"));
                             }
@@ -1423,17 +1436,27 @@ impl ToolchainLister for PythonToolchainProvider {
                     let version = toolchain.environment.version.as_deref().unwrap_or("system");
                     let pyenv = &manager.executable;
                     let pyenv = pyenv.display();
+                    let pyenv_sh_activation = format!("\"{pyenv}\" shell - sh {version}");
                     activation_script.extend(match shell {
-                        ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                        ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                        ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                        ShellKind::PowerShell | ShellKind::Pwsh => None,
-                        ShellKind::Csh => None,
-                        ShellKind::Tcsh => None,
-                        ShellKind::Cmd => None,
-                        ShellKind::Rc => None,
-                        ShellKind::Xonsh => None,
-                        ShellKind::Elvish => None,
+                        Some(ShellKind::Fish) => {
+                            Some(format!("\"{pyenv}\" shell - fish {version}"))
+                        }
+                        Some(ShellKind::Posix(_)) => Some(pyenv_sh_activation),
+                        #[cfg(unix)]
+                        None => Some(pyenv_sh_activation),
+                        Some(ShellKind::Nushell) => {
+                            Some(format!("^\"{pyenv}\" shell - nu {version}"))
+                        }
+                        Some(ShellKind::PowerShell)
+                        | Some(ShellKind::Pwsh)
+                        | Some(ShellKind::Csh)
+                        | Some(ShellKind::Tcsh)
+                        | Some(ShellKind::Cmd)
+                        | Some(ShellKind::Rc)
+                        | Some(ShellKind::Xonsh)
+                        | Some(ShellKind::Elvish) => None,
+                        #[cfg(windows)]
+                        None => None,
                     })
                 }
                 _ => {}
@@ -1497,8 +1520,9 @@ async fn resolve_venv_activation_scripts(
 ) {
     log::debug!("(Python) Resolving activation scripts for venv toolchain {venv:?}");
     if let Some(prefix) = &venv.prefix {
+        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
         for (shell_kind, script_name) in &[
-            (ShellKind::Posix, "activate"),
+            (ShellKind::Posix(PosixShell::Sh), "activate"),
             (ShellKind::Rc, "activate"),
             (ShellKind::Csh, "activate.csh"),
             (ShellKind::Tcsh, "activate.csh"),
@@ -2933,5 +2957,96 @@ mod tests {
         assert!(enum_values.contains(&serde_json::json!("double")));
         assert!(enum_values.contains(&serde_json::json!("single")));
         assert!(enum_values.contains(&serde_json::json!("preserve")));
+    }
+
+    #[test]
+    fn test_activation_script_lookup_with_posix_shell_normalization() {
+        use collections::HashMap;
+        use std::path::PathBuf;
+        use task::{PosixShell, ShellKind};
+
+        // This test reproduces the bug from https://github.com/zed-industries/zed/issues/48047
+        // where Python toolchains (like uv) weren't detected because activation scripts
+        // were stored with Posix(Sh) as the HashMap key, but looked up with the user's
+        // actual shell (e.g., Posix(Bash)).
+        //
+        // The fix uses activation_script_key() to normalize POSIX shell variants before lookup.
+
+        // Create activation scripts HashMap as it would be populated by resolve_venv_activation_scripts()
+        // Scripts are stored with Posix(Sh) as the key for POSIX shells
+        let mut activation_scripts: HashMap<ShellKind, PathBuf> = HashMap::default();
+        activation_scripts.insert(
+            ShellKind::Posix(PosixShell::Sh),
+            PathBuf::from("/path/to/venv/bin/activate"),
+        );
+        activation_scripts.insert(
+            ShellKind::Fish,
+            PathBuf::from("/path/to/venv/bin/activate.fish"),
+        );
+        activation_scripts.insert(
+            ShellKind::PowerShell,
+            PathBuf::from("/path/to/venv/Scripts/activate.ps1"),
+        );
+
+        // This helper function replicates the exact lookup logic from activation_script()
+        // in the Venv/VirtualEnv/Uv/Poetry branch. If that code changes, this test should
+        // be updated to match.
+        fn lookup_activation_script(
+            activation_scripts: &HashMap<ShellKind, PathBuf>,
+            shell: Option<ShellKind>,
+        ) -> Option<&PathBuf> {
+            #[cfg(unix)]
+            let fallback_shell = ShellKind::Posix(PosixShell::Sh);
+            #[cfg(windows)]
+            let fallback_shell = ShellKind::PowerShell;
+
+            let shell_kind = shell.unwrap_or(fallback_shell);
+            // This line must use activation_script_key() - if it doesn't, the test will fail
+            let lookup_key = shell_kind.activation_script_key();
+            activation_scripts.get(&lookup_key)
+        }
+
+        // Test that Bash users can find activation scripts (the bug was they couldn't)
+        let bash_result = lookup_activation_script(
+            &activation_scripts,
+            Some(ShellKind::Posix(PosixShell::Bash)),
+        );
+        assert!(
+            bash_result.is_some(),
+            "Bash users should be able to find activation scripts"
+        );
+        assert_eq!(
+            bash_result.unwrap().to_str().unwrap(),
+            "/path/to/venv/bin/activate"
+        );
+
+        // Test that Zsh users can find activation scripts
+        let zsh_result =
+            lookup_activation_script(&activation_scripts, Some(ShellKind::Posix(PosixShell::Zsh)));
+        assert!(
+            zsh_result.is_some(),
+            "Zsh users should be able to find activation scripts"
+        );
+
+        // Test that Sh users can find activation scripts (direct match)
+        let sh_result =
+            lookup_activation_script(&activation_scripts, Some(ShellKind::Posix(PosixShell::Sh)));
+        assert!(sh_result.is_some());
+
+        // Test that Fish users can find their activation scripts
+        let fish_result = lookup_activation_script(&activation_scripts, Some(ShellKind::Fish));
+        assert!(fish_result.is_some());
+        assert_eq!(
+            fish_result.unwrap().to_str().unwrap(),
+            "/path/to/venv/bin/activate.fish"
+        );
+
+        // Test that PowerShell users can find their activation scripts
+        let ps_result = lookup_activation_script(&activation_scripts, Some(ShellKind::PowerShell));
+        assert!(ps_result.is_some());
+        assert_eq!(
+            ps_result.unwrap().to_str().unwrap(),
+            "/path/to/venv/Scripts/activate.ps1"
+        );
     }
 }

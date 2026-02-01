@@ -12,11 +12,12 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
+use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
+use util::shell::ShellKind;
 use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
@@ -92,7 +93,7 @@ impl Project {
             None => settings.shell.program(),
         };
         let path_style = self.path_style(cx);
-        let shell_kind = ShellKind::new(&shell, path_style.is_windows());
+        let shell_kind = ShellKind::new(&shell);
 
         // Prepare a task for resolving the environment
         let env_task =
@@ -142,12 +143,14 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let format_to_run = || {
                         if let Some(command) = &spawn_task.command {
-                            let command = shell_kind.prepend_command_prefix(command);
-                            let command = shell_kind.try_quote_prefix_aware(&command);
+                            let command =
+                                util::shell::prepend_command_prefix_option(shell_kind, command);
+                            let command =
+                                util::shell::try_quote_prefix_aware_option(shell_kind, &command);
                             let args = spawn_task
                                 .args
                                 .iter()
-                                .filter_map(|arg| shell_kind.try_quote(&arg));
+                                .filter_map(|arg| util::shell::try_quote_option(shell_kind, arg));
 
                             command.into_iter().chain(args).join(" ")
                         } else {
@@ -161,13 +164,17 @@ impl Project {
                         match remote_client {
                             Some(remote_client) => match activation_script.clone() {
                                 activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
+                                    let separator =
+                                        util::shell::sequential_commands_separator_option(
+                                            shell_kind,
+                                        );
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let args =
+                                        util::shell::args_for_shell_option(shell_kind, false, arg);
                                     let shell = remote_client
                                         .read(cx)
                                         .shell()
@@ -194,13 +201,17 @@ impl Project {
                             },
                             None => match activation_script.clone() {
                                 activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
+                                    let separator =
+                                        util::shell::sequential_commands_separator_option(
+                                            shell_kind,
+                                        );
                                     let activation_script =
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let args =
+                                        util::shell::args_for_shell_option(shell_kind, false, arg);
 
                                     (
                                         Shell::WithArguments {
@@ -358,7 +369,7 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, path_style.is_windows());
+            let shell_kind = ShellKind::new(&shell);
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -513,8 +524,7 @@ impl Project {
             .and_then(|remote_client| remote_client.read(cx).shell())
             .map(Shell::Program)
             .unwrap_or_else(|| settings.shell.clone());
-        let is_windows = self.path_style(cx).is_windows();
-        let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
+        let builder = ShellBuilder::new(&shell).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let env_task = self.resolve_directory_environment(
