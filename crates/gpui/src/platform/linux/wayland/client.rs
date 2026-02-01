@@ -75,8 +75,8 @@ use super::{
 
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
-    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    DropItem, ExternalDrop, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
+    LinuxCommon, LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, ResultExt as _, SCROLL_LINES, ScrollDelta,
     ScrollWheelEvent, Size, TouchPhase, WindowParams, point, profiler, px, size,
@@ -2028,22 +2028,30 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 }
                             };
 
-                            let paths: SmallVec<[_; 2]> = file_list
+                            let items: SmallVec<[DropItem; 2]> = file_list
                                 .lines()
-                                .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| url.to_file_path().log_err())
+                                .filter_map(|line| Url::parse(line).log_err())
+                                .filter_map(|url| match url.scheme() {
+                                    "file" => url.to_file_path().log_err().map(DropItem::Path),
+                                    "http" | "https" => Some(DropItem::Url(url)),
+                                    _ => None,
+                                })
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 
                             // Prevent dropping text from other programs.
-                            if paths.is_empty() {
+                            if items.is_empty() {
                                 data_offer.destroy();
                                 return;
                             }
 
+                            let items = ExternalDrop(items);
+                            // Convert to legacy ExternalPaths for backwards compatibility
+                            #[allow(deprecated)]
                             let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                                 position,
-                                paths: crate::ExternalPaths(paths),
+                                paths: items.to_external_paths(),
+                                items,
                             });
 
                             let client = this.get_client();
