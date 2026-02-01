@@ -383,24 +383,12 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                                 .child(menu.clone())
                                 .with_animation(
                                     ("popover-menu-animate", menu_entity_id),
-                                    Animation::new(AnimationDuration::Fast.duration())
+                                    Animation::new(AnimationDuration::Fast.into())
                                         .with_easing(ease_out_quint()),
                                     move |this, delta| {
-                                        const START_OPACITY: f32 = 0.4;
-                                        const MAX_UNFOLD_HEIGHT: f32 = 500.0;
-                                        const ANIMATION_COMPLETE_THRESHOLD: f32 = 0.999;
-
-                                        let opacity =
-                                            START_OPACITY + delta * (1.0 - START_OPACITY);
-                                        let unfold_height = delta * delta * MAX_UNFOLD_HEIGHT;
-
-                                        this.opacity(opacity).when(
-                                            delta < ANIMATION_COMPLETE_THRESHOLD,
-                                            |this| {
-                                                this.overflow_y_hidden()
-                                                    .max_h(px(unfold_height))
-                                            },
-                                        )
+                                        const SLIDE_OFFSET: f32 = -6.0;
+                                        let slide = SLIDE_OFFSET * (1.0 - delta);
+                                        this.opacity(delta).top(px(slide))
                                     },
                                 ),
                         ),
