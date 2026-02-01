@@ -1,14 +1,18 @@
 use anyhow::bail;
 use derive_more::{Add, AddAssign};
 use language_model::LanguageModel;
+use log;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{mem, ops::Range, str::FromStr, sync::Arc};
-
 const OLD_TEXT_END_TAG: &str = "</old_text>";
 const NEW_TEXT_END_TAG: &str = "</new_text>";
+// Common malformed tags that LLMs output (like "</text>" instead of "</old_text>")
+const MALFORMED_TEXT_END: &str = "</text>";
+const MALFORMED_OLD_END: &str = "</old>";
+const MALFORMED_NEW_END: &str = "</new>";
 const EDITS_END_TAG: &str = "</edits>";
 const SEARCH_MARKER: &str = "<<<<<<< SEARCH";
 const SEPARATOR_MARKER: &str = "=======";
@@ -16,9 +20,12 @@ const REPLACE_MARKER: &str = ">>>>>>> REPLACE";
 const SONNET_PARAMETER_INVOKE_1: &str = "</parameter>\n</invoke>";
 const SONNET_PARAMETER_INVOKE_2: &str = "</parameter></invoke>";
 const SONNET_PARAMETER_INVOKE_3: &str = "</parameter>";
-const END_TAGS: [&str; 6] = [
+const END_TAGS: [&str; 9] = [
     OLD_TEXT_END_TAG,
     NEW_TEXT_END_TAG,
+    MALFORMED_TEXT_END,
+    MALFORMED_OLD_END,
+    MALFORMED_NEW_END,
     EDITS_END_TAG,
     SONNET_PARAMETER_INVOKE_1, // Remove these after switching to streaming tool call
     SONNET_PARAMETER_INVOKE_2,
@@ -219,8 +226,23 @@ impl EditFormatParser for XmlEditParser {
                         }
 
                         self.metrics.tags += 1;
-                        if &self.buffer[tag_range.clone()] != OLD_TEXT_END_TAG {
+                        let found_tag = &self.buffer[tag_range.clone()];
+                        let is_valid_old_text_end = found_tag == OLD_TEXT_END_TAG
+                            || found_tag == MALFORMED_TEXT_END
+                            || found_tag == MALFORMED_OLD_END;
+
+                        if !is_valid_old_text_end {
                             self.metrics.mismatched_tags += 1;
+                            log::warn!(
+                                "XmlEditParser: Mismatched tag in old_text - expected '{}', found '{}'",
+                                OLD_TEXT_END_TAG,
+                                found_tag
+                            );
+                        } else if found_tag != OLD_TEXT_END_TAG {
+                            log::info!(
+                                "XmlEditParser: Accepted lenient closing tag '{}' for old_text",
+                                found_tag
+                            );
                         }
 
                         self.buffer.drain(..tag_range.end);
@@ -232,11 +254,26 @@ impl EditFormatParser for XmlEditParser {
                         });
                     } else {
                         if !self.ends_with_tag_prefix() {
+                            let buffer_content = mem::take(&mut self.buffer);
+                            log::debug!(
+                                "XmlEditParser: Emitting old_text buffer (no end tag found, {} chars): {:?}",
+                                buffer_content.len(),
+                                if buffer_content.len() > 100 {
+                                    format!("{}...", &buffer_content[..100])
+                                } else {
+                                    buffer_content.clone()
+                                }
+                            );
                             edit_events.push(EditParserEvent::OldTextChunk {
-                                chunk: mem::take(&mut self.buffer),
+                                chunk: buffer_content,
                                 done: false,
                                 line_hint,
                             });
+                        } else {
+                            log::trace!(
+                                "XmlEditParser: Buffer ends with tag prefix, holding {} chars",
+                                self.buffer.len()
+                            );
                         }
                         break;
                     }
@@ -264,8 +301,23 @@ impl EditFormatParser for XmlEditParser {
                         }
 
                         self.metrics.tags += 1;
-                        if &self.buffer[tag_range.clone()] != NEW_TEXT_END_TAG {
+                        let found_tag = &self.buffer[tag_range.clone()];
+                        let is_valid_new_text_end = found_tag == NEW_TEXT_END_TAG
+                            || found_tag == MALFORMED_TEXT_END
+                            || found_tag == MALFORMED_NEW_END;
+
+                        if !is_valid_new_text_end {
                             self.metrics.mismatched_tags += 1;
+                            log::warn!(
+                                "XmlEditParser: Mismatched tag in new_text - expected '{}', found '{}'",
+                                NEW_TEXT_END_TAG,
+                                found_tag
+                            );
+                        } else if found_tag != NEW_TEXT_END_TAG {
+                            log::info!(
+                                "XmlEditParser: Accepted lenient closing tag '{}' for new_text",
+                                found_tag
+                            );
                         }
 
                         self.buffer.drain(..tag_range.end);
@@ -273,10 +325,25 @@ impl EditFormatParser for XmlEditParser {
                         edit_events.push(EditParserEvent::NewTextChunk { chunk, done: true });
                     } else {
                         if !self.ends_with_tag_prefix() {
+                            let buffer_content = mem::take(&mut self.buffer);
+                            log::debug!(
+                                "XmlEditParser: Emitting new_text buffer (no end tag found, {} chars): {:?}",
+                                buffer_content.len(),
+                                if buffer_content.len() > 100 {
+                                    format!("{}...", &buffer_content[..100])
+                                } else {
+                                    buffer_content.clone()
+                                }
+                            );
                             edit_events.push(EditParserEvent::NewTextChunk {
-                                chunk: mem::take(&mut self.buffer),
+                                chunk: buffer_content,
                                 done: false,
                             });
+                        } else {
+                            log::trace!(
+                                "XmlEditParser: Buffer ends with tag prefix, holding {} chars",
+                                self.buffer.len()
+                            );
                         }
                         break;
                     }
