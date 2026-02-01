@@ -89,7 +89,7 @@ jobs:
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-build-test
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -164,7 +164,7 @@ jobs:
     timeout-minutes: 60
   clippy_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-build-test
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -400,7 +400,7 @@ jobs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-build-test
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -445,7 +445,7 @@ jobs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-build-test
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
