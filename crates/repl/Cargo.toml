@@ -8,9 +8,6 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["remote"]
-
 [features]
 test-support = []
 
