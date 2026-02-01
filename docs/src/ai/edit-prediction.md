@@ -332,19 +332,49 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 - {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
 - {#action editor::PreviousEditPrediction} ({#kb editor::PreviousEditPrediction}): To cycle to the previous edit prediction
 
-### Supermaven {#supermaven}
+### Sweep {#sweep}
 
-To use Supermaven as your provider, set this within `settings.json`:
+To use [Sweep](https://sweep.dev/) as your provider:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Sweep section and enter your API key from the
+   [Sweep dashboard](https://app.sweep.dev/)
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu.
+
+After adding your API key, Sweep will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in `settings.json`:
 
 ```json [settings]
 {
   "features": {
-    "edit_prediction_provider": "supermaven"
+    "edit_prediction_provider": "sweep"
   }
 }
 ```
 
-You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
+### Mercury Coder {#mercury-coder}
+
+To use [Mercury Coder](https://www.inceptionlabs.ai/) by Inception Labs as your provider:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the Mercury section and enter your API key from the
+   [Inception Labs dashboard](https://platform.inceptionlabs.ai/dashboard/api-keys)
+
+Alternatively, click the edit prediction icon in the status bar and select
+**Configure Providers** from the menu.
+
+After adding your API key, Mercury Coder will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in `settings.json`:
+
+```json [settings]
+{
+  "features": {
+    "edit_prediction_provider": "mercury"
+  }
+}
+```
 
 ### Codestral {#codestral}
 
@@ -358,7 +388,7 @@ To use Mistral's Codestral as your provider:
 Alternatively, click the edit prediction icon in the status bar and select
 **Configure Providers** from the menu.
 
-After adding your API key, set Codestral as your provider in `settings.json`:
+After adding your API key, Codestral will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in `settings.json`:
 
 ```json [settings]
 {
