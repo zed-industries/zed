@@ -56,7 +56,7 @@ fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<St
         ZetaVersion::V0113Ordered | ZetaVersion::V0114180EditableRegion => {
             ("<|fim_middle|>current\n", "<|fim_suffix|>")
         }
-        ZetaVersion::V0120GitMergeMarkers => (
+        ZetaVersion::V0120GitMergeMarkers | ZetaVersion::V0131GitMergeMarkersPrefix => (
             zeta_prompt::v0120_git_merge_markers::START_MARKER,
             zeta_prompt::v0120_git_merge_markers::SEPARATOR,
         ),
@@ -76,7 +76,9 @@ fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<St
 
     let region = &prompt[start..end];
     let region = region.strip_suffix('\n').unwrap_or(region);
-    Ok(region.replace(CURSOR_MARKER, ""))
+    let region = region.replace(CURSOR_MARKER, "");
+
+    Ok(region)
 }
 
 fn parse_zeta2_output(
@@ -100,12 +102,18 @@ fn parse_zeta2_output(
         None
     };
 
-    if version == ZetaVersion::V0120GitMergeMarkers {
-        if let Some(stripped) =
-            new_text.strip_suffix(zeta_prompt::v0120_git_merge_markers::END_MARKER)
-        {
-            new_text = stripped.to_string();
+    let suffix = match version {
+        ZetaVersion::V0131GitMergeMarkersPrefix => {
+            zeta_prompt::v0131_git_merge_markers_prefix::END_MARKER
         }
+        ZetaVersion::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
+        _ => "",
+    };
+    if !suffix.is_empty() {
+        new_text = new_text
+            .strip_suffix(suffix)
+            .unwrap_or(&new_text)
+            .to_string();
     }
 
     let mut old_text_normalized = old_text.clone();
