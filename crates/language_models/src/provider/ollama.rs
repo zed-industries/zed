@@ -394,7 +394,14 @@ impl OllamaLanguageModel {
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
-                stop: Some(request.stop),
+                // Only send stop tokens if explicitly provided. When empty/None,
+                // Ollama will use the model's default stop tokens from its Modelfile.
+                // Sending an empty array would override and disable the defaults.
+                stop: if request.stop.is_empty() {
+                    None
+                } else {
+                    Some(request.stop)
+                },
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
