@@ -11,14 +11,23 @@ use workspace::{Workspace, item::Item};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
+use crate::repl_editor::ReplRunMode;
 
 actions!(
     repl,
     [
-        /// Runs the current cell and advances to the next one.
+        /// Runs the current line or selection and advances to the next.
         Run,
-        /// Runs the current cell without advancing.
-        RunInPlace,
+        /// Runs the current line or selection without advancing.
+        RunInPlace, 
+        /// Run the current cell and advances to the next.
+        RunCell,
+        /// Run the current cell without advancing.
+        RunCellInPlace,
+        /// Run all codes above.
+        RunAbove,
+        /// Run all codes.
+        RunAll,
         /// Clears all outputs in the REPL.
         ClearOutputs,
         /// Opens the REPL sessions panel.
@@ -121,22 +130,74 @@ pub fn init(cx: &mut App) {
                                 return;
                             }
 
-                            crate::run(editor_handle.clone(), true, window, cx).log_err();
+                            crate::run(editor_handle.clone(), true, window, cx, ReplRunMode::Line).log_err();
                         }
                     })
                     .detach();
 
                 editor
                     .register_action({
+                        let editor_handle = editor_handle.clone();
                         move |_: &RunInPlace, window, cx| {
                             if !JupyterSettings::enabled(cx) {
                                 return;
                             }
 
-                            crate::run(editor_handle.clone(), false, window, cx).log_err();
+                            crate::run(editor_handle.clone(), false, window, cx, ReplRunMode::Line).log_err();
                         }
                     })
                     .detach();
+
+                editor
+                    .register_action({
+                        let editor_handle = editor_handle.clone();
+                        move |_: &RunCell, window, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), true, window, cx, ReplRunMode::Cell).log_err();
+                        }
+                    })
+                    .detach();
+
+                editor
+                    .register_action({
+                        let editor_handle = editor_handle.clone();
+                        move |_: &RunCellInPlace, window, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), false, window, cx, ReplRunMode::Cell).log_err();
+                        }
+                    })
+                    .detach();
+
+                editor
+                    .register_action({
+                        let editor_handle = editor_handle.clone();
+                        move |_: &RunAbove, window, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), false, window, cx, ReplRunMode::Above).log_err();
+                        }
+                    })
+                    .detach();
+
+                editor
+                    .register_action({
+                        move |_: &RunAll, window, cx| {
+                            if !JupyterSettings::enabled(cx) {
+                                return;
+                            }
+
+                            crate::run(editor_handle.clone(), false, window, cx, ReplRunMode::All).log_err();
+                        }
+                    })
+                    .detach();                    
             });
         },
     )
