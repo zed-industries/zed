@@ -48,7 +48,7 @@ struct SelectionIndicator {
 impl UniformListDecoration for SelectionIndicator {
     fn compute(
         &self,
-        _visible_range: Range<usize>,
+        visible_range: Range<usize>,
         _bounds: Bounds<Pixels>,
         _scroll_offset: Point<Pixels>,
         item_height: Pixels,
@@ -58,51 +58,59 @@ impl UniformListDecoration for SelectionIndicator {
     ) -> AnyElement {
         let selected_top = item_height * self.selected_index;
         let background = cx.theme().colors().ghost_element_selected;
+        let inset = DynamicSpacing::Base04.rems(cx);
 
-        let indicator = match self.previous_selected_index {
+        let should_animate = match self.previous_selected_index {
             Some(previous_index) if !self.reduce_motion => {
-                let distance = self.selected_index.abs_diff(previous_index);
-                let clamped_previous_top = if distance > MAX_ANIMATED_DISTANCE {
-                    let clamped_previous_index = if self.selected_index > previous_index {
-                        self.selected_index - MAX_ANIMATED_DISTANCE
-                    } else {
-                        self.selected_index + MAX_ANIMATED_DISTANCE
-                    };
-                    item_height * clamped_previous_index
-                } else {
-                    item_height * previous_index
-                };
-
-                let generation = self.generation;
-
-                div()
-                    .absolute()
-                    .left_0()
-                    .w_full()
-                    .h(item_height)
-                    .bg(background)
-                    .rounded_sm()
-                    .with_animation(
-                        ("sel-overlay", generation as u64),
-                        Animation::new(Duration::from_millis(80))
-                            .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
-                        move |this, delta| {
-                            let offset = clamped_previous_top
-                                + (selected_top - clamped_previous_top) * delta;
-                            this.top(offset)
-                        },
-                    )
-                    .into_any_element()
+                visible_range.contains(&previous_index)
             }
-            _ => div()
+            _ => false,
+        };
+
+        let indicator = if should_animate {
+            let previous_index = self.previous_selected_index.unwrap();
+            let distance = self.selected_index.abs_diff(previous_index);
+            let clamped_previous_top = if distance > MAX_ANIMATED_DISTANCE {
+                let clamped_previous_index = if self.selected_index > previous_index {
+                    self.selected_index - MAX_ANIMATED_DISTANCE
+                } else {
+                    self.selected_index + MAX_ANIMATED_DISTANCE
+                };
+                item_height * clamped_previous_index
+            } else {
+                item_height * previous_index
+            };
+
+            let generation = self.generation;
+
+            div()
                 .absolute()
-                .left_0()
-                .top(selected_top)
-                .w_full()
+                .left(inset)
+                .right(inset)
                 .h(item_height)
                 .bg(background)
                 .rounded_sm()
-                .into_any_element(),
+                .with_animation(
+                    ("sel-overlay", generation as u64),
+                    Animation::new(Duration::from_millis(150))
+                        .with_easing(gpui::ease_in_out),
+                    move |this, delta| {
+                        let offset = clamped_previous_top
+                            + (selected_top - clamped_previous_top) * delta;
+                        this.top(offset)
+                    },
+                )
+                .into_any_element()
+        } else {
+            div()
+                .absolute()
+                .left(inset)
+                .right(inset)
+                .top(selected_top)
+                .h(item_height)
+                .bg(background)
+                .rounded_sm()
+                .into_any_element()
         };
 
         div()
