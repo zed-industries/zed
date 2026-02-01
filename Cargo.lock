@@ -12714,7 +12714,6 @@ dependencies = [
 name = "project"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "askpass",
  "async-trait",
@@ -12747,6 +12746,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "memchr",
  "node_runtime",
  "parking_lot",
  "paths",
