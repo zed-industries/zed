@@ -22,10 +22,8 @@ jobs:
         fetch-depth: 0
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
-      shell: bash -euxo pipefail {0}
     - name: ./script/clippy
       run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -94,23 +92,18 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -145,23 +138,18 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -201,7 +189,6 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -212,10 +199,8 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed-aarch64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -255,7 +240,6 @@ jobs:
         version=$(git rev-parse --short HEAD)
         echo "Publishing version: ${version} on release channel nightly"
         echo "nightly" > crates/zed/RELEASE_CHANNEL
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -266,10 +250,8 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed-x86_64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -417,7 +399,6 @@ jobs:
         cachixArgs: -v
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
   build_nix_mac_aarch64:
@@ -448,7 +429,6 @@ jobs:
         cachixArgs: -v
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     continue-on-error: true
   update_nightly_tag:
@@ -473,7 +453,6 @@ jobs:
         path: ./artifacts/
     - name: ls -lR ./artifacts
       run: ls -lR ./artifacts
-      shell: bash -euxo pipefail {0}
     - name: release::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
@@ -490,10 +469,8 @@ jobs:
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
         mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
         mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
-      shell: bash -euxo pipefail {0}
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
-      shell: bash -euxo pipefail {0}
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
@@ -507,7 +484,6 @@ jobs:
         git config user.email github-actions@github.com
         git tag -f nightly
         git push origin nightly --force
-      shell: bash -euxo pipefail {0}
     - name: release::create_sentry_release
       uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
       with:
@@ -532,6 +508,8 @@ jobs:
       run: |
         curl -X POST -H 'Content-type: application/json'\
          --data '{"text":"❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
-      shell: bash -euxo pipefail {0}
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

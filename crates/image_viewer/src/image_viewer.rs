@@ -144,16 +144,20 @@ impl ImageView {
     }
 
     fn fit_to_view(&mut self, _: &FitToView, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((bounds, (img_width, img_height))) = self.container_bounds.zip(self.image_size)
-        {
-            let container_width: f32 = bounds.size.width.into();
-            let container_height: f32 = bounds.size.height.into();
-            let scale_x = container_width / img_width as f32;
-            let scale_y = container_height / img_height as f32;
-            self.zoom_level = scale_x.min(scale_y).min(1.0);
+        if let Some((bounds, image_size)) = self.container_bounds.zip(self.image_size) {
+            self.zoom_level = ImageView::compute_fit_to_view_zoom(bounds, image_size);
             self.pan_offset = Point::default();
             cx.notify();
         }
+    }
+
+    fn compute_fit_to_view_zoom(container_bounds: Bounds<Pixels>, image_size: (u32, u32)) -> f32 {
+        let (image_width, image_height) = image_size;
+        let container_width: f32 = container_bounds.size.width.into();
+        let container_height: f32 = container_bounds.size.height.into();
+        let scale_x = container_width / image_width as f32;
+        let scale_y = container_height / image_height as f32;
+        scale_x.min(scale_y).min(1.0)
     }
 
     fn zoom_to_actual_size(
@@ -320,7 +324,18 @@ impl Element for ImageContentElement {
         let image_view = self.image_view.read(cx);
         let image = image_view.image_item.read(cx).image.clone();
 
-        let zoom_level = image_view.zoom_level;
+        let first_layout = image_view.container_bounds.is_none();
+
+        let initial_zoom_level = first_layout
+            .then(|| {
+                image_view
+                    .image_size
+                    .map(|image_size| ImageView::compute_fit_to_view_zoom(bounds, image_size))
+            })
+            .flatten();
+
+        let zoom_level = initial_zoom_level.unwrap_or(image_view.zoom_level);
+
         let pan_offset = image_view.pan_offset;
         let border_color = cx.theme().colors().border;
 
@@ -347,6 +362,9 @@ impl Element for ImageContentElement {
 
         self.image_view.update(cx, |this, _| {
             this.container_bounds = Some(bounds);
+            if let Some(initial_zoom_level) = initial_zoom_level {
+                this.zoom_level = initial_zoom_level;
+            }
         });
 
         let mut image_content = div()

@@ -938,19 +938,34 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Set scroll position to check later
             editor.set_scroll_position(gpui::Point::<f64>::new(5.5, 5.5), window, cx);
-            let original_scroll_position = editor.scroll_manager.anchor();
+            let original_scroll_position = editor
+                .scroll_manager
+                .native_anchor(&editor.display_snapshot(cx), cx);
 
             // Jump to the end of the document and adjust scroll
             editor.move_to_end(&MoveToEnd, window, cx);
             editor.set_scroll_position(gpui::Point::<f64>::new(-2.5, -0.5), window, cx);
-            assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
+            assert_ne!(
+                editor
+                    .scroll_manager
+                    .native_anchor(&editor.display_snapshot(cx), cx),
+                original_scroll_position
+            );
 
             let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), window, cx);
-            assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
+            assert_eq!(
+                editor
+                    .scroll_manager
+                    .native_anchor(&editor.display_snapshot(cx), cx),
+                original_scroll_position
+            );
 
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-            let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
+            let mut invalid_anchor = editor
+                .scroll_manager
+                .native_anchor(&editor.display_snapshot(cx), cx)
+                .anchor;
             invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
@@ -9017,6 +9032,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
             provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
+                cursor_position: None,
                 edit_preview: None,
             }))
         })
@@ -17708,12 +17724,14 @@ async fn test_following(cx: &mut TestAppContext) {
                 &leader_entity,
                 window,
                 move |_, leader, event, window, cx| {
-                    leader.read(cx).add_event_to_update_proto(
-                        event,
-                        &mut update.borrow_mut(),
-                        window,
-                        cx,
-                    );
+                    leader.update(cx, |leader, cx| {
+                        leader.add_event_to_update_proto(
+                            event,
+                            &mut update.borrow_mut(),
+                            window,
+                            cx,
+                        );
+                    });
                 },
             )
             .detach();
@@ -17934,12 +17952,9 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
         let update = update_message.clone();
         |_, window, cx| {
             cx.subscribe_in(&leader, window, move |_, leader, event, window, cx| {
-                leader.read(cx).add_event_to_update_proto(
-                    event,
-                    &mut update.borrow_mut(),
-                    window,
-                    cx,
-                );
+                leader.update(cx, |leader, cx| {
+                    leader.add_event_to_update_proto(event, &mut update.borrow_mut(), window, cx);
+                });
             })
             .detach();
         }

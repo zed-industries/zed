@@ -15,8 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-const PROMPT_TEMPLATE: &str = include_str!("prompts/qa.md");
-
 /// Arguments for the QA command.
 #[derive(Debug, Clone, clap::Args)]
 pub struct QaArgs {
@@ -94,8 +92,9 @@ pub fn build_prompt(example: &Example) -> Option<String> {
         }
     }
 
+    let prompt_template = crate::prompt_assets::get_prompt("qa.md");
     Some(
-        PROMPT_TEMPLATE
+        prompt_template
             .replace("{edit_history}", &edit_history)
             .replace("{cursor_excerpt}", &cursor_excerpt)
             .replace("{actual_patch_word_diff}", &actual_patch_word_diff),
@@ -172,7 +171,9 @@ impl QaClient {
                         cache_control: None,
                     }],
                 }];
-                let response = client.generate(model, max_tokens, messages).await?;
+                let response = client
+                    .generate(model, max_tokens, messages, None, false)
+                    .await?;
                 Ok(response.map(|r| {
                     r.content
                         .iter()
@@ -188,7 +189,9 @@ impl QaClient {
                 let messages = vec![open_ai::RequestMessage::User {
                     content: open_ai::MessageContent::Plain(prompt.to_string()),
                 }];
-                let response = client.generate(model, max_tokens, messages).await?;
+                let response = client
+                    .generate(model, max_tokens, messages, None, false)
+                    .await?;
                 Ok(response.map(|r| {
                     r.choices
                         .into_iter()

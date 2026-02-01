@@ -120,8 +120,8 @@ fn scroll_editor(
     let old_top_column = scroll_position.x as u32;
 
     if editor.scroll_hover(amount, window, cx) {
-        return;
-    }
+    return;
+}
 
     let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
     let amount = match (amount.is_full_page(), editor.visible_line_count()) {
@@ -181,7 +181,9 @@ fn scroll_editor(
                                 .saturating_add_signed(amount.lines(visible_line_count) as i32),
                         )
                     } else {
-                        DisplayRow(top_row.0 + selection.head().row().0 - old_top_row.0)
+                        DisplayRow(top_row.0.saturating_add_signed(
+                            selection.head().row().0 as i32 -  old_top_row.0 as i32,
+                        ))
                     };
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }

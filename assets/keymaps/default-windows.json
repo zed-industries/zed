@@ -319,6 +319,7 @@
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
+      "ctrl-alt-k": "agent::ToggleThinkingMode",
     },
   },
   {
@@ -732,8 +733,8 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "ctrl-shift-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-shift-down": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -742,8 +743,8 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "ctrl-shift-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-shift-down": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -1149,6 +1150,7 @@
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
+      "ctrl-shift-.": "agent::AddSelectionToThread",
     },
   },
   {
