@@ -300,24 +300,24 @@ impl ScrollManager {
             display_map_id: None,
         });
         ScrollManager {
-        vertical_scroll_margin,
-        anchor,
-        scroll_max_x: None,
-        ongoing: OngoingScroll::new(),
-        sticky_header_line_count: 0,
-        autoscroll_request: None,
-        show_scrollbars: true,
-        hide_scrollbar_task: None,
-        active_scrollbar: None,
-        last_autoscroll: None,
-        visible_line_count: None,
-        visible_column_count: None,
-        forbid_vertical_scroll: false,
-        minimap_thumb_state: None,
-        scroll_animation: None,
-        scroll_animation_duration: Duration::from_secs_f32(scroll_animation_duration),
-        _save_scroll_position_task: Task::ready(()),
-    }
+            vertical_scroll_margin,
+            anchor,
+            scroll_max_x: None,
+            ongoing: OngoingScroll::new(),
+            sticky_header_line_count: 0,
+            autoscroll_request: None,
+            show_scrollbars: true,
+            hide_scrollbar_task: None,
+            active_scrollbar: None,
+            last_autoscroll: None,
+            visible_line_count: None,
+            visible_column_count: None,
+            forbid_vertical_scroll: false,
+            minimap_thumb_state: None,
+            scroll_animation: None,
+            scroll_animation_duration: Duration::from_secs_f32(scroll_animation_duration),
+            _save_scroll_position_task: Task::ready(()),
+        }
     }
 
     pub fn set_native_display_map_id(
@@ -465,7 +465,16 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
         let (anchor, top_row) = self.calculate_scroll_anchor(scroll_position, map, cx);
-        self.set_anchor(anchor, map, top_row, local, autoscroll, workspace_id, window, cx)
+        self.set_anchor(
+            anchor,
+            map,
+            top_row,
+            local,
+            autoscroll,
+            workspace_id,
+            window,
+            cx,
+        )
     }
 
     fn set_anchor(
