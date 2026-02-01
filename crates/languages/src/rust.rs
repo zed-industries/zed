@@ -623,11 +623,14 @@ impl LspAdapter for RustLspAdapter {
         });
 
         if enable_lsp_tasks {
-            merge_json_value_into(json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            }), &mut experimental);
+            merge_json_value_into(
+                json!({
+                    "runnables": {
+                        "kinds": [ "cargo", "shell" ],
+                    },
+                }),
+                &mut experimental,
+            );
         }
 
         if let Some(original_experimental) = &mut original.capabilities.experimental {
@@ -658,7 +661,10 @@ impl LspAdapter for RustLspAdapter {
             original.initialization_options = Some(lens_config);
         }
 
-        eprintln!("[DEBUG rust-analyzer] initializationOptions: {:?}", original.initialization_options);
+        eprintln!(
+            "[DEBUG rust-analyzer] initializationOptions: {:?}",
+            original.initialization_options
+        );
         Ok(original)
     }
 
@@ -666,12 +672,13 @@ impl LspAdapter for RustLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<lsp::Uri>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let user_settings = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         let mut default_config = serde_json::json!({
             "lens": {

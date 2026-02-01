@@ -183,7 +183,7 @@ fn render_code_lens_line(
                                     match kind {
                                         CodeLensKind::References => {
                                             let _ = editor.find_all_references(
-                                                &FindAllReferences,
+                                                &FindAllReferences::default(),
                                                 window,
                                                 cx,
                                             );
@@ -266,17 +266,14 @@ impl Editor {
         let multibuffer = self.buffer().clone();
 
         let task = cx.spawn_in(window, async move |editor, cx| {
-            let actions_task = match project.update(cx, |project, cx| {
+            let actions_task = project.update(cx, |project, cx| {
                 project.code_lens_actions::<text::Anchor>(&excerpt_buffer, text_range.clone(), cx)
-            }) {
-                Ok(task) => task,
-                Err(_) => return,
-            };
+            });
 
             let actions: anyhow::Result<Option<Vec<CodeAction>>> = actions_task.await;
 
             if let Ok(Some(actions)) = actions {
-                let lenses: Vec<CodeLensData> = match multibuffer.update(cx, |multibuffer, cx| {
+                let lenses = multibuffer.update(cx, |multibuffer, cx| {
                     let snapshot = multibuffer.snapshot(cx);
 
                     let individual_lenses: Vec<(Anchor, CodeLensItem)> = actions
@@ -307,10 +304,7 @@ impl Editor {
                         .collect();
 
                     group_lenses_by_row(individual_lenses, &snapshot)
-                }) {
-                    Ok(lenses) => lenses,
-                    Err(_) => return,
-                };
+                });
 
                 editor
                     .update(cx, |editor, cx| {

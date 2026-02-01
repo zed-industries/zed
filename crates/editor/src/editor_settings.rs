@@ -296,14 +296,11 @@ impl Settings for EditorSettings {
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
-<<<<<<< HEAD
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
-=======
             code_lens: CodeLens {
                 enabled: code_lens.enabled.unwrap(),
                 debounce: code_lens.debounce.unwrap(),
             },
->>>>>>> dcaf1e13a2 (feat: codelens)
         }
     }
 }

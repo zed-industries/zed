@@ -831,7 +831,7 @@ pub struct DragAndDropSelectionContent {
 }
 
 /// Code lens settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct CodeLensContent {
     /// Whether code lens is enabled.
