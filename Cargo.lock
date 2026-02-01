@@ -305,6 +305,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace",
 ]
 
 [[package]]

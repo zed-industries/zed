@@ -6,7 +6,7 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]
-test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support"]
+test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support", "workspace/test-support"]
 e2e = []
 
 [lints]
@@ -53,6 +53,7 @@ terminal.workspace = true
 uuid.workspace = true
 util.workspace = true
 watch.workspace = true
+workspace.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -66,5 +67,6 @@ language.workspace = true
 indoc.workspace = true
 acp_thread = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
