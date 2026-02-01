@@ -10,6 +10,7 @@ pub struct TitleBarSettings {
     pub show_sign_in: bool,
     pub show_user_menu: bool,
     pub show_menus: bool,
+    pub button_layout: Option<gpui::WindowButtonLayout>,
 }
 
 impl Settings for TitleBarSettings {
@@ -24,6 +25,10 @@ impl Settings for TitleBarSettings {
             show_sign_in: content.show_sign_in.unwrap(),
             show_user_menu: content.show_user_menu.unwrap(),
             show_menus: content.show_menus.unwrap(),
+            button_layout: content
+                .button_layout
+                .filter(|layout| layout != "auto")
+                .map(|layout| gpui::WindowButtonLayout::parse(&layout)),
         }
     }
 }
