@@ -34,8 +34,8 @@ use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use ui::{
-    ContextMenu, Divider, Headline, HeadlineSize, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
-    prelude::*,
+    ContextMenu, ContextMenuItem, Divider, Headline, HeadlineSize, ScrollAxes, Scrollbars, Tooltip,
+    WithScrollbar, prelude::*,
     scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
 use util::ResultExt;
@@ -1459,6 +1459,91 @@ impl Item for TerminalView {
 
     fn is_terminal(&self, _: &App) -> bool {
         true
+    }
+
+    fn on_tab_double_click(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<Task<()>> {
+        self.show_rename_modal(window, cx);
+        None
+    }
+
+    fn tab_context_menu_entries(
+        &self,
+        _window: &gpui::Window,
+        _cx: &App,
+    ) -> Option<Vec<ContextMenuItem>> {
+        use ui::ContextMenuEntry;
+        let focus = self.focus_handle.clone();
+        let focus2 = self.focus_handle.clone();
+        let focus3 = self.focus_handle.clone();
+        Some(vec![
+            ContextMenuItem::Entry(
+                ContextMenuEntry::new("Rename Terminal")
+                    .action(Box::new(RenameTerminal))
+                    .handler(move |window, cx| {
+                        focus.dispatch_action(&RenameTerminal, window, cx);
+                    }),
+            ),
+            ContextMenuItem::Submenu {
+                label: "Tab Color".into(),
+                icon: None,
+                icon_color: None,
+                builder: Rc::new(move |menu, _, _| {
+                    let focus = focus2.clone();
+                    let mut menu = menu;
+                    for (name, color) in TERMINAL_TAB_COLORS {
+                        let focus = focus.clone();
+                        let action = SetTerminalTabColor(*color);
+                        menu = menu.entry(
+                            *name,
+                            Some(Box::new(action.clone())),
+                            move |window, cx| {
+                                focus.dispatch_action(&action, window, cx);
+                            },
+                        );
+                    }
+                    let focus = focus2.clone();
+                    menu.separator().entry(
+                        "Clear Color",
+                        Some(Box::new(ClearTerminalTabColor)),
+                        move |window, cx| {
+                            focus.dispatch_action(&ClearTerminalTabColor, window, cx);
+                        },
+                    )
+                }),
+            },
+            ContextMenuItem::Submenu {
+                label: "Text Color".into(),
+                icon: None,
+                icon_color: None,
+                builder: Rc::new(move |menu, _, _| {
+                    let focus = focus3.clone();
+                    let mut menu = menu;
+                    for (name, color) in TERMINAL_TAB_TEXT_COLORS {
+                        let focus = focus.clone();
+                        let action = SetTerminalTabTextColor(*color);
+                        menu = menu.entry(
+                            *name,
+                            Some(Box::new(action.clone())),
+                            move |window, cx| {
+                                focus.dispatch_action(&action, window, cx);
+                            },
+                        );
+                    }
+                    let focus = focus3.clone();
+                    menu.separator().entry(
+                        "Clear Color",
+                        Some(Box::new(ClearTerminalTabTextColor)),
+                        move |window, cx| {
+                            focus.dispatch_action(&ClearTerminalTabTextColor, window, cx);
+                        },
+                    )
+                }),
+            },
+        ])
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {

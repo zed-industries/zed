@@ -3345,6 +3345,8 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                exclude_build_folders: false,
+                custom_build_folder_patterns: Vec::new(),
             },
             cx,
         );
@@ -3408,6 +3410,8 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                exclude_build_folders: false,
+                custom_build_folder_patterns: Vec::new(),
             },
             cx,
         );
@@ -3446,6 +3450,8 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                exclude_build_folders: false,
+                custom_build_folder_patterns: Vec::new(),
             },
             cx,
         );
@@ -3528,6 +3534,10 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
+                        exclude_build_folders: Some(search_settings.exclude_build_folders),
+                        custom_build_folder_patterns: Some(
+                            search_settings.custom_build_folder_patterns.clone(),
+                        ),
                     });
                 });
             });

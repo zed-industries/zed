@@ -655,6 +655,11 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Whether to exclude common build folders (dist, node_modules, target, etc.) from search.
+    "exclude_build_folders": false,
+    // Additional folder patterns to exclude when exclude_build_folders is enabled.
+    // These patterns are added to the default list of build folder patterns.
+    "custom_build_folder_patterns": []
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -1382,7 +1387,7 @@
   "disable_ai": false,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
-  "auto_update": true,
+  "auto_update": false,
   // How to render LSP `textDocument/documentColor` colors in the editor.
   //
   // Possible values:

@@ -1,7 +1,7 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
-use acp_thread::{AcpThread, AgentSessionInfo};
-use agent::{ContextServerRegistry, ThreadStore};
+use acp_thread::{AcpThread, AgentSessionInfo, AgentSessionList};
+use agent::{ClaudeCodeSessionIndex, ClaudeCodeSessionList, ContextServerRegistry, ThreadStore};
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -46,10 +46,12 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, Corner, DismissEvent,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, MouseButton, Pixels,
+    ScrollHandle, SharedString, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    pulsating_between,
 };
 use language::LanguageRegistry;
+use menu::{Cancel, Confirm};
 use language_model::{ConfigurationError, LanguageModelRegistry};
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -59,11 +61,12 @@ use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
     Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProgressBar, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    ProgressBar, Tab, TabBar, TabPosition, Tooltip, prelude::*, right_click_menu,
+    utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+    CollaboratorId, DraggedSelection, DraggedTab, ModalView, ToggleZoom, ToolbarItemView, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -288,6 +291,191 @@ impl From<ExternalAgent> for AgentType {
     }
 }
 
+// Tab-related structures for multi-tab support
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabColor(pub u32);
+
+impl Default for TabColor {
+    fn default() -> Self {
+        Self(0) // No custom color
+    }
+}
+
+impl TabColor {
+    pub fn to_hsla(&self) -> Option<gpui::Hsla> {
+        if self.0 == 0 {
+            return None;
+        }
+        // Convert u32 to RGBA then to HSLA
+        let r = ((self.0 >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((self.0 >> 8) & 0xFF) as f32 / 255.0;
+        let b = (self.0 & 0xFF) as f32 / 255.0;
+        Some(gpui::Hsla::from(gpui::Rgba { r, g, b, a: 1.0 }))
+    }
+
+    pub fn preset_colors() -> Vec<(SharedString, TabColor)> {
+        vec![
+            ("Red".into(), TabColor(0xFF6B6B)),
+            ("Orange".into(), TabColor(0xFFA94D)),
+            ("Yellow".into(), TabColor(0xFFD93D)),
+            ("Green".into(), TabColor(0x6BCB77)),
+            ("Blue".into(), TabColor(0x4D96FF)),
+            ("Purple".into(), TabColor(0x9B59B6)),
+            ("Pink".into(), TabColor(0xF06595)),
+        ]
+    }
+}
+
+struct AgentTab {
+    view: ActiveView,
+    agent_type: AgentType,
+    custom_name: Option<SharedString>,
+    tab_color: TabColor,
+}
+
+impl AgentTab {
+    fn new(view: ActiveView, agent_type: AgentType) -> Self {
+        Self {
+            view,
+            agent_type,
+            custom_name: None,
+            tab_color: TabColor::default(),
+        }
+    }
+
+    fn title(&self, cx: &App) -> SharedString {
+        if let Some(name) = &self.custom_name {
+            return name.clone();
+        }
+
+        match &self.view {
+            ActiveView::ExternalAgentThread { thread_view } => {
+                if let Some(thread) = thread_view.read(cx).as_native_thread(cx) {
+                    let title = thread.read(cx).title();
+                    if !title.is_empty() {
+                        return title;
+                    }
+                }
+                thread_view.read(cx).title(cx)
+            }
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => {
+                let summary = text_thread_editor
+                    .read(cx)
+                    .text_thread()
+                    .read(cx)
+                    .summary();
+                match summary {
+                    TextThreadSummary::Content(content) => content.text.clone().into(),
+                    _ => DEFAULT_THREAD_TITLE.into(),
+                }
+            }
+            ActiveView::History { kind } => match kind {
+                HistoryKind::AgentThreads => "Agent History".into(),
+                HistoryKind::TextThreads => "Text History".into(),
+            },
+            ActiveView::Configuration => "Settings".into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DraggedAgentPanelTab {
+    pub ix: usize,
+    pub title: SharedString,
+}
+
+impl Render for DraggedAgentPanelTab {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Tab::new("dragged-agent-panel-tab")
+            .toggle_state(true)
+            .child(Label::new(self.title.clone()))
+    }
+}
+
+struct RenameAgentTabModal {
+    current_title: SharedString,
+    editor: Entity<Editor>,
+    panel: WeakEntity<AgentPanel>,
+    tab_index: usize,
+}
+
+impl RenameAgentTabModal {
+    fn new(
+        current_title: String,
+        panel: WeakEntity<AgentPanel>,
+        tab_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(current_title.clone(), window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor
+        });
+        Self {
+            current_title: current_title.into(),
+            editor,
+            panel,
+            tab_index,
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let new_name = self.editor.read(cx).text(cx);
+        let panel = self.panel.clone();
+        let tab_index = self.tab_index;
+
+        if new_name.is_empty() {
+            _ = panel.update(cx, |panel, cx| {
+                panel.rename_tab(tab_index, None, cx);
+            });
+        } else if new_name != self.current_title.as_ref() {
+            _ = panel.update(cx, |panel, cx| {
+                panel.rename_tab(tab_index, Some(new_name.into()), cx);
+            });
+        }
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RenameAgentTabModal {}
+impl ModalView for RenameAgentTabModal {}
+
+impl Focusable for RenameAgentTabModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for RenameAgentTabModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RenameAgentTabModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::ZedAssistant).size(IconSize::XSmall))
+                    .child(Headline::new("Rename Tab").size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
 impl ActiveView {
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
@@ -430,6 +618,11 @@ pub struct AgentPanel {
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     history_subscription: Option<Subscription>,
+    // Multi-tab support
+    tabs: Vec<AgentTab>,
+    active_tab_index: usize,
+    tab_bar_scroll_handle: ScrollHandle,
+    // Legacy fields for compatibility
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -686,6 +879,10 @@ impl AgentPanel {
             configuration_subscription: None,
             history_subscription: None,
             context_server_registry,
+            // Multi-tab support
+            tabs: Vec::new(),
+            active_tab_index: 0,
+            tab_bar_scroll_handle: ScrollHandle::new(),
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
@@ -849,7 +1046,7 @@ impl AgentPanel {
         text_thread_editor.focus_handle(cx).focus(window, cx);
     }
 
-    fn external_thread(
+    pub fn external_thread(
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<AgentSessionInfo>,
@@ -1310,6 +1507,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.set_active_view_with_tab(new_view, focus, true, window, cx);
+    }
+
+    fn set_active_view_with_tab(
+        &mut self,
+        new_view: ActiveView,
+        focus: bool,
+        add_as_new_tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let current_is_history = matches!(self.active_view, ActiveView::History { .. });
         let new_is_history = matches!(new_view, ActiveView::History { .. });
 
@@ -1318,6 +1526,32 @@ impl AgentPanel {
 
         let current_is_special = current_is_history || current_is_config;
         let new_is_special = new_is_history || new_is_config;
+
+        // Add to tabs if this is a thread view (not History/Configuration)
+        if add_as_new_tab && !new_is_special {
+            let agent_type = self.selected_agent.clone();
+            // Clone the view for the tab
+            let tab_view = match &new_view {
+                ActiveView::ExternalAgentThread { thread_view } => {
+                    ActiveView::ExternalAgentThread {
+                        thread_view: thread_view.clone(),
+                    }
+                }
+                ActiveView::TextThread {
+                    text_thread_editor,
+                    title_editor,
+                    buffer_search_bar,
+                    _subscriptions,
+                } => ActiveView::TextThread {
+                    text_thread_editor: text_thread_editor.clone(),
+                    title_editor: title_editor.clone(),
+                    buffer_search_bar: buffer_search_bar.clone(),
+                    _subscriptions: Vec::new(),
+                },
+                _ => return, // Should not happen
+            };
+            self.add_tab(tab_view, agent_type, cx);
+        }
 
         match &new_view {
             ActiveView::TextThread { .. } => {}
@@ -1339,6 +1573,169 @@ impl AgentPanel {
         if focus {
             self.focus_handle(cx).focus(window, cx);
         }
+    }
+
+    // Tab management methods
+    fn add_tab(&mut self, view: ActiveView, agent_type: AgentType, cx: &mut Context<Self>) {
+        // Don't add History or Configuration as tabs
+        if matches!(view, ActiveView::History { .. } | ActiveView::Configuration) {
+            return;
+        }
+
+        let tab = AgentTab::new(view, agent_type);
+        self.tabs.push(tab);
+        self.active_tab_index = self.tabs.len() - 1;
+        self.tab_bar_scroll_handle.scroll_to_item(self.active_tab_index);
+        cx.notify();
+    }
+
+    fn activate_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+
+        self.active_tab_index = index;
+        self.tab_bar_scroll_handle.scroll_to_item(index);
+
+        // Sync active_view with the selected tab
+        if let Some(tab) = self.tabs.get(index) {
+            // Clone the view reference for active_view
+            self.active_view = match &tab.view {
+                ActiveView::ExternalAgentThread { thread_view } => {
+                    ActiveView::ExternalAgentThread {
+                        thread_view: thread_view.clone(),
+                    }
+                }
+                ActiveView::TextThread {
+                    text_thread_editor,
+                    title_editor,
+                    buffer_search_bar,
+                    _subscriptions,
+                } => ActiveView::TextThread {
+                    text_thread_editor: text_thread_editor.clone(),
+                    title_editor: title_editor.clone(),
+                    buffer_search_bar: buffer_search_bar.clone(),
+                    _subscriptions: Vec::new(), // Don't clone subscriptions
+                },
+                ActiveView::History { kind } => ActiveView::History { kind: *kind },
+                ActiveView::Configuration => ActiveView::Configuration,
+            };
+            self.selected_agent = tab.agent_type.clone();
+        }
+
+        self.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+
+        self.tabs.remove(index);
+
+        if self.tabs.is_empty() {
+            // Create a new default tab if all tabs are closed
+            self.new_agent_thread(AgentType::NativeAgent, window, cx);
+            return;
+        }
+
+        // Adjust active_tab_index
+        if self.active_tab_index >= self.tabs.len() {
+            self.active_tab_index = self.tabs.len() - 1;
+        } else if index < self.active_tab_index {
+            self.active_tab_index -= 1;
+        } else if index == self.active_tab_index {
+            // Activate the tab at the same index (or last if we were at end)
+            self.activate_tab(self.active_tab_index.min(self.tabs.len() - 1), window, cx);
+            return;
+        }
+
+        cx.notify();
+    }
+
+    fn close_other_tabs(&mut self, keep_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if keep_index >= self.tabs.len() {
+            return;
+        }
+
+        let kept_tab = self.tabs.remove(keep_index);
+        self.tabs.clear();
+        self.tabs.push(kept_tab);
+        self.active_tab_index = 0;
+
+        // Sync active_view
+        self.activate_tab(0, window, cx);
+    }
+
+    fn close_all_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.tabs.clear();
+        self.active_tab_index = 0;
+        // Create a new default tab
+        self.new_agent_thread(AgentType::NativeAgent, window, cx);
+    }
+
+    fn rename_tab(&mut self, index: usize, new_name: Option<SharedString>, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.custom_name = new_name;
+            cx.notify();
+        }
+    }
+
+    fn start_rename_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+
+        let current_title = self.tabs[index].title(cx).to_string();
+        let panel = cx.entity().downgrade();
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    RenameAgentTabModal::new(current_title, panel, index, window, cx)
+                });
+            });
+        }
+    }
+
+    fn set_tab_color(&mut self, index: usize, color: TabColor, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.tab_color = color;
+            cx.notify();
+        }
+    }
+
+    fn handle_tab_drop(&mut self, dragged_ix: usize, target_ix: usize, cx: &mut Context<Self>) {
+        if dragged_ix == target_ix || dragged_ix >= self.tabs.len() || target_ix > self.tabs.len() {
+            return;
+        }
+
+        let tab = self.tabs.remove(dragged_ix);
+        let insert_ix = if target_ix > dragged_ix {
+            target_ix - 1
+        } else {
+            target_ix
+        };
+        self.tabs.insert(insert_ix, tab);
+
+        // Update active_tab_index
+        if self.active_tab_index == dragged_ix {
+            self.active_tab_index = insert_ix;
+        } else if dragged_ix < self.active_tab_index && self.active_tab_index <= insert_ix {
+            self.active_tab_index -= 1;
+        } else if insert_ix <= self.active_tab_index && self.active_tab_index < dragged_ix {
+            self.active_tab_index += 1;
+        }
+
+        cx.notify();
+    }
+
+    fn current_tab_title(&self, cx: &App) -> SharedString {
+        self.tabs
+            .get(self.active_tab_index)
+            .map(|tab| tab.title(cx))
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
     }
 
     fn populate_recently_updated_menu_section(
@@ -1488,6 +1885,8 @@ impl AgentPanel {
             AgentType::ClaudeCode => {
                 self.selected_agent = AgentType::ClaudeCode;
                 self.serialize(cx);
+                // TODO: Session picker and history disabled until resume with history is supported
+                // For now, just start a new session directly
                 self.external_thread(
                     Some(crate::ExternalAgent::ClaudeCode),
                     None,
@@ -1538,6 +1937,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let is_claude_code = matches!(ext_agent, ExternalAgent::ClaudeCode);
         let selected_agent = AgentType::from(ext_agent);
         if self.selected_agent != selected_agent {
             self.selected_agent = selected_agent;
@@ -1549,6 +1949,7 @@ impl AgentPanel {
             .is_some()
             .then(|| self.thread_store.clone());
 
+        let project_for_history = project.clone();
         let thread_view = cx.new(|cx| {
             crate::acp::AcpThreadView::new(
                 server,
@@ -1565,12 +1966,63 @@ impl AgentPanel {
         });
 
         let acp_history = self.acp_history.clone();
+
+        // TODO: Claude Code session history disabled until resume with history is supported
+        // For Claude Code, immediately set up the session list from CLI storage
+        // This runs right away rather than waiting for the thread_view to emit changes
+        // if is_claude_code {
+        //     let project_path = project_for_history
+        //         .read(cx)
+        //         .worktrees(cx)
+        //         .next()
+        //         .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+        //
+        //     if let Some(project_path) = project_path {
+        //         log::info!("Claude Code: Looking for sessions at project path: {:?}", project_path);
+        //         if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+        //             log::info!("Claude Code: Found session index, creating session list");
+        //             let session_list: Rc<dyn AgentSessionList> =
+        //                 Rc::new(ClaudeCodeSessionList::new(index));
+        //             acp_history.update(cx, |history, cx| {
+        //                 history.set_session_list(Some(session_list), cx);
+        //             });
+        //         } else {
+        //             log::info!("Claude Code: No session index found at {:?}", project_path);
+        //         }
+        //     } else {
+        //         log::info!("Claude Code: No project path found");
+        //     }
+        // }
+
+        // Also observe for future changes (e.g., when native agent connection provides a session list)
+        let acp_history_for_observer = acp_history.clone();
+        let _project_for_observer = project_for_history.clone();
+        let _is_claude_code = is_claude_code;
         self.history_subscription = Some(cx.observe(&thread_view, move |_, thread_view, cx| {
             if let Some(session_list) = thread_view.read(cx).session_list() {
-                acp_history.update(cx, |history, cx| {
+                acp_history_for_observer.update(cx, |history, cx| {
                     history.set_session_list(Some(session_list), cx);
                 });
             }
+            // TODO: Claude Code session history disabled until resume with history is supported
+            // else if is_claude_code {
+            //     // Fallback: For Claude Code, try to create a session list from CLI storage
+            //     let project_path = project_for_observer
+            //         .read(cx)
+            //         .worktrees(cx)
+            //         .next()
+            //         .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+            //
+            //     if let Some(project_path) = project_path {
+            //         if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+            //             let session_list: Rc<dyn AgentSessionList> =
+            //                 Rc::new(ClaudeCodeSessionList::new(index));
+            //             acp_history_for_observer.update(cx, |history, cx| {
+            //                 history.set_session_list(Some(session_list), cx);
+            //             });
+            //         }
+            //     }
+            // }
         }));
 
         self.set_active_view(
@@ -2065,6 +2517,212 @@ impl AgentPanel {
             })
     }
 
+    fn render_tab_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let tab_count = self.tabs.len();
+
+        if tab_count == 0 {
+            // No tabs, show default title
+            return h_flex()
+                .gap(DynamicSpacing::Base04.rems(cx))
+                .child(self.render_title_view(window, cx))
+                .into_any_element();
+        }
+
+        let mut tab_bar = TabBar::new("agent-panel-tab-bar")
+            .track_scroll(&self.tab_bar_scroll_handle);
+
+        for ix in 0..tab_count {
+            let is_active = ix == self.active_tab_index;
+            let tab = &self.tabs[ix];
+            let title = tab.title(cx);
+            let tab_color = tab.tab_color;
+
+            let is_first = ix == 0;
+            let is_last = ix == tab_count - 1;
+            let position_relative_to_active = ix.cmp(&self.active_tab_index);
+
+            let position = if is_first {
+                TabPosition::First
+            } else if is_last {
+                TabPosition::Last
+            } else {
+                TabPosition::Middle(position_relative_to_active)
+            };
+
+            // Build close button
+            let close_button = IconButton::new(("close-tab", ix), IconName::Close)
+                .shape(ui::IconButtonShape::Square)
+                .icon_color(Color::Muted)
+                .size(ButtonSize::None)
+                .icon_size(IconSize::Small)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.close_tab(ix, window, cx);
+                }))
+                .tooltip(Tooltip::text("Close Tab"));
+
+            // Build tab content
+            let tab_content = h_flex()
+                .gap_1()
+                .when_some(tab_color.to_hsla(), |this, color| {
+                    this.child(
+                        div()
+                            .w_2()
+                            .h_2()
+                            .rounded_full()
+                            .bg(color),
+                    )
+                })
+                .child(Label::new(title.clone()).size(LabelSize::Small));
+
+            // Build tab element
+            let tab_element = Tab::new(format!("agent-tab-{ix}"))
+                .close_side(ui::TabCloseSide::End)
+                .position(position)
+                .toggle_state(is_active)
+                .end_slot(close_button)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.activate_tab(ix, window, cx);
+                }))
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, _, window, cx| {
+                        this.close_tab(ix, window, cx);
+                    }),
+                )
+                .on_drag(
+                    DraggedAgentPanelTab {
+                        ix,
+                        title: title.clone(),
+                    },
+                    |dragged_tab, _, _, cx| {
+                        cx.new(|_| dragged_tab.clone()).into()
+                    },
+                )
+                .drag_over::<DraggedAgentPanelTab>(|tab, _, _, _| {
+                    tab.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2))
+                })
+                .on_drop(cx.listener(move |this, dragged: &DraggedAgentPanelTab, _, cx| {
+                    this.handle_tab_drop(dragged.ix, ix, cx);
+                }))
+                .child(tab_content);
+
+            // Wrap tab in right-click menu
+            let panel = cx.entity().downgrade();
+            let tab_with_menu = right_click_menu(("agent-tab-menu", ix))
+                .trigger(|_, _, _| tab_element)
+                .menu(move |window, cx| {
+                    let panel = panel.clone();
+                    ContextMenu::build(window, cx, move |menu, window, cx| {
+                        let mut menu = menu;
+
+                        if let Some(panel_entity) = panel.upgrade() {
+                            menu = menu
+                                .entry("Rename", None, {
+                                    let panel_entity = panel_entity.clone();
+                                    window.handler_for(&panel_entity, move |panel, window, cx| {
+                                        panel.start_rename_tab(ix, window, cx);
+                                    })
+                                })
+                                .custom_row({
+                                    let panel = panel.clone();
+                                    move |window, cx| Self::render_color_submenu(ix, panel.clone(), window, cx)
+                                })
+                                .separator()
+                                .entry("Close", None, {
+                                    let panel_entity = panel_entity.clone();
+                                    window.handler_for(&panel_entity, move |panel, window, cx| {
+                                        panel.close_tab(ix, window, cx);
+                                    })
+                                });
+
+                            if tab_count > 1 {
+                                menu = menu
+                                    .entry("Close Others", None, {
+                                        let panel_entity = panel_entity.clone();
+                                        window.handler_for(&panel_entity, move |panel, window, cx| {
+                                            panel.close_other_tabs(ix, window, cx);
+                                        })
+                                    })
+                                    .entry("Close All", None, {
+                                        let panel_entity = panel_entity.clone();
+                                        window.handler_for(&panel_entity, move |panel, window, cx| {
+                                            panel.close_all_tabs(window, cx);
+                                        })
+                                    });
+                            }
+                        }
+
+                        menu
+                    })
+                });
+
+            tab_bar = tab_bar.child(tab_with_menu);
+        }
+
+        tab_bar.into_any_element()
+    }
+
+    fn render_color_submenu(
+        ix: usize,
+        panel: WeakEntity<Self>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let colors = TabColor::preset_colors();
+
+        h_flex()
+            .w_full()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .child(Label::new("Color").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        // No color option (clear)
+                        div()
+                            .id(("color-none", ix))
+                            .w_4()
+                            .h_4()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click({
+                                let panel = panel.clone();
+                                move |_, window, cx| {
+                                    _ = panel.update(cx, |panel, cx| {
+                                        panel.set_tab_color(ix, TabColor::default(), cx);
+                                    });
+                                    window.refresh();
+                                }
+                            }),
+                    )
+                    .children(colors.into_iter().map(|(name, color)| {
+                        let panel = panel.clone();
+                        div()
+                            .id(SharedString::from(format!("color-{}", name)))
+                            .w_4()
+                            .h_4()
+                            .rounded_full()
+                            .bg(color.to_hsla().unwrap())
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.8))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(move |_, window, cx| {
+                                _ = panel.update(cx, |panel, cx| {
+                                    panel.set_tab_color(ix, color, cx);
+                                });
+                                window.refresh();
+                            })
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
@@ -2428,6 +3086,7 @@ impl AgentPanel {
             .child(
                 h_flex()
                     .size_full()
+                    .overflow_hidden()
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .pl(DynamicSpacing::Base04.rems(cx))
                     .child(match &self.active_view {
@@ -2436,7 +3095,12 @@ impl AgentPanel {
                         }
                         _ => selected_agent.into_any_element(),
                     })
-                    .child(self.render_title_view(window, cx)),
+                    // Use tab bar when tabs are present, otherwise show title
+                    .child(if self.tabs.is_empty() {
+                        self.render_title_view(window, cx).into_any_element()
+                    } else {
+                        self.render_tab_bar(window, cx).into_any_element()
+                    }),
             )
             .child(
                 h_flex()

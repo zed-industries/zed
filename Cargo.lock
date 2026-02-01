@@ -169,6 +169,7 @@ dependencies = [
  "ctor",
  "db",
  "derive_more 0.99.20",
+ "dirs 4.0.0",
  "editor",
  "env_logger 0.11.8",
  "eval_utils",

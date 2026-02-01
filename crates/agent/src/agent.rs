@@ -1,3 +1,4 @@
+mod claude_code_sessions;
 mod db;
 mod edit_agent;
 mod legacy_thread;
@@ -11,6 +12,7 @@ mod thread_store;
 mod tool_permissions;
 mod tools;
 
+pub use claude_code_sessions::{ClaudeCodeSessionIndex, ClaudeCodeSessionList};
 use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;

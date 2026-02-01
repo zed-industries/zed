@@ -640,19 +640,36 @@ impl AcpThreadView {
                 telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
             }
 
+            let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
             let result = if let Some(native_agent) = connection
                 .clone()
                 .downcast::<agent::NativeAgentConnection>()
                 && let Some(resume) = resume_thread.clone()
             {
+                // Native agent resume
                 cx.update(|_, cx| {
                     native_agent
                         .0
                         .update(cx, |agent, cx| agent.open_thread(resume.session_id, cx))
                 })
                 .log_err()
+            } else if let Some(resume) = resume_thread.clone() {
+                // Try to load existing session via ACP protocol
+                cx.update(|_, cx| {
+                    connection
+                        .clone()
+                        .load_thread(&resume.session_id, project.clone(), &root_dir, cx)
+                })
+                .log_err()
+                .flatten()
             } else {
-                let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
+                None
+            };
+
+            // Fall back to creating new thread if resume not supported or no resume requested
+            let result = if let Some(result) = result {
+                Some(result)
+            } else {
                 cx.update(|_, cx| {
                     connection
                         .clone()
@@ -6717,6 +6734,12 @@ impl AcpThreadView {
         }
     }
 
+    fn should_show_update_notification(&self, _cx: &App) -> bool {
+        // TODO: AllAgentServersSettings needs Settings trait implementation
+        // to access show_update_notification setting
+        false
+    }
+
     fn current_model_id(&self, cx: &App) -> Option<String> {
         self.model_selector
             .as_ref()
@@ -7275,7 +7298,8 @@ impl Render for AcpThreadView {
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
-                    !has_messages || !matches!(self.thread_state, ThreadState::Ready { .. })
+                    self.should_show_update_notification(cx)
+                        && (!has_messages || !matches!(self.thread_state, ThreadState::Ready { .. }))
                 }),
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )

@@ -160,7 +160,7 @@ pub struct DragAndDropSelection {
 }
 
 /// Default options for buffer and project search items.
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct SearchSettings {
     /// Whether to show the project search button in the status bar.
     pub button: bool,
@@ -174,6 +174,10 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
+    /// Whether to exclude common build folders from search.
+    pub exclude_build_folders: bool,
+    /// Additional folder patterns to exclude when exclude_build_folders is enabled.
+    pub custom_build_folder_patterns: Vec<String>,
 }
 
 impl EditorSettings {
@@ -270,6 +274,10 @@ impl Settings for EditorSettings {
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
+                exclude_build_folders: search.exclude_build_folders.unwrap_or(false),
+                custom_build_folder_patterns: search
+                    .custom_build_folder_patterns
+                    .unwrap_or_default(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),

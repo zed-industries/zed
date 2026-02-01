@@ -794,6 +794,15 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Whether to exclude common build folders (dist, node_modules, target, etc.) from search.
+    ///
+    /// Default: false
+    pub exclude_build_folders: Option<bool>,
+    /// Additional folder patterns to exclude when exclude_build_folders is enabled.
+    /// These patterns are added to the default list of build folder patterns.
+    ///
+    /// Default: []
+    pub custom_build_folder_patterns: Option<Vec<String>>,
 }
 
 #[with_fallible_options]

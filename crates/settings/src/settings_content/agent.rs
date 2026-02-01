@@ -396,6 +396,10 @@ pub struct BuiltinAgentServerSettings {
     /// Default: {}
     #[serde(default)]
     pub favorite_config_option_values: HashMap<String, Vec<String>>,
+    /// Whether to show a notification banner when a new version of the agent is available.
+    ///
+    /// Default: false
+    pub show_update_notification: Option<bool>,
 }
 
 #[with_fallible_options]
