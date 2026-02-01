@@ -378,6 +378,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 None,
+                self.model.capabilities.thinking_mode,
             );
             let completions = self.stream_completion(request, cx);
             async move {
@@ -393,6 +394,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 None,
+                self.model.capabilities.thinking_mode,
             );
             let completions = self.stream_response(request, cx);
             async move {
@@ -559,5 +561,75 @@ impl Render for ConfigurationView {
         } else {
             v_flex().size_full().child(api_key_section).into_any()
         }
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use settings::ThinkingMode;
+
+    #[test]
+    fn test_model_thinking_mode_configuration() {
+        let available_models = [
+            AvailableModel {
+                name: "model-openai-default".to_string(),
+                display_name: Some("Model OpenAI Default".to_string()),
+                max_tokens: 128000,
+                max_output_tokens: Some(4096),
+                max_completion_tokens: None,
+                capabilities: ModelCapabilities {
+                    tools: true,
+                    images: false,
+                    parallel_tool_calls: false,
+                    prompt_cache_key: false,
+                    chat_completions: true,
+                    thinking_mode: ThinkingMode::Openai,
+                },
+            },
+            AvailableModel {
+                name: "model-interleave".to_string(),
+                display_name: Some("Model Interleave".to_string()),
+                max_tokens: 128000,
+                max_output_tokens: Some(4096),
+                max_completion_tokens: None,
+                capabilities: ModelCapabilities {
+                    tools: true,
+                    images: false,
+                    parallel_tool_calls: false,
+                    prompt_cache_key: false,
+                    chat_completions: true,
+                    thinking_mode: ThinkingMode::Interleave,
+                },
+            },
+            AvailableModel {
+                name: "model-preserved".to_string(),
+                display_name: Some("Model Preserved".to_string()),
+                max_tokens: 128000,
+                max_output_tokens: Some(4096),
+                max_completion_tokens: None,
+                capabilities: ModelCapabilities {
+                    tools: true,
+                    images: false,
+                    parallel_tool_calls: false,
+                    prompt_cache_key: false,
+                    chat_completions: true,
+                    thinking_mode: ThinkingMode::Preserved,
+                },
+            },
+        ];
+
+        assert_eq!(
+            available_models[0].capabilities.thinking_mode,
+            ThinkingMode::Openai
+        );
+        assert_eq!(
+            available_models[1].capabilities.thinking_mode,
+            ThinkingMode::Interleave
+        );
+        assert_eq!(
+            available_models[2].capabilities.thinking_mode,
+            ThinkingMode::Preserved
+        );
     }
 }
