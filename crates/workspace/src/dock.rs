@@ -955,10 +955,10 @@ impl Render for Dock {
             };
 
             let is_closing = self.is_closing;
-            let animation_gen = if is_closing {
-                self.close_generation
+            let (animation_prefix, animation_gen) = if is_closing {
+                ("dock-close", self.close_generation)
             } else {
-                self.open_generation
+                ("dock-open", self.open_generation)
             };
 
             div()
@@ -994,7 +994,7 @@ impl Render for Dock {
                     this.child(create_resize_handle())
                 })
                 .with_animation(
-                    ("dock-anim", animation_gen as u64),
+                    (animation_prefix, animation_gen as u64),
                     Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
                         .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
                     {
