@@ -1,5 +1,6 @@
 pub mod parser;
 mod path_range;
+mod skip_partial_links;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
@@ -247,8 +248,10 @@ pub struct Markdown {
     context_menu_selected_text: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
 struct Options {
     parse_links_only: bool,
+    skip_partial_links: bool,
 }
 
 pub enum CodeBlockRenderer {
@@ -309,9 +312,7 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            options: Options {
-                parse_links_only: false,
-            },
+            options: Options::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
             context_menu_selected_text: None,
@@ -336,6 +337,7 @@ impl Markdown {
             fallback_code_block_language: None,
             options: Options {
                 parse_links_only: true,
+                skip_partial_links: false,
             },
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: HashMap::default(),
@@ -343,6 +345,11 @@ impl Markdown {
         };
         this.parse(cx);
         this
+    }
+
+    pub fn skip_partial_links(mut self, skip: bool) -> Self {
+        self.options.skip_partial_links = skip;
+        self
     }
 
     fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
@@ -470,7 +477,11 @@ impl Markdown {
     }
 
     fn start_background_parse(&self, cx: &Context<Self>) -> Task<()> {
-        let source = self.source.clone();
+        let source = if self.options.skip_partial_links {
+            skip_partial_links::skip_partial_links(self.source.clone())
+        } else {
+            self.source.clone()
+        };
         let should_parse_links_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
