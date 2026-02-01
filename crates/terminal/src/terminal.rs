@@ -919,6 +919,52 @@ impl TaskStatus {
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
 
 impl Terminal {
+    fn normalize_wide_char_cells(term: &mut Term<ZedListener>) {
+        let columns = term.grid().columns();
+        if columns == 0 {
+            return;
+        }
+
+        let topmost_line = term.topmost_line().0;
+        let bottommost_line = term.bottommost_line().0;
+        let last_column = columns - 1;
+
+        let grid = term.grid_mut();
+        for line in topmost_line..=bottommost_line {
+            let row = &mut grid[Line(line)];
+
+            for col in 0..columns {
+                let column = Column(col);
+                let flags = row[column].flags;
+
+                if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) && col != last_column {
+                    row[column].flags.remove(Flags::LEADING_WIDE_CHAR_SPACER);
+                    row[column].c = ' ';
+                }
+
+                if flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    let prev_is_wide = col > 0
+                        && row[Column(col - 1)]
+                            .flags
+                            .contains(Flags::WIDE_CHAR);
+                    if !prev_is_wide {
+                        row[column].flags.remove(Flags::WIDE_CHAR_SPACER);
+                        row[column].c = ' ';
+                    }
+                }
+
+                if flags.contains(Flags::WIDE_CHAR) && col < last_column {
+                    let next_is_spacer = row[Column(col + 1)]
+                        .flags
+                        .contains(Flags::WIDE_CHAR_SPACER);
+                    if !next_is_spacer {
+                        row[column].clear_wide();
+                    }
+                }
+            }
+        }
+    }
+
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
@@ -973,6 +1019,10 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             AlacTermEvent::Wakeup => {
+                {
+                    let mut term = self.term.lock();
+                    Self::normalize_wide_char_cells(&mut term);
+                }
                 cx.emit(Event::Wakeup);
 
                 if let TerminalType::Pty { info, .. } = &self.terminal_type {
@@ -1310,6 +1360,7 @@ impl Terminal {
         {
             let mut term = self.term.lock();
             processor.advance(&mut *term, &converted);
+            Self::normalize_wide_char_cells(&mut term);
         }
         cx.emit(Event::Wakeup);
     }
@@ -2528,7 +2579,7 @@ mod tests {
     };
     use alacritty_terminal::{
         index::{Column, Line, Point as AlacPoint},
-        term::cell::Cell,
+        term::cell::{Cell, Flags},
     };
     use collections::HashMap;
     use gpui::{
@@ -2699,6 +2750,39 @@ mod tests {
             content_after.contains("from_injection"),
             "expected injected output to appear, got: {content_after}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_wide_char_delete_does_not_leave_residue(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output("\u{5b57}".as_bytes(), cx);
+
+            // A common interactive-line-editing pattern is to move back into the wide char's
+            // spacer cell and then delete a single cell (DCH). If wide invariants aren't repaired,
+            // this can leave the wide glyph behind without its spacer, causing visible residue.
+            terminal.write_output(b"\x08\x1b[P", cx);
+
+            let term_lock = terminal.term.lock();
+            let cell0 = &term_lock.grid()[Line(0)][Column(0)];
+            let cell1 = &term_lock.grid()[Line(0)][Column(1)];
+
+            assert_eq!(cell0.c, ' ');
+            assert!(!cell0.flags.contains(Flags::WIDE_CHAR));
+
+            assert_eq!(cell1.c, ' ');
+            assert!(!cell1.flags.contains(Flags::WIDE_CHAR_SPACER));
+        });
     }
 
     // TODO should be tested on Linux too, but does not work there well
