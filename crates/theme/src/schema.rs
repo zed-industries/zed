@@ -839,7 +839,8 @@ pub fn theme_colors_refinement(
     }
 }
 
-pub(crate) fn try_parse_color(color: &str) -> anyhow::Result<Hsla> {
+/// Parses a color string (e.g., "#FF0000" or "#FF0000FF") into an Hsla value.
+pub fn try_parse_color(color: &str) -> anyhow::Result<Hsla> {
     let rgba = gpui::Rgba::try_from(color)?;
     let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
     let hsla = palette::Hsla::from_color(rgba);

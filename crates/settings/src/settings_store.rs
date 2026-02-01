@@ -901,10 +901,12 @@ impl SettingsStore {
                     }),
                 }?;
                 if let Some(new_settings) = new_settings {
+                    let title_bar = new_settings.title_bar.clone();
                     match self.local_settings.entry((root_id, directory_path)) {
                         btree_map::Entry::Vacant(v) => {
                             v.insert(SettingsContent {
                                 project: new_settings,
+                                title_bar,
                                 ..Default::default()
                             });
                             zed_settings_changed = true;
@@ -913,6 +915,7 @@ impl SettingsStore {
                             if &o.get().project != &new_settings {
                                 o.insert(SettingsContent {
                                     project: new_settings,
+                                    title_bar,
                                     ..Default::default()
                                 });
                                 zed_settings_changed = true;
