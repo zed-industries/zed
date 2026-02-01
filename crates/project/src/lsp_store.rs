@@ -10221,9 +10221,7 @@ impl LspStore {
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token) {
-                eprintln!("[DEBUG] on_lsp_work_end: token={:?}, is_disk_based={}", token, work.is_disk_based_diagnostics_progress);
                 if !work.is_disk_based_diagnostics_progress {
-                    eprintln!("[DEBUG] Emitting RefreshCodeLens event");
                     cx.emit(LspStoreEvent::RefreshInlayHints {
                         server_id: language_server_id,
                         request_id: None,

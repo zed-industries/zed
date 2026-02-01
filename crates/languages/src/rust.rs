@@ -661,10 +661,6 @@ impl LspAdapter for RustLspAdapter {
             original.initialization_options = Some(lens_config);
         }
 
-        eprintln!(
-            "[DEBUG rust-analyzer] initializationOptions: {:?}",
-            original.initialization_options
-        );
         Ok(original)
     }
 
