@@ -7,6 +7,9 @@ use gpui::{
 use settings::should_reduce_motion;
 use ui::prelude::*;
 
+const MODAL_OPEN_DURATION: Duration = Duration::from_millis(150);
+const MODAL_CLOSE_DURATION: Duration = Duration::from_millis(100);
+
 #[derive(Debug)]
 pub enum DismissDecision {
     Dismiss(bool),
@@ -176,12 +179,11 @@ impl ModalLayer {
         };
 
         match active_modal.modal.on_before_dismiss(window, cx) {
-            DismissDecision::Dismiss(should_dismiss) => {
-                if !should_dismiss {
-                    self.dismiss_on_focus_lost = !should_dismiss;
-                    return false;
-                }
+            DismissDecision::Dismiss(false) => {
+                self.dismiss_on_focus_lost = true;
+                return false;
             }
+            DismissDecision::Dismiss(true) => {}
             DismissDecision::Pending => {
                 self.dismiss_on_focus_lost = false;
                 return false;
@@ -207,7 +209,7 @@ impl ModalLayer {
                 let generation = self.animation_generation;
 
                 self._close_task = Some(cx.spawn_in(window, async move |this, cx| {
-                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    cx.background_executor().timer(MODAL_CLOSE_DURATION).await;
                     this.update(cx, |this, cx| {
                         if this.animation_generation == generation {
                             this.closing_modal = None;
@@ -240,33 +242,35 @@ impl ModalLayer {
 
 impl Render for ModalLayer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_closing = self.closing_modal.is_some() && self.active_modal.is_none();
         let generation = self.animation_generation;
 
-        if let Some(active_modal) = &self.active_modal {
-            if active_modal.modal.render_bare(cx) {
-                return active_modal.modal.view().into_any_element();
-            }
-        }
-
-        let (modal_view, fade_out_background, focus_handle) =
+        let (modal_view, fade_out_background, focus_handle, is_closing) =
             if let Some(active_modal) = &self.active_modal {
+                if active_modal.modal.render_bare(cx) {
+                    return active_modal.modal.view().into_any_element();
+                }
                 (
                     active_modal.modal.view(),
                     active_modal.modal.fade_out_background(cx),
                     Some(active_modal.focus_handle.clone()),
+                    false,
                 )
             } else if let Some(closing_modal) = &self.closing_modal {
                 (
                     closing_modal.modal_view.clone(),
                     closing_modal.fade_out_background,
                     None,
+                    true,
                 )
             } else {
                 return div().into_any_element();
             };
 
-        let duration = if is_closing { 100 } else { 150 };
+        let duration = if is_closing {
+            MODAL_CLOSE_DURATION
+        } else {
+            MODAL_OPEN_DURATION
+        };
         let reduce_motion = should_reduce_motion(cx);
 
         let modal_content = h_flex()
@@ -304,7 +308,7 @@ impl Render for ModalLayer {
                         modal_content
                             .with_animation(
                                 ("modal-anim", generation as u64),
-                                Animation::new(Duration::from_millis(duration))
+                                Animation::new(duration)
                                     .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
                                 move |this, delta| {
                                     if reduce_motion {
