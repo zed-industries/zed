@@ -501,15 +501,16 @@ fn build_code_label(
                 text.push_str(code_span);
             }
             extension::CodeLabelSpan::Literal(span) => {
-                let highlight_id = language
+                if let Some(highlight_id) = language
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
                         grammar.highlight_id_for_name(highlight_name)
                     })
-                    .unwrap_or_default();
-                let ix = text.len();
-                runs.push((ix..ix + span.text.len(), highlight_id));
+                {
+                    let ix = text.len();
+                    runs.push((ix..ix + span.text.len(), highlight_id));
+                }
                 text.push_str(&span.text);
             }
         }
