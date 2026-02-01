@@ -46,7 +46,10 @@ use devcontainer_api::read_devcontainer_configuration_for_project;
 use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
 
-pub use devcontainer_api::start_dev_container;
+pub use devcontainer_api::{
+    DevContainerConfig, find_devcontainer_configs, start_dev_container,
+    start_dev_container_with_config,
+};
 
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
