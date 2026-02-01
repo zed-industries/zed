@@ -2774,10 +2774,10 @@ mod tests {
             aaaa bbbb\x20
             cccc dddd\x20
             eeee ffff
-            deleted\x20
-            line one
-            deleted\x20
-            line two
+            deleted line\x20
+            one
+            deleted line\x20
+            two
             after"
                 .unindent(),
             &mut cx,
