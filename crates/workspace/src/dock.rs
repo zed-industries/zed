@@ -7,11 +7,12 @@ use client::proto;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, Axis, Context, Corner, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent,
-    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription,
+    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, Task,
     WeakEntity, Window, deferred, div, ease_out_quint, px,
 };
 use settings::SettingsStore;
 use std::sync::Arc;
+use std::time::Duration;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
 use util::ResultExt as _;
@@ -268,12 +269,15 @@ pub struct Dock {
     panel_entries: Vec<PanelEntry>,
     workspace: WeakEntity<Workspace>,
     is_open: bool,
+    is_closing: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     open_generation: usize,
+    close_generation: usize,
+    _close_task: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -365,12 +369,15 @@ impl Dock {
                 panel_entries: Default::default(),
                 active_panel_index: None,
                 is_open: false,
+                is_closing: false,
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
                 open_generation: 0,
+                close_generation: 0,
+                _close_task: None,
             }
         });
 
@@ -483,15 +490,45 @@ impl Dock {
     }
 
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if open != self.is_open {
-            self.is_open = open;
-            if open {
-                self.open_generation = self.open_generation.wrapping_add(1);
+        if open {
+            if self.is_closing {
+                self._close_task = None;
+                self.is_closing = false;
             }
+            if self.is_open {
+                return;
+            }
+            self.is_open = true;
+            self.open_generation = self.open_generation.wrapping_add(1);
             if let Some(active_panel) = self.active_panel_entry() {
-                active_panel.panel.set_active(open, window, cx);
+                active_panel.panel.set_active(true, window, cx);
             }
-
+            cx.notify();
+        } else {
+            if !self.is_open {
+                return;
+            }
+            self.is_open = false;
+            self.is_closing = true;
+            self.close_generation = self.close_generation.wrapping_add(1);
+            if let Some(active_panel) = self.active_panel_entry() {
+                active_panel.panel.set_active(false, window, cx);
+            }
+            let close_gen = self.close_generation;
+            self._close_task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+                if let Some(this) = this.upgrade() {
+                    this.update(cx, |dock, cx| {
+                        if dock.close_generation == close_gen {
+                            dock.is_closing = false;
+                            dock._close_task = None;
+                            cx.notify();
+                        }
+                    });
+                }
+            }));
             cx.notify();
         }
     }
@@ -767,7 +804,7 @@ impl Dock {
     }
 
     fn visible_entry(&self) -> Option<&PanelEntry> {
-        if self.is_open {
+        if self.is_open || self.is_closing {
             self.active_panel_entry()
         } else {
             None
@@ -917,6 +954,13 @@ impl Render for Dock {
                 }
             };
 
+            let is_closing = self.is_closing;
+            let animation_gen = if is_closing {
+                self.close_generation
+            } else {
+                self.open_generation
+            };
+
             div()
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
@@ -935,7 +979,6 @@ impl Render for Dock {
                 })
                 .child(
                     div()
-                        .relative()
                         .map(|this| match self.position().axis() {
                             Axis::Horizontal => this.min_w(size).h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
@@ -945,33 +988,34 @@ impl Render for Dock {
                                 .panel
                                 .to_any()
                                 .cached(StyleRefinement::default().v_flex().size_full()),
-                        )
-                        .with_animation(
-                            ("dock-slide-in", self.open_generation as u64),
-                            Animation::new(AnimationDuration::Fast.into())
-                                .with_easing(ease_out_quint()),
-                            {
-                                let position = self.position;
-                                move |this, delta| {
-                                    const SLIDE_OFFSET: f32 = 16.0;
-                                    let offset = SLIDE_OFFSET * (1.0 - delta);
-                                    let this = this.opacity(delta);
-                                    match position {
-                                        DockPosition::Left => this.left(px(-offset)),
-                                        DockPosition::Right => this.left(px(offset)),
-                                        DockPosition::Bottom => this.top(px(offset)),
-                                    }
-                                }
-                            },
                         ),
                 )
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())
                 })
+                .with_animation(
+                    ("dock-anim", animation_gen as u64),
+                    Animation::new(AnimationDuration::Fast.into())
+                        .with_easing(ease_out_quint()),
+                    {
+                        let position = self.position;
+                        let target_size = f32::from(size);
+                        move |this, delta| {
+                            let progress = if is_closing { 1.0 - delta } else { delta };
+                            let animated_size = px(target_size * progress);
+                            match position.axis() {
+                                Axis::Horizontal => this.w(animated_size),
+                                Axis::Vertical => this.h(animated_size),
+                            }
+                        }
+                    },
+                )
+                .into_any_element()
         } else {
             div()
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
+                .into_any_element()
         }
     }
 }
