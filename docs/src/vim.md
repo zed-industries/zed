@@ -538,6 +538,18 @@ The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not hav
 }
 ```
 
+In visual mode, pressing `I` or `A` when multiple lines are selected does not create multiple cursors by default. Adding the following bindings will enable this functionality, allowing you to insert at the beginning or append at the end of each selected line:
+
+```json [settings]
+{
+  "context": "vim_mode == visual && !VimBlockSelection",
+  "bindings": {
+    "shift-i": "vim::InsertBeforeFirstNonWhitespace",
+    "shift-a": "vim::InsertAfterEndOfLine"
+  }
+}
+```
+
 ### Restoring common text editing and Zed keybindings
 
 If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
