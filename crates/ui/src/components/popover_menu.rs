@@ -243,12 +243,17 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 
     fn resolved_attach(&self) -> Corner {
-        self.attach.unwrap_or(match self.anchor {
-            Corner::TopLeft => Corner::BottomLeft,
-            Corner::TopRight => Corner::BottomRight,
-            Corner::BottomLeft => Corner::TopLeft,
-            Corner::BottomRight => Corner::TopRight,
-        })
+        self.attach
+            .unwrap_or(self.attach.unwrap_or(match self.anchor {
+                Corner::TopLeft => Corner::BottomLeft,
+                Corner::TopCenter => Corner::BottomCenter,
+                Corner::TopRight => Corner::BottomRight,
+                Corner::BottomLeft => Corner::TopLeft,
+                Corner::BottomCenter => Corner::TopCenter,
+                Corner::BottomRight => Corner::TopRight,
+                Corner::LeftCenter => Corner::LeftCenter,
+                Corner::RightCenter => Corner::RightCenter,
+            }))
     }
 
     fn resolved_offset(&self, window: &mut Window) -> Point<Pixels> {
@@ -256,8 +261,11 @@ impl<M: ManagedView> PopoverMenu<M> {
             // Default offset = 4px padding + 1px border
             let offset = rems_from_px(5.) * window.rem_size();
             match self.anchor {
-                Corner::TopRight | Corner::BottomRight => point(offset, px(0.)),
-                Corner::TopLeft | Corner::BottomLeft => point(-offset, px(0.)),
+                Corner::TopRight | Corner::BottomRight | Corner::RightCenter => {
+                    point(offset, px(0.))
+                }
+                Corner::TopLeft | Corner::BottomLeft | Corner::LeftCenter => point(-offset, px(0.)),
+                Corner::TopCenter | Corner::BottomCenter => point(px(0.), px(0.)),
             }
         })
     }
