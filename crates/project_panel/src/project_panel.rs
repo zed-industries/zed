@@ -5368,8 +5368,13 @@ impl ProjectPanel {
                             "project_panel_path_component_{}_{index}",
                             entry_id.to_usize()
                         )))
-                        .when(index == 0, |this| this.ml_neg_0p5())
-                        .px_0p5()
+                        .map(|this| {
+                            if index == 0 {
+                                this.pr_0p5()
+                            } else {
+                                this.px_0p5()
+                            }
+                        })
                         .rounded_xs()
                         .hover(|style| style.bg(cx.theme().colors().element_active))
                         .when(!is_sticky, |div| {
