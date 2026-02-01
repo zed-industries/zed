@@ -186,20 +186,7 @@ When using `vtsls`:
 
 ## Workspace TypeScript version
 
-```json [settings]
-{
-  "lsp": {
-    "vtsls": {
-      "initialization_options": {
-        "vtsls": {
-          "autoUseWorkspaceTsdk": true,
-        },
-      },
-    },
-  },
-}
-
-```
+`vtsls` will use your workspace typescript version by default.
 
 ## Debugging
 
