@@ -1,30 +1,34 @@
 use gpui::{App, Window};
-use settings::Settings as _;
-use theme::{GlobalTheme, ThemeSettings};
+use markdown::{MarkdownFont, MarkdownStyle};
+use theme::GlobalTheme;
 
 /// Wraps user HTML content with a themed template that matches the current Zed theme.
 ///
-/// - Extracts colors from the current theme
-/// - Converts GPUI colors to CSS format
-/// - Injects CSS custom properties for theming
-/// - Adds size measurement script for dynamic layout
-pub fn wrap_html_with_theme(html: &str, _window: &Window, cx: &App) -> String {
+/// Uses MarkdownStyle::themed to ensure consistent styling with markdown outputs.
+pub fn wrap_html_with_theme(html: &str, window: &Window, cx: &App) -> String {
     let theme = GlobalTheme::theme(cx);
     let colors = theme.colors();
-    let theme_settings = ThemeSettings::get_global(cx);
+    let markdown_style = MarkdownStyle::themed(MarkdownFont::Editor, window, cx);
 
-    let font_family = &theme_settings.ui_font.family;
-    let font_size = theme_settings.ui_font_size(cx);
+    // Get base text style from markdown
+    let text_style = &markdown_style.base_text_style;
+    let font_family = &text_style.font_family;
+    let font_size = text_style.font_size.to_pixels(window.rem_size());
 
-    // NOTE: relies on Display formatting as `hsla(h, s, l, a)`
+    // Convert GPUI Hsla colors to CSS hsla() format
     let bg_color = format!("{}", colors.background);
-    let text_color = format!("{}", colors.text);
-    let text_muted = format!("{}", colors.text_muted);
+    let text_color = format!("{}", text_style.color);
     let border_color = format!("{}", colors.border);
-    let border_variant = format!("{}", colors.border_variant);
-    let link_color = format!("{}", colors.text_accent);
 
-    let font_size: f32 = font_size.into();
+    // Get link styling from markdown
+    let link_color = markdown_style
+        .link
+        .color
+        .map(|c| format!("{}", c))
+        .unwrap_or_else(|| format!("{}", colors.text_accent));
+
+    // Use theme color for code background (Background fields are private)
+    let code_bg = format!("{}", colors.editor_background);
 
     format!(
         r#"<!DOCTYPE html>
@@ -35,10 +39,9 @@ pub fn wrap_html_with_theme(html: &str, _window: &Window, cx: &App) -> String {
         :root {{
             --bg-color: {};
             --text-color: {};
-            --text-muted: {};
             --border-color: {};
-            --border-variant: {};
             --link-color: {};
+            --code-bg: {};
         }}
 
         body {{
@@ -56,7 +59,13 @@ pub fn wrap_html_with_theme(html: &str, _window: &Window, cx: &App) -> String {
         }}
 
         code, pre {{
-            background-color: var(--border-variant);
+            background-color: var(--code-bg);
+            padding: 2px 4px;
+            border-radius: 3px;
+        }}
+
+        pre {{
+            padding: 8px;
         }}
 
         hr {{
@@ -95,13 +104,11 @@ pub fn wrap_html_with_theme(html: &str, _window: &Window, cx: &App) -> String {
         /* Header styling */
         thead th {{
             font-weight: 600;
-            border-bottom: 1px solid var(--border-color);
         }}
 
-        /* Subtle header background */
-        thead {{
-            background-color: var(--border-variant);
-            opacity: 0.5;
+        /* Border after header */
+        thead tr {{
+            border-bottom: 1px solid var(--border-color);
         }}
     </style>
 </head>
@@ -130,14 +137,6 @@ pub fn wrap_html_with_theme(html: &str, _window: &Window, cx: &App) -> String {
     </script>
 </body>
 </html>"#,
-        bg_color,
-        text_color,
-        text_muted,
-        border_color,
-        border_variant,
-        link_color,
-        font_family,
-        font_size,
-        html
+        bg_color, text_color, border_color, link_color, code_bg, font_family, font_size, html
     )
 }
