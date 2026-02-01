@@ -192,23 +192,10 @@ struct RenderBlocksOutput {
     resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
 
-/// Data passed to overlay painters during the paint phase.
-pub struct OverlayPainterData<'a> {
-    pub editor: &'a Entity<Editor>,
-    pub snapshot: &'a EditorSnapshot,
-    pub scroll_position: gpui::Point<ScrollOffset>,
-    pub line_height: Pixels,
-    pub visible_row_range: Range<DisplayRow>,
-    pub hitbox: &'a Hitbox,
-}
-
-pub type OverlayPainter = Box<dyn FnOnce(OverlayPainterData<'_>, &mut Window, &mut App)>;
-
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
     split_side: Option<SplitSide>,
-    overlay_painter: Option<OverlayPainter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,16 +212,11 @@ impl EditorElement {
             editor: editor.clone(),
             style,
             split_side: None,
-            overlay_painter: None,
         }
     }
 
     pub fn set_split_side(&mut self, side: SplitSide) {
         self.split_side = Some(side);
-    }
-
-    pub fn set_overlay_painter(&mut self, painter: OverlayPainter) {
-        self.overlay_painter = Some(painter);
     }
 
     fn should_show_buffer_headers(&self) -> bool {
@@ -1977,10 +1959,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if self.split_side == Some(SplitSide::Left) {
-            return None;
-        }
-
         let show_scrollbars = self.editor.read(cx).show_scrollbars;
         if (!show_scrollbars.horizontal && !show_scrollbars.vertical)
             || self.style.scrollbar_width.is_zero()
@@ -4537,7 +4515,9 @@ impl EditorElement {
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor.sticky_headers(style, cx).unwrap_or_default();
+        let items = editor
+            .sticky_headers(&snapshot.display_snapshot, style, cx)
+            .unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -5239,7 +5219,7 @@ impl EditorElement {
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
-                &editor.text_layout_details(window),
+                &editor.text_layout_details(window, cx),
                 window,
                 cx,
             )
@@ -9632,38 +9612,6 @@ impl Element for EditorElement {
                         }
                     };
 
-                    // When jumping from one side of a side-by-side diff to the
-                    // other, we autoscroll autoscroll to keep the target range in view.
-                    //
-                    // If our scroll companion has a pending autoscroll request, process it
-                    // first so that both editors render with synchronized scroll positions.
-                    // This is important for split diff views where one editor may prepaint
-                    // before the other.
-                    if let Some(companion) = self
-                        .editor
-                        .read(cx)
-                        .scroll_companion()
-                        .and_then(|c| c.upgrade())
-                    {
-                        if companion.read(cx).scroll_manager.has_autoscroll_request() {
-                            companion.update(cx, |companion_editor, cx| {
-                                let companion_autoscroll_request =
-                                    companion_editor.scroll_manager.take_autoscroll_request();
-                                companion_editor.autoscroll_vertically(
-                                    bounds,
-                                    line_height,
-                                    max_scroll_top,
-                                    companion_autoscroll_request,
-                                    window,
-                                    cx,
-                                );
-                            });
-                            snapshot = self
-                                .editor
-                                .update(cx, |editor, cx| editor.snapshot(window, cx));
-                        }
-                    }
-
                     let (
                         autoscroll_request,
                         autoscroll_containing_element,
@@ -10261,8 +10209,8 @@ impl Element for EditorElement {
                     );
 
                     self.editor.update(cx, |editor, cx| {
-                        if editor.scroll_manager.clamp_scroll_left(scroll_max.x) {
-                            scroll_position.x = scroll_position.x.min(scroll_max.x);
+                        if editor.scroll_manager.clamp_scroll_left(scroll_max.x, cx) {
+                            scroll_position.x = scroll_max.x.min(scroll_position.x);
                         }
 
                         if needs_horizontal_autoscroll.0
@@ -10919,18 +10867,6 @@ impl Element for EditorElement {
                     self.paint_scrollbars(layout, window, cx);
                     self.paint_edit_prediction_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
-
-                    if let Some(overlay_painter) = self.overlay_painter.take() {
-                        let data = OverlayPainterData {
-                            editor: &self.editor,
-                            snapshot: &layout.position_map.snapshot,
-                            scroll_position: layout.position_map.snapshot.scroll_position(),
-                            line_height: layout.position_map.line_height,
-                            visible_row_range: layout.visible_display_row_range.clone(),
-                            hitbox: &layout.hitbox,
-                        };
-                        overlay_painter(data, window, cx);
-                    }
                 });
             })
         })

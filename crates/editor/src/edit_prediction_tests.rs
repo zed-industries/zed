@@ -1,4 +1,4 @@
-use edit_prediction_types::EditPredictionDelegate;
+use edit_prediction_types::{EditPredictionDelegate, PredictedCursorPosition};
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
@@ -30,6 +30,88 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
     accept_completion(&mut cx);
 
     cx.assert_editor_state("let absolute_zero_celsius = -273.15ˇ;")
+}
+
+#[gpui::test]
+async fn test_edit_prediction_cursor_position_inside_insertion(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    // Buffer: "fn foo() {}" - we'll insert text and position cursor inside the insertion
+    cx.set_state("fn foo() ˇ{}");
+
+    // Insert "bar()" at offset 9, with cursor at offset 2 within the insertion (after "ba")
+    // This tests the case where cursor is inside newly inserted text
+    propose_edits_with_cursor_position_in_insertion(
+        &provider,
+        vec![(9..9, "bar()")],
+        9, // anchor at the insertion point
+        2, // offset 2 within "bar()" puts cursor after "ba"
+        &mut cx,
+    );
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_ref(), "bar()");
+    });
+
+    accept_completion(&mut cx);
+
+    // Cursor should be inside the inserted text at "baˇr()"
+    cx.assert_editor_state("fn foo() baˇr(){}");
+}
+
+#[gpui::test]
+async fn test_edit_prediction_cursor_position_outside_edit(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    // Buffer: "let x = ;" with cursor before semicolon - we'll insert "42" and position cursor elsewhere
+    cx.set_state("let x = ˇ;");
+
+    // Insert "42" at offset 8, but set cursor_position to offset 4 (the 'x')
+    // This tests that cursor moves to the predicted position, not the end of the edit
+    propose_edits_with_cursor_position(
+        &provider,
+        vec![(8..8, "42")],
+        Some(4), // cursor at offset 4 (the 'x'), NOT at the edit location
+        &mut cx,
+    );
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_ref(), "42");
+    });
+
+    accept_completion(&mut cx);
+
+    // Cursor should be at offset 4 (the 'x'), not at the end of the inserted "42"
+    cx.assert_editor_state("let ˇx = 42;");
+}
+
+#[gpui::test]
+async fn test_edit_prediction_cursor_position_fallback(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    // Propose an edit without a cursor position - should fall back to end of edit
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    accept_completion(&mut cx);
+
+    // Cursor should be at the end of the inserted text (default behavior)
+    cx.assert_editor_state("let x = 42ˇ;")
 }
 
 #[gpui::test]
@@ -375,7 +457,18 @@ fn propose_edits<T: ToOffset>(
     edits: Vec<(Range<T>, &str)>,
     cx: &mut EditorTestContext,
 ) {
+    propose_edits_with_cursor_position(provider, edits, None, cx);
+}
+
+fn propose_edits_with_cursor_position<T: ToOffset>(
+    provider: &Entity<FakeEditPredictionDelegate>,
+    edits: Vec<(Range<T>, &str)>,
+    cursor_offset: Option<usize>,
+    cx: &mut EditorTestContext,
+) {
     let snapshot = cx.buffer_snapshot();
+    let cursor_position = cursor_offset
+        .map(|offset| PredictedCursorPosition::at_anchor(snapshot.anchor_after(offset)));
     let edits = edits.into_iter().map(|(range, text)| {
         let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
         (range, text.into())
@@ -386,6 +479,38 @@ fn propose_edits<T: ToOffset>(
             provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
+                cursor_position,
+                edit_preview: None,
+            }))
+        })
+    });
+}
+
+fn propose_edits_with_cursor_position_in_insertion<T: ToOffset>(
+    provider: &Entity<FakeEditPredictionDelegate>,
+    edits: Vec<(Range<T>, &str)>,
+    anchor_offset: usize,
+    offset_within_insertion: usize,
+    cx: &mut EditorTestContext,
+) {
+    let snapshot = cx.buffer_snapshot();
+    // Use anchor_before (left bias) so the anchor stays at the insertion point
+    // rather than moving past the inserted text
+    let cursor_position = Some(PredictedCursorPosition::new(
+        snapshot.anchor_before(anchor_offset),
+        offset_within_insertion,
+    ));
+    let edits = edits.into_iter().map(|(range, text)| {
+        let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
+        (range, text.into())
+    });
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                id: None,
+                edits: edits.collect(),
+                cursor_position,
                 edit_preview: None,
             }))
         })
@@ -417,6 +542,7 @@ fn propose_edits_non_zed<T: ToOffset>(
             provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
+                cursor_position: None,
                 edit_preview: None,
             }))
         })
