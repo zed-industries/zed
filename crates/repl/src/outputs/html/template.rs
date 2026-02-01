@@ -63,12 +63,45 @@ pub fn wrap_html_with_theme(html: &str, _window: &Window, cx: &App) -> String {
             border-color: var(--border-color);
         }}
 
+        /* Modern table styling matching markdown tables */
         table {{
-            border-color: var(--border-color);
+            border-collapse: collapse;
+            border-spacing: 0;
+            margin: 8px 0;
+        }}
+
+        /* Remove pandas default borders */
+        table[border] {{
+            border: none !important;
         }}
 
         th, td {{
-            border-color: var(--border-variant);
+            padding: 4px 8px;
+            text-align: left;
+        }}
+
+        /* Border between columns (not on first column) */
+        th:not(:first-child),
+        td:not(:first-child) {{
+            border-left: 1px solid var(--border-color);
+        }}
+
+        /* Border between rows (not on first row) */
+        tbody tr:not(:first-child) th,
+        tbody tr:not(:first-child) td {{
+            border-top: 1px solid var(--border-color);
+        }}
+
+        /* Header styling */
+        thead th {{
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+        }}
+
+        /* Subtle header background */
+        thead {{
+            background-color: var(--border-variant);
+            opacity: 0.5;
         }}
     </style>
 </head>
