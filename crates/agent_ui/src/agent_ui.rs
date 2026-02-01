@@ -415,6 +415,12 @@ fn update_command_palette_filter(cx: &mut App) {
                 filter.hide_action_types(&[TypeId::of::<zed_actions::agent::ToggleAgentPane>()]);
             }
         }
+
+        if agent_v2_enabled {
+            filter.show_namespace("multi_workspace");
+        } else {
+            filter.hide_namespace("multi_workspace");
+        }
     });
 }
 

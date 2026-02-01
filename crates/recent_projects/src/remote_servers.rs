@@ -5,7 +5,7 @@ use crate::{
     },
     ssh_config::parse_ssh_config_hosts,
 };
-use dev_container::start_dev_container;
+use dev_container::{DevContainerContext, start_dev_container};
 use editor::Editor;
 
 use futures::{FutureExt, channel::oneshot, future::Shared};
@@ -49,7 +49,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenOptions, Toast, Workspace,
+    ModalView, MultiWorkspace, OpenOptions, Toast, Workspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -324,10 +324,11 @@ impl ProjectPicker {
                         .log_err()?;
                     let window = cx
                         .open_window(options, |window, cx| {
-                            cx.new(|cx| {
+                            let workspace = cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                            })
+                            });
+                            cx.new(|cx| MultiWorkspace::new(workspace, cx))
                         })
                         .log_err()?;
 
@@ -1358,7 +1359,9 @@ impl RemoteServerProjects {
 
                 let replace_window = match (create_new_window, secondary_confirm) {
                     (true, false) | (false, true) => None,
-                    (true, true) | (false, false) => window.window_handle().downcast::<Workspace>(),
+                    (true, true) | (false, false) => {
+                        window.window_handle().downcast::<MultiWorkspace>()
+                    }
                 };
 
                 cx.spawn_in(window, async move |_, cx| {
@@ -1590,34 +1593,39 @@ impl RemoteServerProjects {
     }
 
     fn open_dev_container(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(app_state) = self
+        let Some((app_state, context)) = self
             .workspace
-            .read_with(cx, |workspace, _| workspace.app_state().clone())
+            .read_with(cx, |workspace, cx| {
+                let app_state = workspace.app_state().clone();
+                let context = DevContainerContext::from_workspace(workspace, cx)?;
+                Some((app_state, context))
+            })
             .log_err()
+            .flatten()
         else {
+            log::error!("No active project directory for Dev Container");
             return;
         };
 
-        let replace_window = window.window_handle().downcast::<Workspace>();
+        let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
         cx.spawn_in(window, async move |entity, cx| {
-            let (connection, starting_dir) =
-                match start_dev_container(cx, app_state.node_runtime.clone()).await {
-                    Ok((c, s)) => (Connection::DevContainer(c), s),
-                    Err(e) => {
-                        log::error!("Failed to start dev container: {:?}", e);
-                        entity
-                            .update_in(cx, |remote_server_projects, window, cx| {
-                                remote_server_projects.mode = Mode::CreateRemoteDevContainer(
-                                    CreateRemoteDevContainer::new(window, cx).progress(
-                                        DevContainerCreationProgress::Error(format!("{:?}", e)),
-                                    ),
-                                );
-                            })
-                            .log_err();
-                        return;
-                    }
-                };
+            let (connection, starting_dir) = match start_dev_container(context).await {
+                Ok((c, s)) => (Connection::DevContainer(c), s),
+                Err(e) => {
+                    log::error!("Failed to start dev container: {:?}", e);
+                    entity
+                        .update_in(cx, |remote_server_projects, window, cx| {
+                            remote_server_projects.mode = Mode::CreateRemoteDevContainer(
+                                CreateRemoteDevContainer::new(window, cx).progress(
+                                    DevContainerCreationProgress::Error(format!("{:?}", e)),
+                                ),
+                            );
+                        })
+                        .log_err();
+                    return;
+                }
+            };
             entity
                 .update(cx, |_, cx| {
                     cx.emit(DismissEvent);

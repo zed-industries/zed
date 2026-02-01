@@ -141,15 +141,17 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         };
 
         workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.start_debug_session(
-                    scenario,
-                    task_context.clone(),
-                    None,
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi, window, cx| {
+                multi.workspace().update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context.clone(),
+                        None,
+                        None,
+                        window,
+                        cx,
+                    );
+                })
             })
             .unwrap();
 
@@ -178,8 +180,10 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     workspace
-        .update(cx, |workspace, window, cx| {
-            NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+            });
         })
         .unwrap();
 
@@ -320,8 +324,10 @@ async fn test_debug_modal_subtitles_with_multiple_worktrees(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     workspace
-        .update(cx, |workspace, window, cx| {
-            NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+            });
         })
         .unwrap();
 
