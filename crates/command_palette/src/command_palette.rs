@@ -9,8 +9,8 @@ use std::{
 
 use client::parse_zed_link;
 use command_palette_hooks::{
-    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
-    GlobalCommandPaletteInterceptor,
+    AdditionalCommand, CommandInterceptItem, CommandInterceptResult, CommandPaletteCommandProvider,
+    CommandPaletteFilter, GlobalCommandPaletteInterceptor,
 };
 
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -98,19 +98,27 @@ impl CommandPalette {
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
-        let commands = window
-            .available_actions(cx)
-            .into_iter()
-            .filter_map(|action| {
-                if filter.is_some_and(|filter| filter.is_hidden(&*action)) {
-                    return None;
-                }
+        let commands = std::iter::empty()
+            .chain(
+                window
+                    .available_actions(cx)
+                    .into_iter()
+                    .filter_map(|action| {
+                        if filter.is_some_and(|filter| filter.is_hidden(&*action)) {
+                            return None;
+                        }
 
-                Some(Command {
-                    name: humanize_action_name(action.name()),
-                    action,
-                })
-            })
+                        Some(Command {
+                            name: humanize_action_name(action.name()),
+                            action,
+                        })
+                    }),
+            )
+            .chain(
+                CommandPaletteCommandProvider::commands(cx)
+                    .into_iter()
+                    .map(|AdditionalCommand { name, action }| Command { name, action }),
+            )
             .collect();
 
         let delegate = CommandPaletteDelegate::new(

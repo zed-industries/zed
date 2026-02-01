@@ -113,6 +113,52 @@ pub struct CommandInterceptResult {
     pub exclusive: bool,
 }
 
+/// An additional command to include in the command palette.
+pub struct AdditionalCommand {
+    /// The display name for this command (e.g. "language: Rust").
+    pub name: String,
+    /// The action to dispatch when this command is selected.
+    pub action: Box<dyn Action>,
+}
+
+impl Clone for AdditionalCommand {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            action: self.action.boxed_clone(),
+        }
+    }
+}
+
+/// A global registry of command providers that supply additional commands to the command palette.
+///
+/// Each provider is a callback that returns a list of additional commands.
+/// These commands are collected each time the command palette is opened.
+pub struct CommandPaletteCommandProvider(Vec<Box<dyn Fn(&App) -> Vec<AdditionalCommand>>>);
+
+impl Global for CommandPaletteCommandProvider {}
+
+impl CommandPaletteCommandProvider {
+    /// Registers a new command provider.
+    pub fn register(
+        cx: &mut App,
+        provider: impl Fn(&App) -> Vec<AdditionalCommand> + 'static,
+    ) {
+        if !cx.has_global::<Self>() {
+            cx.set_global(Self(Vec::new()));
+        }
+        cx.global_mut::<Self>().0.push(Box::new(provider));
+    }
+
+    /// Collects all additional commands from registered providers.
+    pub fn commands(cx: &App) -> Vec<AdditionalCommand> {
+        let Some(this) = cx.try_global::<Self>() else {
+            return Vec::new();
+        };
+        this.0.iter().flat_map(|provider| provider(cx)).collect()
+    }
+}
+
 /// An interceptor for the command palette.
 #[derive(Clone)]
 pub struct GlobalCommandPaletteInterceptor(
