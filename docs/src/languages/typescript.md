@@ -186,7 +186,7 @@ When using `vtsls`:
 
 ## Workspace TypeScript version
 
-`vtsls` will use your workspace typescript version by default.
+`vtsls` will use your workspace TypeScript version by default.
 
 ## Debugging
 
