@@ -164,6 +164,7 @@ pub struct Picker<D: PickerDelegate> {
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
     previous_selected_index: Option<usize>,
     selection_generation: usize,
+    last_visible_range: Rc<RefCell<Range<usize>>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -432,6 +433,7 @@ impl<D: PickerDelegate> Picker<D> {
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
             previous_selected_index: None,
             selection_generation: 0,
+            last_visible_range: Rc::new(RefCell::new(0..0)),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -548,7 +550,28 @@ impl<D: PickerDelegate> Picker<D> {
         let current_index = self.delegate.selected_index();
 
         if previous_index != current_index {
-            self.previous_selected_index = Some(previous_index);
+            let visible = self.last_visible_range.borrow().clone();
+            // The first and last items in the visible range may be only
+            // partially visible. Exclude them so we don't animate when
+            // scrolling is needed to fully reveal the item.
+            let safe_start = if visible.start > 0 {
+                visible.start + 1
+            } else {
+                visible.start
+            };
+            let match_count = self.delegate.match_count();
+            let safe_end = if visible.end < match_count {
+                visible.end.saturating_sub(1)
+            } else {
+                visible.end
+            };
+            if safe_start < safe_end
+                && (safe_start..safe_end).contains(&current_index)
+            {
+                self.previous_selected_index = Some(previous_index);
+            } else {
+                self.previous_selected_index = None;
+            }
             self.selection_generation = self.selection_generation.wrapping_add(1);
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
@@ -905,10 +928,12 @@ impl<D: PickerDelegate> Picker<D> {
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => {
                 let match_count = self.delegate.match_count();
+                let last_visible_range = self.last_visible_range.clone();
                 uniform_list(
                     "candidates",
                     match_count,
                     cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
+                        *last_visible_range.borrow_mut() = visible_range.clone();
                         visible_range
                             .map(|ix| picker.render_element(window, cx, ix))
                             .collect()
