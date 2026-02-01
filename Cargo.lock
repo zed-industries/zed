@@ -14834,6 +14834,7 @@ dependencies = [
  "unindent",
  "util",
  "util_macros",
+ "vim_mode_setting",
  "workspace",
  "zed_actions",
  "ztracing",
