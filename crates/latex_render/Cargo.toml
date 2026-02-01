@@ -30,8 +30,8 @@ regex.workspace = true
 tiny-skia = "0.11"
 ttf-parser = "0.20"
 
-# ReX library from the fork
-rex = { git = "https://github.com/KenyC/ReX", features = ["tinyskia-renderer", "ttfparser-fontparser"] }
+# ReX library from the fork (with Windows compatibility fixes)
+rex = { git = "https://github.com/MostlyKIGuess/ReX", features = ["tinyskia-renderer", "ttfparser-fontparser"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
