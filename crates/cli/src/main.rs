@@ -952,6 +952,13 @@ mod flatpak {
     pub fn try_restart_to_host() {
         if let Some(flatpak_dir) = get_flatpak_dir() {
             let mut args = vec!["/usr/bin/flatpak-spawn".into(), "--host".into()];
+
+            for (name, value) in env::vars() {
+                if name.starts_with("ZED_") {
+                    args.push(format!("--env={}={}", name, value).into());
+                }
+            }
+
             args.append(&mut get_xdg_env_args());
             args.push("--env=ZED_UPDATE_EXPLANATION=Please use flatpak to update zed".into());
             args.push(
