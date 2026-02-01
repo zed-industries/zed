@@ -1,11 +1,13 @@
 mod font_fallbacks;
 mod font_features;
+mod inline_flow;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
 pub use font_fallbacks::*;
 pub use font_features::*;
+pub(crate) use inline_flow::*;
 pub use line::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
@@ -343,28 +345,77 @@ impl TextSystem {
 #[derive(Deref)]
 pub struct WindowTextSystem {
     line_layout_cache: LineLayoutCache,
+    inline_layout_cache: InlineLayoutCache,
+    ellipsis_layout_cache: Mutex<EllipsisFrameCache>,
     #[deref]
     text_system: Arc<TextSystem>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct TextSystemLayoutIndex {
+    line_layout_index: LineLayoutIndex,
+    inline_layout_index: InlineLayoutIndex,
+}
+
+#[derive(Default)]
+struct EllipsisFrameCache {
+    previous_frame: FxHashMap<EllipsisStyleKey, Arc<EllipsisLayout>>,
+    current_frame: FxHashMap<EllipsisStyleKey, Arc<EllipsisLayout>>,
+}
+
+impl EllipsisFrameCache {
+    fn get_or_insert_with<F>(&mut self, key: &EllipsisStyleKey, build: F) -> Arc<EllipsisLayout>
+    where
+        F: FnOnce() -> Arc<EllipsisLayout>,
+    {
+        if let Some(layout) = self.current_frame.get(key) {
+            return layout.clone();
+        }
+        if let Some(layout) = self.previous_frame.remove(key) {
+            self.current_frame.insert(key.clone(), layout.clone());
+            return layout;
+        }
+
+        let layout = build();
+        self.current_frame.insert(key.clone(), layout.clone());
+        layout
+    }
+
+    fn finish_frame(&mut self) {
+        self.previous_frame.clear();
+        std::mem::swap(&mut self.previous_frame, &mut self.current_frame);
+    }
 }
 
 impl WindowTextSystem {
     pub(crate) fn new(text_system: Arc<TextSystem>) -> Self {
         Self {
             line_layout_cache: LineLayoutCache::new(text_system.platform_text_system.clone()),
+            inline_layout_cache: InlineLayoutCache::new(),
+            ellipsis_layout_cache: Mutex::default(),
             text_system,
         }
     }
 
-    pub(crate) fn layout_index(&self) -> LineLayoutIndex {
-        self.line_layout_cache.layout_index()
+    pub(crate) fn layout_index(&self) -> TextSystemLayoutIndex {
+        TextSystemLayoutIndex {
+            line_layout_index: self.line_layout_cache.layout_index(),
+            inline_layout_index: self.inline_layout_cache.layout_index(),
+        }
     }
 
-    pub(crate) fn reuse_layouts(&self, index: Range<LineLayoutIndex>) {
-        self.line_layout_cache.reuse_layouts(index)
+    pub(crate) fn reuse_layouts(&self, range: Range<TextSystemLayoutIndex>) {
+        self.line_layout_cache
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.inline_layout_cache
+            .reuse_layouts(range.start.inline_layout_index..range.end.inline_layout_index);
     }
 
-    pub(crate) fn truncate_layouts(&self, index: LineLayoutIndex) {
-        self.line_layout_cache.truncate_layouts(index)
+    pub(crate) fn truncate_layouts(&self, index: TextSystemLayoutIndex) {
+        self.line_layout_cache
+            .truncate_layouts(index.line_layout_index);
+        self.inline_layout_cache
+            .truncate_layouts(index.inline_layout_index);
     }
 
     /// Shape the given line, at the given font_size, for painting to the screen.
@@ -546,7 +597,9 @@ impl WindowTextSystem {
     }
 
     pub(crate) fn finish_frame(&self) {
-        self.line_layout_cache.finish_frame()
+        self.line_layout_cache.finish_frame();
+        self.inline_layout_cache.finish_frame();
+        self.ellipsis_layout_cache.lock().finish_frame();
     }
 
     /// Layout the given line of text, at the given font_size.
