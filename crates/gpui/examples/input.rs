@@ -82,14 +82,24 @@ impl TextInput {
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
+            let prev = self.previous_boundary(self.cursor_offset());
+            if self.cursor_offset() == prev {
+                window.play_system_bell();
+                return;
+            }
+            self.select_to(prev, cx)
         }
         self.replace_text_in_range(None, "", window, cx)
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx)
+            let next = self.next_boundary(self.cursor_offset());
+            if self.cursor_offset() == next {
+                window.play_system_bell();
+                return;
+            }
+            self.select_to(next, cx)
         }
         self.replace_text_in_range(None, "", window, cx)
     }
