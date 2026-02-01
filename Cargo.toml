@@ -144,6 +144,7 @@ members = [
     "crates/release_channel",
     "crates/scheduler",
     "crates/remote",
+    "crates/remote_connection",
     "crates/remote_server",
     "crates/repl",
     "crates/reqwest_client",
@@ -383,6 +384,7 @@ recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
+remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
