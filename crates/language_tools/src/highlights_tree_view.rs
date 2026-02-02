@@ -1,4 +1,7 @@
-use editor::{Anchor, Editor, MultiBufferSnapshot, SelectionEffects, ToPoint, scroll::Autoscroll};
+use editor::{
+    Anchor, Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
+    scroll::Autoscroll,
+};
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
@@ -190,9 +193,8 @@ impl HighlightsTreeView {
             if state.editor == editor {
                 return;
             }
-            editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx)
-            });
+            let key = HighlightKey::HighlightsTreeView(editor.entity_id().as_u64() as usize);
+            editor.update(cx, |editor, cx| editor.clear_background_highlights(key, cx));
         }
 
         let subscription =
@@ -422,8 +424,8 @@ impl HighlightsTreeView {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Editor>,
     ) {
-        editor.highlight_background_key::<Self>(
-            key,
+        editor.highlight_background_key(
+            HighlightKey::HighlightsTreeView(key),
             ranges,
             |_, theme| theme.colors().editor_document_highlight_write_background,
             cx,
@@ -431,9 +433,9 @@ impl HighlightsTreeView {
     }
 
     fn clear_editor_highlights(editor: &Entity<Editor>, cx: &mut Context<Self>) {
-        let highlight_key = cx.entity_id().as_u64() as usize;
+        let highlight_key = HighlightKey::HighlightsTreeView(cx.entity_id().as_u64() as usize);
         editor.update(cx, |editor, cx| {
-            editor.clear_background_highlights_key::<Self>(highlight_key, cx);
+            editor.clear_background_highlights(highlight_key, cx);
         });
     }
 

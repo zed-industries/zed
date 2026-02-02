@@ -136,10 +136,37 @@ pub enum FoldStatus {
     Foldable,
 }
 
+/// Keys for tagging text highlights.
+///
+/// Note the order is important as it determines the priority of the highlights, lower means higher priority
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum HighlightKey {
-    Type(TypeId),
-    TypePlus(TypeId, usize),
+    // Note we want semantic tokens > colorized brackets
+    // to allow language server highlights to work over brackets.
+    ColorizeBracket(usize),
+    SemanticToken,
+    // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
+    BufferSearchHighlights,
+    ConsoleAnsiHighlight(usize),
+    DebugStackFrameLine,
+    DocumentHighlightRead,
+    DocumentHighlightWrite,
+    EditPredictionHighlight,
+    Editor,
+    HighlightOnYank,
+    HighlightsTreeView(usize),
+    HoverState,
+    HoveredLinkState,
+    InlineAssist,
+    InputComposition,
+    MatchingBracket,
+    PendingInput,
+    ProjectSearchView,
+    Rename,
+    SearchWithinRange,
+    SelectedTextHighlight,
+    SyntaxTreeView(usize),
+    VimExchange,
 }
 
 pub trait ToDisplayPoint {
@@ -148,7 +175,7 @@ pub trait ToDisplayPoint {
 
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type SemanticTokensHighlights = TreeMap<BufferId, Arc<[SemanticTokenHighlight]>>;
-type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
+type InlayHighlights = TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
 pub struct MultiBufferRowMapping {
@@ -1237,17 +1264,17 @@ impl DisplayMap {
     #[instrument(skip_all)]
     pub(crate) fn highlight_inlays(
         &mut self,
-        type_id: TypeId,
+        key: HighlightKey,
         highlights: Vec<InlayHighlight>,
         style: HighlightStyle,
     ) {
         for highlight in highlights {
-            let update = self.inlay_highlights.update(&type_id, |highlights| {
+            let update = self.inlay_highlights.update(&key, |highlights| {
                 highlights.insert(highlight.inlay, (style, highlight.clone()))
             });
             if update.is_none() {
                 self.inlay_highlights.insert(
-                    type_id,
+                    key,
                     TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]),
                 );
             }
@@ -1255,8 +1282,8 @@ impl DisplayMap {
     }
 
     #[instrument(skip_all)]
-    pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&HighlightKey::Type(type_id))?;
+    pub fn text_highlights(&self, key: HighlightKey) -> Option<(HighlightStyle, &[Range<Anchor>])> {
+        let highlights = self.text_highlights.get(&key)?;
         Some((highlights.0, &highlights.1))
     }
 
@@ -1272,22 +1299,24 @@ impl DisplayMap {
         self.semantic_token_highlights.iter()
     }
 
-    #[instrument(skip_all)]
-    pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self
-            .text_highlights
-            .remove(&HighlightKey::Type(type_id))
-            .is_some();
-        self.text_highlights.retain(|key, _| {
-            let retain = if let HighlightKey::TypePlus(key_type_id, _) = key {
-                key_type_id != &type_id
-            } else {
-                true
-            };
-            cleared |= !retain;
-            retain
+    pub fn clear_highlights(&mut self, key: HighlightKey) -> bool {
+        let mut cleared = self.text_highlights.remove(&key).is_some();
+        cleared |= self.inlay_highlights.remove(&key).is_some();
+        cleared
+    }
+
+    pub fn clear_highlights_with(&mut self, mut f: impl FnMut(&HighlightKey) -> bool) -> bool {
+        let mut cleared = false;
+        self.text_highlights.retain(|k, _| {
+            let b = f(k);
+            cleared |= b;
+            b
         });
-        cleared |= self.inlay_highlights.remove(&type_id).is_some();
+        self.inlay_highlights.retain(|k, _| {
+            let b = f(k);
+            cleared |= b;
+            b
+        });
         cleared
     }
 
@@ -2282,29 +2311,24 @@ impl DisplaySnapshot {
 
     #[cfg(any(test, feature = "test-support"))]
     #[instrument(skip_all)]
-    pub fn text_highlight_ranges<Tag: ?Sized + 'static>(
+    pub fn text_highlight_ranges(
         &self,
+        key: HighlightKey,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
-        let type_id = TypeId::of::<Tag>();
-        self.text_highlights
-            .get(&HighlightKey::Type(type_id))
-            .cloned()
+        self.text_highlights.get(&key).cloned()
     }
 
     #[cfg(any(test, feature = "test-support"))]
     #[instrument(skip_all)]
-    pub fn all_text_highlight_ranges<Tag: ?Sized + 'static>(
+    pub fn all_text_highlight_ranges(
         &self,
+        f: impl Fn(&HighlightKey) -> bool,
     ) -> Vec<(gpui::Hsla, Range<Point>)> {
         use itertools::Itertools;
 
-        let required_type_id = TypeId::of::<Tag>();
         self.text_highlights
             .iter()
-            .filter(|(key, _)| match key {
-                HighlightKey::Type(type_id) => type_id == &required_type_id,
-                HighlightKey::TypePlus(type_id, _) => type_id == &required_type_id,
-            })
+            .filter(|(key, _)| f(key))
             .map(|(_, value)| value.clone())
             .flat_map(|ranges| {
                 ranges
@@ -2321,11 +2345,11 @@ impl DisplaySnapshot {
 
     #[allow(unused)]
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
+    pub(crate) fn inlay_highlights(
         &self,
+        key: HighlightKey,
     ) -> Option<&TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
-        let type_id = TypeId::of::<Tag>();
-        self.inlay_highlights.get(&type_id)
+        self.inlay_highlights.get(&key)
     }
 
     pub fn buffer_header_height(&self) -> u32 {
@@ -3326,7 +3350,7 @@ pub mod tests {
         // Insert a block in the middle of a multi-line diagnostic.
         map.update(cx, |map, cx| {
             map.highlight_text(
-                HighlightKey::Type(TypeId::of::<usize>()),
+                HighlightKey::Editor,
                 vec![
                     buffer_snapshot.anchor_before(Point::new(3, 9))
                         ..buffer_snapshot.anchor_after(Point::new(3, 14)),
@@ -3640,8 +3664,6 @@ pub mod tests {
             )
         });
 
-        enum MyType {}
-
         let style = HighlightStyle {
             color: Some(Hsla::blue()),
             ..Default::default()
@@ -3649,7 +3671,7 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.highlight_text(
-                HighlightKey::Type(TypeId::of::<MyType>()),
+                HighlightKey::Editor,
                 highlighted_ranges
                     .into_iter()
                     .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))

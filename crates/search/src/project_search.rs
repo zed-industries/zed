@@ -1,6 +1,6 @@
 use crate::{
-    BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    BufferSearchBar, FocusSearch, HighlightKey, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
+    ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{
@@ -1467,7 +1467,7 @@ impl ProjectSearchView {
         if match_ranges.is_empty() {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx);
+                editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
             });
         } else {
             self.active_match_index = Some(0);
@@ -1524,7 +1524,8 @@ impl ProjectSearchView {
         cx: &mut App,
     ) {
         self.results_editor.update(cx, |editor, cx| {
-            editor.highlight_background::<Self>(
+            editor.highlight_background(
+                HighlightKey::ProjectSearchView,
                 match_ranges,
                 move |index, theme| {
                     if active_index == Some(*index) {

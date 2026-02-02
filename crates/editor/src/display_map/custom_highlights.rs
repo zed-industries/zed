@@ -9,9 +9,7 @@ use std::{
     vec,
 };
 
-use crate::display_map::{
-    HighlightKey, SemanticTokenHighlight, SemanticTokensHighlights, TextHighlights,
-};
+use crate::display_map::{HighlightKey, SemanticTokensHighlights, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -143,16 +141,14 @@ fn create_highlight_endpoints(
                 if start == end {
                     continue;
                 }
-                struct SemanticTokenHighLights;
-
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: start,
-                    tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
+                    tag: HighlightKey::SemanticToken,
                     style: Some(token.style),
                 });
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: end,
-                    tag: HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighLights>()),
+                    tag: HighlightKey::SemanticToken,
                     style: None,
                 });
             }
@@ -226,21 +222,16 @@ impl PartialOrd for HighlightEndpoint {
 
 impl Ord for HighlightEndpoint {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        const SEMANTIC_HIGHLIGHT_KEY_TYPE: HighlightKey =
-            HighlightKey::Type(std::any::TypeId::of::<SemanticTokenHighlight>());
         self.offset
             .cmp(&other.offset)
             .then_with(|| self.style.is_some().cmp(&other.style.is_some()))
-            .then_with(|| {
-                (self.tag == SEMANTIC_HIGHLIGHT_KEY_TYPE)
-                    .cmp(&(other.tag == SEMANTIC_HIGHLIGHT_KEY_TYPE))
-            })
+            .then_with(|| self.tag.cmp(&other.tag))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, sync::Arc};
+    use std::sync::Arc;
 
     use super::*;
     use crate::MultiBuffer;
@@ -306,8 +297,7 @@ mod tests {
                 ranges.push(start_anchor..end_anchor);
             }
 
-            let type_id = TypeId::of::<()>(); // Simple type ID for testing
-            highlights.insert(HighlightKey::Type(type_id), Arc::new((style, ranges)));
+            highlights.insert(HighlightKey::Editor, Arc::new((style, ranges)));
         }
 
         // Get all chunks and verify their bitmaps

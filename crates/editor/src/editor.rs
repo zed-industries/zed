@@ -282,11 +282,6 @@ impl ReportEditorEvent {
 
 pub enum ActiveDebugLine {}
 pub enum DebugStackFrameLine {}
-enum DocumentHighlightRead {}
-enum DocumentHighlightWrite {}
-enum InputComposition {}
-pub enum PendingInput {}
-enum SelectedTextHighlight {}
 
 pub enum ConflictsOuter {}
 pub enum ConflictsOurs {}
@@ -672,8 +667,6 @@ enum EditPredictionSettings {
         preview_requires_modifier: bool,
     },
 }
-
-enum EditPredictionHighlight {}
 
 #[derive(Debug, Clone)]
 struct InlineDiagnostic {
@@ -6952,7 +6945,8 @@ impl Editor {
                 cx.new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), window, cx));
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor.update(cx, |editor, cx| {
-                editor.highlight_background::<Self>(
+                editor.highlight_background(
+                    HighlightKey::Editor,
                     &ranges_to_highlight,
                     |_, theme| theme.colors().editor_highlighted_line_background,
                     cx,
@@ -7293,8 +7287,8 @@ impl Editor {
         let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, None);
         if start_word_range != end_word_range {
             self.document_highlights_task.take();
-            self.clear_background_highlights::<DocumentHighlightRead>(cx);
-            self.clear_background_highlights::<DocumentHighlightWrite>(cx);
+            self.clear_background_highlights(HighlightKey::DocumentHighlightRead, cx);
+            self.clear_background_highlights(HighlightKey::DocumentHighlightWrite, cx);
             return None;
         }
 
@@ -7354,12 +7348,14 @@ impl Editor {
                         }
                     }
 
-                    this.highlight_background::<DocumentHighlightRead>(
+                    this.highlight_background(
+                        HighlightKey::DocumentHighlightRead,
                         &read_ranges,
                         |_, theme| theme.colors().editor_document_highlight_read_background,
                         cx,
                     );
-                    this.highlight_background::<DocumentHighlightWrite>(
+                    this.highlight_background(
+                        HighlightKey::DocumentHighlightWrite,
                         &write_ranges,
                         |_, theme| theme.colors().editor_document_highlight_write_background,
                         cx,
@@ -7469,13 +7465,14 @@ impl Editor {
             editor
                 .update_in(cx, |editor, _, cx| {
                     if use_debounce {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor.clear_background_highlights(HighlightKey::SelectedTextHighlight, cx);
                         editor.debounced_selection_highlight_complete = true;
                     } else if editor.debounced_selection_highlight_complete {
                         return;
                     }
                     if !match_ranges.is_empty() {
-                        editor.highlight_background::<SelectedTextHighlight>(
+                        editor.highlight_background(
+                            HighlightKey::SelectedTextHighlight,
                             &match_ranges,
                             |_, theme| theme.colors().editor_document_highlight_bracket_background,
                             cx,
@@ -7567,7 +7564,7 @@ impl Editor {
         let Some((query_text, query_range)) =
             self.prepare_highlight_query_from_selection(window, cx)
         else {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.clear_background_highlights(HighlightKey::SelectedTextHighlight, cx);
             self.quick_selection_highlight_task.take();
             self.debounced_selection_highlight_task.take();
             self.debounced_selection_highlight_complete = false;
@@ -8160,7 +8157,7 @@ impl Editor {
         };
 
         self.splice_inlays(&active_edit_prediction.inlay_ids, Default::default(), cx);
-        self.clear_highlights::<EditPredictionHighlight>(cx);
+        self.clear_highlights(HighlightKey::EditPredictionHighlight, cx);
         self.stale_edit_prediction_in_menu = Some(active_edit_prediction);
         true
     }
@@ -8545,7 +8542,8 @@ impl Editor {
                     self.splice_inlays(&[], inlays, cx);
                 } else {
                     let background_color = cx.theme().status().deleted_background;
-                    self.highlight_text::<EditPredictionHighlight>(
+                    self.highlight_text(
+                        HighlightKey::EditPredictionHighlight,
                         edits.iter().map(|(range, _)| range.clone()).collect(),
                         HighlightStyle {
                             background_color: Some(background_color),
@@ -17573,14 +17571,14 @@ impl Editor {
 
         if let Some((_, read_highlights)) = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightRead>()))
+            .get(&HighlightKey::DocumentHighlightRead)
         {
             all_highlights.extend(read_highlights.iter());
         }
 
         if let Some((_, write_highlights)) = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightWrite>()))
+            .get(&HighlightKey::DocumentHighlightWrite)
         {
             all_highlights.extend(write_highlights.iter());
         }
@@ -18521,7 +18519,8 @@ impl Editor {
                         },
                     );
                 }
-                editor.highlight_background::<Self>(
+                editor.highlight_background(
+                    HighlightKey::Editor,
                     &ranges,
                     |_, theme| theme.colors().editor_highlighted_line_background,
                     cx,
@@ -18681,9 +18680,9 @@ impl Editor {
                     .detach();
 
                     let write_highlights =
-                        this.clear_background_highlights::<DocumentHighlightWrite>(cx);
+                        this.clear_background_highlights(HighlightKey::DocumentHighlightWrite, cx);
                     let read_highlights =
-                        this.clear_background_highlights::<DocumentHighlightRead>(cx);
+                        this.clear_background_highlights(HighlightKey::DocumentHighlightRead, cx);
                     let ranges = write_highlights
                         .iter()
                         .flat_map(|(_, ranges)| ranges.iter())
@@ -18691,7 +18690,8 @@ impl Editor {
                         .cloned()
                         .collect();
 
-                    this.highlight_text::<Rename>(
+                    this.highlight_text(
+                        HighlightKey::Rename,
                         ranges,
                         HighlightStyle {
                             fade_out: Some(0.6),
@@ -18822,7 +18822,7 @@ impl Editor {
             Some(Autoscroll::fit()),
             cx,
         );
-        self.clear_highlights::<Rename>(cx);
+        self.clear_highlights(HighlightKey::Rename, cx);
         self.show_local_selections = true;
 
         if moving_cursor {
@@ -23192,7 +23192,8 @@ impl Editor {
     }
 
     pub fn set_search_within_ranges(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
-        self.highlight_background::<SearchWithinRange>(
+        self.highlight_background(
+            HighlightKey::SearchWithinRange,
             ranges,
             |_, colors| colors.colors().editor_document_highlight_read_background,
             cx,
@@ -23204,60 +23205,41 @@ impl Editor {
     }
 
     pub fn clear_search_within_ranges(&mut self, cx: &mut Context<Self>) {
-        self.clear_background_highlights::<SearchWithinRange>(cx);
+        self.clear_background_highlights(HighlightKey::SearchWithinRange, cx);
     }
 
-    pub fn highlight_background<T: 'static>(
+    pub fn highlight_background(
         &mut self,
+        key: HighlightKey,
         ranges: &[Range<Anchor>],
         color_fetcher: impl Fn(&usize, &Theme) -> Hsla + Send + Sync + 'static,
         cx: &mut Context<Self>,
     ) {
-        self.background_highlights.insert(
-            HighlightKey::Type(TypeId::of::<T>()),
-            (Arc::new(color_fetcher), Arc::from(ranges)),
-        );
+        self.background_highlights
+            .insert(key, (Arc::new(color_fetcher), Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
 
-    pub fn highlight_background_key<T: 'static>(
+    pub fn highlight_background_key(
         &mut self,
-        key: usize,
+        key: HighlightKey,
         ranges: &[Range<Anchor>],
         color_fetcher: impl Fn(&usize, &Theme) -> Hsla + Send + Sync + 'static,
         cx: &mut Context<Self>,
     ) {
-        self.background_highlights.insert(
-            HighlightKey::TypePlus(TypeId::of::<T>(), key),
-            (Arc::new(color_fetcher), Arc::from(ranges)),
-        );
+        self.background_highlights
+            .insert(key, (Arc::new(color_fetcher), Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
 
-    pub fn clear_background_highlights<T: 'static>(
+    pub fn clear_background_highlights(
         &mut self,
+        key: HighlightKey,
         cx: &mut Context<Self>,
     ) -> Option<BackgroundHighlight> {
-        let text_highlights = self
-            .background_highlights
-            .remove(&HighlightKey::Type(TypeId::of::<T>()))?;
-        if !text_highlights.1.is_empty() {
-            self.scrollbar_marker_state.dirty = true;
-            cx.notify();
-        }
-        Some(text_highlights)
-    }
-
-    pub fn clear_background_highlights_key<T: 'static>(
-        &mut self,
-        key: usize,
-        cx: &mut Context<Self>,
-    ) -> Option<BackgroundHighlight> {
-        let text_highlights = self
-            .background_highlights
-            .remove(&HighlightKey::TypePlus(TypeId::of::<T>(), key))?;
+        let text_highlights = self.background_highlights.remove(&key)?;
         if !text_highlights.1.is_empty() {
             self.scrollbar_marker_state.dirty = true;
             cx.notify();
@@ -23403,9 +23385,7 @@ impl Editor {
 
         let highlights = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<
-                items::BufferSearchHighlights,
-            >()));
+            .get(&HighlightKey::BufferSearchHighlights);
 
         if let Some((_color, ranges)) = highlights {
             ranges
@@ -23424,11 +23404,11 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = &'a Range<Anchor>> {
         let read_highlights = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightRead>()))
+            .get(&HighlightKey::DocumentHighlightRead)
             .map(|h| &h.1);
         let write_highlights = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightWrite>()))
+            .get(&HighlightKey::DocumentHighlightWrite)
             .map(|h| &h.1);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
@@ -23453,9 +23433,9 @@ impl Editor {
             })
     }
 
-    pub fn has_background_highlights<T: 'static>(&self) -> bool {
+    pub fn has_background_highlights(&self, key: HighlightKey) -> bool {
         self.background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<T>()))
+            .get(&key)
             .is_some_and(|(_, highlights)| !highlights.is_empty())
     }
 
@@ -23569,55 +23549,58 @@ impl Editor {
             .collect()
     }
 
-    pub fn highlight_text_key<T: 'static>(
+    pub fn highlight_text_key(
         &mut self,
-        key: usize,
+        key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
         merge: bool,
         cx: &mut Context<Self>,
     ) {
         self.display_map.update(cx, |map, cx| {
-            map.highlight_text(
-                HighlightKey::TypePlus(TypeId::of::<T>(), key),
-                ranges,
-                style,
-                merge,
-                cx,
-            );
+            map.highlight_text(key, ranges, style, merge, cx);
         });
         cx.notify();
     }
 
-    pub fn highlight_text<T: 'static>(
+    pub fn highlight_text(
         &mut self,
+        key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
         cx: &mut Context<Self>,
     ) {
         self.display_map.update(cx, |map, cx| {
-            map.highlight_text(
-                HighlightKey::Type(TypeId::of::<T>()),
-                ranges,
-                style,
-                false,
-                cx,
-            )
+            map.highlight_text(key, ranges, style, false, cx)
         });
         cx.notify();
     }
 
-    pub fn text_highlights<'a, T: 'static>(
+    pub fn text_highlights<'a>(
         &'a self,
+        key: HighlightKey,
         cx: &'a App,
     ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
-        self.display_map.read(cx).text_highlights(TypeId::of::<T>())
+        self.display_map.read(cx).text_highlights(key)
     }
 
-    pub fn clear_highlights<T: 'static>(&mut self, cx: &mut Context<Self>) {
+    pub fn clear_highlights(&mut self, key: HighlightKey, cx: &mut Context<Self>) {
         let cleared = self
             .display_map
-            .update(cx, |map, _| map.clear_highlights(TypeId::of::<T>()));
+            .update(cx, |map, _| map.clear_highlights(key));
+        if cleared {
+            cx.notify();
+        }
+    }
+
+    pub fn clear_highlights_with(
+        &mut self,
+        f: impl FnMut(&HighlightKey) -> bool,
+        cx: &mut Context<Self>,
+    ) {
+        let cleared = self
+            .display_map
+            .update(cx, |map, _| map.clear_highlights_with(f));
         if cleared {
             cx.notify();
         }
@@ -24367,7 +24350,7 @@ impl Editor {
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
-        let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
+        let (_, ranges) = self.text_highlights(HighlightKey::InputComposition, cx)?;
         Some(
             ranges
                 .iter()
@@ -24707,7 +24690,7 @@ impl Editor {
         }
 
         let existing_pending = self
-            .text_highlights::<PendingInput>(cx)
+            .text_highlights(HighlightKey::PendingInput, cx)
             .map(|(_, ranges)| ranges.to_vec());
         if existing_pending.is_none() && pending.is_empty() {
             return;
@@ -24746,9 +24729,10 @@ impl Editor {
             .collect();
 
         if pending.is_empty() {
-            self.clear_highlights::<PendingInput>(cx);
+            self.clear_highlights(HighlightKey::PendingInput, cx);
         } else {
-            self.highlight_text::<PendingInput>(
+            self.highlight_text(
+                HighlightKey::PendingInput,
                 ranges,
                 HighlightStyle {
                     underline: Some(UnderlineStyle {
@@ -24769,7 +24753,10 @@ impl Editor {
             });
         }
 
-        if self.text_highlights::<PendingInput>(cx).is_none() {
+        if self
+            .text_highlights(HighlightKey::PendingInput, cx)
+            .is_none()
+        {
             self.ime_transaction.take();
         }
     }
@@ -27545,12 +27532,15 @@ impl EntityInputHandler for Editor {
 
     fn marked_text_range(&self, _: &mut Window, cx: &mut Context<Self>) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
-        let range = self.text_highlights::<InputComposition>(cx)?.1.first()?;
+        let range = self
+            .text_highlights(HighlightKey::InputComposition, cx)?
+            .1
+            .first()?;
         Some(range.start.to_offset_utf16(&snapshot).0.0..range.end.to_offset_utf16(&snapshot).0.0)
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.clear_highlights::<InputComposition>(cx);
+        self.clear_highlights(HighlightKey::InputComposition, cx);
         self.ime_transaction.take();
     }
 
@@ -27694,7 +27684,8 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 this.unmark_text(window, cx);
             } else {
-                this.highlight_text::<InputComposition>(
+                this.highlight_text(
+                    HighlightKey::InputComposition,
                     marked_ranges.clone(),
                     HighlightStyle {
                         underline: Some(UnderlineStyle {
@@ -27748,7 +27739,10 @@ impl EntityInputHandler for Editor {
             });
         }
 
-        if self.text_highlights::<InputComposition>(cx).is_none() {
+        if self
+            .text_highlights(HighlightKey::InputComposition, cx)
+            .is_none()
+        {
             self.ime_transaction.take();
         }
     }
