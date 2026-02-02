@@ -7290,8 +7290,8 @@ dependencies = [
  "project",
  "prompt_store",
  "rand 0.9.2",
- "recent_projects",
  "remote",
+ "remote_connection",
  "schemars",
  "serde",
  "serde_json",
@@ -11471,10 +11471,7 @@ dependencies = [
 name = "panel"
 version = "0.1.0"
 dependencies = [
- "editor",
  "gpui",
- "settings",
- "theme",
  "ui",
  "workspace",
 ]
@@ -13521,7 +13518,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
- "auto_update",
  "dap",
  "db",
  "dev_container",
@@ -13536,7 +13532,6 @@ dependencies = [
  "indoc",
  "language",
  "log",
- "markdown",
  "menu",
  "node_runtime",
  "open_path_prompt",
@@ -13546,6 +13541,7 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
+ "remote_connection",
  "remote_server",
  "semver",
  "serde",
@@ -13554,7 +13550,6 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
- "theme",
  "ui",
  "util",
  "windows-registry 0.6.1",
@@ -13732,6 +13727,28 @@ dependencies = [
  "urlencoding",
  "util",
  "which 6.0.3",
+]
+
+[[package]]
+name = "remote_connection"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "askpass",
+ "auto_update",
+ "futures 0.3.31",
+ "gpui",
+ "log",
+ "markdown",
+ "menu",
+ "release_channel",
+ "remote",
+ "semver",
+ "settings",
+ "theme",
+ "ui",
+ "ui_input",
+ "workspace",
 ]
 
 [[package]]
