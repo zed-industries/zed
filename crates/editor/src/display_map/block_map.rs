@@ -636,36 +636,25 @@ impl BlockMap {
                         .to_point(WrapPoint::new(edit.new.end, 0), Bias::Left);
 
                     let my_start = companion
-                        .convert_rows_from_companion(
+                        .convert_point_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            (
-                                Bound::Included(companion_start),
-                                Bound::Included(companion_start),
-                            ),
+                            companion_start,
                         )
-                        .first()
-                        .and_then(|t| t.boundaries.first())
-                        .map(|(_, range)| range.start)
-                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                        .start;
                     let my_end = companion
-                        .convert_rows_from_companion(
+                        .convert_point_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            (
-                                Bound::Included(companion_end),
-                                Bound::Included(companion_end),
-                            ),
+                            companion_end,
                         )
-                        .first()
-                        .and_then(|t| t.boundaries.last())
-                        .map(|(_, range)| range.end)
-                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                        .end;
 
                     let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
+                    // FIXME hsou
                     if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
                         *my_end.row_mut() += 1;
                         *my_end.column_mut() = 0;

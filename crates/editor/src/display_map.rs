@@ -150,10 +150,8 @@ type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Ancho
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
-pub struct MultiBufferRowMapping {
-    pub first_group: Option<Range<MultiBufferPoint>>,
-    pub boundaries: Vec<(MultiBufferPoint, Range<MultiBufferPoint>)>,
-    pub prev_boundary: Option<(MultiBufferPoint, Range<MultiBufferPoint>)>,
+pub struct CompanionExcerptPatch {
+    pub patch: Patch<MultiBufferPoint>,
     pub source_excerpt_end: MultiBufferPoint,
     pub target_excerpt_end: MultiBufferPoint,
 }
@@ -163,7 +161,7 @@ pub type ConvertMultiBufferRows = fn(
     &MultiBufferSnapshot,
     &MultiBufferSnapshot,
     (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-) -> Vec<MultiBufferRowMapping>;
+) -> Vec<CompanionExcerptPatch>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -233,7 +231,7 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         our_snapshot: &MultiBufferSnapshot,
         bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-    ) -> Vec<MultiBufferRowMapping> {
+    ) -> Vec<CompanionExcerptPatch> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         } else {
@@ -242,19 +240,29 @@ impl Companion {
         convert_fn(excerpt_map, companion_snapshot, our_snapshot, bounds)
     }
 
-    pub(crate) fn convert_rows_from_companion(
+    pub(crate) fn convert_point_from_companion(
         &self,
         display_map_id: EntityId,
         our_snapshot: &MultiBufferSnapshot,
         companion_snapshot: &MultiBufferSnapshot,
-        bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
-    ) -> Vec<MultiBufferRowMapping> {
+        point: MultiBufferPoint,
+    ) -> Range<MultiBufferPoint> {
         let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
         } else {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         };
-        convert_fn(excerpt_map, our_snapshot, companion_snapshot, bounds)
+        let patch = convert_fn(
+            excerpt_map,
+            companion_snapshot,
+            our_snapshot,
+            (Bound::Included(point), Bound::Included(point)),
+        )
+        .into_iter()
+        .next()
+        .unwrap()
+        .patch;
+        patch.edit_for_old_position(point).new
     }
 
     pub(crate) fn companion_excerpt_to_excerpt(
