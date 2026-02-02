@@ -670,6 +670,10 @@ impl EditPredictionStore {
             }
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    .with_disabled(IconName::ZedPredictDisabled)
+                    .with_up(IconName::ZedPredictUp)
+                    .with_down(IconName::ZedPredictDown)
+                    .with_error(IconName::ZedPredictError)
             }
         }
     }
