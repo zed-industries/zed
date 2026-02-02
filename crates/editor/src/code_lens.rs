@@ -90,6 +90,10 @@ impl CodeLensCache {
     pub fn set_refresh_task(&mut self, buffer_id: BufferId, task: Task<()>) {
         self.pending_refresh.insert(buffer_id, task);
     }
+
+    pub fn remove_refresh_task(&mut self, buffer_id: &BufferId) {
+        self.pending_refresh.remove(buffer_id);
+    }
 }
 
 fn group_lenses_by_row(
@@ -306,7 +310,7 @@ impl Editor {
                     group_lenses_by_row(individual_lenses, &snapshot)
                 });
 
-                editor
+                if let Err(_) = editor
                     .update(cx, |editor, cx| {
                         if let Some(old_block_ids) =
                             editor.code_lens_cache.get_block_ids(&buffer_id)
@@ -339,8 +343,17 @@ impl Editor {
                         editor.code_lens_cache.set_block_ids(buffer_id, block_ids);
                         cx.notify();
                     })
-                    .ok();
+                {
+                    editor.update(cx, |editor, _cx| {
+                        editor.code_lens_cache.remove_refresh_task(&buffer_id);
+                    }).ok();
+                    return;
+                }
             }
+
+            editor.update(cx, |editor, _cx| {
+                editor.code_lens_cache.remove_refresh_task(&buffer_id);
+            }).ok();
         });
 
         self.code_lens_cache.set_refresh_task(buffer_id, task);

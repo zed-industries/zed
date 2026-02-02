@@ -1057,6 +1057,7 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
+                            this.invalidate_code_lens_cache_for_server(server_id);
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
@@ -6091,9 +6092,26 @@ impl LspStore {
                 .unwrap_or_default()
         });
 
-        // TODO: Re-enable cache after fixing timing issues with rust-analyzer
-        // Cache is disabled to ensure fresh code lens requests after indexing completes
-        let _ = (existing_servers, version_queried_for.clone());
+        if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
+            if let Some(cached_lens) = &lsp_data.code_lens {
+                if !version_queried_for.changed_since(&lsp_data.buffer_version) {
+                    let has_different_servers = existing_servers.is_some_and(|existing_servers| {
+                        existing_servers != cached_lens.lens.keys().copied().collect()
+                    });
+                    if !has_different_servers {
+                        return Task::ready(Ok(Some(
+                            cached_lens.lens.values().flatten().cloned().collect(),
+                        )))
+                        .shared();
+                    }
+                } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
+                    if !version_queried_for.changed_since(updating_for) {
+                        return running_update.clone();
+                    }
+                }
+            }
+        }
+
         let lens_lsp_data = self
             .latest_lsp_data(buffer, cx)
             .code_lens
@@ -10222,6 +10240,7 @@ impl LspStore {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token) {
                 if !work.is_disk_based_diagnostics_progress {
+                    self.invalidate_code_lens_cache_for_server(language_server_id);
                     cx.emit(LspStoreEvent::RefreshInlayHints {
                         server_id: language_server_id,
                         request_id: None,
@@ -13321,6 +13340,18 @@ impl LspStore {
             *lsp_data = BufferLspData::new(buffer, cx);
         }
         lsp_data
+    }
+
+    fn invalidate_code_lens_cache_for_server(&mut self, server_id: LanguageServerId) {
+        for lsp_data in self.lsp_data.values_mut() {
+            if let Some(code_lens) = &mut lsp_data.code_lens {
+                if code_lens.lens.remove(&server_id).is_some() {
+                    if code_lens.lens.is_empty() {
+                        lsp_data.code_lens = None;
+                    }
+                }
+            }
+        }
     }
 }
 
