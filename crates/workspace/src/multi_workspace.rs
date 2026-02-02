@@ -2,7 +2,7 @@ use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, actions, px};
 use project::Project;
 use theme::ActiveTheme;
-use ui::{IconButton, IconName, IconSize, Label, LabelSize, ListItem, SharedString, prelude::*};
+use ui::{ListItem, ListSeparator, prelude::*};
 
 use crate::{
     DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
@@ -234,24 +234,20 @@ impl Render for MultiWorkspace {
                 .collect();
 
             Some(
-                div()
+                v_flex()
                     .id("workspace-sidebar")
                     .h_full()
                     .w_64()
-                    .flex()
-                    .flex_col()
                     .bg(cx.theme().colors().surface_background)
                     .border_r_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        div()
+                        h_flex()
                             .h(titlebar_height)
                             .w_full()
-                            .pl(px(80.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
                             .pr_2()
+                            .pl(px(80.))
+                            .justify_between()
                             .child(Label::new("Workspaces").size(LabelSize::Small))
                             .child(
                                 IconButton::new("new-workspace", IconName::Plus)
@@ -266,13 +262,13 @@ impl Render for MultiWorkspace {
                                     })),
                             ),
                     )
-                    .child(ui::ListSeparator)
+                    .child(ListSeparator)
                     .child(
                         div()
                             .id("workspace-sidebar-content")
+                            .p_1()
                             .flex_1()
                             .overflow_y_scroll()
-                            .p_1()
                             .children(items),
                     ),
             )
@@ -281,10 +277,10 @@ impl Render for MultiWorkspace {
         };
 
         client_side_decorations(
-            div()
+            h_flex()
+                // .items_start()
+                // .flex_1()
                 .size_full()
-                .flex()
-                .flex_row()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
                         if !this.multi_workspace_enabled(cx) {
@@ -322,7 +318,14 @@ impl Render for MultiWorkspace {
                     },
                 ))
                 .children(sidebar)
-                .child(div().flex_1().size_full().child(self.workspace().clone())),
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .size_full()
+                        .overflow_hidden()
+                        .child(self.workspace().clone()),
+                ),
             window,
             cx,
         )
