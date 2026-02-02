@@ -1,5 +1,5 @@
 use gpui::{Action as _, App};
-use settings::{LanguageSettingsContent, SettingsContent};
+use settings::{FontWeightContent, LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use strum::IntoDiscriminant as _;
 use ui::IntoElement;
@@ -744,7 +744,7 @@ fn appearance_page() -> SettingsPage {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Font Weight",
                 description: "Font weight for editor text (100-900).",
-                field: Box::new(SettingField {
+                field: Box::new(SettingField::<FontWeightContent> {
                     json_path: Some("buffer_font_weight"),
                     pick: |settings_content| settings_content.theme.buffer_font_weight.as_ref(),
                     write: |settings_content, value| {
@@ -913,7 +913,7 @@ fn appearance_page() -> SettingsPage {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Font Weight",
                 description: "Font weight for UI elements (100-900).",
-                field: Box::new(SettingField {
+                field: Box::new(SettingField::<FontWeightContent> {
                     json_path: Some("ui_font_weight"),
                     pick: |settings_content| settings_content.theme.ui_font_weight.as_ref(),
                     write: |settings_content, value| {
