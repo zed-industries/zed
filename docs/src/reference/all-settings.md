@@ -2667,13 +2667,16 @@ Configuration for various AI model providers including API URLs and authenticati
 
 ## LSP Document Colors
 
-- Description: Whether to show document color information from the language server
+- Description: How to render LSP `textDocument/documentColor` colors in the editor
 - Setting: `lsp_document_colors`
-- Default: `true`
+- Default: `inlay`
 
 **Options**
 
-`boolean` values
+1. `inlay`: Render document colors as inlay hints near the color text.
+2. `background`: Draw a background behind the color text.
+3. `border`: Draw a border around the color text.
+4. `none`: Do not query and render document colors.
 
 ## Max Tabs
 
