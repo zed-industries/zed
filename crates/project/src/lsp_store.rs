@@ -62,10 +62,10 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
-    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
-    ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Toolchain, Transaction, Unclipped,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, DiskState, File as _,
+    Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
+    LspInstaller, ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
@@ -2593,8 +2593,18 @@ impl LocalLspStore {
         if !file.is_local() {
             return;
         }
-        if file.disk_state().is_deleted() {
-            return;
+        // Don't register if the buffer is out of sync with disk
+        // (file was deleted or modified externally, e.g., during git branch switch)
+        match file.disk_state() {
+            DiskState::Deleted => return,
+            DiskState::Present { mtime } => {
+                if let Some(saved_mtime) = buffer.saved_mtime() {
+                    if mtime != saved_mtime {
+                        return;
+                    }
+                }
+            }
+            _ => {}
         }
 
         let abs_path = file.abs_path(cx);
@@ -4210,6 +4220,15 @@ impl LspStore {
                     }
                 }
             }
+            BufferStoreEvent::BufferFileDeleted { buffer, old_file } => {
+                let buffer_id = buffer.read(cx).remote_id();
+                if let Some(local) = self.as_local_mut()
+                    && let Some(file) = File::from_dyn(Some(old_file))
+                    && local.registered_buffers.contains_key(&buffer_id)
+                {
+                    local.unregister_old_buffer_from_language_servers(buffer, file, cx);
+                }
+            }
             _ => {}
         }
     }
@@ -4238,12 +4257,43 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
+            WorktreeStoreEvent::WorktreeDeletedEntry(_, entry_id) => {
+                self.on_entry_deleted(*entry_id, cx);
+            }
             WorktreeStoreEvent::WorktreeReleased(..)
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedEntries(..)
-            | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
-            | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
+            | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..) => {}
         }
+    }
+
+    fn on_entry_deleted(&mut self, entry_id: ProjectEntryId, cx: &mut Context<Self>) {
+        let Some(buffer) = self.buffer_store.read(cx).get_by_entry_id(entry_id) else {
+            return;
+        };
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+
+        if !local.registered_buffers.contains_key(&buffer_id) {
+            return;
+        }
+
+        let Some(file) = buffer.read(cx).file() else {
+            return;
+        };
+        let Some(local_file) = file.as_local() else {
+            return;
+        };
+
+        let abs_path = local_file.abs_path(cx);
+        let Ok(file_url) = lsp::Uri::from_file_path(&abs_path) else {
+            return;
+        };
+
+        local.unregister_buffer_from_language_servers(&buffer, &file_url, cx);
     }
 
     fn on_prettier_store_event(
