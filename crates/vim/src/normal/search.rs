@@ -1426,7 +1426,6 @@ mod test {
         cx.simulate_keystrokes("/");
         cx.run_until_parked();
 
-        // Verify search options are set from settings
         let search_bar = cx.workspace(|workspace, _, cx| {
             workspace
                 .active_pane()
@@ -1438,7 +1437,6 @@ mod test {
         });
 
         cx.update_entity(search_bar, |bar, _window, _cx| {
-            // Should have WHOLE_WORD and CASE_SENSITIVE from settings
             assert!(
                 bar.has_search_option(search::SearchOptions::WHOLE_WORD),
                 "whole_word setting should be respected"
@@ -1447,14 +1445,12 @@ mod test {
                 bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
                 "case_sensitive setting should be respected"
             );
-            // Should NOT have REGEX since we set regex=false
             assert!(
                 !bar.has_search_option(search::SearchOptions::REGEX),
                 "regex=false setting should be respected"
             );
         });
 
-        // Dismiss and test with different settings
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
 
@@ -1486,7 +1482,6 @@ mod test {
         });
 
         cx.update_entity(search_bar, |bar, _window, _cx| {
-            // Should have REGEX and INCLUDE_IGNORED from settings
             assert!(
                 bar.has_search_option(search::SearchOptions::REGEX),
                 "regex=true setting should be respected"
@@ -1495,7 +1490,6 @@ mod test {
                 bar.has_search_option(search::SearchOptions::INCLUDE_IGNORED),
                 "include_ignored=true setting should be respected"
             );
-            // Should NOT have WHOLE_WORD or CASE_SENSITIVE
             assert!(
                 !bar.has_search_option(search::SearchOptions::WHOLE_WORD),
                 "whole_word=false setting should be respected"
