@@ -1817,67 +1817,74 @@ impl EditorElement {
                     let cursor_next_x = cursor_row_layout.x_for_index(cursor_column + 1)
                         + cursor_row_layout
                             .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let mut block_width = cursor_next_x - cursor_character_x;
-                    if block_width == Pixels::ZERO {
-                        block_width = em_advance;
+                    let mut cell_width = cursor_next_x - cursor_character_x;
+                    if cell_width == Pixels::ZERO {
+                        cell_width = em_advance;
                     }
-                    let block_text = if selection.cursor_shape == CursorShape::Block
-                        && !redacted_ranges.iter().any(|range| {
-                            range.start <= cursor_position && cursor_position < range.end
+
+                    let mut block_width = cell_width;
+                    let mut block_text = None;
+
+                    let is_cursor_in_redacted_range = redacted_ranges
+                        .iter()
+                        .any(|range| range.start <= cursor_position && cursor_position < range.end);
+
+                    if selection.cursor_shape == CursorShape::Block && !is_cursor_in_redacted_range
+                    {
+                        if let Some(text) = snapshot.grapheme_at(cursor_position).or_else(|| {
+                            if snapshot.is_empty() {
+                                snapshot.placeholder_text().and_then(|s| {
+                                    s.graphemes(true).next().map(|s| s.to_string().into())
+                                })
+                            } else {
+                                None
+                            }
                         }) {
-                        snapshot
-                            .grapheme_at(cursor_position)
-                            .or_else(|| {
-                                if snapshot.is_empty() {
-                                    snapshot.placeholder_text().and_then(|s| {
-                                        s.graphemes(true).next().map(|s| s.to_string().into())
-                                    })
-                                } else {
-                                    None
+                            let is_ascii_whitespace_only =
+                                text.as_ref().chars().all(|c| c.is_ascii_whitespace());
+                            let len = text.len();
+
+                            let mut font = cursor_row_layout
+                                .font_id_for_index(cursor_column)
+                                .and_then(|cursor_font_id| {
+                                    window.text_system().get_font_for_id(cursor_font_id)
+                                })
+                                .unwrap_or(self.style.text.font());
+                            font.features = self.style.text.font_features.clone();
+
+                            // Invert the text color for the block cursor. Ensure that the text
+                            // color is opaque enough to be visible against the background color.
+                            //
+                            // 0.75 is an arbitrary threshold to determine if the background color is
+                            // opaque enough to use as a text color.
+                            //
+                            // TODO: In the future we should ensure themes have a `text_inverse` color.
+                            let color = if cx.theme().colors().editor_background.a < 0.75 {
+                                match cx.theme().appearance {
+                                    Appearance::Dark => Hsla::black(),
+                                    Appearance::Light => Hsla::white(),
                                 }
-                            })
-                            .map(|text| {
-                                let len = text.len();
+                            } else {
+                                cx.theme().colors().editor_background
+                            };
 
-                                let mut font = cursor_row_layout
-                                    .font_id_for_index(cursor_column)
-                                    .and_then(|cursor_font_id| {
-                                        window.text_system().get_font_for_id(cursor_font_id)
-                                    })
-                                    .unwrap_or(self.style.text.font());
-                                font.features = self.style.text.font_features.clone();
-
-                                // Invert the text color for the block cursor. Ensure that the text
-                                // color is opaque enough to be visible against the background color.
-                                //
-                                // 0.75 is an arbitrary threshold to determine if the background color is
-                                // opaque enough to use as a text color.
-                                //
-                                // TODO: In the future we should ensure themes have a `text_inverse` color.
-                                let color = if cx.theme().colors().editor_background.a < 0.75 {
-                                    match cx.theme().appearance {
-                                        Appearance::Dark => Hsla::black(),
-                                        Appearance::Light => Hsla::white(),
-                                    }
-                                } else {
-                                    cx.theme().colors().editor_background
-                                };
-
-                                window.text_system().shape_line(
-                                    text,
-                                    cursor_row_layout.font_size,
-                                    &[TextRun {
-                                        len,
-                                        font,
-                                        color,
-                                        ..Default::default()
-                                    }],
-                                    None,
-                                )
-                            })
-                    } else {
-                        None
-                    };
+                            let shaped = window.text_system().shape_line(
+                                text,
+                                cursor_row_layout.font_size,
+                                &[TextRun {
+                                    len,
+                                    font,
+                                    color,
+                                    ..Default::default()
+                                }],
+                                None,
+                            );
+                            if !is_ascii_whitespace_only {
+                                block_width = block_width.max(shaped.width);
+                            }
+                            block_text = Some(shaped);
+                        }
+                    }
 
                     let x = cursor_character_x - scroll_pixel_position.x.into();
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
