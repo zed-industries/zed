@@ -215,6 +215,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "b.rs": "fn b() {\n    B\n}",
         },
         "c.js": "def c\n  C\nend",
+        "d": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 1
+            "#,
+            "d.rs": "fn d() {\n    D\n}",
+        },
         "README.json": "tabs are better\n",
     }));
 
@@ -252,6 +259,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         let settings_a = settings_for("a.rs");
         let settings_b = settings_for("b/b.rs");
         let settings_c = settings_for("c.js");
+        let settings_d = settings_for("d/d.rs");
         let settings_readme = settings_for("README.json");
 
         // .editorconfig overrides .zed/settings
@@ -261,8 +269,9 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
         assert_eq!(settings_a.preferred_line_length, 120);
 
-        // .editorconfig in b/ overrides .editorconfig in root
+        // .editorconfig in subdirectory overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+        assert_eq!(Some(settings_d.tab_size), NonZeroU32::new(1));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
