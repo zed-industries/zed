@@ -1,9 +1,10 @@
 use anyhow::Result;
 use edit_prediction::cursor_excerpt;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate, EditPredictionIconSet};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
+use icons::IconName;
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
 };
@@ -172,6 +173,10 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         true
     }
 
+    fn icons(&self, _cx: &App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::AiMistral)
+    }
+
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
         Self::api_key(cx).is_some()
     }
@@ -330,6 +335,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         Some(EditPrediction::Local {
             id: None,
             edits,
+            cursor_position: None,
             edit_preview: Some(current_completion.edit_preview.clone()),
         })
     }

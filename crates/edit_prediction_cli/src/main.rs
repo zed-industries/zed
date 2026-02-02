@@ -12,6 +12,7 @@ mod parse_output;
 mod paths;
 mod predict;
 mod progress;
+mod prompt_assets;
 mod pull_examples;
 mod qa;
 mod reorder_patch;
@@ -61,6 +62,8 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    /// The limit for the number of examples to process
+    /// Default is unlimited for processing local datasets, 5000 when pulling from snowflake
     #[clap(long, global = true)]
     limit: Option<usize>,
     #[clap(long, global = true)]
@@ -257,6 +260,9 @@ struct PredictArgs {
     provider: Option<PredictionProvider>,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
+    /// Only use cached responses, don't queue new requests for batching
+    #[clap(long)]
+    cache_only: bool,
 }
 
 #[derive(Debug, Args, Clone)]

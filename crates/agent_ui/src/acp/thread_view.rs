@@ -2560,11 +2560,27 @@ impl AcpServerView {
                 let workspace = workspace.clone();
 
                 ContextMenu::build(window, cx, move |menu, _, cx| {
-                    let is_at_top = entity
-                        .read(cx)
-                        .as_active_thread()
+                    let active_thread = entity.read(cx).as_active_thread();
+                    let is_at_top = active_thread
                         .map(|active| &active.list_state)
                         .map_or(true, |state| state.logical_scroll_top().item_ix == 0);
+
+                    let has_selection = active_thread
+                        .and_then(|active| active.thread.read(cx).entries().get(entry_ix))
+                        .and_then(|entry| match entry {
+                            AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
+                            _ => None,
+                        })
+                        .map(|chunks| {
+                            chunks.iter().any(|chunk| {
+                                let md = match chunk {
+                                    AssistantMessageChunk::Message { block } => block.markdown(),
+                                    AssistantMessageChunk::Thought { block } => block.markdown(),
+                                };
+                                md.map_or(false, |m| m.read(cx).selected_text().is_some())
+                            })
+                        })
+                        .unwrap_or(false);
 
                     let copy_this_agent_response =
                         ContextMenuEntry::new("Copy This Agent Response").handler({
@@ -2619,7 +2635,11 @@ impl AcpServerView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
-                        .action("Copy Selection", Box::new(markdown::CopyAsMarkdown))
+                        .action_disabled_when(
+                            !has_selection,
+                            "Copy Selection",
+                            Box::new(markdown::CopyAsMarkdown),
+                        )
                         .item(copy_this_agent_response)
                         .separator()
                         .item(scroll_item)
