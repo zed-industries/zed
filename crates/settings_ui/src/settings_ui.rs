@@ -562,10 +562,35 @@ pub fn open_settings_editor(
             return;
         }
 
+        let query = format!("#{path}");
+        let indices = settings_window.filter_by_json_path(&query);
+
         settings_window.search_bar.update(cx, |editor, cx| {
-            editor.set_text(format!("#{path}"), window, cx);
+            editor.set_text(query, window, cx);
         });
-        settings_window.update_matches(cx);
+        settings_window.apply_match_indices(indices.iter().copied());
+
+        if indices.len() == 1
+            && let Some(search_index) = settings_window.search_index.as_ref()
+        {
+            let SearchKeyLUTEntry {
+                page_index,
+                item_index,
+                header_index,
+                ..
+            } = search_index.key_lut[indices[0]];
+            let page = &settings_window.pages[page_index];
+            let item = &page.items[item_index];
+
+            if settings_window.filter_table[page_index][item_index]
+                && let SettingsPageItem::SubPageLink(link) = item
+                && let SettingsPageItem::SectionHeader(header) = page.items[header_index]
+            {
+                settings_window.push_sub_page(link.clone(), SharedString::from(header), window, cx);
+            }
+        }
+
+        cx.notify();
     }
 
     let existing_window = cx
@@ -1433,7 +1458,6 @@ impl SettingsWindow {
             editor.set_placeholder_text("Search settings…", window, cx);
             editor
         });
-
         cx.subscribe(&search_bar, |this, _, event: &EditorEvent, cx| {
             let EditorEvent::Edited { transaction_id: _ } = event else {
                 return;
@@ -1800,9 +1824,58 @@ impl SettingsWindow {
         }
     }
 
+    fn filter_by_json_path(&self, query: &str) -> Vec<usize> {
+        let Some(path) = query.strip_prefix('#') else {
+            return vec![];
+        };
+        let Some(search_index) = self.search_index.as_ref() else {
+            return vec![];
+        };
+        let mut indices = vec![];
+        for (index, SearchKeyLUTEntry { json_path, .. }) in search_index.key_lut.iter().enumerate()
+        {
+            let Some(json_path) = json_path else {
+                continue;
+            };
+
+            if let Some(post) = json_path.strip_prefix(path)
+                && (post.is_empty() || post.starts_with('.'))
+            {
+                indices.push(index);
+            }
+        }
+        indices
+    }
+
+    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>) {
+        let Some(search_index) = self.search_index.as_ref() else {
+            return;
+        };
+
+        for page in &mut self.filter_table {
+            page.fill(false);
+        }
+
+        for match_index in match_indices {
+            let SearchKeyLUTEntry {
+                page_index,
+                header_index,
+                item_index,
+                ..
+            } = search_index.key_lut[match_index];
+            let page = &mut self.filter_table[page_index];
+            page[header_index] = true;
+            page[item_index] = true;
+        }
+        self.has_query = true;
+        self.filter_matches_to_file();
+        self.open_first_nav_page();
+        self.reset_list_state();
+    }
+
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
-        let mut query = self.search_bar.read(cx).text(cx);
+        let query = self.search_bar.read(cx).text(cx);
         if query.is_empty() || self.search_index.is_none() {
             for page in &mut self.filter_table {
                 page.fill(true);
@@ -1814,68 +1887,19 @@ impl SettingsWindow {
             return;
         }
 
-        let is_json_link_query;
-        if query.starts_with("#") {
-            query.remove(0);
-            is_json_link_query = true;
-        } else {
-            is_json_link_query = false;
+        let is_json_link_query = query.starts_with("#");
+        if is_json_link_query {
+            let indices = self.filter_by_json_path(&query);
+            if !indices.is_empty() {
+                self.apply_match_indices(indices.into_iter());
+                cx.notify();
+                return;
+            }
         }
 
         let search_index = self.search_index.as_ref().unwrap().clone();
 
-        fn update_matches_inner(
-            this: &mut SettingsWindow,
-            search_index: &SearchIndex,
-            match_indices: impl Iterator<Item = usize>,
-            cx: &mut Context<SettingsWindow>,
-        ) {
-            for page in &mut this.filter_table {
-                page.fill(false);
-            }
-
-            for match_index in match_indices {
-                let SearchKeyLUTEntry {
-                    page_index,
-                    header_index,
-                    item_index,
-                    ..
-                } = search_index.key_lut[match_index];
-                let page = &mut this.filter_table[page_index];
-                page[header_index] = true;
-                page[item_index] = true;
-            }
-            this.has_query = true;
-            this.filter_matches_to_file();
-            this.open_first_nav_page();
-            this.reset_list_state();
-            cx.notify();
-        }
-
         self.search_task = Some(cx.spawn(async move |this, cx| {
-            if is_json_link_query {
-                let mut indices = vec![];
-                for (index, SearchKeyLUTEntry { json_path, .. }) in
-                    search_index.key_lut.iter().enumerate()
-                {
-                    let Some(json_path) = json_path else {
-                        continue;
-                    };
-
-                    if let Some(post) = query.strip_prefix(json_path)
-                        && (post.is_empty() || post.starts_with('.'))
-                    {
-                        indices.push(index);
-                    }
-                }
-                if !indices.is_empty() {
-                    this.update(cx, |this, cx| {
-                        update_matches_inner(this, search_index.as_ref(), indices.into_iter(), cx);
-                    })
-                    .ok();
-                    return;
-                }
-            }
             let bm25_task = cx.background_spawn({
                 let search_index = search_index.clone();
                 let max_results = search_index.key_lut.len();
@@ -1894,6 +1918,11 @@ impl SettingsWindow {
             );
 
             let fuzzy_matches = fuzzy_search_task.await;
+            // PERF:
+            // If results are slow to appear, we should:
+            // - return to the structure we had previously where we wait on fuzzy matches first (they resolve quickly) with a min match score of 0.3
+            // - wait on bm25 and replace fuzzy matches with bm25 matches
+            // - to deal with lack of fuzzyness with bm25 searches however, we should keep the fuzzy matches around, and merge fuzzy matches with high score (>0.75?) into bm25 results
             let bm25_matches = bm25_task.await;
 
             _ = this
@@ -1930,7 +1959,8 @@ impl SettingsWindow {
                         .map(|bm25_match| bm25_match.document.id);
                     let merged_indices = bm25_indices.chain(fuzzy_indices);
 
-                    update_matches_inner(this, search_index.as_ref(), merged_indices, cx);
+                    this.apply_match_indices(merged_indices);
+                    cx.notify();
                 })
                 .ok();
 
