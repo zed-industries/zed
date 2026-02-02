@@ -35,7 +35,7 @@ The implementation prioritizes core functionality first (entities and basic data
   - Prioritize code correctness and clarity over speed/efficiency (.rules compliance)
   - _Requirements: 8.1, 8.4, 9.4_
 
-- [ ]* 1.1 Write GPUI property test for data structure validation using gpui-component
+- [x]* 1.1 Write GPUI property test for data structure validation using gpui-component
   - Use `TestAppContext` and `cx.background_executor().timer()` instead of `smol::Timer::after()` (AGENTS.md compliance)
   - Test gpui-component integration with Root component
   - Follow .rules: never use `unwrap()`, use `?` for error propagation
@@ -106,8 +106,8 @@ The implementation prioritizes core functionality first (entities and basic data
   - **Property 25: Memory Management**
   - **Validates: Requirements 8.1, 8.5**
 
-- [ ] 2. Implement all trading panels using gpui-component widgets
-  - [ ] 2.1 Create panels.rs with enhanced UI components from gpui-component
+- [-] 2. Implement all trading panels using gpui-component widgets
+  - [x] 2.1 Create panels.rs with enhanced UI components from gpui-component
     - Implement WatchlistPanel using gpui-component's virtualized Table for stock list
     - Implement ChartPanel using gpui-component's built-in Chart for K-line display
     - Implement StockInfoPanel using gpui-component's layout and display components

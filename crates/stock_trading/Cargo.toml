@@ -13,6 +13,8 @@ anyhow.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+log.workspace = true
+reqwest_client.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 settings.workspace = true

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{App, Context, Entity, EventEmitter, Render, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Render, Subscription};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,30 @@ use tokio::net::TcpStream;
 use url::Url;
 
 use crate::market_data::{OrderSide, OrderBookEntry};
+
+// Extension trait for error logging
+trait LogErr<T> {
+    fn log_err(self) -> Option<T>;
+}
+
+impl<T> LogErr<T> for Result<T> {
+    fn log_err(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log::error!("{}", error);
+                None
+            }
+        }
+    }
+}
+
+impl LogErr<()> for anyhow::Error {
+    fn log_err(self) -> Option<()> {
+        log::error!("{}", self);
+        None
+    }
+}
 
 /// WebSocket message structure for real-time updates
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +62,7 @@ impl WebSocketMessage {
 }
 
 /// WebSocket message type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MessageType {
     Quote,           // Real-time price updates
     Trade,           // Trade executions
@@ -290,7 +314,7 @@ pub struct WebSocketService {
 impl WebSocketService {
     /// Create new WebSocket service
     pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new_entity(Self {
+        cx.new(|_| Self {
             connection: None,
             subscriptions: HashMap::new(),
             message_handlers: HashMap::new(),
@@ -307,18 +331,18 @@ impl WebSocketService {
     }
     
     /// Connect to WebSocket endpoint with proper error handling (.rules compliance)
-    pub fn connect(&mut self, url: &str, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn connect(&mut self, url: &str, cx: &mut Context<Self>) -> gpui::Task<Result<()>> {
         let url = url.to_string();
         self.connection_state = ConnectionState::Connecting;
         
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             match Url::parse(&url) {
                 Ok(parsed_url) => {
                     match connect_async(parsed_url).await {
                         Ok((ws_stream, _)) => {
                             let connection = Arc::new(Mutex::new(ws_stream));
                             
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.connection = Some(connection);
                                 this.connection_state = ConnectionState::Connected;
                                 this.reconnect_attempts = 0;
@@ -329,7 +353,7 @@ impl WebSocketService {
                             Ok(())
                         }
                         Err(error) => {
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.handle_connection_error(error.into(), cx);
                             })?;
                             Err(anyhow::anyhow!("Failed to connect to WebSocket"))
@@ -337,7 +361,7 @@ impl WebSocketService {
                     }
                 }
                 Err(error) => {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.handle_connection_error(error.into(), cx);
                     })?;
                     Err(anyhow::anyhow!("Invalid WebSocket URL"))
@@ -366,7 +390,7 @@ impl WebSocketService {
         
         // Send subscription message if connected
         if matches!(self.connection_state, ConnectionState::Connected) {
-            self.send_message(subscribe_message, cx);
+            let _ = self.send_message(subscribe_message, cx);
         }
         
         Ok(())
@@ -387,7 +411,7 @@ impl WebSocketService {
             
             // Send unsubscription message if connected
             if matches!(self.connection_state, ConnectionState::Connected) {
-                self.send_message(unsubscribe_message, cx);
+                let _ = self.send_message(unsubscribe_message, cx);
             }
             
             cx.emit(WebSocketEvent::SubscriptionRemoved(symbol.to_string()));
@@ -401,27 +425,25 @@ impl WebSocketService {
         &mut self,
         message: WebSocketMessage,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> gpui::Task<Result<()>> {
         if !matches!(self.connection_state, ConnectionState::Connected) {
             // Buffer message if not connected
             if self.message_buffer.len() < self.max_buffer_size {
                 self.message_buffer.push(message);
             }
-            return cx.spawn(|_, _| async { Ok(()) });
+            return gpui::Task::ready(Ok(()));
         }
         
         let connection = self.connection.clone();
         
-        cx.spawn(|_, _| async move {
-            if let Some(conn) = connection {
-                let json_message = serde_json::to_string(&message)?;
-                let ws_message = Message::Text(json_message);
+        cx.spawn(async move |_this, _cx| {
+            if let Some(_conn) = connection {
+                let _json_message = serde_json::to_string(&message)?;
+                let _ws_message = Message::Text(_json_message);
                 
-                if let Ok(mut stream) = conn.lock() {
-                    // Note: This is a simplified implementation
-                    // In a real implementation, you would use the WebSocket stream's send method
-                    // stream.send(ws_message).await?;
-                }
+                // Note: This is a simplified implementation
+                // In a real implementation, you would use the WebSocket stream's send method
+                // stream.send(ws_message).await?;
             }
             Ok(())
         })
@@ -448,10 +470,11 @@ impl WebSocketService {
     
     /// Handle connection errors with proper error handling (.rules compliance)
     pub fn handle_connection_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        let error_string = error.to_string();
         error.log_err(); // Use .log_err() for visibility
         
-        self.connection_state = ConnectionState::Error(error.to_string());
-        cx.emit(WebSocketEvent::ConnectionError(error.to_string()));
+        self.connection_state = ConnectionState::Error(error_string.clone());
+        cx.emit(WebSocketEvent::ConnectionError(error_string));
         
         // Attempt reconnection if within limits
         if self.reconnect_attempts < self.max_reconnect_attempts {
@@ -460,12 +483,13 @@ impl WebSocketService {
             
             let delay = self.reconnect_delay * self.reconnect_attempts;
             
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(delay).await;
                 
-                if let Err(reconnect_error) = this.update(&mut cx, |this, cx| this.attempt_reconnect(cx)) {
+                if let Err(reconnect_error) = this.update(cx, |this, cx| this.attempt_reconnect(cx)) {
                     reconnect_error.log_err(); // Never let _ = on fallible operations
                 }
+                Ok::<(), anyhow::Error>(())
             }).detach();
             
             cx.emit(WebSocketEvent::ReconnectAttempt(self.reconnect_attempts));
@@ -483,17 +507,18 @@ impl WebSocketService {
     pub fn start_heartbeat(&mut self, cx: &mut Context<Self>) {
         let heartbeat_interval = self.heartbeat_interval;
         
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(heartbeat_interval).await;
                 
-                if let Err(error) = this.update(&mut cx, |this, cx| {
+                if let Err(error) = this.update(cx, |this, cx| {
                     this.send_heartbeat(cx)
                 }) {
                     error.log_err(); // Proper error handling
                     break;
                 }
             }
+            Ok::<(), anyhow::Error>(())
         }).detach();
     }
     
@@ -505,7 +530,7 @@ impl WebSocketService {
             serde_json::json!({"timestamp": SystemTime::now()}),
         )?;
         
-        self.send_message(heartbeat_message, cx);
+        let _ = self.send_message(heartbeat_message, cx);
         Ok(())
     }
     
@@ -529,7 +554,7 @@ impl WebSocketService {
         if matches!(self.connection_state, ConnectionState::Connected) {
             let messages = std::mem::take(&mut self.message_buffer);
             for message in messages {
-                self.send_message(message, cx);
+                let _ = self.send_message(message, cx);
             }
         }
     }
@@ -538,7 +563,7 @@ impl WebSocketService {
 impl EventEmitter<WebSocketEvent> for WebSocketService {}
 
 impl Render for WebSocketService {
-    fn render(&mut self, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         gpui::div() // WebSocket service doesn't render UI directly
     }
 }

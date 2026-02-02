@@ -1,12 +1,35 @@
 use anyhow::Result;
-use gpui::{App, Context, Entity, EventEmitter, Render, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Render, Subscription};
 use rand::{thread_rng, Rng};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::market_data::*;
 use crate::websocket_service::*;
+
+// Extension trait for error logging
+trait LogErr<T> {
+    fn log_err(self) -> Option<T>;
+}
+
+impl<T> LogErr<T> for Result<T> {
+    fn log_err(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log::error!("{}", error);
+                None
+            }
+        }
+    }
+}
+
+impl LogErr<()> for anyhow::Error {
+    fn log_err(self) -> Option<()> {
+        log::error!("{}", self);
+        None
+    }
+}
 
 /// Mock data service for development and testing
 pub struct MockDataService {
@@ -14,7 +37,7 @@ pub struct MockDataService {
     simulation_active: bool,
     update_interval: Duration,
     price_volatility: f64,
-    _simulation_task: Option<Task<()>>,
+    _simulation_task: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -153,7 +176,7 @@ impl MockDataService {
         // Initialize with realistic stock data
         service.initialize_stock_data();
         
-        cx.new_entity(service)
+        cx.new(|_| service)
     }
     
     /// Initialize realistic stock data for major stocks
@@ -189,11 +212,11 @@ impl MockDataService {
         self.simulation_active = true;
         let update_interval = self.update_interval;
         
-        let task = cx.spawn(|this, mut cx| async move {
+        let task = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(update_interval).await;
                 
-                if let Err(error) = this.update(&mut cx, |this, cx| {
+                if let Err(error) = this.update(cx, |this, cx| {
                     this.update_all_prices(cx)
                 }) {
                     error.log_err(); // Proper error handling
@@ -335,7 +358,7 @@ impl MockDataService {
         // Add some random positions
         let symbols: Vec<_> = self.stock_data.keys().take(3).collect();
         for symbol in symbols {
-            if let Some(stock_data) = self.stock_data.get(*symbol) {
+            if let Some(stock_data) = self.stock_data.get(symbol) {
                 let quantity = rng.gen_range(10..100) as i64;
                 let average_cost = stock_data.base_price * rng.gen_range(0.9..1.1);
                 
@@ -396,7 +419,7 @@ impl MockDataService {
 impl EventEmitter<MockDataEvent> for MockDataService {}
 
 impl Render for MockDataService {
-    fn render(&mut self, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         gpui::div() // Mock data service doesn't render UI directly
     }
 }
@@ -409,14 +432,14 @@ pub struct MockWebSocketService {
     price_volatility: f64,
     connection_state: ConnectionState,
     mock_data_service: Option<Entity<MockDataService>>,
-    _simulation_task: Option<Task<()>>,
+    _simulation_task: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl MockWebSocketService {
     /// Create new mock WebSocket service
     pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new_entity(Self {
+        cx.new(|_| Self {
             subscriptions: HashMap::new(),
             simulation_active: false,
             update_interval: Duration::from_millis(500), // 500ms updates
@@ -434,14 +457,14 @@ impl MockWebSocketService {
     }
     
     /// Simulate WebSocket connection
-    pub fn simulate_connect(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn simulate_connect(&mut self, cx: &mut Context<Self>) -> gpui::Task<Result<()>> {
         self.connection_state = ConnectionState::Connecting;
         
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             // Simulate connection delay
             cx.background_executor().timer(Duration::from_millis(100)).await;
             
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.connection_state = ConnectionState::Connected;
                 cx.emit(WebSocketEvent::Connected);
                 this.start_simulation(cx);
@@ -488,11 +511,11 @@ impl MockWebSocketService {
         self.simulation_active = true;
         let update_interval = self.update_interval;
         
-        let task = cx.spawn(|this, mut cx| async move {
+        let task = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(update_interval).await;
                 
-                if let Err(error) = this.update(&mut cx, |this, cx| {
+                if let Err(error) = this.update(cx, |this, cx| {
                     this.generate_mock_updates(cx)
                 }) {
                     error.log_err(); // Proper error handling
@@ -674,7 +697,7 @@ impl MockWebSocketService {
 impl EventEmitter<WebSocketEvent> for MockWebSocketService {}
 
 impl Render for MockWebSocketService {
-    fn render(&mut self, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         gpui::div() // Mock WebSocket service doesn't render UI directly
     }
 }

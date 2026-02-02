@@ -623,7 +623,7 @@ impl Candle {
 }
 
 /// Time frame enumeration for chart data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TimeFrame {
     OneMinute,
     FiveMinutes,

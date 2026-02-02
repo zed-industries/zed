@@ -1,6 +1,5 @@
-use anyhow::Result;
 use gpui::TestAppContext;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::market_data::*;
 use crate::websocket_service::*;
@@ -13,7 +12,7 @@ use crate::*;
 /// Property: For any order parameters entered, the system should validate them 
 /// before submission, accepting valid orders and rejecting invalid ones
 #[gpui::test]
-async fn property_order_validation(cx: &mut TestAppContext) {
+async fn property_order_validation(_cx: &mut TestAppContext) {
     // Test valid order creation
     let valid_order = Order::new(
         "ORDER_001".to_string(),
@@ -114,7 +113,7 @@ async fn property_order_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_market_data_validation(cx: &mut TestAppContext) {
+async fn test_market_data_validation(_cx: &mut TestAppContext) {
     // Test valid market data creation
     let valid_data = MarketData::new("AAPL".to_string(), 150.0);
     assert!(valid_data.is_ok(), "Valid market data should be created successfully");
@@ -147,7 +146,7 @@ async fn test_market_data_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_order_book_validation(cx: &mut TestAppContext) {
+async fn test_order_book_validation(_cx: &mut TestAppContext) {
     // Test valid order book creation
     let valid_order_book = OrderBook::new("AAPL".to_string());
     assert!(valid_order_book.is_ok(), "Valid order book should be created successfully");
@@ -189,7 +188,7 @@ async fn test_order_book_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_portfolio_validation(cx: &mut TestAppContext) {
+async fn test_portfolio_validation(_cx: &mut TestAppContext) {
     // Test valid portfolio creation
     let valid_portfolio = Portfolio::new("ACCOUNT_001".to_string(), 100_000.0);
     assert!(valid_portfolio.is_ok(), "Valid portfolio should be created successfully");
@@ -210,7 +209,7 @@ async fn test_portfolio_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_position_validation(cx: &mut TestAppContext) {
+async fn test_position_validation(_cx: &mut TestAppContext) {
     // Test valid position creation
     let valid_position = Position::new("AAPL".to_string(), 100, 150.0);
     assert!(valid_position.is_ok(), "Valid position should be created successfully");
@@ -246,7 +245,7 @@ async fn test_position_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_candle_validation(cx: &mut TestAppContext) {
+async fn test_candle_validation(_cx: &mut TestAppContext) {
     let timestamp = SystemTime::now();
     
     // Test valid candle creation
@@ -291,7 +290,7 @@ async fn test_candle_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_websocket_message_validation(cx: &mut TestAppContext) {
+async fn test_websocket_message_validation(_cx: &mut TestAppContext) {
     // Test valid WebSocket message creation
     let data = serde_json::json!({"test": "data"});
     let valid_message = WebSocketMessage::new(
@@ -316,7 +315,7 @@ async fn test_websocket_message_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_quote_update_validation(cx: &mut TestAppContext) {
+async fn test_quote_update_validation(_cx: &mut TestAppContext) {
     // Test valid quote update creation
     let valid_quote = QuoteUpdate::new("AAPL".to_string(), 149.5, 150.5, 150.0);
     assert!(valid_quote.is_ok(), "Valid quote update should be created successfully");
@@ -345,7 +344,7 @@ async fn test_quote_update_validation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_websocket_subscription_validation(cx: &mut TestAppContext) {
+async fn test_websocket_subscription_validation(_cx: &mut TestAppContext) {
     // Test valid subscription creation
     let message_types = vec![MessageType::Quote, MessageType::Trade];
     let valid_subscription = WebSocketSubscription::new("AAPL".to_string(), message_types.clone());
@@ -371,8 +370,8 @@ async fn test_websocket_subscription_validation(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_gpui_component_integration(cx: &mut TestAppContext) {
     // Test TradingManager entity creation and basic functionality
-    let http_client = http_client::ReqwestClient::new().unwrap();
-    let trading_manager = TradingManager::new(std::sync::Arc::new(http_client), cx);
+    let http_client = reqwest_client::ReqwestClient::new();
+    let trading_manager = cx.update(|cx| TradingManager::new(std::sync::Arc::new(http_client), cx));
     
     // Test setting active symbol
     trading_manager.update(cx, |manager, cx| {
@@ -381,8 +380,8 @@ async fn test_gpui_component_integration(cx: &mut TestAppContext) {
     });
     
     // Test DataService entity creation
-    let http_client = http_client::ReqwestClient::new().unwrap();
-    let data_service = DataService::new(std::sync::Arc::new(http_client), cx);
+    let http_client = reqwest_client::ReqwestClient::new();
+    let data_service = cx.update(|cx| DataService::new(std::sync::Arc::new(http_client), cx));
     
     // Test data service caching
     data_service.update(cx, |service, cx| {
@@ -397,7 +396,7 @@ async fn test_gpui_component_integration(cx: &mut TestAppContext) {
     });
     
     // Test WebSocketService entity creation
-    let websocket_service = WebSocketService::new(cx);
+    let websocket_service = cx.update(|cx| WebSocketService::new(cx));
     
     websocket_service.update(cx, |service, cx| {
         // Test subscription management
@@ -418,7 +417,7 @@ async fn test_gpui_component_integration(cx: &mut TestAppContext) {
     });
     
     // Test MockDataService entity creation and functionality
-    let mock_data_service = MockDataService::new(cx);
+    let mock_data_service = cx.update(|cx| MockDataService::new(cx));
     
     mock_data_service.update(cx, |service, _cx| {
         // Test getting available symbols
@@ -487,7 +486,7 @@ async fn test_gpui_component_integration(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_timeframe_functionality(cx: &mut TestAppContext) {
+async fn test_timeframe_functionality(_cx: &mut TestAppContext) {
     // Test TimeFrame enum functionality
     assert_eq!(TimeFrame::OneMinute.to_seconds(), 60);
     assert_eq!(TimeFrame::FiveMinutes.to_seconds(), 300);
@@ -501,7 +500,7 @@ async fn test_timeframe_functionality(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_watchlist_item_functionality(cx: &mut TestAppContext) {
+async fn test_watchlist_item_functionality(_cx: &mut TestAppContext) {
     // Test WatchlistItem creation and updates
     let watchlist_item = WatchlistItem::new("AAPL".to_string(), "Apple Inc.".to_string());
     assert!(watchlist_item.is_ok(), "Valid watchlist item should be created successfully");
