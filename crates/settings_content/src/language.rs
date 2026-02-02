@@ -117,9 +117,6 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
-            // TODO(zeta2): remove this option and create migration
-            Content::Experimental(name) if name == "sweep" => EditPredictionProvider::Sweep,
-            Content::Experimental(name) if name == "mercury" => EditPredictionProvider::Mercury,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
             {
