@@ -38,11 +38,6 @@ pub struct CsvPreviewView {
     pub(crate) list_state: gpui::ListState,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
-    /// Used to signalize parser that the cell was edited, and reparsing is needed.
-    /// Emited by `cell_editor` module on submit.
-    /// Is needed, as `buffer.edit([(range, new_text)], None, cx);` emits `BufferEdited` event,
-    /// which is too generic, and this flag shows that the source of that event is indeed cell editing
-    pub(crate) cell_edited_flag: bool,
 }
 
 pub fn init(cx: &mut App) {
@@ -131,7 +126,6 @@ impl CsvPreviewView {
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
-                cell_edited_flag: false,
                 scroll_handle: ScrollHandle::default(),
                 engine: TableDataEngine::default(),
             };

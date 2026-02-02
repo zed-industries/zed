@@ -32,12 +32,6 @@ impl CsvPreviewView {
                     println!("Event which triggered reparsing: {event:?}");
                     this.parse_csv_from_active_editor(true, cx);
                 }
-                EditorEvent::BufferEdited | EditorEvent::Reparsed(_) if this.cell_edited_flag => {
-                    println!("CSV Cell edited. Event: {event:?}");
-                    // Clearing
-                    this.cell_edited_flag = false;
-                    this.parse_csv_from_active_editor(true, cx);
-                }
                 _ => {
                     println!("Other event: {event:?}");
                 }
