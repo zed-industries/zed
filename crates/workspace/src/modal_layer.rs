@@ -246,59 +246,43 @@ mod tests {
     use gpui::{div, Empty, TestAppContext, UpdateGlobal};
     use settings::SettingsStore;
 
-    struct TestModal {
-        focus_handle: FocusHandle,
-    }
-
-    impl TestModal {
-        fn new(cx: &mut gpui::Context<Self>) -> Self {
-            Self {
-                focus_handle: cx.focus_handle(),
+    macro_rules! define_test_modal {
+        ($name:ident) => {
+            struct $name {
+                focus_handle: FocusHandle,
             }
-        }
-    }
 
-    impl Render for TestModal {
-        fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-            div().track_focus(&self.focus_handle(cx))
-        }
-    }
-
-    impl gpui::Focusable for TestModal {
-        fn focus_handle(&self, _cx: &App) -> FocusHandle {
-            self.focus_handle.clone()
-        }
-    }
-
-    impl EventEmitter<DismissEvent> for TestModal {}
-    impl ModalView for TestModal {}
-
-    struct TestModalB {
-        focus_handle: FocusHandle,
-    }
-
-    impl TestModalB {
-        fn new(cx: &mut gpui::Context<Self>) -> Self {
-            Self {
-                focus_handle: cx.focus_handle(),
+            impl $name {
+                fn new(cx: &mut gpui::Context<Self>) -> Self {
+                    Self {
+                        focus_handle: cx.focus_handle(),
+                    }
+                }
             }
-        }
+
+            impl Render for $name {
+                fn render(
+                    &mut self,
+                    _window: &mut Window,
+                    cx: &mut gpui::Context<Self>,
+                ) -> impl IntoElement {
+                    div().track_focus(&self.focus_handle(cx))
+                }
+            }
+
+            impl gpui::Focusable for $name {
+                fn focus_handle(&self, _cx: &App) -> FocusHandle {
+                    self.focus_handle.clone()
+                }
+            }
+
+            impl EventEmitter<DismissEvent> for $name {}
+            impl ModalView for $name {}
+        };
     }
 
-    impl Render for TestModalB {
-        fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-            div().track_focus(&self.focus_handle(cx))
-        }
-    }
-
-    impl gpui::Focusable for TestModalB {
-        fn focus_handle(&self, _cx: &App) -> FocusHandle {
-            self.focus_handle.clone()
-        }
-    }
-
-    impl EventEmitter<DismissEvent> for TestModalB {}
-    impl ModalView for TestModalB {}
+    define_test_modal!(TestModalA);
+    define_test_modal!(TestModalB);
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -315,7 +299,7 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             assert!(layer.active_modal.is_some());
         });
     }
@@ -327,9 +311,9 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             assert!(layer.active_modal.is_some());
-            layer.toggle_modal::<TestModal, _>(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal::<TestModalA, _>(window, cx, |_window, cx| TestModalA::new(cx));
             assert!(layer.active_modal.is_none());
         });
     }
@@ -341,12 +325,12 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
-            assert!(layer.active_modal::<TestModal>().is_some());
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
+            assert!(layer.active_modal::<TestModalA>().is_some());
 
             layer.toggle_modal(window, cx, |_window, cx| TestModalB::new(cx));
             assert!(layer.active_modal::<TestModalB>().is_some());
-            assert!(layer.active_modal::<TestModal>().is_none());
+            assert!(layer.active_modal::<TestModalA>().is_none());
         });
     }
 
@@ -357,7 +341,7 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             layer.hide_modal(window, cx);
             assert!(layer.active_modal.is_none());
             assert!(layer.closing_modal.is_some());
@@ -371,8 +355,7 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.workspace.reduce_motion =
-                        Some(settings::ReduceMotion::On);
+                    settings.workspace.reduce_motion = Some(settings::ReduceMotion::On);
                 });
             });
         });
@@ -381,7 +364,7 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             layer.hide_modal(window, cx);
             assert!(layer.active_modal.is_none());
             assert!(layer.closing_modal.is_none());
@@ -395,12 +378,13 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             layer.hide_modal(window, cx);
             assert!(layer.closing_modal.is_some());
         });
 
-        cx.executor().advance_clock(MODAL_CLOSE_DURATION + std::time::Duration::from_millis(50));
+        cx.executor()
+            .advance_clock(MODAL_CLOSE_DURATION + std::time::Duration::from_millis(50));
         cx.executor().run_until_parked();
 
         layer.update_in(cx, |layer, _window, _cx| {
@@ -415,7 +399,7 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             layer.hide_modal(window, cx);
             assert!(layer.closing_modal.is_some());
 
@@ -432,8 +416,7 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            let result = layer.hide_modal(window, cx);
-            assert!(!result);
+            assert!(!layer.hide_modal(window, cx));
         });
     }
 
@@ -443,19 +426,19 @@ mod tests {
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
         let layer = cx.new(|_cx| ModalLayer::new());
 
-        let gen0 = layer.read_with(cx, |layer, _| layer.animation_generation);
+        let generation_0 = layer.read_with(cx, |layer, _| layer.animation_generation);
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
         });
-        let gen1 = layer.read_with(cx, |layer, _| layer.animation_generation);
-        assert!(gen1 > gen0);
+        let generation_1 = layer.read_with(cx, |layer, _| layer.animation_generation);
+        assert!(generation_1 > generation_0);
 
         layer.update_in(cx, |layer, window, cx| {
             layer.hide_modal(window, cx);
         });
-        let gen2 = layer.read_with(cx, |layer, _| layer.animation_generation);
-        assert!(gen2 > gen1);
+        let generation_2 = layer.read_with(cx, |layer, _| layer.animation_generation);
+        assert!(generation_2 > generation_1);
     }
 
     #[gpui::test]
@@ -469,7 +452,7 @@ mod tests {
         });
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             assert!(layer.has_active_modal());
         });
     }
@@ -481,8 +464,8 @@ mod tests {
         let layer = cx.new(|_cx| ModalLayer::new());
 
         layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModal::new(cx));
-            assert!(layer.active_modal::<TestModal>().is_some());
+            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
+            assert!(layer.active_modal::<TestModalA>().is_some());
             assert!(layer.active_modal::<TestModalB>().is_none());
         });
     }

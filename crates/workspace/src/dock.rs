@@ -1150,7 +1150,7 @@ mod tests {
     use super::*;
     use super::test::TestPanel;
     use fs::FakeFs;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::Project;
     use settings::SettingsStore;
 
@@ -1159,6 +1159,18 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    fn add_panel_to_dock(
+        dock: &Entity<Dock>,
+        panel: &Entity<TestPanel>,
+        workspace: &Entity<crate::Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        dock.update_in(cx, |dock, window, cx| {
+            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
+            dock.activate_panel(0, window, cx);
         });
     }
 
@@ -1173,11 +1185,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
             assert!(dock.is_open);
             assert!(!dock.is_closing);
@@ -1195,11 +1206,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(!dock.is_open);
@@ -1214,11 +1224,10 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
 
-        cx.update(|_, cx| {
+        cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.workspace.reduce_motion =
-                        Some(settings::ReduceMotion::On);
+                    settings.workspace.reduce_motion = Some(settings::ReduceMotion::On);
                 });
             });
         });
@@ -1226,11 +1235,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(!dock.is_open);
@@ -1249,11 +1257,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(dock.is_closing);
@@ -1278,11 +1285,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(dock.is_closing);
@@ -1305,15 +1311,14 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
-            let gen_before = dock.animation_generation;
+            let generation_before = dock.animation_generation;
             dock.set_open(true, window, cx);
-            assert_eq!(dock.animation_generation, gen_before);
+            assert_eq!(dock.animation_generation, generation_before);
         });
     }
 
@@ -1329,14 +1334,12 @@ mod tests {
             workspace.left_dock.clone()
         });
 
-        // Dock starts closed, so calling set_open(false) should be a noop
         dock.update_in(cx, |dock, window, cx| {
-            let gen_before = dock.animation_generation;
+            let generation_before = dock.animation_generation;
             dock.set_open(false, window, cx);
-            assert_eq!(dock.animation_generation, gen_before);
-            // Call again to verify double-close is also noop
+            assert_eq!(dock.animation_generation, generation_before);
             dock.set_open(false, window, cx);
-            assert_eq!(dock.animation_generation, gen_before);
+            assert_eq!(dock.animation_generation, generation_before);
         });
     }
 
@@ -1351,11 +1354,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(dock.is_closing);
@@ -1374,11 +1376,10 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
+
         dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
             dock.set_open(true, window, cx);
         });
 
@@ -1406,26 +1407,22 @@ mod tests {
         let dock = workspace.update_in(cx, |workspace, _window, _cx| {
             workspace.left_dock.clone()
         });
-
         let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        dock.update_in(cx, |dock, window, cx| {
-            dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
-            dock.activate_panel(0, window, cx);
-        });
+        add_panel_to_dock(&dock, &panel, &workspace, cx);
 
-        let gen0 = dock.read_with(cx, |dock, _| dock.animation_generation);
+        let generation_0 = dock.read_with(cx, |dock, _| dock.animation_generation);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
         });
-        let gen1 = dock.read_with(cx, |dock, _| dock.animation_generation);
-        assert_eq!(gen1, gen0 + 1);
+        let generation_1 = dock.read_with(cx, |dock, _| dock.animation_generation);
+        assert_eq!(generation_1, generation_0 + 1);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(false, window, cx);
         });
-        let gen2 = dock.read_with(cx, |dock, _| dock.animation_generation);
-        assert!(gen2 > gen1);
+        let generation_2 = dock.read_with(cx, |dock, _| dock.animation_generation);
+        assert!(generation_2 > generation_1);
     }
 }
 

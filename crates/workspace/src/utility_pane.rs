@@ -276,14 +276,20 @@ mod tests {
     fn test_utility_pane_state_slot_left() {
         let state = UtilityPaneState::default();
         assert!(state.slot(UtilityPaneSlot::Left).is_none());
-        assert!(state.slot(UtilityPaneSlot::Left) as *const _ == &state.left_slot as *const _);
+        assert!(std::ptr::eq(
+            state.slot(UtilityPaneSlot::Left),
+            &state.left_slot,
+        ));
     }
 
     #[test]
     fn test_utility_pane_state_slot_right() {
         let state = UtilityPaneState::default();
         assert!(state.slot(UtilityPaneSlot::Right).is_none());
-        assert!(state.slot(UtilityPaneSlot::Right) as *const _ == &state.right_slot as *const _);
+        assert!(std::ptr::eq(
+            state.slot(UtilityPaneSlot::Right),
+            &state.right_slot,
+        ));
     }
 
     #[test]
