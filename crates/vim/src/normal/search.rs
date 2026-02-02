@@ -1405,71 +1405,99 @@ mod test {
 
     #[gpui::test]
     async fn test_vim_search_respects_search_settings(cx: &mut gpui::TestAppContext) {
-        use search::SearchOptions as Opts;
-
         let mut cx = VimTestContext::new(cx, true).await;
-        cx.set_state("ˇhello Hello HELLO helloworld", Mode::Normal);
 
-        // (regex, whole_word, case_sensitive, include_ignored) -> expected options
-        let test_cases: [(bool, bool, bool, bool, Opts); 2] = [
-            (
-                false,
-                true,
-                true,
-                false,
-                Opts::WHOLE_WORD | Opts::CASE_SENSITIVE,
-            ),
-            (
-                true,
-                false,
-                false,
-                true,
-                Opts::REGEX | Opts::INCLUDE_IGNORED,
-            ),
-        ];
-
-        for (regex, whole_word, case_sensitive, include_ignored, expected) in test_cases {
-            cx.update_global(|store: &mut SettingsStore, cx| {
-                store.update_user_settings(cx, |s| {
-                    s.editor.search = Some(settings::SearchSettingsContent {
-                        regex: Some(regex),
-                        whole_word: Some(whole_word),
-                        case_sensitive: Some(case_sensitive),
-                        include_ignored: Some(include_ignored),
-                        ..Default::default()
-                    });
+        // Test 1: Verify that search settings are respected when opening vim search
+        // Set search settings: regex=false, whole_word=true, case_sensitive=true
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.search = Some(settings::SearchSettingsContent {
+                    button: Some(true),
+                    whole_word: Some(true),
+                    case_sensitive: Some(true),
+                    include_ignored: Some(false),
+                    regex: Some(false),
+                    center_on_match: Some(false),
                 });
             });
+        });
 
-            cx.simulate_keystrokes("/");
-            cx.run_until_parked();
+        cx.set_state("ˇhello Hello HELLO helloworld", Mode::Normal);
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
 
-            let bar = cx.workspace(|ws, _, cx| {
-                ws.active_pane()
-                    .read(cx)
-                    .toolbar()
-                    .read(cx)
-                    .item_of_type::<BufferSearchBar>()
-                    .unwrap()
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be deployed")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            assert!(
+                bar.has_search_option(search::SearchOptions::WHOLE_WORD),
+                "whole_word setting should be respected"
+            );
+            assert!(
+                bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
+                "case_sensitive setting should be respected"
+            );
+            assert!(
+                !bar.has_search_option(search::SearchOptions::REGEX),
+                "regex=false setting should be respected"
+            );
+        });
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Test 2: Change settings to regex=true, whole_word=false
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.search = Some(settings::SearchSettingsContent {
+                    button: Some(true),
+                    whole_word: Some(false),
+                    case_sensitive: Some(false),
+                    include_ignored: Some(true),
+                    regex: Some(true),
+                    center_on_match: Some(false),
+                });
             });
+        });
 
-            cx.update_entity(bar, move |bar, _, _| {
-                for opt in [
-                    Opts::REGEX,
-                    Opts::WHOLE_WORD,
-                    Opts::CASE_SENSITIVE,
-                    Opts::INCLUDE_IGNORED,
-                ] {
-                    assert_eq!(
-                        bar.has_search_option(opt),
-                        expected.contains(opt),
-                        "{opt:?}"
-                    );
-                }
-            });
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
 
-            cx.simulate_keystrokes("escape");
-            cx.run_until_parked();
-        }
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be deployed")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            assert!(
+                bar.has_search_option(search::SearchOptions::REGEX),
+                "regex=true setting should be respected"
+            );
+            assert!(
+                bar.has_search_option(search::SearchOptions::INCLUDE_IGNORED),
+                "include_ignored=true setting should be respected"
+            );
+            assert!(
+                !bar.has_search_option(search::SearchOptions::WHOLE_WORD),
+                "whole_word=false setting should be respected"
+            );
+            assert!(
+                !bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
+                "case_sensitive=false setting should be respected"
+            );
+        });
     }
 }
