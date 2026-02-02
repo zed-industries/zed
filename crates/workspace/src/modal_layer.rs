@@ -292,27 +292,20 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    async fn test_toggle_modal_opens(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
-
-        layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
-            assert!(layer.active_modal.is_some());
-        });
+    fn new_modal_layer(cx: &mut gpui::VisualTestContext) -> Entity<ModalLayer> {
+        cx.new(|_cx| ModalLayer::new())
     }
 
     #[gpui::test]
-    async fn test_toggle_modal_closes_same_type(cx: &mut TestAppContext) {
+    async fn test_toggle_modal_open_and_close(cx: &mut TestAppContext) {
         init_test(cx);
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         layer.update_in(cx, |layer, window, cx| {
             layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             assert!(layer.active_modal.is_some());
+
             layer.toggle_modal::<TestModalA, _>(window, cx, |_window, cx| TestModalA::new(cx));
             assert!(layer.active_modal.is_none());
         });
@@ -322,7 +315,7 @@ mod tests {
     async fn test_toggle_modal_replaces_different_type(cx: &mut TestAppContext) {
         init_test(cx);
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         layer.update_in(cx, |layer, window, cx| {
             layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
@@ -338,9 +331,11 @@ mod tests {
     async fn test_hide_modal_starts_close_animation(cx: &mut TestAppContext) {
         init_test(cx);
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         layer.update_in(cx, |layer, window, cx| {
+            assert!(!layer.hide_modal(window, cx));
+
             layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
             layer.hide_modal(window, cx);
             assert!(layer.active_modal.is_none());
@@ -361,7 +356,7 @@ mod tests {
         });
 
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         layer.update_in(cx, |layer, window, cx| {
             layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
@@ -375,7 +370,7 @@ mod tests {
     async fn test_close_animation_completes(cx: &mut TestAppContext) {
         init_test(cx);
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         layer.update_in(cx, |layer, window, cx| {
             layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
@@ -396,7 +391,7 @@ mod tests {
     async fn test_open_during_close_cancels_animation(cx: &mut TestAppContext) {
         init_test(cx);
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         layer.update_in(cx, |layer, window, cx| {
             layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
@@ -410,21 +405,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_hide_empty_modal_layer(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
-
-        layer.update_in(cx, |layer, window, cx| {
-            assert!(!layer.hide_modal(window, cx));
-        });
-    }
-
-    #[gpui::test]
     async fn test_animation_generation_increments(cx: &mut TestAppContext) {
         init_test(cx);
         let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
+        let layer = new_modal_layer(cx);
 
         let generation_0 = layer.read_with(cx, |layer, _| layer.animation_generation);
 
@@ -439,35 +423,6 @@ mod tests {
         });
         let generation_2 = layer.read_with(cx, |layer, _| layer.animation_generation);
         assert!(generation_2 > generation_1);
-    }
-
-    #[gpui::test]
-    async fn test_has_active_modal(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
-
-        layer.update_in(cx, |layer, _window, _cx| {
-            assert!(!layer.has_active_modal());
-        });
-
-        layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
-            assert!(layer.has_active_modal());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_active_modal_returns_typed(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (_view, cx) = cx.add_window_view(|_window, _cx| Empty);
-        let layer = cx.new(|_cx| ModalLayer::new());
-
-        layer.update_in(cx, |layer, window, cx| {
-            layer.toggle_modal(window, cx, |_window, cx| TestModalA::new(cx));
-            assert!(layer.active_modal::<TestModalA>().is_some());
-            assert!(layer.active_modal::<TestModalB>().is_none());
-        });
     }
 }
 

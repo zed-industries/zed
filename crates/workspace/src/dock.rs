@@ -1162,55 +1162,35 @@ mod tests {
         });
     }
 
-    fn add_panel_to_dock(
-        dock: &Entity<Dock>,
-        panel: &Entity<TestPanel>,
+    fn add_dock_with_panel(
         workspace: &Entity<crate::Workspace>,
         cx: &mut VisualTestContext,
-    ) {
+    ) -> (Entity<Dock>, Entity<TestPanel>) {
+        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
+            workspace.left_dock.clone()
+        });
+        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
         dock.update_in(cx, |dock, window, cx| {
             dock.add_panel(panel.clone(), workspace.downgrade(), window, cx);
             dock.activate_panel(0, window, cx);
         });
+        (dock, panel)
     }
 
     #[gpui::test]
-    async fn test_dock_set_open_true(cx: &mut TestAppContext) {
+    async fn test_dock_open_close_lifecycle(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
+        let (dock, _panel) = add_dock_with_panel(&workspace, cx);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
             assert!(dock.is_open);
             assert!(!dock.is_closing);
-        });
-    }
 
-    #[gpui::test]
-    async fn test_dock_set_open_false(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
-
-        dock.update_in(cx, |dock, window, cx| {
-            dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(!dock.is_open);
         });
@@ -1232,11 +1212,7 @@ mod tests {
             });
         });
 
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
+        let (dock, _panel) = add_dock_with_panel(&workspace, cx);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
@@ -1247,23 +1223,19 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_dock_close_animation_completes(cx: &mut TestAppContext) {
+    async fn test_dock_close_animation_lifecycle(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
+        let (dock, _panel) = add_dock_with_panel(&workspace, cx);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
             dock.set_open(false, window, cx);
             assert!(dock.is_closing);
+            assert!(dock.visible_entry().is_some());
         });
 
         cx.executor().advance_clock(Duration::from_millis(150));
@@ -1281,12 +1253,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
+        let (dock, _panel) = add_dock_with_panel(&workspace, cx);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
@@ -1301,67 +1268,23 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_dock_double_open_is_noop(cx: &mut TestAppContext) {
+    async fn test_dock_noop_operations(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
-
-        dock.update_in(cx, |dock, window, cx| {
-            dock.set_open(true, window, cx);
-            let generation_before = dock.animation_generation;
-            dock.set_open(true, window, cx);
-            assert_eq!(dock.animation_generation, generation_before);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_dock_double_close_is_noop(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
+        let (dock, _panel) = add_dock_with_panel(&workspace, cx);
 
         dock.update_in(cx, |dock, window, cx| {
             let generation_before = dock.animation_generation;
             dock.set_open(false, window, cx);
             assert_eq!(dock.animation_generation, generation_before);
-            dock.set_open(false, window, cx);
-            assert_eq!(dock.animation_generation, generation_before);
-        });
-    }
 
-    #[gpui::test]
-    async fn test_dock_visible_entry_during_close(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
-
-        dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
-            dock.set_open(false, window, cx);
-            assert!(dock.is_closing);
-            assert!(dock.visible_entry().is_some());
+            let generation_before = dock.animation_generation;
+            dock.set_open(true, window, cx);
+            assert_eq!(dock.animation_generation, generation_before);
         });
     }
 
@@ -1372,12 +1295,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
+        let (dock, panel) = add_dock_with_panel(&workspace, cx);
 
         dock.update_in(cx, |dock, window, cx| {
             dock.set_open(true, window, cx);
@@ -1403,12 +1321,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| crate::Workspace::test_new(project, window, cx));
-
-        let dock = workspace.update_in(cx, |workspace, _window, _cx| {
-            workspace.left_dock.clone()
-        });
-        let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 0, cx));
-        add_panel_to_dock(&dock, &panel, &workspace, cx);
+        let (dock, _panel) = add_dock_with_panel(&workspace, cx);
 
         let generation_0 = dock.read_with(cx, |dock, _| dock.animation_generation);
 

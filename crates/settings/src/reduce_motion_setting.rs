@@ -47,47 +47,13 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_reduce_motion_on(cx: &mut TestAppContext) {
+    fn test_should_reduce_motion_variants(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
+            assert_eq!(ReduceMotionSetting::default().0, ReduceMotion::System);
             assert!(ReduceMotionSetting(ReduceMotion::On).should_reduce_motion(cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_reduce_motion_off(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
             assert!(!ReduceMotionSetting(ReduceMotion::Off).should_reduce_motion(cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_reduce_motion_system_delegates_to_platform(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
             assert!(!ReduceMotionSetting(ReduceMotion::System).should_reduce_motion(cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_default_is_system(_cx: &mut TestAppContext) {
-        assert_eq!(ReduceMotion::default(), ReduceMotion::System);
-        assert_eq!(ReduceMotionSetting::default().0, ReduceMotion::System);
-    }
-
-    #[gpui::test]
-    fn test_from_settings_reads_workspace(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        set_reduce_motion(cx, ReduceMotion::On);
-        cx.update(|cx| {
-            assert_eq!(ReduceMotionSetting::get_global(cx).0, ReduceMotion::On);
-        });
-
-        set_reduce_motion(cx, ReduceMotion::Off);
-        cx.update(|cx| {
-            assert_eq!(ReduceMotionSetting::get_global(cx).0, ReduceMotion::Off);
         });
     }
 

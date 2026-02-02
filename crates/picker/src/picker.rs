@@ -1003,61 +1003,22 @@ mod tests {
     }
 
     #[test]
-    fn test_animated_origin_returns_none_when_reduce_motion() {
-        let indicator = make_indicator(5, Some(3), true);
-        assert_eq!(indicator.animated_origin(px(30.), &(0..10)), None);
+    fn test_animated_origin_returns_none() {
+        assert_eq!(make_indicator(5, Some(3), true).animated_origin(px(30.), &(0..10)), None);
+        assert_eq!(make_indicator(5, None, false).animated_origin(px(30.), &(0..10)), None);
+        assert_eq!(make_indicator(5, Some(12), false).animated_origin(px(30.), &(3..10)), None);
     }
 
     #[test]
-    fn test_animated_origin_returns_none_when_no_previous_index() {
-        let indicator = make_indicator(5, None, false);
-        assert_eq!(indicator.animated_origin(px(30.), &(0..10)), None);
+    fn test_animated_origin_computes_position() {
+        assert_eq!(make_indicator(5, Some(3), false).animated_origin(px(30.), &(0..10)), Some(px(90.)));
+        assert_eq!(make_indicator(5, Some(2), false).animated_origin(px(25.), &(0..10)), Some(px(50.)));
+        assert_eq!(make_indicator(8, Some(0), false).animated_origin(px(20.), &(0..10)), Some(px(100.)));
+        assert_eq!(make_indicator(2, Some(9), false).animated_origin(px(20.), &(0..10)), Some(px(100.)));
     }
 
-    #[test]
-    fn test_animated_origin_returns_none_when_previous_not_visible() {
-        let indicator = make_indicator(5, Some(12), false);
-        assert_eq!(indicator.animated_origin(px(30.), &(3..10)), None);
-    }
-
-    #[test]
-    fn test_animated_origin_small_move_within_range() {
-        let indicator = make_indicator(5, Some(3), false);
-        assert_eq!(
-            indicator.animated_origin(px(30.), &(0..10)),
-            Some(px(90.)),
-        );
-    }
-
-    #[test]
-    fn test_animated_origin_clamps_large_downward_move() {
-        let indicator = make_indicator(8, Some(0), false);
-        assert_eq!(
-            indicator.animated_origin(px(20.), &(0..10)),
-            Some(px(100.)),
-        );
-    }
-
-    #[test]
-    fn test_animated_origin_clamps_large_upward_move() {
-        let indicator = make_indicator(2, Some(9), false);
-        assert_eq!(
-            indicator.animated_origin(px(20.), &(0..10)),
-            Some(px(100.)),
-        );
-    }
-
-    #[test]
-    fn test_animated_origin_exact_boundary_distance() {
-        let indicator = make_indicator(5, Some(2), false);
-        assert_eq!(
-            indicator.animated_origin(px(25.), &(0..10)),
-            Some(px(50.)),
-        );
-    }
-
-    /// Mirrors the safe-range logic from `Picker::is_fully_visible` to test
-    /// boundary behavior without needing a full Picker instance.
+    /// Standalone version of `Picker::is_fully_visible` for unit testing
+    /// without a full Picker instance.
     fn is_fully_visible(visible_range: Range<usize>, index: usize, match_count: usize) -> bool {
         let safe_start = if visible_range.start > 0 {
             visible_range.start + 1
@@ -1073,38 +1034,18 @@ mod tests {
     }
 
     #[test]
-    fn test_is_fully_visible_in_safe_range() {
-        assert!(is_fully_visible(2..8, 5, 20));
+    fn test_is_fully_visible_true_cases() {
+        assert!(is_fully_visible(2..8, 5, 20));   // mid-range
+        assert!(is_fully_visible(0..8, 0, 20));    // list start (no start clip)
+        assert!(is_fully_visible(12..20, 19, 20)); // list end (no end clip)
     }
 
     #[test]
-    fn test_is_fully_visible_at_scroll_boundary_start() {
-        assert!(!is_fully_visible(2..8, 2, 20));
-    }
-
-    #[test]
-    fn test_is_fully_visible_at_scroll_boundary_end() {
-        assert!(!is_fully_visible(2..8, 7, 20));
-    }
-
-    #[test]
-    fn test_is_fully_visible_at_list_start() {
-        assert!(is_fully_visible(0..8, 0, 20));
-    }
-
-    #[test]
-    fn test_is_fully_visible_at_list_end() {
-        assert!(is_fully_visible(12..20, 19, 20));
-    }
-
-    #[test]
-    fn test_is_fully_visible_outside_range() {
-        assert!(!is_fully_visible(5..10, 15, 20));
-    }
-
-    #[test]
-    fn test_is_fully_visible_empty_range() {
-        assert!(!is_fully_visible(5..5, 5, 20));
+    fn test_is_fully_visible_false_cases() {
+        assert!(!is_fully_visible(2..8, 2, 20));   // at scroll boundary start
+        assert!(!is_fully_visible(2..8, 7, 20));   // at scroll boundary end
+        assert!(!is_fully_visible(5..10, 15, 20)); // outside range entirely
+        assert!(!is_fully_visible(5..5, 5, 20));   // empty range
     }
 }
 

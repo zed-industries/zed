@@ -273,23 +273,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_utility_pane_state_slot_left() {
+    fn test_utility_pane_state_slots() {
         let state = UtilityPaneState::default();
         assert!(state.slot(UtilityPaneSlot::Left).is_none());
-        assert!(std::ptr::eq(
-            state.slot(UtilityPaneSlot::Left),
-            &state.left_slot,
-        ));
-    }
-
-    #[test]
-    fn test_utility_pane_state_slot_right() {
-        let state = UtilityPaneState::default();
+        assert!(std::ptr::eq(state.slot(UtilityPaneSlot::Left), &state.left_slot));
         assert!(state.slot(UtilityPaneSlot::Right).is_none());
-        assert!(std::ptr::eq(
-            state.slot(UtilityPaneSlot::Right),
-            &state.right_slot,
-        ));
+        assert!(std::ptr::eq(state.slot(UtilityPaneSlot::Right), &state.right_slot));
     }
 
     #[test]
