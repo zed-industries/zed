@@ -1167,10 +1167,7 @@ impl ProjectPanel {
                                             Box::new(git::RestoreFile { skip_prompt: false }),
                                         )
                                     })
-                                    .action(
-                                        "Add to .gitignore",
-                                        Box::new(git::AddToGitignore),
-                                    )
+                                    .action("Add to .gitignore", Box::new(git::AddToGitignore))
                                     .when(!is_dir, |menu| {
                                         menu.action("View File History", Box::new(git::FileHistory))
                                     })
@@ -2198,81 +2195,25 @@ impl ProjectPanel {
                 .read(cx)
                 .repository_and_path_for_project_path(&project_path, cx)?;
 
-            let project = self.project.downgrade();
-            let repository = repository.downgrade();
+            let workspace = self.workspace.clone();
+            let receiver =
+                repository.update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, is_dir));
 
-            cx.spawn(async move |panel, cx| {
-                let result: anyhow::Result<()> = async {
-                    let path_display = repo_path.as_ref().display(PathStyle::Posix);
-                    let file_path_str = if is_dir {
-                        format!("{}/", path_display)
-                    } else {
-                        path_display.to_string()
-                    };
-
-                    let repo_root = repository.read_with(cx, |repository, _| {
-                        repository.snapshot().work_directory_abs_path
-                    })?;
-
-                    let gitignore_abs_path = repo_root.join(".gitignore");
-
-                    let buffer = project
-                        .update(cx, |project, cx| {
-                            project.open_local_buffer(gitignore_abs_path, cx)
-                        })?
-                        .await?;
-
-                    let should_save = buffer.update(cx, |buffer, cx| {
-                        let existing_content = buffer.text();
-
-                        if existing_content
-                            .lines()
-                            .any(|line: &str| line.trim() == file_path_str)
-                        {
-                            return false;
-                        }
-
-                        let insert_position = existing_content.len();
-                        let new_entry = if existing_content.is_empty() {
-                            format!("{}\n", file_path_str)
-                        } else if existing_content.ends_with('\n') {
-                            format!("{}\n", file_path_str)
-                        } else {
-                            format!("\n{}\n", file_path_str)
-                        };
-
-                        buffer.edit([(insert_position..insert_position, new_entry)], None, cx);
-                        true
-                    });
-
-                    if should_save {
-                        project
-                            .update(cx, |project, cx| project.save_buffer(buffer, cx))?
-                            .await?;
-                    }
-
-                    Ok(())
-                }
-                .await;
-
-                if let Err(e) = result {
-                    panel
-                        .update(cx, |panel, cx| {
+            cx.spawn(async move |_, cx| {
+                if let Err(e) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
                             let message = format!("Failed to add to .gitignore: {}", e);
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)
                             });
-                            panel
-                                .workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.toggle_status_toast(toast, cx);
-                                })
-                                .ok();
-                        })
-                        .ok();
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            });
+                        });
+                    }
                 }
-
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
