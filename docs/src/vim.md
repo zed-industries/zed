@@ -124,13 +124,15 @@ per language.
 
 These commands help you manage multiple cursors in Zed.
 
-| Command                                                      | Default Shortcut |
-| ------------------------------------------------------------ | ---------------- |
-| Add a cursor selecting the next copy of the current word     | `g l`            |
-| Add a cursor selecting the previous copy of the current word | `g L`            |
-| Skip latest word selection, and add next                     | `g >`            |
-| Skip latest word selection, and add previous                 | `g <`            |
-| Add a visual selection for every copy of the current word    | `g a`            |
+| Command                                                                           | Default Shortcut |
+| ----------------------------------------------------------------------------------| ---------------- |
+| Add a cursor selecting the next copy of the current word                          | `g l`            |
+| Add a cursor selecting the previous copy of the current word                      | `g L`            |
+| Skip latest word selection, and add next                                          | `g >`            |
+| Skip latest word selection, and add previous                                      | `g <`            |
+| Add a visual selection for every copy of the current word                         | `g a`            |
+| Add a cursor at the first character of every line in the current visual selection | `g I`            |
+| Add a cursor at the end of every line in the current visual selection             | `g A`            |
 
 ### Pane management
 
@@ -534,18 +536,6 @@ The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not hav
   "context": "vim_mode == visual",
   "bindings": {
     "shift-x": "vim::Exchange"
-  }
-}
-```
-
-In visual mode, pressing `I` or `A` when multiple lines are selected does not create multiple cursors by default. Adding the following bindings will enable this functionality, allowing you to insert at the beginning or append at the end of each selected line:
-
-```json [settings]
-{
-  "context": "vim_mode == visual && !VimBlockSelection",
-  "bindings": {
-    "shift-i": "vim::InsertBeforeFirstNonWhitespace",
-    "shift-a": "vim::InsertAfterEndOfLine"
   }
 }
 ```
