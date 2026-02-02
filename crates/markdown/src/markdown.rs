@@ -29,8 +29,8 @@ use gpui::{
     ElementId, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox,
     Hsla, Image, ImageFormat, Inline, InlineBuilder, InlineLayout, KeyContext, Length, MouseButton,
     MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful,
-    StrikethroughStyle, StyleRefinement, Task, TextRun, TextStyle, TextStyleRefinement, actions,
-    img, inline, point, quad,
+    StrikethroughStyle, StyleRefinement, Task, TextRun, TextStyle, TextStyleRefinement, WhiteSpace,
+    actions, img, inline, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -199,6 +199,7 @@ impl MarkdownStyle {
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
+                    white_space: Some(WhiteSpace::Nowrap),
                     ..Default::default()
                 },
                 ..Default::default()
