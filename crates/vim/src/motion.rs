@@ -2964,22 +2964,22 @@ fn method_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
-    if map.buffer_snapshot().as_singleton().is_none() {
+    let snapshot = map.buffer_snapshot();
+    if snapshot.as_singleton().is_none() {
         return display_point;
     }
 
     for _ in 0..times {
         let offset = map
             .display_point_to_point(display_point, Bias::Left)
-            .to_offset(&map.buffer_snapshot());
+            .to_offset(&snapshot);
         let range = if direction == Direction::Prev {
             MultiBufferOffset(0)..offset
         } else {
-            offset..map.buffer_snapshot().len()
+            offset..snapshot.len()
         };
 
-        let possibilities = map
-            .buffer_snapshot()
+        let possibilities = snapshot
             .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(4))
             .filter_map(|(range, object)| {
                 if !matches!(object, language::TextObject::AroundFunction) {
@@ -3016,22 +3016,22 @@ fn comment_motion(
     times: usize,
     direction: Direction,
 ) -> DisplayPoint {
-    if map.buffer_snapshot().as_singleton().is_none() {
+    let snapshot = map.buffer_snapshot();
+    if snapshot.as_singleton().is_none() {
         return display_point;
     }
 
     for _ in 0..times {
         let offset = map
             .display_point_to_point(display_point, Bias::Left)
-            .to_offset(&map.buffer_snapshot());
+            .to_offset(&snapshot);
         let range = if direction == Direction::Prev {
             MultiBufferOffset(0)..offset
         } else {
-            offset..map.buffer_snapshot().len()
+            offset..snapshot.len()
         };
 
-        let possibilities = map
-            .buffer_snapshot()
+        let possibilities = snapshot
             .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(6))
             .filter_map(|(range, object)| {
                 if !matches!(object, language::TextObject::AroundComment) {
@@ -5034,12 +5034,9 @@ mod test {
 
         cx.set_state(&format!("ˇ{}", current_text), Mode::Normal);
         cx.set_head_text(diff_base);
-        cx.run_until_parked();
-
         cx.update_editor(|editor, window, cx| {
             editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
         });
-        cx.run_until_parked();
 
         // When diff hunks are expanded, the deleted line from the diff base
         // appears in the MultiBuffer. The method motion should correctly
@@ -5106,6 +5103,95 @@ mod test {
             fn third() {
                 println!("third");
             }
+        "#});
+    }
+
+    #[gpui::test]
+    async fn test_comment_motion_with_expanded_diff_hunks(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let diff_base = indoc! {r#"
+            // first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#};
+
+        let current_text = indoc! {r#"
+            // first comment
+            fn first() {
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#};
+
+        cx.set_state(&format!("ˇ{}", current_text), Mode::Normal);
+        cx.set_head_text(diff_base);
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        // The first `] /` (vim::NextComment) should go to the end of the first
+        // comment.
+        cx.simulate_keystrokes("] /");
+        cx.assert_editor_state(indoc! {r#"
+            // First commenˇt
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
+        "#});
+
+        // The next `] /` (vim::NextComment) should go to the end of the second
+        // comment, skipping over the removed comment, since it's not in the
+        // actual buffer.
+        cx.simulate_keystrokes("] /");
+        cx.assert_editor_state(indoc! {r#"
+            // first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second commenˇt
+            fn second() { println!("second"); }
+        "#});
+
+        // Going back to previous comment with `[ /` (vim::PreviousComment)
+        // should go back to the start of the second comment.
+        cx.simulate_keystrokes("[ /");
+        cx.assert_editor_state(indoc! {r#"
+            // first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            ˇ// second comment
+            fn second() { println!("second"); }
+        "#});
+
+        // Going back again with `[ /` (vim::PreviousComment) should finally put
+        // the cursor at the start of the first comment.
+        cx.simulate_keystrokes("[ /");
+        cx.assert_editor_state(indoc! {r#"
+            ˇ// first comment
+            fn first() {
+                // removed comment
+                println!("first");
+            }
+
+            // second comment
+            fn second() { println!("second"); }
         "#});
     }
 }
