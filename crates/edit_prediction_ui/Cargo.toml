@@ -33,6 +33,7 @@ futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 language.workspace = true
+lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true

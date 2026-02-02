@@ -6,12 +6,16 @@ use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
 };
-use language::{LanguageRegistry, Point, language_settings};
+use language::{Buffer, CodeLabel, LanguageRegistry, Point, ToOffset, language_settings};
 use markdown::{Markdown, MarkdownStyle};
+use project::{Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource};
 use settings::Settings as _;
+use std::rc::Rc;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*,
+};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -419,6 +423,7 @@ impl RatePredictionsModal {
                     editor.set_show_indent_guides(false, cx);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.set_placeholder_text("Add your feedback…", window, cx);
+                    editor.set_completion_provider(Some(Rc::new(FeedbackCompletionProvider)));
                     if focus {
                         cx.focus_self(window);
                     }
@@ -613,6 +618,44 @@ impl RatePredictionsModal {
                         ),
                 )
                 .when(!rated, |this| {
+                    let modal = cx.entity().downgrade();
+                    let failure_mode_menu =
+                        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                            FeedbackCompletionProvider::FAILURE_MODES
+                                .iter()
+                                .fold(menu, |menu, (_key, description)| {
+                                    let description: SharedString = (*description).into();
+                                    let modal = modal.clone();
+                                    menu.entry(
+                                        description.clone(),
+                                        None,
+                                        move |window, cx| {
+                                            if let Some(modal) = modal.upgrade() {
+                                                modal.update(cx, |this, cx| {
+                                                    if let Some(active) = &this.active_prediction {
+                                                        active.feedback_editor.update(
+                                                            cx,
+                                                            |editor, cx| {
+                                                                editor.set_text(
+                                                                    description.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                    this.thumbs_down_active(
+                                                        &ThumbsDownActivePrediction,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        },
+                                    )
+                                })
+                        });
+
                     this.child(
                         h_flex()
                             .p_2()
@@ -620,19 +663,32 @@ impl RatePredictionsModal {
                             .border_y_1()
                             .border_color(border_color)
                             .child(
-                                Icon::new(IconName::Info)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
+                                DropdownMenu::new(
+                                    "failure-mode-dropdown",
+                                    "Issue",
+                                    failure_mode_menu,
+                                )
+                                .style(ui::DropdownStyle::Outlined)
+                                .trigger_size(ButtonSize::Compact),
                             )
                             .child(
-                                div().w_full().pr_2().flex_wrap().child(
-                                    Label::new(concat!(
-                                        "Explain why this completion is good or bad. ",
-                                        "If it's negative, describe what you expected instead."
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                ),
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Info)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        div().flex_wrap().child(
+                                            Label::new(concat!(
+                                                "Explain why this completion is good or bad. ",
+                                                "If it's negative, describe what you expected instead."
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                    ),
                             ),
                     )
                 })
@@ -908,5 +964,131 @@ fn format_time_ago(elapsed: Duration) -> String {
         "1 day".to_string()
     } else {
         format!("{} days", seconds / 86400)
+    }
+}
+
+struct FeedbackCompletionProvider;
+
+impl FeedbackCompletionProvider {
+    const FAILURE_MODES: &'static [(&'static str, &'static str)] = &[
+        (
+            "bad_location",
+            "Made a prediction somewhere other than expected",
+        ),
+        ("incomplete", "Prediction was incomplete or cut off"),
+        (
+            "deleted",
+            "Prediction deleted code that should have been kept. Prefer `reverted` if it reverted an edit",
+        ),
+        (
+            "bad_style",
+            "Prediction used wrong coding style or conventions",
+        ),
+        (
+            "repetitive",
+            "Prediction repeated existing code unnecessarily",
+        ),
+        (
+            "hallucinated",
+            "Prediction referenced non-existent variables/functions",
+        ),
+        ("wrong_indent", "Prediction had incorrect indentation"),
+        ("syntax_error", "Introduced a syntax error"),
+        (
+            "too_aggressive",
+            "Prediction made more changes than expected",
+        ),
+        (
+            "too_conservative",
+            "Prediction was overly cautious/conservative",
+        ),
+        (
+            "no_context",
+            "Misunderstood or did not use contextual information",
+        ),
+        ("reverted", "Reverted recent edits"),
+    ];
+}
+
+impl editor::CompletionProvider for FeedbackCompletionProvider {
+    fn completions(
+        &self,
+        _excerpt_id: editor::ExcerptId,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> gpui::Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let buffer = buffer.read(cx);
+        let mut count_back = 0;
+
+        for char in buffer.reversed_chars_at(buffer_position) {
+            if char.is_ascii_alphanumeric() || char == '_' {
+                count_back += 1;
+            } else {
+                break;
+            }
+        }
+
+        let start_anchor = buffer.anchor_before(
+            buffer_position
+                .to_offset(&buffer)
+                .saturating_sub(count_back),
+        );
+
+        let replace_range = start_anchor..buffer_position;
+        let snapshot = buffer.text_snapshot();
+        let query: String = snapshot.text_for_range(replace_range.clone()).collect();
+
+        if query.len() < 3 {
+            return gpui::Task::ready(Ok(vec![CompletionResponse {
+                completions: vec![],
+                display_options: CompletionDisplayOptions {
+                    dynamic_width: true,
+                },
+                is_incomplete: false,
+            }]));
+        }
+
+        let query_lower = query.to_lowercase();
+
+        let completions: Vec<Completion> = Self::FAILURE_MODES
+            .iter()
+            .filter(|(key, _description)| key.starts_with(&query_lower))
+            .map(|(key, description)| Completion {
+                replace_range: replace_range.clone(),
+                new_text: description.to_string(),
+                label: CodeLabel::plain(format!("{}: {}", key, description), None),
+                documentation: None,
+                source: CompletionSource::Custom,
+                icon_path: None,
+                match_start: None,
+                snippet_deduplication_key: None,
+                insert_text_mode: None,
+                confirm: None,
+            })
+            .collect();
+
+        gpui::Task::ready(Ok(vec![CompletionResponse {
+            completions,
+            display_options: CompletionDisplayOptions {
+                dynamic_width: true,
+            },
+            is_incomplete: false,
+        }]))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut Context<Editor>,
+    ) -> bool {
+        text.chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
     }
 }
