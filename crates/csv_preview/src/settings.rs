@@ -34,19 +34,6 @@ pub enum RowIdentifiers {
     RowNum,
 }
 
-#[derive(Default, Clone, Copy, PartialEq)]
-pub(crate) enum CopyFormat {
-    /// Copy as Tab-Separated Values (TSV)
-    #[default]
-    Tsv,
-    /// Copy as Comma-Separated Values (CSV)
-    Csv,
-    /// Copy as Semicolon-Separated Values
-    Semicolon,
-    /// Copy as Markdown table
-    Markdown,
-}
-
 // TODO: Finish implementation of column driven width first
 // #[derive(Default, Clone, Copy, PartialEq)]
 // pub(crate) enum TableWidthMode {
@@ -66,23 +53,12 @@ pub(crate) enum CopyFormat {
 //     }
 // }
 
-#[derive(Default, Clone, Copy, PartialEq)]
-pub(crate) enum CopyMode {
-    /// Copy in display order (what you see after sorting)
-    #[default]
-    Display,
-    /// Copy in original file order (data coordinates)
-    Data,
-}
-
 #[derive(Clone, Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) font_type: FontType,
     pub(crate) numbering_type: RowIdentifiers,
-    pub(crate) copy_format: CopyFormat,
-    pub(crate) copy_mode: CopyMode,
     // pub(crate) table_width_mode: TableWidthMode,
     pub(crate) show_debug_info: bool,
     pub(crate) show_perf_metrics_overlay: bool,

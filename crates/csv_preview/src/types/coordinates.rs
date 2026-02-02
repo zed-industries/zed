@@ -40,11 +40,6 @@ impl DataRow {
     pub fn new(row: usize) -> Self {
         Self(row)
     }
-
-    /// Get the inner row value
-    pub fn get(self) -> usize {
-        self.0
-    }
 }
 
 impl Deref for DataRow {

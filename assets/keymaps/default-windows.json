@@ -1225,7 +1225,6 @@
   {
     "context": "CsvPreview",
     "bindings": {
-      "ctrl-c": "csv::CopySelected",
       "escape": "csv::ClearSelection",
       "up": "csv::SelectUp",
       "down": "csv::SelectDown",
@@ -1243,8 +1242,8 @@
       "ctrl-shift-up": "csv::ExtendSelectionToTopEdge",
       "ctrl-shift-down": "csv::ExtendSelectionToBottomEdge",
       "ctrl-shift-left": "csv::ExtendSelectionToLeftEdge",
-      "ctrl-shift-right": "csv::ExtendSelectionToRightEdge"
-    }
+      "ctrl-shift-right": "csv::ExtendSelectionToRightEdge",
+    },
   },
   {
     "context": "KeymapEditor",

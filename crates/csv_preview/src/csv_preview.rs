@@ -25,7 +25,6 @@ actions!(
     csv,
     [
         OpenPreview,
-        CopySelected,
         SelectAll,
         ClearSelection,
         ///// Single cell selection /////

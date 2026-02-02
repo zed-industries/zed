@@ -1197,7 +1197,6 @@
   {
     "context": "CsvPreview",
     "bindings": {
-      "ctrl-c": "csv::CopySelected",
       "escape": "csv::ClearSelection",
       "up": "csv::SelectUp",
       "down": "csv::SelectDown",
@@ -1215,8 +1214,8 @@
       "ctrl-shift-up": "csv::ExtendSelectionToTopEdge",
       "ctrl-shift-down": "csv::ExtendSelectionToBottomEdge",
       "ctrl-shift-left": "csv::ExtendSelectionToLeftEdge",
-      "ctrl-shift-right": "csv::ExtendSelectionToRightEdge"
-    }
+      "ctrl-shift-right": "csv::ExtendSelectionToRightEdge",
+    },
   },
   {
     "context": "KeymapEditor",
@@ -1372,8 +1371,8 @@
       "ctrl-m": "notebook::AddCodeBlock",
       "ctrl-shift-m": "notebook::AddMarkdownBlock",
       "ctrl-shift-r": "notebook::RestartKernel",
-      "ctrl-c": "notebook::InterruptKernel"
-    }
+      "ctrl-c": "notebook::InterruptKernel",
+    },
   },
   {
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",

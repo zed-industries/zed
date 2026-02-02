@@ -2,7 +2,6 @@ use gpui::ListAlignment;
 
 use crate::{CsvPreviewView, types::AnyColumn};
 
-mod copy_selected;
 mod selection_handlers;
 
 impl CsvPreviewView {

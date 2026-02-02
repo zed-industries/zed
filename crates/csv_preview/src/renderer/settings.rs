@@ -6,7 +6,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView,
-    settings::{CopyFormat, CopyMode, FontType, RowRenderMechanism, VerticalAlignment},
+    settings::{FontType, RowRenderMechanism, VerticalAlignment},
 };
 
 ///// Settings related /////
@@ -30,18 +30,6 @@ impl CsvPreviewView {
         let current_font_text = match self.settings.font_type {
             FontType::Ui => "UI Font",
             FontType::Monospace => "Monospace",
-        };
-
-        let current_copy_format_text = match self.settings.copy_format {
-            CopyFormat::Tsv => "TSV (Tab)",
-            CopyFormat::Csv => "CSV (Comma)",
-            CopyFormat::Semicolon => "Semicolon",
-            CopyFormat::Markdown => "Markdown",
-        };
-
-        let current_copy_mode_text = match self.settings.copy_mode {
-            CopyMode::Display => "Display Order",
-            CopyMode::Data => "File Order",
         };
 
         // let current_table_width_text = match self.settings.table_width_mode {
@@ -109,66 +97,6 @@ impl CsvPreviewView {
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.font_type = FontType::Monospace;
-                        cx.notify();
-                    });
-                }
-            })
-        });
-
-        let copy_format_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("TSV (Tab)", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.copy_format = CopyFormat::Tsv;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("CSV (Comma)", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.copy_format = CopyFormat::Csv;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("Semicolon", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.copy_format = CopyFormat::Semicolon;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("Markdown", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.copy_format = CopyFormat::Markdown;
-                        cx.notify();
-                    });
-                }
-            })
-        });
-
-        let copy_mode_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("Display Order", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.copy_mode = CopyMode::Display;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("File Order", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.copy_mode = CopyMode::Data;
                         cx.notify();
                     });
                 }
@@ -261,46 +189,6 @@ impl CsvPreviewView {
                             )
                             .trigger_size(ButtonSize::Compact)
                             .trigger_tooltip(Tooltip::text("Choose between UI font and monospace font for better readability"))
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child("Copy Format:"),
-                        )
-                        .child(
-                            DropdownMenu::new(
-                                ElementId::Name("copy-format-dropdown".into()),
-                                current_copy_format_text,
-                                copy_format_dropdown_menu,
-                            )
-                            .trigger_size(ButtonSize::Compact)
-                            .trigger_tooltip(Tooltip::text("Choose format for copying selected cells (CSV, TSV, Semicolon, or Markdown table)"))
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child("Copy Order:"),
-                        )
-                        .child(
-                            DropdownMenu::new(
-                                ElementId::Name("copy-mode-dropdown".into()),
-                                current_copy_mode_text,
-                                copy_mode_dropdown_menu,
-                            )
-                            .trigger_size(ButtonSize::Compact)
-                            .trigger_tooltip(Tooltip::text("Choose whether to copy in display order (what you see) or file order (original data)"))
                         ),
                 )
                 // .child(

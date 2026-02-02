@@ -1299,7 +1299,6 @@
   {
     "context": "CsvPreview",
     "bindings": {
-      "cmd-c": "csv::CopySelected",
       "escape": "csv::ClearSelection",
       "up": "csv::SelectUp",
       "down": "csv::SelectDown",

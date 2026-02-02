@@ -23,7 +23,6 @@ use crate::{
     },
 };
 
-pub mod copy_selected;
 pub mod filtering_by_column;
 pub mod selection;
 pub mod sorting_by_column;
@@ -132,14 +131,6 @@ impl DisplayToDataMapping {
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
-    }
-
-    /// Get the display row for a given data row (reverse lookup)
-    pub fn get_display_row(&self, data_row: DataRow) -> Option<DisplayRow> {
-        self.mapping
-            .iter()
-            .find(|(_, mapped_data_row)| **mapped_data_row == data_row)
-            .map(|(display_row, _)| *display_row)
     }
 
     /// Get the number of filtered rows
