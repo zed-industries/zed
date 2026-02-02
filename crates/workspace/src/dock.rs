@@ -8,7 +8,7 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, Axis, Context, Corner, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent,
     MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, Task,
-    WeakEntity, Window, deferred, div, px,
+    WeakEntity, Window, deferred, div, ease_out_cubic, px,
 };
 use settings::{SettingsStore, should_reduce_motion};
 use std::sync::Arc;
@@ -991,29 +991,29 @@ impl Render for Dock {
                     this.child(create_resize_handle())
                 });
 
-            dock_div
-                .with_animation(
-                    ("dock-anim", animation_generation as u64),
-                    Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
-                        .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
-                    {
-                        let position = self.position;
-                        let target_size = f32::from(size);
-                        move |this, delta| {
-                            if reduce_motion {
-                                return this;
+            if reduce_motion {
+                dock_div.into_any_element()
+            } else {
+                dock_div
+                    .with_animation(
+                        ("dock-anim", animation_generation as u64),
+                        Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
+                            .with_easing(ease_out_cubic),
+                        {
+                            let position = self.position;
+                            let target_size = f32::from(size);
+                            move |this, delta| {
+                                let progress = if is_closing { 1.0 - delta } else { delta };
+                                let animated_size = px(target_size * progress);
+                                match position.axis() {
+                                    Axis::Horizontal => this.w(animated_size),
+                                    Axis::Vertical => this.h(animated_size),
+                                }
                             }
-                            let progress =
-                                if is_closing { 1.0 - delta } else { delta };
-                            let animated_size = px(target_size * progress);
-                            match position.axis() {
-                                Axis::Horizontal => this.w(animated_size),
-                                Axis::Vertical => this.h(animated_size),
-                            }
-                        }
-                    },
-                )
-                .into_any_element()
+                        },
+                    )
+                    .into_any_element()
+            }
         } else {
             div()
                 .key_context(dispatch_context)

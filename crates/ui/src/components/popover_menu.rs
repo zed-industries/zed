@@ -382,26 +382,25 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         .relative()
                         .occlude()
                         .child(menu.clone());
-                    let mut element = deferred(
-                        anchored.child(
-                            menu_div
-                                .with_animation(
-                                    ("popover-menu-animate", menu_entity_id),
-                                    Animation::new(AnimationDuration::Fast.into())
-                                        .with_easing(ease_out_quint()),
-                                    move |this, delta| {
-                                        if reduce_motion {
-                                            return this;
-                                        }
-                                        const SLIDE_OFFSET: f32 = -6.0;
-                                        let slide = SLIDE_OFFSET * (1.0 - delta);
-                                        this.opacity(delta).top(px(slide))
-                                    },
-                                ),
-                        ),
-                    )
-                    .with_priority(1)
-                    .into_any();
+                    let animated_menu = if reduce_motion {
+                        menu_div.into_any()
+                    } else {
+                        menu_div
+                            .with_animation(
+                                ("popover-menu-animate", menu_entity_id),
+                                Animation::new(AnimationDuration::Fast.into())
+                                    .with_easing(ease_out_quint()),
+                                move |this, delta| {
+                                    const SLIDE_OFFSET: f32 = -6.0;
+                                    let slide = SLIDE_OFFSET * (1.0 - delta);
+                                    this.opacity(delta).top(px(slide))
+                                },
+                            )
+                            .into_any()
+                    };
+                    let mut element = deferred(anchored.child(animated_menu))
+                        .with_priority(1)
+                        .into_any();
 
                     menu_layout_id = Some(element.request_layout(window, cx));
                     element

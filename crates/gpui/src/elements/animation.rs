@@ -229,6 +229,11 @@ mod easing {
         }
     }
 
+    /// The cubic ease-out function, which starts quickly and decelerates to a stop
+    pub fn ease_out_cubic(delta: f32) -> f32 {
+        1.0 - (1.0 - delta).powi(3)
+    }
+
     /// The Quint ease-out function, which starts quickly and decelerates to a stop
     pub fn ease_out_quint() -> impl Fn(f32) -> f32 {
         move |delta| 1.0 - (1.0 - delta).powi(5)

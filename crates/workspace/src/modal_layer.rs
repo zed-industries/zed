@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable as _, ManagedView, MouseButton, Subscription, Task,
+    Focusable as _, ManagedView, MouseButton, Subscription, Task, ease_out_cubic,
 };
 use settings::should_reduce_motion;
 use ui::prelude::*;
@@ -266,11 +266,6 @@ impl Render for ModalLayer {
                 return div().into_any_element();
             };
 
-        let duration = if is_closing {
-            MODAL_CLOSE_DURATION
-        } else {
-            MODAL_OPEN_DURATION
-        };
         let reduce_motion = should_reduce_motion(cx);
 
         let modal_content = h_flex()
@@ -279,6 +274,27 @@ impl Render for ModalLayer {
             .on_mouse_down(MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation();
             });
+
+        let animated_content = if reduce_motion {
+            modal_content.into_any_element()
+        } else {
+            let duration = if is_closing {
+                MODAL_CLOSE_DURATION
+            } else {
+                MODAL_OPEN_DURATION
+            };
+            modal_content
+                .with_animation(
+                    ("modal-anim", generation as u64),
+                    Animation::new(duration).with_easing(ease_out_cubic),
+                    move |this, delta| {
+                        let progress = if is_closing { 1.0 - delta } else { delta };
+                        let slide = -6.0 * (1.0 - progress);
+                        this.opacity(progress).top(px(slide))
+                    },
+                )
+                .into_any_element()
+        };
 
         div()
             .absolute()
@@ -304,24 +320,7 @@ impl Render for ModalLayer {
                     .top_20()
                     .items_center()
                     .when_some(focus_handle, |this, handle| this.track_focus(&handle))
-                    .child(
-                        modal_content
-                            .with_animation(
-                                ("modal-anim", generation as u64),
-                                Animation::new(duration)
-                                    .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
-                                move |this, delta| {
-                                    if reduce_motion {
-                                        return this;
-                                    }
-                                    let progress =
-                                        if is_closing { 1.0 - delta } else { delta };
-                                    let slide = -6.0 * (1.0 - progress);
-                                    this.opacity(progress).top(px(slide))
-                                },
-                            )
-                            .into_any_element(),
-                    ),
+                    .child(animated_content),
             )
             .into_any_element()
     }

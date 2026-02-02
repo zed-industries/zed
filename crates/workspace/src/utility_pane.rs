@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt as _, AppContext as _, EntityId, MouseButton, Pixels, Render,
-    StatefulInteractiveElement, Subscription, Task, WeakEntity, deferred, px,
+    StatefulInteractiveElement, Subscription, Task, WeakEntity, deferred, ease_out_cubic, px,
 };
 use settings::should_reduce_motion;
 use ui::{
@@ -338,23 +338,24 @@ impl RenderOnce for UtilityPaneFrame {
             )
             .when(!is_closing, |this| this.child(create_resize_handle()));
 
-        pane_div
-            .with_animation(
-                ("utility-pane-anim", animation_generation as u64),
-                Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
-                    .with_easing(|delta| 1.0 - (1.0 - delta).powi(3)),
-                {
-                    let target_width = f32::from(width);
-                    move |this, delta| {
-                        if reduce_motion {
-                            return this;
+        if reduce_motion {
+            pane_div.into_any_element()
+        } else {
+            pane_div
+                .with_animation(
+                    ("utility-pane-anim", animation_generation as u64),
+                    Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
+                        .with_easing(ease_out_cubic),
+                    {
+                        let target_width = f32::from(width);
+                        move |this, delta| {
+                            let progress = if is_closing { 1.0 - delta } else { delta };
+                            let animated_width = px(target_width * progress);
+                            this.w(animated_width)
                         }
-                        let progress = if is_closing { 1.0 - delta } else { delta };
-                        let animated_width = px(target_width * progress);
-                        this.w(animated_width)
-                    }
-                },
-            )
-            .into_any_element()
+                    },
+                )
+                .into_any_element()
+        }
     }
 }
