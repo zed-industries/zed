@@ -25271,19 +25271,20 @@ fn comment_delimiter_for_newline(
     let comment_candidate = snapshot
         .chars_for_range(range.clone())
         .skip(num_of_whitespaces)
-        .take(max_len_of_delimiter)
+        .take(max_len_of_delimiter + 2)
         .collect::<String>();
-    let (delimiter, trimmed_len) = delimiters
+    let (delimiter, trimmed_len, is_repl) = delimiters
         .iter()
         .filter_map(|delimiter| {
             let prefix = delimiter.trim_end();
             if comment_candidate.starts_with(prefix) {
-                Some((delimiter, prefix.len()))
+                let is_repl = comment_candidate[prefix.len()..].starts_with(" %%");
+                Some((delimiter, prefix.len(), is_repl))
             } else {
                 None
             }
         })
-        .max_by_key(|(_, len)| *len)?;
+        .max_by_key(|(_, len, _)| *len)?;
 
     if let Some(BlockCommentConfig {
         start: block_start, ..
@@ -25306,25 +25307,20 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
-        let repl_prefix = format!("{}%%", delimiter);
-
-        let line_content_after_indent: String = snapshot
-            .chars_for_range(range)
-            .skip(num_of_whitespaces)
-            .collect();
-
-        if line_content_after_indent.starts_with(&repl_prefix) {
-            let content_after_cursor: String = line_content_after_indent
-                .chars()
-                .skip(start_point.column as usize - num_of_whitespaces)
-                .collect();
-
-            if content_after_cursor.trim().is_empty() {
-                return None;
-            }
+        if !is_repl {
+            return Some(delimiter.clone());
         }
 
-        Some(delimiter.clone())
+        let line_content_after_cursor: String = snapshot
+            .chars_for_range(range)
+            .skip(start_point.column as usize)
+            .collect();
+
+        if line_content_after_cursor.trim().is_empty() {
+            return None;
+        } else {
+            return Some(delimiter.clone());
+        }
     } else {
         None
     }
