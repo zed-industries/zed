@@ -15,7 +15,6 @@ impl Render for CsvPreviewView {
             .bg(theme.colors().editor_background)
             // Apparently, this should make newly created CSV preview to get focus automatically
             .track_focus(&self.focus_handle)
-            .child(self.render_settings_panel(window, cx))
             .child({
                 if self.engine.contents.number_of_cols == 0 {
                     div()
