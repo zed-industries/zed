@@ -88,9 +88,20 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(handle) = self.utility_pane(slot) {
-            let current = handle.expanded(cx);
-            handle.set_expanded(!current, cx);
+        if let Some(state) = self.utility_panes.slot_mut(slot).as_mut() {
+            let current = state.utility_pane.expanded(cx);
+            if current {
+                state.utility_pane.set_expanded(false, cx);
+            } else {
+                // Cancel any pending close animation so the stale close task
+                // doesn't clear the slot the user just re-expanded.
+                if state.is_closing {
+                    state.is_closing = false;
+                    state.animation_generation = state.animation_generation.wrapping_add(1);
+                    state._close_task = None;
+                }
+                state.utility_pane.set_expanded(true, cx);
+            }
         }
         cx.notify();
         self.serialize_workspace(window, cx);
