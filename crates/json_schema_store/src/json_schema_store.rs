@@ -73,6 +73,8 @@ pub fn init(cx: &mut App) {
             }
             cx.update_global::<SchemaStore, _>(|schema_store, cx| {
                 schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}settings"), cx);
+                schema_store
+                    .notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}project_settings"), cx);
             });
         })
         .detach();
@@ -294,12 +296,51 @@ async fn resolve_dynamic_schema(
                 )
             })
         }
+        "project_settings" => {
+            let lsp_adapter_names = languages
+                .all_lsp_adapters()
+                .into_iter()
+                .map(|adapter| adapter.name().to_string())
+                .collect::<Vec<_>>();
+
+            cx.update(|cx| {
+                let language_names = &languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>();
+
+                cx.global::<settings::SettingsStore>().project_json_schema(
+                    &settings::SettingsJsonSchemaParams {
+                        language_names,
+                        lsp_adapter_names: &lsp_adapter_names,
+                        // These are not allowed in project-specific settings but
+                        // they're still fields required by the
+                        // `SettingsJsonSchemaParams` struct.
+                        font_names: &[],
+                        theme_names: &[],
+                        icon_theme_names: &[],
+                    },
+                )
+            })
+        }
         "debug_tasks" => {
             let adapter_schemas = cx.read_global::<dap::DapRegistry, _>(|dap_registry, _| {
                 dap_registry.adapters_schema()
             });
             task::DebugTaskFile::generate_json_schema(&adapter_schemas)
         }
+        "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions),
+        "action" => {
+            let normalized_action_name = rest.context("No Action name provided")?;
+            let action_name = denormalize_action_name(normalized_action_name);
+            let mut generator = settings::KeymapFile::action_schema_generator();
+            let schema = cx
+                .update(|cx| cx.action_schema_by_name(&action_name, &mut generator))
+                .flatten();
+            root_schema_from_action_schema(schema, &mut generator).to_value()
+        }
+        "tasks" => task::TaskTemplates::generate_json_schema(),
         _ => {
             anyhow::bail!("Unrecognized schema: {schema_name}");
         }
@@ -333,9 +374,13 @@ pub fn all_schema_file_associations(
         {
             "fileMatch": [
                 schema_file_match(paths::settings_file()),
-                paths::local_settings_file_relative_path()
             ],
             "url": format!("{SCHEMA_URI_PREFIX}settings"),
+        },
+        {
+            "fileMatch": [
+            paths::local_settings_file_relative_path()],
+            "url": format!("{SCHEMA_URI_PREFIX}project_settings"),
         },
         {
             "fileMatch": [schema_file_match(paths::keymap_file())],

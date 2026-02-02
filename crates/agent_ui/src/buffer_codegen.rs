@@ -544,7 +544,6 @@ impl CodegenAlternative {
                 temperature,
                 messages,
                 thinking_allowed: false,
-                bypass_rate_limit: false,
             }
         }))
     }
@@ -623,7 +622,6 @@ impl CodegenAlternative {
                 temperature,
                 messages: vec![request_message],
                 thinking_allowed: false,
-                bypass_rate_limit: false,
             }
         }))
     }

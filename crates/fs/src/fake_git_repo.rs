@@ -6,8 +6,9 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
+        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -18,7 +19,7 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use smol::future::FutureExt as _;
+use smol::{channel::Sender, future::FutureExt as _};
 use std::{path::PathBuf, sync::Arc};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
@@ -49,6 +50,7 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,
+    pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
 }
 
 impl FakeGitRepositoryState {
@@ -66,6 +68,7 @@ impl FakeGitRepositoryState {
             merge_base_contents: Default::default(),
             oids: Default::default(),
             remotes: HashMap::default(),
+            graph_commits: Vec::new(),
         }
     }
 }
@@ -736,5 +739,29 @@ impl GitRepository for FakeGitRepository {
             state.remotes.remove(&name);
             Ok(())
         })
+    }
+
+    fn initial_graph_data(
+        &self,
+        _log_source: LogSource,
+        _log_order: LogOrder,
+        request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            let graph_commits =
+                fs.with_git_state(&dot_git_path, false, |state| state.graph_commits.clone())?;
+
+            for chunk in graph_commits.chunks(GRAPH_CHUNK_SIZE) {
+                request_tx.send(chunk.to_vec()).await.ok();
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn commit_data_reader(&self) -> Result<CommitDataReader> {
+        anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
     }
 }

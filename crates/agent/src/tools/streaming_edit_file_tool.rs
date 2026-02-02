@@ -6,7 +6,7 @@ use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
-use language::{Anchor, LanguageRegistry, ToPoint};
+use language::LanguageRegistry;
 use language_model::LanguageModelToolResultContent;
 use paths;
 use project::{Project, ProjectPath};
@@ -389,28 +389,39 @@ impl AgentTool for StreamingEditFileTool {
                 })
                 .await;
 
+            let action_log = self.thread.read_with(cx, |thread, _cx| thread.action_log().clone())?;
+
+            // Edit the buffer and report edits to the action log as part of the
+            // same effect cycle, otherwise the edit will be reported as if the
+            // user made it (due to the buffer subscription in action_log).
             match input.mode {
                 StreamingEditFileMode::Create | StreamingEditFileMode::Overwrite => {
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_created(buffer.clone(), cx);
+                    });
                     let content = input.content.ok_or_else(|| {
                         anyhow!("'content' field is required for create and overwrite modes")
                     })?;
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.edit([(0..buffer.len(), content.as_str())], None, cx);
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(0..buffer.len(), content.as_str())], None, cx);
+                        });
+                        action_log.update(cx, |log, cx| {
+                            log.buffer_edited(buffer.clone(), cx);
+                        });
                     });
                 }
                 StreamingEditFileMode::Edit => {
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_read(buffer.clone(), cx);
+                    });
                     let edits = input.edits.ok_or_else(|| {
                         anyhow!("'edits' field is required for edit mode")
                     })?;
-                    apply_edits(&buffer, &edits, &diff, &event_stream, &abs_path, cx)?;
+                    // apply_edits now handles buffer_edited internally in the same effect cycle
+                    apply_edits(&buffer, &action_log, &edits, &diff, &event_stream, &abs_path, cx)?;
                 }
             }
-
-            let action_log = self.thread.read_with(cx, |thread, _cx| thread.action_log().clone())?;
-
-            action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx);
-            });
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
@@ -476,34 +487,36 @@ impl AgentTool for StreamingEditFileTool {
 
 fn apply_edits(
     buffer: &Entity<language::Buffer>,
+    action_log: &Entity<action_log::ActionLog>,
     edits: &[EditOperation],
     diff: &Entity<Diff>,
     event_stream: &ToolCallEventStream,
     abs_path: &Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let mut emitted_location = false;
     let mut failed_edits = Vec::new();
     let mut ambiguous_edits = Vec::new();
+    let mut resolved_edits: Vec<(Range<usize>, String)> = Vec::new();
+    let mut first_edit_line: Option<u32> = None;
 
+    // First pass: resolve all edits without applying them
     for (index, edit) in edits.iter().enumerate() {
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-        let result = apply_single_edit(buffer, &snapshot, edit, diff, cx);
+        let result = resolve_edit(&snapshot, edit);
 
         match result {
-            Ok(Some(range)) => {
-                if !emitted_location {
-                    let line = buffer.update(cx, |buffer, _cx| {
-                        range.start.to_point(&buffer.snapshot()).row
-                    });
-                    if let Some(abs_path) = abs_path.clone() {
-                        event_stream.update_fields(
-                            ToolCallUpdateFields::new()
-                                .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-                        );
-                    }
-                    emitted_location = true;
+            Ok(Some((range, new_text))) => {
+                if first_edit_line.is_none() {
+                    first_edit_line = Some(snapshot.offset_to_point(range.start).row);
                 }
+                // Reveal the range in the diff view
+                let start_anchor =
+                    buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(range.start));
+                let end_anchor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_after(range.end));
+                diff.update(cx, |card, cx| {
+                    card.reveal_range(start_anchor..end_anchor, cx)
+                });
+                resolved_edits.push((range, new_text));
             }
             Ok(None) => {
                 failed_edits.push(index);
@@ -514,6 +527,7 @@ fn apply_edits(
         }
     }
 
+    // Check for errors before applying any edits
     if !failed_edits.is_empty() {
         let indices = failed_edits
             .iter()
@@ -547,16 +561,44 @@ fn apply_edits(
         );
     }
 
+    // Emit location for the first edit
+    if let Some(line) = first_edit_line {
+        if let Some(abs_path) = abs_path.clone() {
+            event_stream.update_fields(
+                ToolCallUpdateFields::new()
+                    .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
+            );
+        }
+    }
+
+    // Second pass: apply all edits and report to action_log in the same effect cycle.
+    // This prevents the buffer subscription from treating these as user edits.
+    if !resolved_edits.is_empty() {
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| {
+                // Apply edits in reverse order so offsets remain valid
+                let mut edits_sorted: Vec<_> = resolved_edits.into_iter().collect();
+                edits_sorted.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+                for (range, new_text) in edits_sorted {
+                    buffer.edit([(range, new_text.as_str())], None, cx);
+                }
+            });
+            action_log.update(cx, |log, cx| {
+                log.buffer_edited(buffer.clone(), cx);
+            });
+        });
+    }
+
     Ok(())
 }
 
-fn apply_single_edit(
-    buffer: &Entity<language::Buffer>,
+/// Resolves an edit operation by finding the matching text in the buffer.
+/// Returns Ok(Some((range, new_text))) if a unique match is found,
+/// Ok(None) if no match is found, or Err(ranges) if multiple matches are found.
+fn resolve_edit(
     snapshot: &BufferSnapshot,
     edit: &EditOperation,
-    diff: &Entity<Diff>,
-    cx: &mut AsyncApp,
-) -> std::result::Result<Option<Range<Anchor>>, Vec<Range<usize>>> {
+) -> std::result::Result<Option<(Range<usize>, String)>, Vec<Range<usize>>> {
     let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
     matcher.push(&edit.old_text, None);
     let matches = matcher.finish();
@@ -570,23 +612,7 @@ fn apply_single_edit(
     }
 
     let match_range = matches.into_iter().next().expect("checked len above");
-
-    let start_anchor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(match_range.start));
-    let end_anchor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_after(match_range.end));
-
-    diff.update(cx, |card, cx| {
-        card.reveal_range(start_anchor..end_anchor, cx)
-    });
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(match_range.clone(), edit.new_text.as_str())], None, cx);
-    });
-
-    let new_end = buffer.read_with(cx, |buffer, _cx| {
-        buffer.anchor_after(match_range.start + edit.new_text.len())
-    });
-
-    Ok(Some(start_anchor..new_end))
+    Ok(Some((match_range, edit.new_text.clone())))
 }
 
 fn resolve_path(

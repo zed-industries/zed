@@ -18,7 +18,6 @@ extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 serde.workspace = true

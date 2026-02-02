@@ -200,7 +200,7 @@ impl EditorBlock {
                     div()
                         .id((ElementId::from(cx.block_id), "output-scroll"))
                         .flex_1()
-                        .size_full()
+                        .overflow_x_hidden()
                         .py(text_line_height / 2.)
                         .mr(editor_margins.right)
                         .pr_2()

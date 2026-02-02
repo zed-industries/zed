@@ -8,7 +8,7 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _, SubagentsFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -18,7 +18,8 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
-use cloud_llm_client::{CompletionIntent, Plan};
+use cloud_api_types::Plan;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -31,7 +32,6 @@ use futures::{
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
-use language::Buffer;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
@@ -316,6 +316,17 @@ impl UserMessage {
                         }
                         MentionUri::Diagnostics { .. } => {
                             write!(&mut diagnostics_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::TerminalSelection { .. } => {
+                            write!(
+                                &mut selection_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "console",
+                                    text: content
+                                }
+                            )
+                            .ok();
                         }
                     }
 
@@ -624,26 +635,63 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
+    ///
+    /// # Shell Compatibility for Terminal Tool
+    ///
+    /// For the terminal tool, "Always allow" options are only shown when the user's
+    /// shell supports POSIX-like command chaining syntax (`&&`, `||`, `;`, `|`).
+    ///
+    /// **Why this matters:** When a user sets up an "always allow" pattern like `^cargo`,
+    /// we need to parse the command to extract all sub-commands and verify that EVERY
+    /// sub-command matches the pattern. Otherwise, an attacker could craft a command like
+    /// `cargo build && rm -rf /` that would bypass the security check.
+    ///
+    /// **Supported shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
+    ///
+    /// **Unsupported shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
+    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
+    ///
+    /// For unsupported shells, we hide the "Always allow" UI options entirely, and if
+    /// the user has `always_allow` rules configured in settings, `ToolPermissionDecision::from_input`
+    /// will return a `Deny` with an explanatory error message.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
+        use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
         let input_value = &self.input_value;
 
-        let (pattern, pattern_display) = match tool_name.as_str() {
-            "terminal" => (
+        // Check if the user's shell supports POSIX-like command chaining.
+        // See the doc comment above for the full explanation of why this is needed.
+        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
+            ShellKind::system().supports_posix_chaining()
+        } else {
+            true
+        };
+
+        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
+            (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
-            ),
-            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+            )
+        } else if tool_name == EditFileTool::name()
+            || tool_name == DeletePathTool::name()
+            || tool_name == MovePathTool::name()
+            || tool_name == CreateDirectoryTool::name()
+            || tool_name == SaveFileTool::name()
+        {
+            (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
-            ),
-            "fetch" => (
+            )
+        } else if tool_name == FetchTool::name() {
+            (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
-            ),
-            _ => (None, None),
+            )
+        } else {
+            (None, None)
         };
 
         let mut choices = Vec::new();
@@ -663,27 +711,29 @@ impl ToolPermissionContext {
             });
         };
 
-        push_choice(
-            format!("Always for {}", tool_name.replace('_', " ")),
-            format!("always_allow:{}", tool_name),
-            format!("always_deny:{}", tool_name),
-            acp::PermissionOptionKind::AllowAlways,
-            acp::PermissionOptionKind::RejectAlways,
-        );
-
-        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-            let button_text = match tool_name.as_str() {
-                "terminal" => format!("Always for `{}` commands", display),
-                "fetch" => format!("Always for `{}`", display),
-                _ => format!("Always for `{}`", display),
-            };
+        if shell_supports_always_allow {
             push_choice(
-                button_text,
-                format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                format!("Always for {}", tool_name.replace('_', " ")),
+                format!("always_allow:{}", tool_name),
+                format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
                 acp::PermissionOptionKind::RejectAlways,
             );
+
+            if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+                let button_text = if tool_name == TerminalTool::name() {
+                    format!("Always for `{}` commands", display)
+                } else {
+                    format!("Always for `{}`", display)
+                };
+                push_choice(
+                    button_text,
+                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::RejectAlways,
+                );
+            }
         }
 
         push_choice(
@@ -716,11 +766,6 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub struct QueuedMessage {
-    pub content: Vec<acp::ContentBlock>,
-    pub tracked_buffers: Vec<Entity<Buffer>>,
-}
-
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
@@ -735,18 +780,20 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
-    queued_messages: Vec<QueuedMessage>,
+    /// Flag indicating the UI has a queued message waiting to be sent.
+    /// Used to signal that the turn should end at the next message boundary.
+    has_queued_message: bool,
     pending_message: Option<AgentMessage>,
-    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
-    context_server_registry: Entity<ContextServerRegistry>,
+    pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
-    templates: Arc<Templates>,
+    pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
@@ -795,7 +842,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -862,7 +909,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools,
             request_token_usage: HashMap::default(),
@@ -1060,7 +1107,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1233,16 +1280,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let parent_tools = self.tools.clone();
-            self.add_tool(SubagentTool::new(
-                cx.weak_entity(),
-                self.project.clone(),
-                self.project_context.clone(),
-                self.context_server_registry.clone(),
-                self.templates.clone(),
-                self.depth(),
-                parent_tools,
-            ));
+            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
         }
     }
 
@@ -1298,52 +1336,12 @@ impl Thread {
         })
     }
 
-    pub fn queue_message(
-        &mut self,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-    ) {
-        self.queued_messages.push(QueuedMessage {
-            content,
-            tracked_buffers,
-        });
+    pub fn set_has_queued_message(&mut self, has_queued: bool) {
+        self.has_queued_message = has_queued;
     }
 
-    pub fn queued_messages(&self) -> &[QueuedMessage] {
-        &self.queued_messages
-    }
-
-    pub fn remove_queued_message(&mut self, index: usize) -> Option<QueuedMessage> {
-        if index < self.queued_messages.len() {
-            Some(self.queued_messages.remove(index))
-        } else {
-            None
-        }
-    }
-
-    pub fn update_queued_message(
-        &mut self,
-        index: usize,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-    ) -> bool {
-        if index < self.queued_messages.len() {
-            self.queued_messages[index] = QueuedMessage {
-                content,
-                tracked_buffers,
-            };
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn clear_queued_messages(&mut self) {
-        self.queued_messages.clear();
-    }
-
-    fn has_queued_messages(&self) -> bool {
-        !self.queued_messages.is_empty()
+    pub fn has_queued_message(&self) -> bool {
+        self.has_queued_message
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -1707,6 +1705,13 @@ impl Thread {
                 }
             }
 
+            // Drop the stream to release the rate limit permit before tool execution.
+            // The stream holds a semaphore guard that limits concurrent requests.
+            // Without this, the permit would be held during potentially long-running
+            // tool execution, which could cause deadlocks when tools spawn subagents
+            // that need their own permits.
+            drop(events);
+
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
@@ -1760,7 +1765,7 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let has_queued = this.update(cx, |this, _| this.has_queued_messages())?;
+                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
                 if has_queued {
                     log::debug!("Queued message found, ending turn at message boundary");
                     return Ok(());
@@ -1782,10 +1787,7 @@ impl Thread {
         };
 
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                None => false,
-            }
+            plan.is_some()
         } else {
             true
         };
@@ -2307,7 +2309,6 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
-            bypass_rate_limit: false,
         };
 
         log::debug!("Completion request built successfully");
@@ -2330,8 +2331,7 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool =
-            cx.has_flag::<AgentV2FeatureFlag>() && model.supports_streaming_tools();
+        let use_streaming_edit_tool = false;
 
         let mut tools = self
             .tools
@@ -2348,11 +2348,11 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        ("streaming_edit_file", false) | ("edit_file", true) => None,
                         ("streaming_edit_file", true) => {
                             // Expose streaming tool as "edit_file"
                             Some((SharedString::from("edit_file"), tool.clone()))
                         }
-                        ("edit_file", true) => None,
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
                 } else {

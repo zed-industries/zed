@@ -42,10 +42,11 @@ impl GitRemote {
     pub async fn avatar_url(
         &self,
         commit: SharedString,
+        author_email: Option<SharedString>,
         client: Arc<dyn HttpClient>,
     ) -> Option<Url> {
         self.host
-            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, author_email, client)
             .await
             .ok()
             .flatten()
@@ -139,6 +140,7 @@ pub trait GitHostingProvider {
         _repo_owner: &str,
         _repo: &str,
         _commit: SharedString,
+        _author_email: Option<SharedString>,
         _http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         Ok(None)
