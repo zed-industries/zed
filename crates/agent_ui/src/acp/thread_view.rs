@@ -385,7 +385,7 @@ enum ServerState {
     Connected(ConnectedServerState),
 }
 
-struct ConnectedServerState {
+pub struct ConnectedServerState {
     auth_state: AuthState,
     current: AcpThreadView,
     connection: Rc<dyn AgentConnection>,
@@ -399,6 +399,12 @@ enum AuthState {
         pending_auth_method: Option<acp::AuthMethodId>,
         _subscription: Option<Subscription>,
     },
+}
+
+impl AuthState {
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok)
+    }
 }
 
 struct LoadingView {
@@ -3580,22 +3586,17 @@ impl AcpServerView {
             }
         });
 
-        let scroll_handle = if let ServerState::Connected {
-            current:
-                AcpThreadView {
-                    subagent_scroll_handles,
-                    ..
-                },
-        } = &self.server_state
-        {
-            subagent_scroll_handles
-                .borrow_mut()
-                .entry(session_id.clone())
-                .or_default()
-                .clone()
-        } else {
-            ScrollHandle::default()
-        };
+        let scroll_handle = self
+            .as_active_thread()
+            .map(|state| {
+                state
+                    .subagent_scroll_handles
+                    .borrow_mut()
+                    .entry(session_id.clone())
+                    .or_default()
+                    .clone()
+            })
+            .unwrap_or_default();
 
         scroll_handle.scroll_to_bottom();
         let editor_bg = cx.theme().colors().editor_background;
@@ -3985,15 +3986,9 @@ impl AcpServerView {
             .map(|(i, choice)| (i, choice.label()))
             .collect();
 
-        let permission_dropdown_handle = match &self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        permission_dropdown_handle,
-                        ..
-                    },
-            } => permission_dropdown_handle.clone(),
-            _ => return div().into_any_element(),
+        let permission_dropdown_handle = match self.as_active_thread() {
+            Some(thread) => thread.permission_dropdown_handle.clone(),
+            None => return div().into_any_element(),
         };
 
         PopoverMenu::new(("permission-granularity", entry_ix))
@@ -4417,14 +4412,8 @@ impl AcpServerView {
             .map(|(i, choice)| (i, choice.label()))
             .collect();
 
-        let permission_dropdown_handle = match &self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        permission_dropdown_handle,
-                        ..
-                    },
-            } => permission_dropdown_handle.clone(),
+        let permission_dropdown_handle = match self.as_active_thread() {
+            Some(thread) => thread.permission_dropdown_handle.clone(),
             _ => return div().into_any_element(),
         };
 
@@ -4683,7 +4672,9 @@ impl AcpServerView {
         let command_element =
             self.render_collapsible_command(false, command_content, &tool_call.id, cx);
 
-        let is_expanded = matches!(&self.server_state, ServerState::Connected{current: AcpThreadView { expanded_tool_calls, .. }} if expanded_tool_calls.contains(&tool_call.id));
+        let is_expanded = self
+            .as_connected()
+            .is_some_and(|c| c.current.expanded_tool_calls.contains(&tool_call.id));
 
         let header = h_flex()
             .id(header_id)
@@ -5908,10 +5899,12 @@ impl AcpServerView {
                                         .label_size(LabelSize::XSmall),
                                     )
                                     .when(
-                                        !matches!(
-                                            &self.server_state,
-                                            ServerState::Connected{current: AcpThreadView { hovered_edited_file_buttons: Some(i), .. }} if *i == index
-                                        ),
+                                        match self.as_active_thread() {
+                                            Some(thread) => {
+                                                thread.hovered_edited_file_buttons == Some(index)
+                                            }
+                                            None => false,
+                                        },
                                         |this| {
                                             let full_path = full_path.clone();
                                             this.hover(|s| s.bg(cx.theme().colors().element_hover))
@@ -6003,16 +5996,10 @@ impl AcpServerView {
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
 
-        let queued_message_editors = match &self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        queued_message_editors,
-                        ..
-                    },
-            } => queued_message_editors.as_slice(),
-            _ => &[],
-        };
+        let queued_message_editors = self
+            .as_connected()
+            .map(|c| c.current.queued_message_editors.as_slice())
+            .unwrap_or(&[]);
 
         let queue_len = queued_message_editors.len();
         let can_fast_track = if let Some(active) = self.as_active_thread() {
@@ -6237,12 +6224,9 @@ impl AcpServerView {
             .opacity(0.8)
             .block_mouse_except_scroll();
 
-        let enable_editor = match self.server_state {
-            ServerState::Connected { .. } => true,
-            ServerState::Loading { .. }
-            | ServerState::Unauthenticated { .. }
-            | ServerState::LoadError(..) => false,
-        };
+        let enable_editor = self
+            .as_connected()
+            .is_some_and(|conn| conn.auth_state.is_ok());
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
@@ -6341,16 +6325,9 @@ impl AcpServerView {
     }
 
     fn queued_messages_len(&self) -> usize {
-        match &self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        local_queued_messages,
-                        ..
-                    },
-            } => local_queued_messages.len(),
-            _ => 0,
-        }
+        self.as_active_thread()
+            .map(|thread| thread.local_queued_messages.len())
+            .unwrap_or_default()
     }
 
     fn has_queued_messages(&self) -> bool {
@@ -6394,21 +6371,15 @@ impl AcpServerView {
         tracked_buffers: Vec<Entity<Buffer>>,
         _cx: &mut Context<Self>,
     ) -> bool {
-        match &mut self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        local_queued_messages,
-                        ..
-                    },
-            } if index < local_queued_messages.len() => {
-                local_queued_messages[index] = QueuedMessage {
+        match self.as_active_thread_mut() {
+            Some(thread) if index < thread.local_queued_messages.len() => {
+                thread.local_queued_messages[index] = QueuedMessage {
                     content,
                     tracked_buffers,
                 };
                 true
             }
-            _ => false,
+            Some(_) | None => false,
         }
     }
 
@@ -6420,31 +6391,20 @@ impl AcpServerView {
     }
 
     fn queued_message_contents(&self) -> Vec<Vec<acp::ContentBlock>> {
-        match &self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        local_queued_messages,
-                        ..
-                    },
-            } => local_queued_messages
+        match self.as_active_thread() {
+            None => Vec::new(),
+            Some(thread) => thread
+                .local_queued_messages
                 .iter()
                 .map(|q| q.content.clone())
                 .collect(),
-            _ => Vec::new(),
         }
     }
 
     fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        let editor = match &self.server_state {
-            ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        queued_message_editors,
-                        ..
-                    },
-            } => queued_message_editors.get(index).cloned(),
-            _ => None,
+        let editor = match self.as_active_thread() {
+            Some(thread) => thread.queued_message_editors.get(index).cloned(),
+            None => None,
         };
         let Some(editor) = editor else {
             return;
@@ -6471,34 +6431,31 @@ impl AcpServerView {
         let needed_count = self.queued_messages_len();
         let queued_messages = self.queued_message_contents();
 
-        let ServerState::Connected {
-            current:
-                AcpThreadView {
-                    queued_message_editors,
-                    queued_message_editor_subscriptions,
-                    last_synced_queue_length,
-                    prompt_capabilities,
-                    available_commands,
-                    ..
-                },
-        } = &mut self.server_state
-        else {
+        let agent_name = self.agent.name();
+        let workspace = self.workspace.clone();
+        let project = self.project.downgrade();
+        let history = self.history.downgrade();
+        let message_editor = self.message_editor.clone();
+
+        let Some(thread) = self.as_active_thread_mut() else {
             return;
         };
-        let prompt_capabilities = prompt_capabilities.clone();
-        let available_commands = available_commands.clone();
+        let prompt_capabilities = thread.prompt_capabilities.clone();
+        let available_commands = thread.available_commands.clone();
 
-        let current_count = queued_message_editors.len();
+        let current_count = thread.queued_message_editors.len();
 
-        if current_count == needed_count && needed_count == *last_synced_queue_length {
+        if current_count == needed_count && needed_count == thread.last_synced_queue_length {
             return;
         }
 
         if current_count > needed_count {
-            queued_message_editors.truncate(needed_count);
-            queued_message_editor_subscriptions.truncate(needed_count);
+            thread.queued_message_editors.truncate(needed_count);
+            thread
+                .queued_message_editor_subscriptions
+                .truncate(needed_count);
 
-            for (index, editor) in queued_message_editors.iter().enumerate() {
+            for (index, editor) in thread.queued_message_editors.iter().enumerate() {
                 if let Some(content) = queued_messages.get(index) {
                     editor.update(cx, |editor, cx| {
                         editor.set_message(content.clone(), window, cx);
@@ -6507,17 +6464,16 @@ impl AcpServerView {
             }
         }
 
-        while queued_message_editors.len() < needed_count {
-            let agent_name = self.agent.name();
-            let index = queued_message_editors.len();
+        while thread.queued_message_editors.len() < needed_count {
+            let index = thread.queued_message_editors.len();
             let content = queued_messages.get(index).cloned().unwrap_or_default();
 
             let editor = cx.new(|cx| {
                 let mut editor = MessageEditor::new(
-                    self.workspace.clone(),
-                    self.project.downgrade(),
+                    workspace.clone(),
+                    project.clone(),
                     None,
-                    self.history.downgrade(),
+                    history.clone(),
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
@@ -6534,7 +6490,7 @@ impl AcpServerView {
                 editor
             });
 
-            let main_editor = self.message_editor.clone();
+            let message_editor = message_editor.clone();
             let subscription = cx.subscribe_in(
                 &editor,
                 window,
@@ -6543,10 +6499,10 @@ impl AcpServerView {
                         this.save_queued_message_at_index(index, cx);
                     }
                     MessageEditorEvent::Cancel => {
-                        window.focus(&main_editor.focus_handle(cx), cx);
+                        window.focus(&message_editor.focus_handle(cx), cx);
                     }
                     MessageEditorEvent::Send => {
-                        window.focus(&main_editor.focus_handle(cx), cx);
+                        window.focus(&message_editor.focus_handle(cx), cx);
                     }
                     MessageEditorEvent::SendImmediately => {
                         this.send_queued_message_at_index(index, true, window, cx);
@@ -6555,8 +6511,10 @@ impl AcpServerView {
                 },
             );
 
-            queued_message_editors.push(editor);
-            queued_message_editor_subscriptions.push(subscription);
+            thread.queued_message_editors.push(editor);
+            thread
+                .queued_message_editor_subscriptions
+                .push(subscription);
         }
 
         if let Some(active) = self.as_active_thread_mut() {
@@ -6864,15 +6822,10 @@ impl AcpServerView {
             .as_active_thread()
             .is_some_and(|active| active.thread.read(cx).status() != ThreadStatus::Idle);
 
-        if matches!(
-            &self.server_state,
-            ServerState::Connected {
-                current: AcpThreadView {
-                    is_loading_contents: true,
-                    ..
-                }
-            }
-        ) {
+        if self
+            .as_active_thread()
+            .is_some_and(|thread| thread.is_loading_contents)
+        {
             div()
                 .id("loading-message-content")
                 .px_1()
@@ -6952,15 +6905,9 @@ impl AcpServerView {
                     workspace.is_being_followed(CollaboratorId::Agent)
                 })
                 .unwrap_or(false),
-            _ => matches!(
-                &self.server_state,
-                ServerState::Connected {
-                    current: AcpThreadView {
-                        should_be_following: true,
-                        ..
-                    }
-                }
-            ),
+            _ => self
+                .as_active_thread()
+                .is_some_and(|thread| thread.should_be_following),
         }
     }
 
@@ -8558,13 +8505,9 @@ fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
 
 impl Focusable for AcpServerView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.server_state {
-            ServerState::Connected {
-                current: AcpThreadView { .. },
-            } => self.active_editor(cx).focus_handle(cx),
-            ServerState::Loading { .. }
-            | ServerState::LoadError(_)
-            | ServerState::Unauthenticated { .. } => self.focus_handle.clone(),
+        match self.as_active_thread() {
+            Some(_) => self.active_editor(cx).focus_handle(cx),
+            None => self.focus_handle.clone(),
         }
     }
 }
@@ -8757,13 +8700,28 @@ impl Render for AcpServerView {
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {
-                ServerState::Unauthenticated {
+                ServerState::Loading { .. } => v_flex()
+                    .flex_1()
+                    .child(self.render_recent_history(cx))
+                    .into_any(),
+                ServerState::LoadError(e) => v_flex()
+                    .flex_1()
+                    .size_full()
+                    .items_center()
+                    .justify_end()
+                    .child(self.render_load_error(e, window, cx))
+                    .into_any(),
+                ServerState::Connected(ConnectedServerState {
                     connection,
-                    description,
-                    configuration_view,
-                    pending_auth_method,
+                    auth_state:
+                        AuthState::Unauthenticated {
+                            description,
+                            configuration_view,
+                            pending_auth_method,
+                            _subscription,
+                        },
                     ..
-                } => v_flex()
+                }) => v_flex()
                     .flex_1()
                     .size_full()
                     .justify_end()
@@ -8776,25 +8734,14 @@ impl Render for AcpServerView {
                         cx,
                     ))
                     .into_any_element(),
-                ServerState::Loading { .. } => v_flex()
-                    .flex_1()
-                    .child(self.render_recent_history(cx))
-                    .into_any(),
-                ServerState::LoadError(e) => v_flex()
-                    .flex_1()
-                    .size_full()
-                    .items_center()
-                    .justify_end()
-                    .child(self.render_load_error(e, window, cx))
-                    .into_any(),
-                ServerState::Connected { current } => v_flex().flex_1().map(|this| {
-                    let this = this.when(current.resumed_without_history, |this| {
+                ServerState::Connected(connected) => v_flex().flex_1().map(|this| {
+                    let this = this.when(connected.current.resumed_without_history, |this| {
                         this.child(self.render_resume_notice(cx))
                     });
                     if has_messages {
                         this.child(
                             list(
-                                current.list_state.clone(),
+                                connected.current.list_state.clone(),
                                 cx.processor(|this, index: usize, window, cx| {
                                     let Some((entry, len)) =
                                         this.as_active_thread().and_then(|active| {
@@ -8811,7 +8758,7 @@ impl Render for AcpServerView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(&current.list_state, window, cx)
+                        .vertical_scrollbar_for(&connected.current.list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
@@ -8821,10 +8768,8 @@ impl Render for AcpServerView {
             // The activity bar is intentionally rendered outside of the ThreadState::Active match
             // above so that the scrollbar doesn't render behind it. The current setup allows
             // the scrollbar to stop exactly at the activity bar start.
-            .when(has_messages, |this| match &self.server_state {
-                ServerState::Connected {
-                    current: AcpThreadView { thread, .. },
-                } => this.children(self.render_activity_bar(thread, window, cx)),
+            .when(has_messages, |this| match self.as_active_thread() {
+                Some(thread) => this.children(self.render_activity_bar(&thread.thread, window, cx)),
                 _ => this,
             })
             .when(self.show_codex_windows_warning, |this| {
@@ -9064,23 +9009,9 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, _cx| {
-            let ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        resumed_without_history,
-                        ..
-                    },
-            } = &view.server_state
-            else {
-                panic!("Expected Active state");
-            };
-            assert!(*resumed_without_history);
-            assert_eq!(
-                view.as_active_thread()
-                    .map(|active| &active.list_state)
-                    .map_or(0, |s| s.item_count()),
-                0
-            );
+            let state = view.as_active_thread().unwrap();
+            assert!(state.resumed_without_history);
+            assert_eq!(state.list_state.item_count(), 0);
         });
     }
 
@@ -9104,14 +9035,9 @@ pub(crate) mod tests {
 
         // Check that the refusal error is set
         thread_view.read_with(cx, |thread_view, _cx| {
-            let ServerState::Connected {
-                current: AcpThreadView { thread_error, .. },
-            } = &thread_view.server_state
-            else {
-                panic!("Expected Active state");
-            };
+            let state = thread_view.as_active_thread().unwrap();
             assert!(
-                matches!(thread_error, Some(ThreadError::Refusal)),
+                matches!(state.thread_error, Some(ThreadError::Refusal)),
                 "Expected refusal error to be set"
             );
         });
@@ -11257,18 +11183,8 @@ pub(crate) mod tests {
 
         // Verify default granularity is the last option (index 2 = "Only this time")
         thread_view.read_with(cx, |thread_view, _cx| {
-            let selected = if let ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        selected_permission_granularity,
-                        ..
-                    },
-            } = &thread_view.server_state
-            {
-                selected_permission_granularity.get(&tool_call_id)
-            } else {
-                None
-            };
+            let state = thread_view.as_active_thread().unwrap();
+            let selected = state.selected_permission_granularity.get(&tool_call_id);
             assert!(
                 selected.is_none(),
                 "Should have no selection initially (defaults to last)"
@@ -11291,18 +11207,8 @@ pub(crate) mod tests {
 
         // Verify the selection was updated
         thread_view.read_with(cx, |thread_view, _cx| {
-            let selected = if let ServerState::Connected {
-                current:
-                    AcpThreadView {
-                        selected_permission_granularity,
-                        ..
-                    },
-            } = &thread_view.server_state
-            {
-                selected_permission_granularity.get(&tool_call_id)
-            } else {
-                None
-            };
+            let state = thread_view.as_active_thread().unwrap();
+            let selected = state.selected_permission_granularity.get(&tool_call_id);
             assert_eq!(selected, Some(&0), "Should have selected index 0");
         });
     }
