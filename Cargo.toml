@@ -732,7 +732,7 @@ wasmtime = { version = "33", default-features = false, features = [
     "parallel-compilation",
 ] }
 wasmtime-wasi = "33"
-wax = "0.6"
+wax = "0.7"
 which = "6.0.0"
 windows-core = "0.61"
 yawc = "0.2.5"

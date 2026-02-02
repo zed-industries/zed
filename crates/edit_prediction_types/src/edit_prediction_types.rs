@@ -4,6 +4,34 @@ use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::{Anchor, Buffer, OffsetRangeExt};
 
+/// Represents a predicted cursor position after an edit is applied.
+///
+/// Since the cursor may be positioned inside newly inserted text that doesn't
+/// exist in the original buffer, we store an anchor (which points to a position
+/// in the original buffer, typically the start of an edit) plus an offset into
+/// the inserted text.
+#[derive(Clone, Debug)]
+pub struct PredictedCursorPosition {
+    /// An anchor in the original buffer. If the cursor is inside an edit,
+    /// this points to the start of that edit's range.
+    pub anchor: language::Anchor,
+    /// Offset from the anchor into the new text. If the cursor is inside
+    /// inserted text, this is the offset within that insertion. If the cursor
+    /// is outside any edit, this is 0.
+    pub offset: usize,
+}
+
+impl PredictedCursorPosition {
+    pub fn new(anchor: language::Anchor, offset: usize) -> Self {
+        Self { anchor, offset }
+    }
+
+    /// Creates a predicted cursor position at an exact anchor location (offset = 0).
+    pub fn at_anchor(anchor: language::Anchor) -> Self {
+        Self { anchor, offset: 0 }
+    }
+}
+
 /// The display mode used when showing an edit prediction to the user.
 /// Used for metrics tracking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +57,7 @@ pub enum EditPrediction {
     Local {
         id: Option<SharedString>,
         edits: Vec<(Range<language::Anchor>, Arc<str>)>,
+        cursor_position: Option<PredictedCursorPosition>,
         edit_preview: Option<language::EditPreview>,
     },
     /// Jump to a different file from the one that requested the prediction

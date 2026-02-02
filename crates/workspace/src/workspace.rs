@@ -1306,12 +1306,18 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(..) => {
+                &project::Event::WorktreeRemoved(id) | &project::Event::WorktreeAdded(id) => {
                     this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    this.update_history(cx);
+                    if this
+                        .project()
+                        .read(cx)
+                        .worktree_for_id(id, cx)
+                        .is_some_and(|wt| wt.read(cx).is_visible())
+                    {
+                        this.serialize_workspace(window, cx);
+                        this.update_history(cx);
+                    }
                 }
-
                 project::Event::WorktreeUpdatedEntries(..) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
