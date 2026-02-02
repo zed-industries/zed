@@ -394,18 +394,41 @@ impl DockerExecConnection {
 
         let output = command.output().await?;
 
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!(
+                "failed to upload file via docker cp {src_path_display} -> {dest_path_str}: {stderr}",
+            );
+            anyhow::bail!(
+                "failed to upload file via docker cp {} -> {}: {}",
+                src_path_display,
+                dest_path_str,
+                stderr,
+            );
+        }
+
+        let mut chown_command = util::command::new_smol_command(self.docker_cli());
+        chown_command.arg("exec");
+        chown_command.arg("-w");
+        chown_command.arg(remote_dir_for_server);
+        chown_command.arg(&self.connection_options.container_id);
+        chown_command.arg("chown");
+        chown_command.arg(format!(
+            "{}:{}",
+            self.connection_options.remote_user, self.connection_options.remote_user,
+        ));
+        chown_command.arg(format!("{}", &dest_path_str));
+
+        let output = chown_command.output().await?;
+
         if output.status.success() {
             return Ok(());
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!(
-            "failed to upload file via docker cp {src_path_display} -> {dest_path_str}: {stderr}",
-        );
+        log::debug!("failed to change ownership for zed_remote_server via chown",);
         anyhow::bail!(
-            "failed to upload file via docker cp {} -> {}: {}",
-            src_path_display,
-            dest_path_str,
+            "failed to change ownership for zed_remote_server via chown: {}",
             stderr,
         );
     }
@@ -711,7 +734,12 @@ impl RemoteConnection for DockerExecConnection {
             inner_program.push("-l".to_string());
         };
 
-        let mut docker_args = vec!["exec".to_string()];
+        // TODO why can't I use self.docker_exec?
+        let mut docker_args = vec![
+            "exec".to_string(),
+            "-u".to_string(),
+            self.connection_options.remote_user.clone(),
+        ];
 
         if let Some(parsed_working_dir) = parsed_working_dir {
             docker_args.push("-w".to_string());
