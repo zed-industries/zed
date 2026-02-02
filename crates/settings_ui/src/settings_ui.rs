@@ -565,6 +565,7 @@ pub fn open_settings_editor(
         let query = format!("#{path}");
         let indices = settings_window.filter_by_json_path(&query);
 
+        settings_window.opening_link = true;
         settings_window.search_bar.update(cx, |editor, cx| {
             editor.set_text(query, window, cx);
         });
@@ -716,6 +717,7 @@ pub struct SettingsWindow {
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
     sub_page_stack: Vec<SubPage>,
+    opening_link: bool,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
     /// Cached settings file buffers to avoid repeated disk I/O on each settings change
@@ -1463,6 +1465,10 @@ impl SettingsWindow {
                 return;
             };
 
+            if this.opening_link {
+                this.opening_link = false;
+                return;
+            }
             this.update_matches(cx);
         })
         .detach();
@@ -1619,6 +1625,7 @@ impl SettingsWindow {
             project_setting_file_buffers: HashMap::default(),
             pages: vec![],
             sub_page_stack: vec![],
+            opening_link: false,
             navbar_entries: vec![],
             navbar_entry: 0,
             navbar_scroll_handle: UniformListScrollHandle::default(),
@@ -4208,6 +4215,7 @@ pub mod test {
                 content_handles: Vec::default(),
                 search_task: None,
                 sub_page_stack: Vec::default(),
+                opening_link: false,
                 focus_handle: cx.focus_handle(),
                 navbar_focus_handle: NonFocusableHandle::new(
                     NAVBAR_CONTAINER_TAB_INDEX,
@@ -4328,6 +4336,7 @@ pub mod test {
             navbar_focus_subscriptions: vec![],
             filter_table: vec![],
             sub_page_stack: vec![],
+            opening_link: false,
             has_query: false,
             content_handles: vec![],
             search_task: None,
