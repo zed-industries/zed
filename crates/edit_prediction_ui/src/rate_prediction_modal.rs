@@ -1007,6 +1007,10 @@ impl FeedbackCompletionProvider {
             "Misunderstood or did not use contextual information",
         ),
         ("reverted", "Reverted recent edits"),
+        (
+            "bad_cursor_position",
+            "The prediction moved the cursor to an unhelpful position",
+        ),
     ];
 }
 
