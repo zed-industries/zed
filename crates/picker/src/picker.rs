@@ -46,8 +46,6 @@ struct SelectionIndicator {
 }
 
 impl SelectionIndicator {
-    /// When the previous index was visible, compute the pixel offset to
-    /// animate from, clamping the distance to avoid overly long slides.
     fn animated_origin(&self, item_height: Pixels, visible_range: &Range<usize>) -> Option<Pixels> {
         if self.reduce_motion {
             return None;
@@ -1017,8 +1015,6 @@ mod tests {
         assert_eq!(make_indicator(2, Some(9), false).animated_origin(px(20.), &(0..10)), Some(px(100.)));
     }
 
-    /// Standalone version of `Picker::is_fully_visible` for unit testing
-    /// without a full Picker instance.
     fn is_fully_visible(visible_range: Range<usize>, index: usize, match_count: usize) -> bool {
         let safe_start = if visible_range.start > 0 {
             visible_range.start + 1
