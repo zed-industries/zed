@@ -11457,8 +11457,6 @@ name = "panel"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "settings",
- "theme",
  "ui",
  "workspace",
 ]
@@ -13494,7 +13492,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
- "auto_update",
  "dap",
  "db",
  "dev_container",
@@ -13509,7 +13506,6 @@ dependencies = [
  "indoc",
  "language",
  "log",
- "markdown",
  "menu",
  "node_runtime",
  "open_path_prompt",
@@ -13528,9 +13524,7 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
- "theme",
  "ui",
- "ui_input",
  "util",
  "windows-registry 0.6.1",
  "workspace",
