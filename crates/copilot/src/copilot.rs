@@ -281,16 +281,25 @@ impl GlobalCopilotAuth {
         cx.try_global()
     }
 
-    pub fn get_or_init(app_state: Arc<AppState>, cx: &mut App) -> GlobalCopilotAuth {
-        if let Some(copilot) = cx.try_global::<Self>() {
-            copilot.clone()
-        } else {
-            Self::set_global(
+    pub fn try_get_or_init(app_state: Arc<AppState>, cx: &mut App) -> Option<GlobalCopilotAuth> {
+        let ai_enabled = !DisableAiSettings::get(None, cx).disable_ai;
+
+        if let Some(copilot) = cx.try_global::<Self>().cloned() {
+            if ai_enabled {
+                Some(copilot)
+            } else {
+                cx.remove_global::<Self>();
+                None
+            }
+        } else if ai_enabled {
+            Some(Self::set_global(
                 app_state.languages.next_language_server_id(),
                 app_state.fs.clone(),
                 app_state.node_runtime.clone(),
                 cx,
-            )
+            ))
+        } else {
+            None
         }
     }
 }
