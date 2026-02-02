@@ -49,7 +49,7 @@ fn check_hardcoded_security_rules(
         if pattern.is_match(input) {
             return Some(ToolPermissionDecision::Deny(
                 "Blocked by built-in security rule. This operation is considered too \
-                 dangerous and cannot be overridden by settings."
+                 harmful to be allowed, and cannot be overridden by settings."
                     .into(),
             ));
         }
@@ -65,7 +65,7 @@ fn check_hardcoded_security_rules(
                     if pattern.is_match(command) {
                         return Some(ToolPermissionDecision::Deny(
                             "Blocked by built-in security rule. This operation is considered too \
-                             dangerous and cannot be overridden by settings."
+                             harmful to be allowed, and cannot be overridden by settings."
                                 .into(),
                         ));
                     }
