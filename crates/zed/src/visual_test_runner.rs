@@ -1951,7 +1951,7 @@ fn run_subagent_visual_tests(
     )?;
 
     // Expand the first subagent
-    thread_view.update(cx, |view: &mut agent_ui::acp::AcpThreadView, cx| {
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpServerView, cx| {
         view.expand_subagent(acp::SessionId::new("subagent-1"), cx);
     });
 
