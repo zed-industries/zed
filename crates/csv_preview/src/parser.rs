@@ -124,9 +124,6 @@ impl CsvPreviewView {
 
                 view.engine.contents = parsed_csv;
                 view.last_parse_end_time = Some(parse_end_time);
-                view.performance_metrics.record("Filters recalc", || {
-                    view.engine.calculate_available_filters();
-                });
 
                 view.apply_filter_sort();
                 cx.notify();

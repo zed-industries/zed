@@ -1,6 +1,3 @@
-use std::hash::DefaultHasher;
-use std::hash::Hasher;
-
 use text::Anchor;
 use ui::SharedString;
 
@@ -28,17 +25,6 @@ pub enum TableCell {
 }
 
 impl TableCell {
-    // TODO: Store hashed value
-    pub fn hash(&self) -> u64 {
-        match self {
-            TableCell::Real { cached_value, .. } => {
-                let mut hasher = DefaultHasher::new();
-                hasher.write(cached_value.as_bytes());
-                hasher.finish()
-            }
-            TableCell::Virtual => 0,
-        }
-    }
     /// Create a TableCell with buffer position tracking
     pub fn from_buffer_position(
         content: SharedString,

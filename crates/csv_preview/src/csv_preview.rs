@@ -14,7 +14,6 @@ use workspace::{Item, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
-mod action_handlers;
 mod parser;
 mod renderer;
 mod settings;
