@@ -1,11 +1,10 @@
 use gpui::{Action, App, Context, Entity, EventEmitter, Pixels, Render, Subscription, Window, px};
 use theme::ActiveTheme;
-use ui::{
-    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelSize, ListItem,
-    ParentElement, SharedString, Styled, div, prelude::*,
-};
+use ui::utils::TRAFFIC_LIGHT_PADDING;
+use ui::{ListItem, Tooltip, prelude::*};
 use workspace::{
-    MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent, Workspace,
+    MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
+    ToggleWorkspaceSidebar, Workspace,
 };
 
 const DEFAULT_WIDTH: Pixels = px(256.0);
@@ -111,25 +110,37 @@ impl Render for Sidebar {
             .border_r_1()
             .border_color(cx.theme().colors().border)
             .child(
-                div()
+                h_flex()
                     .h(titlebar_height)
                     .w_full()
-                    .pl(px(80.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
+                    .mt_px()
                     .pr_2()
-                    .child(Label::new("Workspaces").size(LabelSize::Small))
+                    .when(cfg!(target_os = "macos"), |this| {
+                        this.pl(px(TRAFFIC_LIGHT_PADDING))
+                    })
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        IconButton::new("close-sidebar", IconName::WorkspaceSidebarOpen)
+                            .icon_size(IconSize::Small)
+                            .tooltip(|_window, cx| {
+                                Tooltip::for_action("Close Sidebar", &ToggleWorkspaceSidebar, cx)
+                            })
+                            .on_click(cx.listener(|_this, _, _window, cx| {
+                                cx.emit(SidebarEvent::Close);
+                            })),
+                    )
                     .child(
                         IconButton::new("new-workspace", IconName::Plus)
                             .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("New Workspace"))
                             .on_click(cx.listener(|_this, _, window, cx| {
                                 window.dispatch_action(NewWorkspaceInWindow.boxed_clone(), cx);
                                 cx.emit(SidebarEvent::Close);
                             })),
                     ),
             )
-            .child(ui::ListSeparator)
             .child(
                 div()
                     .id("workspace-sidebar-content")
