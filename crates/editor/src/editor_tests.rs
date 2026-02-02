@@ -10312,7 +10312,7 @@ async fn test_autoindent_preserve_indent_maintains_indentation_on_newline(cx: &m
 #[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.auto_indent = Some(settings::AutoIndentMode::Full);
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware);
         settings.languages.0.insert(
             "python".into(),
             LanguageSettingsContent {

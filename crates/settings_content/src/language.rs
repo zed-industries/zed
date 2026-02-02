@@ -276,9 +276,9 @@ pub enum EditPredictionsMode {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AutoIndentMode {
-    /// Full auto-indent based on syntax context.
-    /// Adjusts indentation based on the code structure when typing.
-    Full,
+    /// Adjusts indentation based on syntax context when typing.
+    /// Uses tree-sitter to analyze code structure and indent accordingly.
+    SyntaxAware,
     /// Preserve the indentation of the current line when creating new lines,
     /// but don't adjust based on syntax context.
     PreserveIndent,
@@ -464,11 +464,11 @@ pub struct LanguageSettingsContent {
     pub linked_edits: Option<bool>,
     /// Controls automatic indentation behavior when typing.
     ///
-    /// - "full": Adjusts indentation based on syntax context (default)
+    /// - "syntax_aware": Adjusts indentation based on syntax context (default)
     /// - "preserve_indent": Preserves current line's indentation on new lines
     /// - "none": No automatic indentation
     ///
-    /// Default: full
+    /// Default: syntax_aware
     pub auto_indent: Option<AutoIndentMode>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///

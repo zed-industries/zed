@@ -5128,8 +5128,8 @@ impl Editor {
                                     buffer.language_settings_at(start, cx).auto_indent;
                                 let preserve_indent =
                                     auto_indent_mode != language::AutoIndentMode::None;
-                                let use_autoindent =
-                                    auto_indent_mode == language::AutoIndentMode::Full;
+                                let apply_syntax_indent =
+                                    auto_indent_mode == language::AutoIndentMode::SyntaxAware;
                                 let capacity_for_delimiter =
                                     delimiter.as_deref().map(str::len).unwrap_or_default();
                                 let existing_indent_len = if preserve_indent {
@@ -5161,7 +5161,11 @@ impl Editor {
                                     }
                                     new_text.extend(extra_indent.chars());
                                 }
-                                (start, new_text, *prevent_auto_indent || !use_autoindent)
+                                (
+                                    start,
+                                    new_text,
+                                    *prevent_auto_indent || !apply_syntax_indent,
+                                )
                             }
                         };
 

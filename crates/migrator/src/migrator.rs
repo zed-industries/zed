@@ -2373,7 +2373,7 @@ mod tests {
             None,
         );
 
-        // true should become "full"
+        // true should become "syntax_aware"
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
@@ -2384,7 +2384,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
-                "auto_indent": "full"
+                "auto_indent": "syntax_aware"
             }"#
                 .unindent(),
             ),
@@ -2435,13 +2435,13 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
-                "auto_indent": "full",
-                "languages": {
-                    "Python": {
-                        "auto_indent": "none"
+                    "auto_indent": "syntax_aware",
+                    "languages": {
+                        "Python": {
+                            "auto_indent": "none"
+                        }
                     }
-                }
-            }"#
+                }"#
                 .unindent(),
             ),
         );

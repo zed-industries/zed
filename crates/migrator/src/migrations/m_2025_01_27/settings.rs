@@ -16,9 +16,11 @@ fn migrate_auto_indent(value: &mut Value, _path: &[&str]) -> Result<()> {
     };
 
     *auto_indent = match auto_indent {
-        Value::Bool(true) => Value::String("full".to_string()),
+        Value::Bool(true) => Value::String("syntax_aware".to_string()),
         Value::Bool(false) => Value::String("none".to_string()),
-        Value::String(s) if s == "full" || s == "preserve_indent" || s == "none" => return Ok(()),
+        Value::String(s) if s == "syntax_aware" || s == "preserve_indent" || s == "none" => {
+            return Ok(());
+        }
         _ => anyhow::bail!("Expected auto_indent to be a boolean or valid enum value"),
     };
     Ok(())
