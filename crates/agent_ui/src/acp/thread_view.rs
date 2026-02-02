@@ -1351,20 +1351,6 @@ impl AcpServerView {
         };
     }
 
-    fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
-        self.as_active_thread()
-            .map(|active| active.update(cx, |active, cx| active.start_turn(cx)))
-            .unwrap_or(0)
-    }
-
-    fn stop_turn(&mut self, generation: usize, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread() {
-            active.update(cx, |active, _cx| {
-                active.stop_turn(generation);
-            });
-        }
-    }
-
     fn update_turn_tokens(&mut self, cx: &mut Context<Self>) {
         if let Some(active) = self.as_active_thread() {
             active.update(cx, |active, cx| {

@@ -376,13 +376,14 @@ impl AcpThreadView {
                 let Some((contents, tracked_buffers)) = contents_task.await? else {
                     return Ok(());
                 };
+                let generation = this.update(cx, |this, cx| {
+                    this.start_turn(cx)
+                })?;
 
-                let generation = server_view.update_in(cx, |this, _window, cx| {
+                server_view.update_in(cx, |this, _window, cx| {
                     this.in_flight_prompt = Some(contents.clone());
-                    let generation = this.start_turn(cx);
                     this.set_editor_is_expanded(false, cx);
                     this.scroll_to_bottom(cx);
-                    generation
                 })?;
 
                 let _stop_turn = defer({
