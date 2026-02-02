@@ -52,29 +52,24 @@ impl Editor {
             return;
         };
 
-        let buffers_to_query = self
-            .visible_excerpts(true, cx)
+        let visible = self.visible_excerpts(true, cx);
+        let buffers_to_query = visible
             .into_values()
             .map(|(buffer, ..)| buffer)
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
-                let settings = language_settings(
-                    editor_buffer.read(cx).language().map(|l| l.name()),
-                    editor_buffer.read(cx).file(),
-                    cx,
-                );
-                let retain = buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
-                    && self.registered_buffers.contains_key(&editor_buffer_id)
-                    && settings.semantic_tokens.enabled();
-                if retain {
+                if self.registered_buffers.contains_key(&editor_buffer_id)
+                    && language_settings(
+                        editor_buffer.read(cx).language().map(|l| l.name()),
+                        editor_buffer.read(cx).file(),
+                        cx,
+                    )
+                    .semantic_tokens
+                    .enabled()
+                {
                     Some((editor_buffer_id, editor_buffer))
                 } else {
-                    self.display_map.update(cx, |display_map, _| {
-                        display_map.invalidate_semantic_highlights(editor_buffer_id);
-                    });
-                    self.semantic_tokens_fetched_for_buffers
-                        .remove(&editor_buffer_id);
                     None
                 }
             })
@@ -99,7 +94,7 @@ impl Editor {
                                 None
                             } else {
                                 let task = sema.semantic_tokens(buffer, for_server, cx);
-                                Some(async move { (buffer_id, query_version, dbg!(task.await)) })
+                                Some(async move { (buffer_id, query_version, task.await) })
                             }
                         })
                         .collect::<Vec<_>>()
@@ -1092,8 +1087,10 @@ mod tests {
             multibuffer
         });
 
-        let editor = workspace.update_in(&mut cx, |_, window, cx| {
-            cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx))
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
         });
         editor.update_in(&mut cx, |editor, window, cx| {
             let nav_history = workspace
