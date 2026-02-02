@@ -49,7 +49,6 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
         apply_scroll: Option<ScrollOffset>,
     ) {
-        self.clear_cell_editor();
         self.scroll_to_focused_cell(cx, apply_scroll);
     }
 

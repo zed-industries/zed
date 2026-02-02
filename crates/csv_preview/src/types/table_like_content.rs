@@ -1,6 +1,6 @@
 use ui::table_row::TableRow;
 
-use crate::types::{DataCellId, DataRow, LineNumber, TableCell};
+use crate::types::{DataRow, LineNumber, TableCell};
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
 #[derive(Clone)]
@@ -26,10 +26,6 @@ impl Default for TableLikeContent {
 }
 
 impl TableLikeContent {
-    pub fn get_cell(&self, id: &DataCellId) -> Option<&TableCell> {
-        self.rows.get(*id.row)?.get(id.col)
-    }
-
     pub(crate) fn get_row(&self, data_row: DataRow) -> Option<&TableRow<TableCell>> {
         self.rows.get(*data_row)
     }

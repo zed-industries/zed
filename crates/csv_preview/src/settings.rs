@@ -86,6 +86,5 @@ pub(crate) struct CsvPreviewSettings {
     // pub(crate) table_width_mode: TableWidthMode,
     pub(crate) show_debug_info: bool,
     pub(crate) show_perf_metrics_overlay: bool,
-    pub(crate) show_cell_editor_row: bool,
     pub(crate) multiline_cells_enabled: bool,
 }

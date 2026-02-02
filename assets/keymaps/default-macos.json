@@ -1318,14 +1318,6 @@
       "cmd-shift-down": "csv::ExtendSelectionToBottomEdge",
       "cmd-shift-left": "csv::ExtendSelectionToLeftEdge",
       "cmd-shift-right": "csv::ExtendSelectionToRightEdge",
-      "enter": "csv::StartCellEditing",
-    },
-  },
-  {
-    "context": "TableCellEditor",
-    "bindings": {
-      "enter": "csv::FinishCellEditing",
-      "escape": "csv::CancelCellEditing",
     },
   },
   {

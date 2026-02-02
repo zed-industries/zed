@@ -35,14 +35,7 @@ impl Render for CsvPreviewView {
             .on_action(cx.listener(Self::extend_selection_to_bottom_edge))
             .on_action(cx.listener(Self::extend_selection_to_left_edge))
             .on_action(cx.listener(Self::extend_selection_to_right_edge))
-            // Cell editor
-            .on_action(cx.listener(Self::start_cell_editing))
-            .on_action(cx.listener(Self::finish_cell_editing))
-            .on_action(cx.listener(Self::cancel_cell_editing_handler))
             .child(self.render_settings_panel(window, cx))
-            .when(self.settings.show_cell_editor_row, |div| {
-                div.child(self.render_cell_editor(cx))
-            })
             .child({
                 if self.engine.contents.number_of_cols == 0 {
                     div()

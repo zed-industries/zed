@@ -65,11 +65,4 @@ impl TableCell {
             TableCell::Virtual => None,
         }
     }
-
-    pub(crate) fn position(&self) -> Option<&CellContentSpan> {
-        match self {
-            TableCell::Real { position, .. } => Some(position),
-            TableCell::Virtual => None,
-        }
-    }
 }

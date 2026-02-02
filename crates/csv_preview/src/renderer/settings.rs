@@ -370,22 +370,6 @@ fn create_experimental_popover_menu(
                         },
                     )
                     .toggleable_entry(
-                        "Show cell editor row",
-                        settings.show_cell_editor_row,
-                        IconPosition::Start,
-                        None,
-                        {
-                            let view_entity = view_entity.clone();
-                            move |_, cx| {
-                                view_entity.update(cx, |view, cx| {
-                                    view.settings.show_cell_editor_row =
-                                        !view.settings.show_cell_editor_row;
-                                    cx.notify();
-                                })
-                            }
-                        },
-                    )
-                    .toggleable_entry(
                         "Show cell positions",
                         settings.show_debug_info,
                         IconPosition::Start,

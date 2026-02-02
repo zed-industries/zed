@@ -28,9 +28,6 @@ use crate::{
     types::{AnyColumn, DataRow, OptionExt, TableCell},
 };
 
-/// Hash of a cell used in filtering
-pub struct ValueHash(u64);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FilterEntryState {
     Available { is_applied: bool },

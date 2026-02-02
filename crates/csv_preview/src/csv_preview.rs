@@ -1,21 +1,20 @@
 use editor::Editor;
 use gpui::{
-    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
-    ScrollHandle, Task, actions,
+    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ScrollHandle, Task,
+    actions,
 };
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
 
-use crate::{cell_editor::CellEditorCtx, table_data_engine::TableDataEngine};
+use crate::table_data_engine::TableDataEngine;
 use ui::{SharedString, TableColumnWidths, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
 mod action_handlers;
-mod cell_editor;
 mod parser;
 mod renderer;
 mod settings;
@@ -49,14 +48,9 @@ actions!(
         ExtendSelectionToBottomEdge,
         ExtendSelectionToLeftEdge,
         ExtendSelectionToRightEdge,
-        ///// Cell editing /////
-        StartCellEditing,
-        FinishCellEditing,
-        CancelCellEditing,
     ]
 );
 const TABLE_CONTEXT_NAME: &'static str = "CsvPreview";
-const CELL_EDITOR_CONTEXT_NAME: &'static str = "TableCellEditor";
 
 pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,
@@ -72,8 +66,6 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
-    /// Context of inline cell editor. If None - no editing is in progress.
-    pub(crate) cell_editor: Option<CellEditorCtx>,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
     /// Used to signalize parser that the cell was edited, and reparsing is needed.
@@ -168,7 +160,6 @@ impl CsvPreviewView {
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
                 settings: CsvPreviewSettings::default(),
-                cell_editor: None,
                 last_parse_end_time: None,
                 cell_edited_flag: false,
                 scroll_handle: ScrollHandle::default(),

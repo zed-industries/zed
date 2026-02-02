@@ -182,28 +182,20 @@ impl CsvPreviewView {
             // Check if this cell is the selection anchor using display coordinates
             let is_anchor = this.engine.selection.is_cell_anchor(display_row, col);
 
-            let cell = if let Some(ctx) = this.cell_editor.as_ref()
-                && ctx.cell_to_edit == display_cell_id
-            {
-                div()
-                    .relative()
-                    .child(div().absolute().child(ctx.editor.clone()))
-            } else {
-                div().size_full().whitespace_nowrap().text_ellipsis().child(
-                    CsvPreviewView::create_selectable_cell(
-                        display_cell_id,
-                        cell_content,
-                        cx.entity(),
-                        selected_bg,
-                        is_selected,
-                        is_focused,
-                        is_anchor,
-                        this.settings.vertical_alignment,
-                        this.settings.font_type,
-                        cx,
-                    ),
-                )
-            };
+            let cell = div().size_full().whitespace_nowrap().text_ellipsis().child(
+                CsvPreviewView::create_selectable_cell(
+                    display_cell_id,
+                    cell_content,
+                    cx.entity(),
+                    selected_bg,
+                    is_selected,
+                    is_focused,
+                    is_anchor,
+                    this.settings.vertical_alignment,
+                    this.settings.font_type,
+                    cx,
+                ),
+            );
 
             elements.push(
                 div()

@@ -16,6 +16,7 @@ pub enum LineNumber {
     LineRange(usize, usize),
 }
 
+#[allow(dead_code)]
 pub trait ResultExt<T, E: Debug> {
     /// Syntactic sugar for `.unwrap_or_else(|e|panic!("{msg}: {e:?}"))`
     fn expect_lazy(self, f: impl FnOnce() -> String) -> T;
