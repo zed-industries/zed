@@ -186,7 +186,24 @@ When using `vtsls`:
 
 ## Workspace TypeScript version
 
-`vtsls` will use your workspace TypeScript version by default.
+This is enabled by default.
+
+Some projects require using the TypeScript version in `node_modules` to ensure compiler behavior, diagnostics, and editor tooling exactly match the build and CI environment, including framework and plugin compatibility. This avoids version-related inconsistencies and false errors across contributors and tooling.
+If you wish to disable this feature, it can be done as follows:
+
+```json [settings]
+{
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "vtsls": {
+          "autoUseWorkspaceTsdk": false
+        }
+      }
+    }
+  }
+}
+```
 
 ## Debugging
 
