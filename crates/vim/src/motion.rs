@@ -5141,7 +5141,7 @@ mod test {
         // comment.
         cx.simulate_keystrokes("] /");
         cx.assert_editor_state(indoc! {r#"
-            // First commenˇt
+            // first commenˇt
             fn first() {
                 // removed comment
                 println!("first");
