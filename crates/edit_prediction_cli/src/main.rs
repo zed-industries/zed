@@ -23,6 +23,7 @@ mod score;
 mod split_commit;
 mod split_dataset;
 mod synthesize;
+mod truncate_expected_patch;
 mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
@@ -54,6 +55,7 @@ use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
+use crate::truncate_expected_patch::TruncatePatchArgs;
 
 #[derive(Parser, Debug)]
 #[command(name = "ep")]
@@ -193,6 +195,8 @@ enum Command {
     Clean,
     /// Generate an evaluation example by splitting a chronologically-ordered commit
     SplitCommit(SplitCommitArgs),
+    /// Truncate expected patch by the given criteria
+    TruncatePatch(TruncatePatchArgs),
     /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
     Split(SplitArgs),
     /// Filter a JSONL dataset by programming language (based on cursor_path extension)
@@ -233,6 +237,7 @@ impl Display for Command {
             }
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
+            Command::TruncatePatch(_) => write!(f, "truncate-patch"),
             Command::Split(_) => write!(f, "split"),
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
             Command::ImportBatch(args) => {
@@ -568,8 +573,10 @@ async fn load_examples(
     // Skip resume logic for --in-place since input and output are the same file,
     // which would incorrectly treat all input examples as already processed.
     if !args.in_place {
-        if let Some(path) = output_path {
-            resume_from_output(path, &mut examples);
+        if let Some(path) = output_path
+            && let Some(command) = &args.command
+        {
+            resume_from_output(path, &mut examples, command);
         }
     }
 
@@ -594,7 +601,7 @@ fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
     hasher.finish()
 }
 
-fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
+fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>, command: &Command) {
     let file = match File::open(path) {
         Ok(f) => f,
         Err(_) => return,
@@ -615,8 +622,22 @@ fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
         if let Ok(output_example) = serde_json::from_str::<Example>(&line) {
             let hash = spec_hash(&output_example.spec);
             if input_hashes.contains(&hash) && !kept_hashes.contains(&hash) {
-                kept_hashes.insert(hash);
-                kept_lines.push(line);
+                let is_complete = match command {
+                    Command::Qa(_) => output_example
+                        .qa
+                        .first()
+                        .and_then(|q| q.as_ref())
+                        .and_then(|q| q.confidence)
+                        .is_some(),
+                    Command::Repair(_) => output_example.predictions.iter().any(|p| {
+                        p.provider == PredictionProvider::Repair && p.actual_patch.is_some()
+                    }),
+                    _ => true,
+                };
+                if is_complete {
+                    kept_hashes.insert(hash);
+                    kept_lines.push(line);
+                }
             }
         }
     }
@@ -729,6 +750,15 @@ fn main() {
             }
             return;
         }
+        Command::TruncatePatch(truncate_args) => {
+            if let Err(error) =
+                truncate_expected_patch::run_truncate_expected_patch(truncate_args, &args.inputs)
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         Command::Split(split_args) => {
             if let Err(error) = split_dataset::run_split(split_args, &args.inputs) {
                 eprintln!("{error:#}");
@@ -745,60 +775,7 @@ fn main() {
             }
             return;
         }
-        Command::Qa(qa_args) => {
-            // Read examples from input files
-            let mut examples = example::read_example_files(&args.inputs);
 
-            // Apply filters
-            if let Some(name_filter) = &args.name {
-                examples.retain(|e| e.spec.name.contains(name_filter));
-            }
-            if let Some(repo_filter) = &args.repo {
-                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
-            }
-            if let Some(offset) = args.offset {
-                examples.splice(0..offset, []);
-            }
-            if let Some(limit) = args.limit {
-                examples.truncate(limit);
-            }
-
-            smol::block_on(async {
-                if let Err(e) = qa::run_qa(&mut examples, qa_args, output.as_ref()).await {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
-        Command::Repair(repair_args) => {
-            // Read examples from input files
-            let mut examples = example::read_example_files(&args.inputs);
-
-            // Apply filters
-            if let Some(name_filter) = &args.name {
-                examples.retain(|e| e.spec.name.contains(name_filter));
-            }
-            if let Some(repo_filter) = &args.repo {
-                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
-            }
-            if let Some(offset) = args.offset {
-                examples.splice(0..offset, []);
-            }
-            if let Some(limit) = args.limit {
-                examples.truncate(limit);
-            }
-
-            smol::block_on(async {
-                if let Err(e) =
-                    repair::run_repair(&mut examples, repair_args, output.as_ref()).await
-                {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
         _ => {}
     }
 
@@ -825,6 +802,12 @@ fn main() {
                     }
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
+                    }
+                    Command::Qa(args) => {
+                        qa::sync_batches(args).await?;
+                    }
+                    Command::Repair(args) => {
+                        repair::sync_batches(args).await?;
                     }
                     _ => (),
                 }
@@ -957,14 +940,20 @@ fn main() {
                                             )
                                             .await?;
                                         }
+                                        Command::Qa(args) => {
+                                            qa::run_qa(example, args, &example_progress).await?;
+                                        }
+                                        Command::Repair(args) => {
+                                            repair::run_repair(example, args, &example_progress)
+                                                .await?;
+                                        }
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
+                                        | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_)
-                                        | Command::Qa(_)
-                                        | Command::Repair(_) => {
+                                        | Command::ImportBatch(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -1061,6 +1050,12 @@ fn main() {
                     }
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
+                    }
+                    Command::Qa(args) => {
+                        qa::sync_batches(args).await?;
+                    }
+                    Command::Repair(args) => {
+                        repair::sync_batches(args).await?;
                     }
                     _ => (),
                 }
