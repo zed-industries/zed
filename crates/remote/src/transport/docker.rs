@@ -116,16 +116,39 @@ impl DockerExecConnection {
         {
             Ok(shell) => match shell.trim() {
                 "" => {
-                    log::error!("$SHELL is not set, falling back to {default_shell}");
-                    default_shell.to_owned()
+                    log::info!("$SHELL is not set, checking passwd for user");
                 }
-                shell => shell.to_owned(),
+                shell => {
+                    return shell.to_owned();
+                }
             },
             Err(e) => {
-                log::error!("Failed to get shell: {e}");
-                default_shell.to_owned()
+                log::error!("Failed to get $SHELL: {e}. Checking passwd for user");
             }
         }
+
+        match self
+            .run_docker_exec(
+                "sh",
+                None,
+                &Default::default(),
+                &["-c", "getent passwd \"$(id -un)\" | cut -d: -f7"],
+            )
+            .await
+        {
+            Ok(shell) => match shell.trim() {
+                "" => {
+                    log::info!("No shell found in passwd, falling back to {default_shell}");
+                }
+                shell => {
+                    return shell.to_owned();
+                }
+            },
+            Err(e) => {
+                log::info!("Error getting shell from passwd: {e}. Falling back to {default_shell}");
+            }
+        }
+        default_shell.to_owned()
     }
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
@@ -609,6 +632,8 @@ impl RemoteConnection for DockerExecConnection {
         }
 
         docker_args.extend([
+            "-u".to_string(),
+            self.connection_options.remote_user.to_string(),
             "-w".to_string(),
             self.remote_dir_for_server.clone(),
             "-i".to_string(),
@@ -678,13 +703,30 @@ impl RemoteConnection for DockerExecConnection {
             self.connection_options.container_id, dest_path_str
         ));
 
-        cx.background_spawn(async move {
-            let output = command.output().await?;
+        let mut chown_command = util::command::new_smol_command(self.docker_cli());
+        chown_command.arg("exec");
+        chown_command.arg(&self.connection_options.container_id);
+        chown_command.arg("chown");
+        chown_command.arg(format!(
+            "{}:{}",
+            self.connection_options.remote_user, self.connection_options.remote_user
+        ));
+        chown_command.arg(format!("{}", dest_path_str));
 
-            if output.status.success() {
-                Ok(())
-            } else {
+        cx.background_spawn(async move {
+            let output = chown_command.output().await?;
+
+            if !output.status.success() {
                 Err(anyhow::anyhow!("Failed to upload directory"))
+            } else {
+                let chown_output = chown_command.output().await?;
+                if chown_output.status.success() {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Failed to change ownership of uploaded directory"
+                    ))
+                }
             }
         })
     }
