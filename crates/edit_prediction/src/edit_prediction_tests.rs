@@ -1433,6 +1433,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
 
     let prediction = EditPrediction {
         edits,
+        cursor_position: None,
         edit_preview,
         buffer: buffer.clone(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
@@ -1444,6 +1445,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             cursor_excerpt: "".into(),
             editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
+            excerpt_start_row: None,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),

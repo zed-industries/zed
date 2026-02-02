@@ -195,7 +195,7 @@ impl AcpConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
-        let builder = ShellBuilder::new(&shell).non_interactive();
+        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());

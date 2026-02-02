@@ -28,14 +28,20 @@ pub struct CommitDetails {
 
 pub struct CommitAvatar<'a> {
     sha: &'a SharedString,
+    author_email: Option<SharedString>,
     remote: Option<&'a GitRemote>,
     size: Option<IconSize>,
 }
 
 impl<'a> CommitAvatar<'a> {
-    pub fn new(sha: &'a SharedString, remote: Option<&'a GitRemote>) -> Self {
+    pub fn new(
+        sha: &'a SharedString,
+        author_email: Option<SharedString>,
+        remote: Option<&'a GitRemote>,
+    ) -> Self {
         Self {
             sha,
+            author_email,
             remote,
             size: None,
         }
@@ -44,6 +50,7 @@ impl<'a> CommitAvatar<'a> {
     pub fn from_commit_details(details: &'a CommitDetails) -> Self {
         Self {
             sha: &details.sha,
+            author_email: Some(details.author_email.clone()),
             remote: details
                 .message
                 .as_ref()
@@ -75,7 +82,8 @@ impl<'a> CommitAvatar<'a> {
         let remote = self
             .remote
             .filter(|remote| remote.host_supports_avatars())?;
-        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha.clone());
+        let avatar_url =
+            CommitAvatarAsset::new(remote.clone(), self.sha.clone(), self.author_email.clone());
 
         let url = window.use_asset::<CommitAvatarAsset>(&avatar_url, cx)??;
         Some(Avatar::new(url.to_string()))
@@ -85,6 +93,7 @@ impl<'a> CommitAvatar<'a> {
 #[derive(Clone, Debug)]
 struct CommitAvatarAsset {
     sha: SharedString,
+    author_email: Option<SharedString>,
     remote: GitRemote,
 }
 
@@ -96,8 +105,12 @@ impl Hash for CommitAvatarAsset {
 }
 
 impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
+    fn new(remote: GitRemote, sha: SharedString, author_email: Option<SharedString>) -> Self {
+        Self {
+            remote,
+            sha,
+            author_email,
+        }
     }
 }
 
@@ -114,7 +127,7 @@ impl Asset for CommitAvatarAsset {
         async move {
             source
                 .remote
-                .avatar_url(source.sha, client)
+                .avatar_url(source.sha, source.author_email, client)
                 .await
                 .map(|url| SharedString::from(url.to_string()))
         }

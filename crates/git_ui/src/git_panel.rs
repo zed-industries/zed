@@ -1735,19 +1735,25 @@ impl GitPanel {
             return StageStatus::Unstaged;
         };
 
+        let show_placeholders = self.show_placeholders && !self.has_staged_changes();
         let mut fully_staged_count = 0usize;
         let mut any_staged_or_partially_staged = false;
 
         for descendant in descendants {
-            match GitPanel::stage_status_for_entry(descendant, repo) {
-                StageStatus::Staged => {
-                    fully_staged_count += 1;
-                    any_staged_or_partially_staged = true;
+            if show_placeholders && !descendant.status.is_created() {
+                fully_staged_count += 1;
+                any_staged_or_partially_staged = true;
+            } else {
+                match GitPanel::stage_status_for_entry(descendant, repo) {
+                    StageStatus::Staged => {
+                        fully_staged_count += 1;
+                        any_staged_or_partially_staged = true;
+                    }
+                    StageStatus::PartiallyStaged => {
+                        any_staged_or_partially_staged = true;
+                    }
+                    StageStatus::Unstaged => {}
                 }
-                StageStatus::PartiallyStaged => {
-                    any_staged_or_partially_staged = true;
-                }
-                StageStatus::Unstaged => {}
             }
         }
 
@@ -5064,7 +5070,7 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    if event.modifiers().secondary() {
+                    if event.click_count() > 1 || event.modifiers().secondary() {
                         this.open_file(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);

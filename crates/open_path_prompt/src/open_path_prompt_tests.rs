@@ -19,6 +19,8 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
         .insert_tree(
             path!("/root"),
             json!({
+                ".a1": ".A1",
+                ".b1": ".B1",
                 "a1": "A1",
                 "a2": "A2",
                 "a3": "A3",
@@ -51,7 +53,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     #[cfg(windows)]
     let expected_separator = ".\\";
 
-    // If the query ends with a slash, the picker should show the contents of the directory.
+    // If the query ends with a slash, the picker should show the contents of the directory and not show any of the hidden entries.
     let query = path!("/root/");
     insert_query(query, &picker, cx).await;
     assert_eq!(
@@ -94,6 +96,33 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
     let query = path!("/root/dir2/di");
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir3", "dir4"]);
+
+    // Don't show candidates for the query ".".
+    let query = path!("/root/.");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), Vec::<String>::new());
+
+    // Don't show any candidates for the query ".a".
+    let query = path!("/root/.a");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), Vec::<String>::new());
+
+    // Show candidates for the query "./".
+    // Should show current directory and contents.
+    let query = path!("/root/./");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+    );
+
+    // Show candidates for the query "../". Show parent contents.
+    let query = path!("/root/dir1/../");
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "a1", "a2", "a3", "dir1", "dir2"]
+    );
 }
 
 #[gpui::test]
@@ -369,11 +398,13 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
     let expected_separator = ".\\";
 
     insert_query(path!("/root/"), &picker, cx).await;
-
     assert_eq!(
         collect_match_candidates(&picker, cx),
         vec![expected_separator, ".hidden", "directory_1", "directory_2"]
     );
+
+    insert_query(path!("/root/."), &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec![".hidden"]);
 }
 
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

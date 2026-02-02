@@ -16,8 +16,6 @@ use anyhow::Result;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
-const PROMPT_TEMPLATE: &str = include_str!("prompts/repair.md");
-
 /// Arguments for the repair command.
 #[derive(Debug, Clone, clap::Args)]
 pub struct RepairArgs {
@@ -91,8 +89,9 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
         .confidence
         .map_or("unknown".to_string(), |v| v.to_string());
 
+    let prompt_template = crate::prompt_assets::get_prompt("repair.md");
     Some(
-        PROMPT_TEMPLATE
+        prompt_template
             .replace("{edit_history}", &edit_history)
             .replace("{context}", &context)
             .replace("{cursor_excerpt}", &cursor_excerpt)
@@ -126,11 +125,12 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
 
 /// Parse the repair response into a prediction.
 fn parse_repair_response(example: &Example, response_text: &str) -> Result<ExamplePrediction> {
-    let actual_patch = TeacherPrompt::parse(example, response_text)?;
+    let (actual_patch, actual_cursor_offset) = TeacherPrompt::parse(example, response_text)?;
 
     Ok(ExamplePrediction {
         actual_patch: Some(actual_patch),
         actual_output: response_text.to_string(),
+        actual_cursor_offset,
         error: None,
         provider: PredictionProvider::Repair,
     })
@@ -363,6 +363,7 @@ pub async fn run_repair(
                     example.predictions.push(ExamplePrediction {
                         actual_patch: None,
                         actual_output: response_text.clone(),
+                        actual_cursor_offset: None,
                         error: Some(format!("Failed to parse repair response: {}", e)),
                         provider: PredictionProvider::Repair,
                     });
