@@ -2220,6 +2220,7 @@ impl GitStore {
                     CommitOptions {
                         amend: options.amend,
                         signoff: options.signoff,
+                        hooks: options.hooks,
                     },
                     askpass,
                     cx,
@@ -5037,10 +5038,16 @@ impl Repository {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
-        let rx = self.run_hook(RunHook::PreCommit, cx);
+        let rx = if options.hooks {
+            Some(self.run_hook(RunHook::PreCommit, cx))
+        } else {
+            None
+        };
 
         self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
-            rx.await??;
+            if let Some(rx) = rx {
+                rx.await??;
+            }
 
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
@@ -5069,6 +5076,7 @@ impl Repository {
                             options: Some(proto::commit::CommitOptions {
                                 amend: options.amend,
                                 signoff: options.signoff,
+                                hooks: options.hooks,
                             }),
                             askpass_id,
                         })

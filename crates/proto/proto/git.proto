@@ -397,6 +397,7 @@ message Commit {
     message CommitOptions {
         bool amend = 1;
         bool signoff = 2;
+        bool hooks = 3;
     }
 }
 
