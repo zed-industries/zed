@@ -58,7 +58,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HighlightCategory {
     Text(HighlightKey),
     SemanticToken {
@@ -278,7 +278,12 @@ impl HighlightsTreeView {
             }
         });
 
-        entries.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        entries.sort_by(|a, b| {
+            a.sort_key
+                .cmp(&b.sort_key)
+                .then_with(|| a.category.cmp(&b.category))
+        });
+        entries.dedup_by(|a, b| a.sort_key == b.sort_key && a.category == b.category);
 
         self.cached_entries = entries;
 
