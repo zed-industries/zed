@@ -17,6 +17,8 @@ use crate::{
 
 pub(crate) const UTILITY_PANE_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 pub(crate) const UTILITY_PANE_MIN_WIDTH: Pixels = px(20.0);
+const UTILITY_PANE_OPEN_DURATION: Duration = Duration::from_millis(150);
+const UTILITY_PANE_CLOSE_DURATION: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UtilityPaneSlot {
@@ -150,11 +152,12 @@ impl Workspace {
         }
 
         state.is_closing = true;
+        // Prevents stale close tasks from clearing state after a new open/close cycle has begun.
         state.animation_generation = state.animation_generation.wrapping_add(1);
         let close_generation = state.animation_generation;
         state._close_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(100))
+                .timer(UTILITY_PANE_CLOSE_DURATION)
                 .await;
             if let Some(this) = this.upgrade() {
                 this.update(cx, |workspace, cx| {
@@ -296,6 +299,58 @@ mod tests {
             UtilityPaneSlot::Left
         );
     }
+
+    #[test]
+    fn test_utility_pane_slot_state_initial_values() {
+        let state = UtilityPaneState::default();
+        assert!(state.slot(UtilityPaneSlot::Left).is_none());
+        assert!(state.slot(UtilityPaneSlot::Right).is_none());
+    }
+
+    #[test]
+    fn test_utility_pane_slot_mut_independence() {
+        let mut state = UtilityPaneState::default();
+        assert!(state.slot(UtilityPaneSlot::Left).is_none());
+        assert!(state.slot(UtilityPaneSlot::Right).is_none());
+
+        let left = state.slot_mut(UtilityPaneSlot::Left);
+        assert!(left.is_none());
+
+        let right = state.slot_mut(UtilityPaneSlot::Right);
+        assert!(right.is_none());
+    }
+
+    #[test]
+    fn test_utility_pane_slot_returns_correct_field() {
+        let state = UtilityPaneState::default();
+        assert!(std::ptr::eq(
+            state.slot(UtilityPaneSlot::Left),
+            &state.left_slot
+        ));
+        assert!(std::ptr::eq(
+            state.slot(UtilityPaneSlot::Right),
+            &state.right_slot
+        ));
+    }
+
+    #[test]
+    fn test_utility_pane_slot_mut_returns_correct_field() {
+        let mut state = UtilityPaneState::default();
+        assert!(std::ptr::eq(
+            state.slot_mut(UtilityPaneSlot::Left),
+            &state.left_slot
+        ));
+        assert!(std::ptr::eq(
+            state.slot_mut(UtilityPaneSlot::Right),
+            &state.right_slot
+        ));
+    }
+
+    // Animation lifecycle tests (is_closing, animation_generation, _close_task)
+    // require a full Workspace test fixture because clear_utility_pane and
+    // register_utility_pane operate on &mut Workspace with a Context. These
+    // transitions are best tested via integration tests that can construct a
+    // Workspace, similar to the patterns in dock.rs tests.
 }
 
 impl RenderOnce for UtilityPaneFrame {
@@ -374,7 +429,11 @@ impl RenderOnce for UtilityPaneFrame {
             pane_div
                 .with_animation(
                     ("utility-pane-anim", animation_generation as u64),
-                    Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
+                    Animation::new(if is_closing {
+                        UTILITY_PANE_CLOSE_DURATION
+                    } else {
+                        UTILITY_PANE_OPEN_DURATION
+                    })
                         .with_easing(ease_out_cubic),
                     {
                         let target_width = f32::from(width);

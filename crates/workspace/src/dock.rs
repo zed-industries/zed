@@ -18,6 +18,8 @@ use ui::{prelude::*, right_click_menu};
 use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
+const DOCK_OPEN_DURATION: Duration = Duration::from_millis(150);
+const DOCK_CLOSE_DURATION: Duration = Duration::from_millis(100);
 
 pub enum PanelEvent {
     ZoomIn,
@@ -497,6 +499,7 @@ impl Dock {
                 return;
             }
             self.is_open = true;
+            // Prevents stale close tasks from clearing state after a new open/close cycle has begun.
             self.animation_generation = self.animation_generation.wrapping_add(1);
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(true, window, cx);
@@ -516,7 +519,7 @@ impl Dock {
                 let close_generation = self.animation_generation;
                 self._close_task = Some(cx.spawn(async move |this, cx| {
                     cx.background_executor()
-                        .timer(Duration::from_millis(100))
+                        .timer(DOCK_CLOSE_DURATION)
                         .await;
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |dock, cx| {
@@ -804,6 +807,7 @@ impl Dock {
     }
 
     fn visible_entry(&self) -> Option<&PanelEntry> {
+        // Panel remains visible during close animation so it can animate out smoothly.
         if self.is_open || self.is_closing {
             self.active_panel_entry()
         } else {
@@ -997,7 +1001,7 @@ impl Render for Dock {
                 dock_div
                     .with_animation(
                         ("dock-anim", animation_generation as u64),
-                        Animation::new(Duration::from_millis(if is_closing { 100 } else { 150 }))
+                        Animation::new(if is_closing { DOCK_CLOSE_DURATION } else { DOCK_OPEN_DURATION })
                             .with_easing(ease_out_cubic),
                         {
                             let position = self.position;

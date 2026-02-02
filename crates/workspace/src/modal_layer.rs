@@ -9,6 +9,7 @@ use ui::prelude::*;
 
 const MODAL_OPEN_DURATION: Duration = Duration::from_millis(150);
 const MODAL_CLOSE_DURATION: Duration = Duration::from_millis(100);
+const MODAL_SLIDE_OFFSET: f32 = -6.0;
 
 #[derive(Debug)]
 pub enum DismissDecision {
@@ -100,13 +101,6 @@ impl ModalLayer {
         }
     }
 
-    /// Toggles a modal of type `V`. If a modal of the same type is currently active,
-    /// it will be hidden. If a different modal is active, it will be replaced with the new one.
-    /// If no modal is active, the new modal will be shown.
-    ///
-    /// If closing the current modal fails (e.g., due to `on_before_dismiss` returning
-    /// `DismissDecision::Dismiss(false)` or `DismissDecision::Pending`), the new modal
-    /// will not be shown.
     pub fn toggle_modal<V, B>(&mut self, window: &mut Window, cx: &mut Context<Self>, build_view: B)
     where
         V: ModalView,
@@ -130,14 +124,13 @@ impl ModalLayer {
         self._close_task = None;
     }
 
-    /// Shows a modal and sets up subscriptions for dismiss events and focus tracking.
-    /// The modal is automatically focused after being shown.
     fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
     where
         V: ModalView,
     {
         self.cancel_close_animation();
-        self.animation_generation += 1;
+        // Prevents stale close tasks from clearing state after a new open/close cycle has begun.
+        self.animation_generation = self.animation_generation.wrapping_add(1);
 
         let focus_handle = cx.focus_handle();
         self.active_modal = Some(ActiveModal {
@@ -165,13 +158,6 @@ impl ModalLayer {
         cx.notify();
     }
 
-    /// Attempts to hide the currently active modal.
-    ///
-    /// The modal's `on_before_dismiss` method is called to determine if dismissal should proceed.
-    /// If dismissal is allowed, the modal is removed and focus is restored to the previously
-    /// focused element.
-    ///
-    /// Returns `true` if the modal was successfully hidden, `false` otherwise.
     pub fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
@@ -205,18 +191,20 @@ impl ModalLayer {
                     modal_view: active_modal.modal.view(),
                     fade_out_background,
                 });
-                self.animation_generation += 1;
+                self.animation_generation = self.animation_generation.wrapping_add(1);
                 let generation = self.animation_generation;
 
-                self._close_task = Some(cx.spawn_in(window, async move |this, cx| {
+                self._close_task = Some(cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(MODAL_CLOSE_DURATION).await;
-                    this.update(cx, |this, cx| {
-                        if this.animation_generation == generation {
-                            this.closing_modal = None;
-                            this._close_task = None;
-                            cx.notify();
-                        }
-                    }).ok();
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, cx| {
+                            if this.animation_generation == generation {
+                                this.closing_modal = None;
+                                this._close_task = None;
+                                cx.notify();
+                            }
+                        });
+                    }
                 }));
             }
 
@@ -226,7 +214,6 @@ impl ModalLayer {
         true
     }
 
-    /// Returns the currently active modal if it is of type `V`.
     pub fn active_modal<V>(&self) -> Option<Entity<V>>
     where
         V: 'static,
@@ -475,7 +462,7 @@ impl Render for ModalLayer {
                     Animation::new(duration).with_easing(ease_out_cubic),
                     move |this, delta| {
                         let progress = if is_closing { 1.0 - delta } else { delta };
-                        let slide = -6.0 * (1.0 - progress);
+                        let slide = MODAL_SLIDE_OFFSET * (1.0 - progress);
                         this.opacity(progress).top(px(slide))
                     },
                 )
