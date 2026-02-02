@@ -346,7 +346,14 @@
   // The default number of context lines shown in multibuffer excerpts.
   "excerpt_context_lines": 2,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -703,7 +710,9 @@
   },
   // Whether to resize all the panels in a dock when resizing the dock.
   // Can be a combination of "left", "right" and "bottom".
-  "resize_all_panels_in_dock": ["left"],
+  "resize_all_panels_in_dock": [
+    "left"
+  ],
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
@@ -972,65 +981,135 @@
           "default_mode": "confirm",
           "always_deny": [
             // Dangerous rm commands
-            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
-            { "pattern": "rm\\s+-rf\\s*$" },
+            {
+              "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)"
+            },
+            {
+              "pattern": "rm\\s+-rf\\s*$"
+            },
             // Disk destruction
-            { "pattern": "> /dev/sd" },
-            { "pattern": "mkfs\\." },
-            { "pattern": "dd\\s+if=/dev/(zero|random)" },
+            {
+              "pattern": "> /dev/sd"
+            },
+            {
+              "pattern": "mkfs\\."
+            },
+            {
+              "pattern": "dd\\s+if=/dev/(zero|random)"
+            },
             // Fork bomb
-            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
+            {
+              "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:"
+            },
             // System files
-            { "pattern": "/etc/passwd" },
-            { "pattern": "/etc/shadow" },
+            {
+              "pattern": "/etc/passwd"
+            },
+            {
+              "pattern": "/etc/shadow"
+            },
             // Windows destructive commands
-            { "pattern": "del /f /s /q c:\\\\" },
-            { "pattern": "format c:" },
-            { "pattern": "rd /s /q" },
+            {
+              "pattern": "del /f /s /q c:\\\\"
+            },
+            {
+              "pattern": "format c:"
+            },
+            {
+              "pattern": "rd /s /q"
+            },
           ],
           "always_confirm": [
             // File deletion
-            { "pattern": "rm\\s" },
+            {
+              "pattern": "rm\\s"
+            },
             // Destructive git operations
-            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
-            { "pattern": "git\\s+push\\s+(-f|--force)" },
+            {
+              "pattern": "git\\s+(reset|clean)\\s+--hard"
+            },
+            {
+              "pattern": "git\\s+push\\s+(-f|--force)"
+            },
             // Database operations
-            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
-            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
+            {
+              "pattern": "DROP\\s+TABLE",
+              "case_sensitive": true
+            },
+            {
+              "pattern": "DELETE\\s+FROM",
+              "case_sensitive": true
+            },
             // Privileged commands
-            { "pattern": "sudo\\s" },
+            {
+              "pattern": "sudo\\s"
+            },
           ],
         },
         "edit_file": {
           "default_mode": "confirm",
           "always_deny": [
             // Secrets and credentials
-            { "pattern": "\\.env($|\\.)" },
-            { "pattern": "secrets?/" },
-            { "pattern": "\\.pem$" },
-            { "pattern": "\\.key$" },
+            {
+              "pattern": "\\.env($|\\.)"
+            },
+            {
+              "pattern": "secrets?/"
+            },
+            {
+              "pattern": "\\.pem$"
+            },
+            {
+              "pattern": "\\.key$"
+            },
           ],
         },
         "delete_path": {
           "default_mode": "confirm",
           "always_deny": [
             // System directories
-            { "pattern": "^/etc" },
-            { "pattern": "^/usr" },
-            { "pattern": "^/bin" },
-            { "pattern": "^/sbin" },
-            { "pattern": "^/var" },
-            { "pattern": "^/boot" },
-            { "pattern": "^/root" },
+            {
+              "pattern": "^/etc"
+            },
+            {
+              "pattern": "^/usr"
+            },
+            {
+              "pattern": "^/bin"
+            },
+            {
+              "pattern": "^/sbin"
+            },
+            {
+              "pattern": "^/var"
+            },
+            {
+              "pattern": "^/boot"
+            },
+            {
+              "pattern": "^/root"
+            },
             // Home directory root
-            { "pattern": "^~$" },
-            { "pattern": "^/Users/[^/]+$" },
-            { "pattern": "^/home/[^/]+$" },
+            {
+              "pattern": "^~$"
+            },
+            {
+              "pattern": "^/Users/[^/]+$"
+            },
+            {
+              "pattern": "^/home/[^/]+$"
+            },
             // Git directory
-            { "pattern": "\\.git/?$" },
+            {
+              "pattern": "\\.git/?$"
+            },
             // Windows system directories
-            { "pattern": "^C:\\\\Windows" },
-            { "pattern": "^C:\\\\Program Files" },
+            {
+              "pattern": "^C:\\\\Windows"
+            },
+            {
+              "pattern": "^C:\\\\Program Files"
+            },
           ],
         },
         "fetch": {
@@ -1104,7 +1183,6 @@
     "notify_when_agent_waiting": "primary_screen",
     // Whether to play a sound when the agent has either completed
     // its response, or needs user input.
-
     // Default: false
     "play_sound_when_agent_done": false,
     // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
@@ -1143,8 +1221,9 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": ["..."],
-
+  "language_servers": [
+    "..."
+  ],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -1425,10 +1504,14 @@
   // for files that are not tracked by git, but are still important to your project. Note that globs
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
-  "file_scan_inclusions": [".env*"],
+  "file_scan_inclusions": [
+    ".env*"
+  ],
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
-  "hidden_files": ["**/.*"],
+  "hidden_files": [
+    "**/.*"
+  ],
   // Globs to match files that will be opened as read-only. You can still view these files,
   // but cannot edit them. This is useful for generated files or external dependencies.
   "read_only_files": [],
@@ -1544,6 +1627,13 @@
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+    },
+    "sweep": {
+      // When enabled, Sweep will not store edit prediction inputs or outputs.
+      // When disabled, Sweep may collect data including buffer contents,
+      // diagnostics, file paths, repository names, and generated predictions
+      // to improve the service.
+      "privacy_mode": false,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -1688,7 +1778,12 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".env", "env", ".venv", "venv"],
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
         // Can also be `csh`, `fish`, `nushell` and `power_shell`
         "activate_script": "default",
         // Preferred Conda manager to use when activating Conda environments.
@@ -1839,8 +1934,15 @@
       "**/{zed,Zed}/{settings,keymap,tasks,debug}.json",
       "tsconfig*.json",
     ],
-    "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
-    "Shell Script": [".env.*"],
+    "Markdown": [
+      ".rules",
+      ".cursorrules",
+      ".windsurfrules",
+      ".clinerules"
+    ],
+    "Shell Script": [
+      ".env.*"
+    ],
   },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
@@ -1869,9 +1971,24 @@
   //
   // This list can be customized to restrict what extensions are able to do.
   "granted_extension_capabilities": [
-    { "kind": "process:exec", "command": "*", "args": ["**"] },
-    { "kind": "download_file", "host": "*", "path": ["**"] },
-    { "kind": "npm:install", "package": "*" },
+    {
+      "kind": "process:exec",
+      "command": "*",
+      "args": [
+        "**"
+      ]
+    },
+    {
+      "kind": "download_file",
+      "host": "*",
+      "path": [
+        "**"
+      ]
+    },
+    {
+      "kind": "npm:install",
+      "package": "*"
+    },
   ],
   // Controls how completions are processed for this language.
   "completions": {
@@ -1927,10 +2044,15 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
-      "language_servers": ["astro-language-server", "..."],
+      "language_servers": [
+        "astro-language-server",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-astro"],
+        "plugins": [
+          "prettier-plugin-astro"
+        ],
       },
     },
     "Blade": {
@@ -1953,7 +2075,11 @@
       },
     },
     "CSharp": {
-      "language_servers": ["roslyn", "!omnisharp", "..."],
+      "language_servers": [
+        "roslyn",
+        "!omnisharp",
+        "..."
+      ],
     },
     "CSS": {
       "prettier": {
@@ -1969,13 +2095,23 @@
       "ensure_final_newline_on_save": false,
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": [
+        "elixir-ls",
+        "!expert",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ],
     },
     "Elm": {
       "tab_size": 4,
     },
     "Erlang": {
-      "language_servers": ["erlang-ls", "!elp", "..."],
+      "language_servers": [
+        "erlang-ls",
+        "!elp",
+        "..."
+      ],
     },
     "Git Commit": {
       "allow_rewrap": "anywhere",
@@ -1987,7 +2123,9 @@
       "code_actions_on_format": {
         "source.organizeImports": true,
       },
-      "debuggers": ["Delve"],
+      "debuggers": [
+        "Delve"
+      ],
     },
     "GraphQL": {
       "prettier": {
@@ -1995,7 +2133,13 @@
       },
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": [
+        "elixir-ls",
+        "!expert",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ],
     },
     "HTML": {
       "prettier": {
@@ -2003,16 +2147,26 @@
       },
     },
     "HTML+ERB": {
-      "language_servers": ["herb", "!ruby-lsp", "..."],
+      "language_servers": [
+        "herb",
+        "!ruby-lsp",
+        "..."
+      ],
     },
     "Java": {
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-java"],
+        "plugins": [
+          "prettier-plugin-java"
+        ],
       },
     },
     "JavaScript": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": [
+        "!typescript-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
       },
@@ -2028,17 +2182,29 @@
       },
     },
     "JS+ERB": {
-      "language_servers": ["!ruby-lsp", "..."],
+      "language_servers": [
+        "!ruby-lsp",
+        "..."
+      ],
     },
     "Kotlin": {
-      "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."],
+      "language_servers": [
+        "!kotlin-language-server",
+        "kotlin-lsp",
+        "..."
+      ],
     },
     "LaTeX": {
       "formatter": "language_server",
-      "language_servers": ["texlab", "..."],
+      "language_servers": [
+        "texlab",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-latex"],
+        "plugins": [
+          "prettier-plugin-latex"
+        ],
       },
     },
     "Markdown": {
@@ -2055,10 +2221,17 @@
       },
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "language_servers": [
+        "phpactor",
+        "!intelephense",
+        "!phptools",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"],
+        "plugins": [
+          "@prettier/plugin-php"
+        ],
         "parser": "php",
       },
     },
@@ -2070,7 +2243,12 @@
       },
     },
     "Proto": {
-      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
+      "language_servers": [
+        "buf",
+        "!protols",
+        "!protobuf-language-server",
+        "..."
+      ],
     },
     "Python": {
       "code_actions_on_format": {
@@ -2081,14 +2259,33 @@
           "name": "ruff",
         },
       },
-      "debuggers": ["Debugpy"],
-      "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
+      "debuggers": [
+        "Debugpy"
+      ],
+      "language_servers": [
+        "basedpyright",
+        "ruff",
+        "!ty",
+        "!pyrefly",
+        "!pyright",
+        "!pylsp",
+        "..."
+      ],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."],
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "..."
+      ],
     },
     "Rust": {
-      "debuggers": ["CodeLLDB"],
+      "debuggers": [
+        "CodeLLDB"
+      ],
     },
     "SCSS": {
       "prettier": {
@@ -2096,17 +2293,30 @@
       },
     },
     "Starlark": {
-      "language_servers": ["starpls", "!buck2-lsp", "..."],
+      "language_servers": [
+        "starpls",
+        "!buck2-lsp",
+        "..."
+      ],
     },
     "Svelte": {
-      "language_servers": ["svelte-language-server", "..."],
+      "language_servers": [
+        "svelte-language-server",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-svelte"],
+        "plugins": [
+          "prettier-plugin-svelte"
+        ],
       },
     },
     "TSX": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": [
+        "!typescript-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
       },
@@ -2117,18 +2327,29 @@
       },
     },
     "TypeScript": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": [
+        "!typescript-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
       },
     },
     "SystemVerilog": {
       "format_on_save": "off",
-      "language_servers": ["!slang", "..."],
+      "language_servers": [
+        "!slang",
+        "..."
+      ],
       "use_on_type_format": false,
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "vtsls", "..."],
+      "language_servers": [
+        "vue-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
       },
@@ -2136,7 +2357,9 @@
     "XML": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-xml"],
+        "plugins": [
+          "@prettier/plugin-xml"
+        ],
       },
     },
     "YAML": {
@@ -2145,10 +2368,16 @@
       },
     },
     "YAML+ERB": {
-      "language_servers": ["!ruby-lsp", "..."],
+      "language_servers": [
+        "!ruby-lsp",
+        "..."
+      ],
     },
     "Zig": {
-      "language_servers": ["zls", "..."],
+      "language_servers": [
+        "zls",
+        "..."
+      ],
     },
   },
   // Different settings for specific language models.
@@ -2333,7 +2562,12 @@
   "windows": {
     "languages": {
       "PHP": {
-        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."],
+        "language_servers": [
+          "intelephense",
+          "!phpactor",
+          "!phptools",
+          "..."
+        ],
       },
     },
   },
@@ -2427,7 +2661,6 @@
   //   }
   // }
   "profiles": {},
-
   // A map of log scopes to the desired log level.
   // Useful for filtering out noisy logs or enabling more verbose logging.
   //
