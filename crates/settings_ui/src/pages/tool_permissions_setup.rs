@@ -541,20 +541,14 @@ fn render_rule_section(
         })
         .unwrap_or(0);
 
+    let (default_patterns, user_patterns): (Vec<_>, Vec<_>) = patterns
+        .iter()
+        .enumerate()
+        .partition(|(_, pattern)| is_default_pattern(tool_id, rule_type, pattern));
+
     v_flex()
         .id(section_id)
-        .child(
-            h_flex()
-                .gap_1()
-                .child(Label::new(title))
-                .when(default_count > 0, |this| {
-                    this.child(
-                        Label::new(format!("{} default", default_count))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                }),
-        )
+        .child(Label::new(title))
         .child(
             Label::new(description)
                 .size(LabelSize::Small)
@@ -568,12 +562,82 @@ fn render_rule_section(
                 .when(patterns.is_empty(), |this| {
                     this.child(render_pattern_empty_state(cx))
                 })
-                .children(patterns.iter().enumerate().map(|(index, pattern)| {
-                    render_pattern_row(tool_id, rule_type, index, pattern.clone(), cx)
-                }))
+                .when(!default_patterns.is_empty(), |this| {
+                    this.child(
+                        v_flex()
+                            .gap_1p5()
+                            .child(render_section_header(
+                                "Default",
+                                Some(default_count),
+                                true,
+                                cx,
+                            ))
+                            .children(
+                                default_patterns
+                                    .iter()
+                                    .map(|(_, pattern)| render_default_pattern_row(pattern, cx)),
+                            ),
+                    )
+                })
+                .when(!user_patterns.is_empty(), |this| {
+                    this.child(
+                        v_flex()
+                            .gap_1p5()
+                            .child(render_section_header("Your Patterns", None, false, cx))
+                            .children(user_patterns.iter().map(|(index, pattern)| {
+                                render_user_pattern_row(
+                                    tool_id,
+                                    rule_type,
+                                    *index,
+                                    (*pattern).clone(),
+                                    cx,
+                                )
+                            })),
+                    )
+                })
                 .child(render_add_pattern_input(tool_id, rule_type, cx)),
         )
         .into_any_element()
+}
+
+fn render_section_header(
+    title: impl Into<SharedString>,
+    count: Option<usize>,
+    is_default: bool,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let default_tooltip = "Sensible set of default patterns that can't be overriden.";
+
+    h_flex()
+        .gap_1()
+        .w_full()
+        .min_w_full()
+        .child(
+            Label::new(title)
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+                .buffer_font(cx),
+        )
+        .when_some(count, |this, count| {
+            this.child(
+                Label::new(format!("({})", count))
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .buffer_font(cx),
+            )
+        })
+        .when(is_default, |this| {
+            this.child(
+                IconButton::new("tooltip_info", IconName::Info)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Hidden)
+                    .shape(crate::IconButtonShape::Square)
+                    .style(ButtonStyle::Transparent)
+                    .tooltip(Tooltip::text(default_tooltip))
+                    .on_click(|_, _, _| {}), // Intentional empty on click handler so that clicking on the info tooltip icon doesn't trigger the switch toggle
+            )
+        })
+        .child(Divider::horizontal_dashed().color(ui::DividerColor::BorderVariant))
 }
 
 fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
@@ -589,22 +653,6 @@ fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
                 .color(Color::Disabled),
         )
         .into_any_element()
-}
-
-fn render_pattern_row(
-    tool_id: &'static str,
-    rule_type: RuleType,
-    index: usize,
-    pattern: String,
-    cx: &mut Context<SettingsWindow>,
-) -> AnyElement {
-    let is_default = is_default_pattern(tool_id, rule_type, &pattern);
-
-    if is_default {
-        render_default_pattern_row(&pattern, cx)
-    } else {
-        render_user_pattern_row(tool_id, rule_type, index, pattern, cx)
-    }
 }
 
 fn render_default_pattern_row(pattern: &str, cx: &mut Context<SettingsWindow>) -> AnyElement {
