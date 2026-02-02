@@ -1630,6 +1630,13 @@ pub enum ClipboardEntry {
     Image(Image),
     /// A file entry
     ExternalPaths(crate::ExternalPaths),
+    /// A URL entry
+    URL {
+        /// The full path string of the URL
+        path: ClipboardString,
+        /// The name of the URL, this is typically just the last path component
+        string: ClipboardString,
+    },
 }
 
 impl ClipboardItem {
@@ -1666,14 +1673,63 @@ impl ClipboardItem {
         }
     }
 
+    /// Create a new ClipboardItem::URL with no associated metadata
+    pub fn new_url(path: String, name: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::URL {
+                path: ClipboardString::new(path),
+                string: ClipboardString::new(name),
+            }],
+        }
+    }
+
+    /// Create a new ClipboardItem::URL with the given text and associated metadata
+    pub fn new_url_with_metadata(path: String, name: String, metadata: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::URL {
+                path: ClipboardString {
+                    text: path,
+                    metadata: Some(metadata.clone()),
+                },
+                string: ClipboardString {
+                    text: name,
+                    metadata: Some(metadata),
+                },
+            }],
+        }
+    }
+
+    /// Create a new ClipboardItem::URL with the given text and associated json metadata
+    pub fn new_url_with_json_metadata<T: Serialize + Clone>(
+        path: String,
+        name: String,
+        metadata: T,
+    ) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::URL {
+                path: ClipboardString::new(path).with_json_metadata(metadata.clone()),
+                string: ClipboardString::new(name).with_json_metadata(metadata),
+            }],
+        }
+    }
+
     /// Concatenates together all the ClipboardString entries in the item.
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
         let mut answer = String::new();
 
         for entry in self.entries.iter() {
-            if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
-                answer.push_str(text);
+            match entry {
+                ClipboardEntry::String(ClipboardString { text, metadata: _ }) => {
+                    answer.push_str(text);
+                }
+                ClipboardEntry::URL {
+                    path: _,
+                    string: ClipboardString { text, metadata: _ },
+                } => {
+                    answer.push_str(text);
+                }
+                _ => {}
             }
         }
 
@@ -1692,6 +1748,17 @@ impl ClipboardItem {
             Some(answer)
         } else {
             None
+        }
+    }
+
+    /// If the first item is a url, return the url as a string
+    pub fn url(&self) -> Option<String> {
+        match self.entries().first() {
+            Some(ClipboardEntry::URL {
+                path: ClipboardString { text, metadata: _ },
+                string: _,
+            }) => Some(text.clone()),
+            _ => None,
         }
     }
 

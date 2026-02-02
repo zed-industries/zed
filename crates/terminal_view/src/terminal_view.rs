@@ -817,7 +817,7 @@ impl TerminalView {
             return;
         }
 
-        if let Some(text) = clipboard.text() {
+        if let Some(text) = clipboard.url().or_else(|| clipboard.text()) {
             self.terminal
                 .update(cx, |terminal, _cx| terminal.paste(&text));
         }
