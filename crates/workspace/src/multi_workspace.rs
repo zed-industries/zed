@@ -2,7 +2,11 @@ use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, actions, px};
 use project::Project;
 use theme::ActiveTheme;
-use ui::{ListItem, ListSeparator, Tooltip, prelude::*, utils::TRAFFIC_LIGHT_PADDING};
+use ui::{
+    ListItem, Tooltip,
+    prelude::*,
+    utils::{TRAFFIC_LIGHT_PADDING, platform_title_bar_height},
+};
 
 use crate::{
     DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
@@ -199,7 +203,7 @@ impl MultiWorkspace {
 
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar_height = (1.75 * window.rem_size()).max(px(34.));
+        let titlebar_height = platform_title_bar_height(window);
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
 
         let sidebar = if multi_workspace_enabled && self.sidebar_open {
@@ -249,11 +253,14 @@ impl Render for MultiWorkspace {
                         h_flex()
                             .h(titlebar_height)
                             .w_full()
+                            .mt_px()
                             .pr_2()
                             .when(cfg!(target_os = "macos"), |this| {
                                 this.pl(px(TRAFFIC_LIGHT_PADDING))
                             })
                             .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
                             .child(
                                 IconButton::new("close-sidebar", IconName::WorkspaceSidebarOpen)
                                     .icon_size(IconSize::Small)
@@ -283,7 +290,6 @@ impl Render for MultiWorkspace {
                                     })),
                             ),
                     )
-                    .child(ListSeparator)
                     .child(
                         div()
                             .id("workspace-sidebar-content")
