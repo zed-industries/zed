@@ -41,14 +41,10 @@ fn check_hardcoded_security_rules(
     }
 
     let rules = &*HARDCODED_SECURITY_RULES;
-    let patterns = &rules.terminal_deny;
-
-    if patterns.is_empty() {
-        return None;
-    }
+    let terminal_patterns = &rules.terminal_deny;
 
     // First: check the original input as-is
-    for pattern in patterns {
+    for pattern in terminal_patterns {
         if pattern.is_match(input) {
             return Some(ToolPermissionDecision::Deny(
                 HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
@@ -60,7 +56,7 @@ fn check_hardcoded_security_rules(
     if shell_kind.supports_posix_chaining() {
         if let Some(commands) = extract_commands(input) {
             for command in &commands {
-                for pattern in patterns {
+                for pattern in terminal_patterns {
                     if pattern.is_match(command) {
                         return Some(ToolPermissionDecision::Deny(
                             HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
