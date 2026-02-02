@@ -360,6 +360,13 @@ impl Render for EditPredictionButton {
             | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
+                let icons = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .map(|p| p.icons(cx))
+                    .unwrap_or_else(|| {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    });
 
                 let ep_icon;
                 let tooltip_meta;
@@ -369,17 +376,15 @@ impl Render for EditPredictionButton {
                     EditPredictionProvider::Sweep => {
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
-                        ep_icon = IconName::SweepAi;
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         tooltip_meta = if missing_token {
                             "Missing API key for Sweep"
                         } else {
                             "Powered by Sweep"
                         };
-                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                     }
                     EditPredictionProvider::Mercury => {
-                        ep_icon = IconName::Inception;
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
                         tooltip_meta = if missing_token {
@@ -389,11 +394,7 @@ impl Render for EditPredictionButton {
                         };
                     }
                     _ => {
-                        ep_icon = if enabled {
-                            IconName::ZedPredict
-                        } else {
-                            IconName::ZedPredictDisabled
-                        };
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         tooltip_meta = "Powered by Zeta"
                     }
                 };
@@ -889,10 +890,17 @@ impl EditPredictionButton {
         );
 
         if !self.editor_enabled.unwrap_or(true) {
+            let icons = self
+                .edit_prediction_provider
+                .as_ref()
+                .map(|p| p.icons(cx))
+                .unwrap_or_else(|| {
+                    edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                });
             menu = menu.item(
                 ContextMenuEntry::new("This file is excluded.")
                     .disabled(true)
-                    .icon(IconName::ZedPredictDisabled)
+                    .icon(icons.disabled)
                     .icon_size(IconSize::Small),
             );
         }

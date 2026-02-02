@@ -6,8 +6,11 @@ use crate::{
     },
 };
 use anyhow::Result;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
+use edit_prediction_types::{
+    EditPrediction, EditPredictionDelegate, EditPredictionIconSet, interpolate_edits,
+};
 use gpui::{App, Context, Entity, Task};
+use icons::IconName;
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToPointUtf16};
 use std::{ops::Range, sync::Arc, time::Duration};
 
@@ -48,6 +51,12 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn icons(&self, _cx: &App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::Copilot)
+            .with_disabled(IconName::CopilotDisabled)
+            .with_error(IconName::CopilotError)
     }
 
     fn is_refreshing(&self, _cx: &App) -> bool {
