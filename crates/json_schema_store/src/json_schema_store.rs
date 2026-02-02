@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
 use language::{
     LanguageRegistry, LanguageServerName, LspAdapterDelegate,
-    language_settings::{AllLanguageSettings, all_language_settings},
+    language_settings::AllLanguageSettings,
 };
 use parking_lot::RwLock;
 use project::{LspStore, lsp_store::LocalLspAdapterDelegate};
