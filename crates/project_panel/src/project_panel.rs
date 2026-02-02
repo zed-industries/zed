@@ -1381,18 +1381,9 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let entry_id = entry.id;
 
-            if self.project.read(cx).entry_is_worktree_root(entry_id, cx) {
-                self.collapse_all_entries(&CollapseAllEntries, window, cx);
-            } else {
-                self.collapse_all_for_entry(worktree_id, entry_id, cx);
-                self.update_visible_entries(
-                    Some((worktree_id, entry_id)),
-                    false,
-                    false,
-                    window,
-                    cx,
-                );
-            }
+            self.collapse_all_for_entry(worktree_id, entry_id, cx);
+
+            self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
             cx.notify();
         }
     }

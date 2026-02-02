@@ -6745,27 +6745,19 @@ async fn test_collapse_root_single_worktree(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_selected_entry_and_children(
-            &CollapseSelectedEntryAndChildren,
-            window,
-            cx,
-        );
+        panel.collapse_selected_entry_and_children(&CollapseSelectedEntryAndChildren, window, cx);
     });
     cx.run_until_parked();
 
-    // In a single-worktree project, collapsing the root delegates to collapse_all_entries,
-    // which keeps the root expanded but collapses all children.
+    // The root and all its children should be collapsed
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root  <== selected",
-            "    > dir1",
-            "    > dir2",
-        ],
-        "Root should stay expanded but all children should be collapsed"
+        &["> root  <== selected"],
+        "Root and all children should be collapsed"
     );
 
-    // Re-expand dir1 and verify its children were recursively collapsed
+    // Re-expand root and dir1, verify children were recursively collapsed
+    toggle_expand_dir(&panel, "root", cx);
     toggle_expand_dir(&panel, "root/dir1", cx);
     cx.run_until_parked();
 
@@ -6778,7 +6770,7 @@ async fn test_collapse_root_single_worktree(cx: &mut gpui::TestAppContext) {
             "          file2.txt",
             "    > dir2",
         ],
-        "After re-expanding dir1, subdir1 should still be collapsed"
+        "After re-expanding root and dir1, subdir1 should still be collapsed"
     );
 }
 
@@ -6843,17 +6835,13 @@ async fn test_collapse_root_multi_worktree(cx: &mut gpui::TestAppContext) {
     );
 
     // Select root1 and collapse it and its children.
-    // In a multi-worktree project, this delegates to collapse_all_entries,
-    // which collapses all worktree roots entirely.
+    // In a multi-worktree project, this should only collapse the selected worktree,
+    // leaving other worktrees unaffected.
     select_path(&panel, "root1", cx);
     cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_selected_entry_and_children(
-            &CollapseSelectedEntryAndChildren,
-            window,
-            cx,
-        );
+        panel.collapse_selected_entry_and_children(&CollapseSelectedEntryAndChildren, window, cx);
     });
     cx.run_until_parked();
 
@@ -6861,25 +6849,135 @@ async fn test_collapse_root_multi_worktree(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
             "> root1  <== selected",
-            "> root2",
+            "v root2",
+            "    v dir2",
+            "          file3.txt",
+            "      file4.txt",
         ],
-        "All worktree roots should be collapsed"
+        "Only root1 should be collapsed, root2 should remain expanded"
     );
 
-    // Re-expand both roots and verify children were recursively collapsed
+    // Re-expand root1 and verify its children were recursively collapsed
     toggle_expand_dir(&panel, "root1", cx);
-    toggle_expand_dir(&panel, "root2", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1  <== selected",
+            "    > dir1",
+            "v root2",
+            "    v dir2",
+            "          file3.txt",
+            "      file4.txt",
+        ],
+        "After re-expanding root1, dir1 should still be collapsed, root2 should be unaffected"
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_non_root_multi_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root1"),
+        json!({
+            "dir1": {
+                "subdir1": {
+                    "file1.txt": ""
+                },
+                "file2.txt": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/root2"),
+        json!({
+            "dir2": {
+                "subdir2": {
+                    "file3.txt": ""
+                },
+                "file4.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [path!("/root1").as_ref(), path!("/root2").as_ref()],
+        cx,
+    )
+    .await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root1/dir1", cx);
+    toggle_expand_dir(&panel, "root1/dir1/subdir1", cx);
+    toggle_expand_dir(&panel, "root2/dir2", cx);
+    toggle_expand_dir(&panel, "root2/dir2/subdir2", cx);
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
             "v root1",
-            "    > dir1",
-            "v root2  <== selected",
-            "    > dir2",
-            "      file4.txt",
+            "    v dir1",
+            "        v subdir1",
+            "              file1.txt",
+            "          file2.txt",
+            "v root2",
+            "    v dir2",
+            "        v subdir2  <== selected",
+            "              file3.txt",
+            "          file4.txt",
         ],
-        "After re-expanding roots, all child directories should still be collapsed"
+        "Initial state with directories expanded across worktrees"
+    );
+
+    // Select dir1 in root1 and collapse it
+    select_path(&panel, "root1/dir1", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_selected_entry_and_children(&CollapseSelectedEntryAndChildren, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    > dir1  <== selected",
+            "v root2",
+            "    v dir2",
+            "        v subdir2",
+            "              file3.txt",
+            "          file4.txt",
+        ],
+        "Only dir1 should be collapsed, root2 should be completely unaffected"
+    );
+
+    // Re-expand dir1 and verify subdir1 was recursively collapsed
+    toggle_expand_dir(&panel, "root1/dir1", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    v dir1  <== selected",
+            "        > subdir1",
+            "          file2.txt",
+            "v root2",
+            "    v dir2",
+            "        v subdir2",
+            "              file3.txt",
+            "          file4.txt",
+        ],
+        "After re-expanding dir1, subdir1 should still be collapsed"
     );
 }
 
