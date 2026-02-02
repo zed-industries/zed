@@ -60,14 +60,14 @@ pub fn init(cx: &mut App) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HighlightCategory {
-    Text,
+    Text(HighlightKey),
     SemanticToken(Option<SharedString>),
 }
 
 impl HighlightCategory {
     fn label(&self) -> SharedString {
         match self {
-            HighlightCategory::Text => "text".into(),
+            HighlightCategory::Text(key) => format!("text: {key:?}").into(),
             HighlightCategory::SemanticToken(Some(token_type)) => {
                 format!("semantic token: {token_type}").into()
             }
@@ -231,18 +231,15 @@ impl HighlightsTreeView {
         let mut entries = Vec::new();
 
         display_map.update(cx, |display_map, _cx| {
-            for (_, arc) in display_map.all_text_highlights() {
-                let style = arc.0;
-                let ranges = &arc.1;
-
-                for range in ranges.iter() {
+            for (key, text_highlights) in display_map.all_text_highlights() {
+                for range in &text_highlights.1 {
                     let (range_display, sort_key) =
                         format_anchor_range(range, &multi_buffer_snapshot);
                     entries.push(HighlightEntry {
                         range: range.clone(),
                         range_display,
-                        style,
-                        category: HighlightCategory::Text,
+                        style: text_highlights.0,
+                        category: HighlightCategory::Text(*key),
                         sort_key,
                     });
                 }
@@ -308,7 +305,7 @@ impl HighlightsTreeView {
             .iter()
             .enumerate()
             .filter(|(_, entry)| match entry.category {
-                HighlightCategory::Text => self.show_text_highlights,
+                HighlightCategory::Text(_) => self.show_text_highlights,
                 HighlightCategory::SemanticToken(_) => self.show_semantic_tokens,
             })
             .collect()
