@@ -76,7 +76,8 @@ impl WorkspaceSidebar for Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar_height = (1.75 * window.rem_size()).max(px(34.));
+        let titlebar_height = ui::utils::platform_title_bar_height(window);
+        let ui_font = theme::setup_ui_font(window, cx);
         let multi_workspace = self.multi_workspace.clone();
 
         let workspaces = self.multi_workspace.read(cx).workspaces().to_vec();
@@ -102,6 +103,7 @@ impl Render for Sidebar {
         div()
             .id("workspace-sidebar")
             .h_full()
+            .font(ui_font)
             .w(self.width)
             .flex()
             .flex_col()

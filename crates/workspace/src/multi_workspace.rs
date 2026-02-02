@@ -272,7 +272,6 @@ impl MultiWorkspace {
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
-        let ui_font = theme::setup_ui_font(window, cx);
 
         let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
             self.sidebar.as_ref().map(|sidebar_handle| {
