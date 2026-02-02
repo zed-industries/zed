@@ -13971,13 +13971,13 @@ dependencies = [
 [[package]]
 name = "rex"
 version = "0.1.2"
-source = "git+https://github.com/MostlyKIGuess/ReX#37a480a5830c17675cb17ce145f72692efd777a7"
+source = "git+https://github.com/MostlyKIGuess/ReX#022dae0ce760efb8f7357171665517f10c0b56a4"
 dependencies = [
  "log",
  "serde",
  "serde_derive",
  "tiny-skia",
- "ttf-parser 0.20.0",
+ "ttf-parser 0.21.1",
  "unicode-math",
 ]
 
@@ -18235,7 +18235,7 @@ checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 [[package]]
 name = "unicode-math"
 version = "0.1.0"
-source = "git+https://github.com/MostlyKIGuess/ReX#37a480a5830c17675cb17ce145f72692efd777a7"
+source = "git+https://github.com/MostlyKIGuess/ReX#022dae0ce760efb8f7357171665517f10c0b56a4"
 dependencies = [
  "nom 7.1.3",
  "regex",
