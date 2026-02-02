@@ -137,7 +137,6 @@ impl Render for Sidebar {
                             .tooltip(Tooltip::text("New Workspace"))
                             .on_click(cx.listener(|_this, _, window, cx| {
                                 window.dispatch_action(NewWorkspaceInWindow.boxed_clone(), cx);
-                                cx.emit(SidebarEvent::Close);
                             })),
                     ),
             )
