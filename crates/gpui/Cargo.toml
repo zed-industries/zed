@@ -254,6 +254,12 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 util = { workspace = true, features = ["test-support"] }
+criterion.workspace = true
+
+[[bench]]
+name = "inline_layout"
+harness = false
+required-features = ["test-support"]
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"

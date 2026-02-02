@@ -1,5 +1,8 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
+use gpui::{
+    App, DivInspectorState, InlineInspectorState, Inspector, InspectorElementId, IntoElement,
+    Window,
+};
 use platform_title_bar::PlatformTitleBar;
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
@@ -7,6 +10,7 @@ use util::{ResultExt as _, command::new_smol_command};
 use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
+use crate::inline_inspector::render_inline_inspector;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
@@ -48,6 +52,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
             div_inspector.update_inspected_element(&id, state.clone(), window, cx);
             div_inspector.render(window, cx).into_any_element()
         })
+    });
+
+    cx.register_inspector_element(move |_id, state: &InlineInspectorState, _window, cx| {
+        render_inline_inspector(state, cx).into_any_element()
     });
 
     cx.set_inspector_renderer(Box::new(render_inspector));
