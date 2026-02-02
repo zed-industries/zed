@@ -23806,6 +23806,8 @@ impl Editor {
                     )
                     .detach();
                 }
+                self.semantic_tokens_fetched_for_buffers
+                    .remove(&buffer.read(cx).remote_id());
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
@@ -23857,11 +23859,8 @@ impl Editor {
                 for id in ids {
                     self.fetched_tree_sitter_chunks.remove(id);
                     if let Some(buffer) = snapshot.buffer_for_excerpt(*id) {
-                        let buffer_id = buffer.remote_id();
-                        self.semantic_tokens_fetched_for_buffers.remove(&buffer_id);
-                        self.display_map.update(cx, |display_map, _| {
-                            display_map.invalidate_semantic_highlights(buffer_id);
-                        });
+                        self.semantic_tokens_fetched_for_buffers
+                            .remove(&buffer.remote_id());
                     }
                 }
                 self.colorize_brackets(false, cx);
