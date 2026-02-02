@@ -15317,6 +15317,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "sidebar"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "theme",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "signal-hook"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21095,6 +21105,7 @@ dependencies = [
  "settings_profile_selector",
  "settings_ui",
  "shellexpand 2.1.2",
+ "sidebar",
  "smol",
  "snippet_provider",
  "snippets_ui",

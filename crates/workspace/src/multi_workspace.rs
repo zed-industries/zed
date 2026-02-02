@@ -1,8 +1,12 @@
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
-use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, actions, px};
+use gpui::{
+    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, ManagedView, MouseButton,
+    Pixels, Render, Subscription, Window, actions, deferred, px,
+};
 use project::Project;
-use theme::ActiveTheme;
-use ui::{ListItem, ListSeparator, prelude::*};
+use ui::prelude::*;
+
+const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
     DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
@@ -22,10 +26,56 @@ actions!(
     ]
 );
 
+pub enum SidebarEvent {
+    Open,
+    Close,
+}
+
+pub trait Sidebar: EventEmitter<SidebarEvent> + Render + Sized {
+    fn width(&self, cx: &App) -> Pixels;
+    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
+}
+
+pub trait SidebarHandle: 'static + Send + Sync {
+    fn width(&self, cx: &App) -> Pixels;
+    fn set_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn to_any(&self) -> AnyView;
+    fn entity_id(&self) -> EntityId;
+}
+
+#[derive(Clone)]
+pub struct DraggedSidebar;
+
+impl Render for DraggedSidebar {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+impl<T: Sidebar> SidebarHandle for Entity<T> {
+    fn width(&self, cx: &App) -> Pixels {
+        self.read(cx).width(cx)
+    }
+
+    fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_width(width, cx))
+    }
+
+    fn to_any(&self) -> AnyView {
+        self.clone().into()
+    }
+
+    fn entity_id(&self) -> EntityId {
+        Entity::entity_id(self)
+    }
+}
+
 pub struct MultiWorkspace {
     workspaces: Vec<Entity<Workspace>>,
     active_workspace_index: usize,
+    sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
+    _sidebar_subscription: Option<Subscription>,
 }
 
 impl MultiWorkspace {
@@ -33,8 +83,30 @@ impl MultiWorkspace {
         Self {
             workspaces: vec![workspace],
             active_workspace_index: 0,
+            sidebar: None,
             sidebar_open: false,
+            _sidebar_subscription: None,
         }
+    }
+
+    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
+        let subscription = cx.subscribe(&sidebar, |this, _, event, cx| match event {
+            SidebarEvent::Open => this.toggle_sidebar(cx),
+            SidebarEvent::Close => {
+                this.sidebar_open = false;
+                cx.notify();
+            }
+        });
+        self.sidebar = Some(Box::new(sidebar));
+        self._sidebar_subscription = Some(subscription);
+    }
+
+    pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
+        self.sidebar.as_deref()
+    }
+
+    pub fn sidebar_open(&self) -> bool {
+        self.sidebar_open && self.sidebar.is_some()
     }
 
     fn multi_workspace_enabled(&self, cx: &App) -> bool {
@@ -85,7 +157,7 @@ impl MultiWorkspace {
         }
     }
 
-    fn activate_index(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn activate_index(&mut self, index: usize, cx: &mut Context<Self>) {
         debug_assert!(
             index < self.workspaces.len(),
             "workspace index out of bounds"
@@ -195,83 +267,53 @@ impl MultiWorkspace {
 
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar_height = (1.75 * window.rem_size()).max(px(34.));
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
 
-        let sidebar = if multi_workspace_enabled && self.sidebar_open {
-            let items: Vec<_> = self
-                .workspaces
-                .iter()
-                .enumerate()
-                .map(|(index, workspace)| {
-                    let is_active = index == self.active_workspace_index;
-                    let worktree_names: Vec<String> = workspace
-                        .read(cx)
-                        .worktrees(cx)
-                        .filter_map(|wt| {
-                            wt.read(cx)
-                                .abs_path()
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
+        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
+            self.sidebar.as_ref().map(|sidebar_handle| {
+                let weak = cx.weak_entity();
+
+                let sidebar_width = sidebar_handle.width(cx);
+                let resize_handle = deferred(
+                    div()
+                        .id("sidebar-resize-handle")
+                        .absolute()
+                        .right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                        .top(px(0.))
+                        .h_full()
+                        .w(SIDEBAR_RESIZE_HANDLE_SIZE)
+                        .cursor_col_resize()
+                        .on_drag(DraggedSidebar, |dragged, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.new(|_| dragged.clone())
                         })
-                        .collect();
-                    let label: SharedString = if worktree_names.is_empty() {
-                        format!("Workspace {}", index + 1).into()
-                    } else {
-                        worktree_names.join(", ").into()
-                    };
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_mouse_up(MouseButton::Left, move |event, _, cx| {
+                            if event.click_count == 2 {
+                                weak.update(cx, |this, cx| {
+                                    if let Some(sidebar) = this.sidebar.as_mut() {
+                                        sidebar.set_width(None, cx);
+                                    }
+                                })
+                                .ok();
+                                cx.stop_propagation();
+                            }
+                        })
+                        .occlude(),
+                );
 
-                    ListItem::new(("workspace-item", index))
-                        .inset(true)
-                        .toggle_state(is_active)
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.activate_index(index, cx);
-                            this.sidebar_open = false;
-                            cx.notify();
-                        }))
-                        .child(Label::new(label))
-                })
-                .collect();
-
-            Some(
-                v_flex()
-                    .id("workspace-sidebar")
+                div()
+                    .id("sidebar-container")
+                    .relative()
                     .h_full()
-                    .w_64()
-                    .bg(cx.theme().colors().surface_background)
-                    .border_r_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex()
-                            .h(titlebar_height)
-                            .w_full()
-                            .pr_2()
-                            .pl(px(80.))
-                            .justify_between()
-                            .child(Label::new("Workspaces").size(LabelSize::Small))
-                            .child(
-                                IconButton::new("new-workspace", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        window.dispatch_action(
-                                            NewWorkspaceInWindow.boxed_clone(),
-                                            cx,
-                                        );
-                                        this.sidebar_open = false;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(ListSeparator)
-                    .child(
-                        div()
-                            .id("workspace-sidebar-content")
-                            .p_1()
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .children(items),
-                    ),
-            )
+                    .w(sidebar_width)
+                    .flex_shrink_0()
+                    .child(sidebar_handle.to_any())
+                    .child(resize_handle)
+                    .into_any_element()
+            })
         } else {
             None
         };
@@ -317,7 +359,20 @@ impl Render for MultiWorkspace {
                         this.toggle_sidebar(cx);
                     },
                 ))
-                .children(sidebar)
+                .when(
+                    self.sidebar_open() && self.multi_workspace_enabled(cx),
+                    |this| {
+                        this.on_drag_move(cx.listener(
+                            |this: &mut Self, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
+                                if let Some(sidebar) = &this.sidebar {
+                                    let new_width = e.event.position.x;
+                                    sidebar.set_width(Some(new_width), cx);
+                                }
+                            },
+                        ))
+                        .children(sidebar)
+                    },
+                )
                 .child(
                     div()
                         .flex()

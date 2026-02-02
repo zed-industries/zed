@@ -68,6 +68,7 @@ use settings::{
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
+use sidebar::Sidebar;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -353,6 +354,13 @@ pub fn initialize_workspace(
         // A 1.92 regression causes unused-assignment to trigger on this variable.
         _ = _on_close_subscription.is_some();
         _on_close_subscription = bind_on_window_closed(cx);
+    })
+    .detach();
+
+    cx.observe_new(|multi_workspace: &mut MultiWorkspace, _window, cx| {
+        let multi_workspace_handle = cx.entity();
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, cx));
+        multi_workspace.register_sidebar(sidebar, cx);
     })
     .detach();
 

@@ -1,0 +1,21 @@
+[package]
+name = "sidebar"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sidebar.rs"
+
+[features]
+default = []
+
+[dependencies]
+gpui.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace.workspace = true
