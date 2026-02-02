@@ -97,6 +97,10 @@ pub enum BufferStoreEvent {
         buffer: Entity<Buffer>,
         old_file: Option<Arc<dyn language::File>>,
     },
+    BufferFileDeleted {
+        buffer: Entity<Buffer>,
+        old_file: Arc<dyn language::File>,
+    },
 }
 
 #[derive(Default, Debug, Clone)]
@@ -574,6 +578,15 @@ impl LocalBufferStore {
                     old_file: buffer.file().cloned(),
                 });
             }
+            // Emit BufferFileDeleted when file is deleted externally (e.g., git branch switch)
+            if new_file.disk_state.is_deleted() && !old_file.disk_state.is_deleted() {
+                if let Some(old_file) = buffer.file().cloned() {
+                    events.push(BufferStoreEvent::BufferFileDeleted {
+                        buffer: cx.entity(),
+                        old_file,
+                    });
+                }
+            }
             let local = this.as_local_mut()?;
             if new_file.entry_id != old_file.entry_id {
                 if let Some(entry_id) = old_file.entry_id {
@@ -825,6 +838,13 @@ impl BufferStore {
         }
     }
 
+    fn as_local(&self) -> Option<&LocalBufferStore> {
+        match &self.state {
+            BufferStoreState::Local(state) => Some(state),
+            _ => None,
+        }
+    }
+
     fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
         match &mut self.state {
             BufferStoreState::Local(state) => Some(state),
@@ -1068,6 +1088,14 @@ impl BufferStore {
             self.as_remote()
                 .and_then(|remote| remote.loading_remote_buffers_by_id.get(&buffer_id).cloned())
         })
+    }
+
+    pub fn get_by_entry_id(&self, entry_id: ProjectEntryId) -> Option<Entity<Buffer>> {
+        let buffer_id = self
+            .as_local()
+            .and_then(|local| local.local_buffer_ids_by_entry_id.get(&entry_id))
+            .copied()?;
+        self.get(buffer_id)
     }
 
     pub fn buffer_version_info(&self, cx: &App) -> (Vec<proto::BufferVersion>, Vec<BufferId>) {
