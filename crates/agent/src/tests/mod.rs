@@ -4294,14 +4294,7 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx, mut cancellation_tx) =
         crate::ToolCallEventStream::test_with_cancellation();
@@ -4586,18 +4579,11 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project,
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
-    let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx)); 
-    
+    let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx));
+
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4901,14 +4887,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -4970,14 +4949,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
