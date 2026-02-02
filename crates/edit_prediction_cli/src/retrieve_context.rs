@@ -49,6 +49,7 @@ pub async fn run_context_retrieval(
             cursor_row: captured.cursor_row,
             cursor_column: captured.cursor_column,
             cursor_offset: captured.cursor_offset,
+            excerpt_start_row: captured.excerpt_start_row,
             edit_history,
             related_files: Some(related_files),
         });

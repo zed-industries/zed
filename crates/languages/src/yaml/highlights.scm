@@ -23,7 +23,12 @@
   (tag)
 ] @type
 
-key: (flow_node (plain_scalar (string_scalar) @property))
+key: (flow_node
+  [
+    (plain_scalar (string_scalar))
+    (double_quote_scalar)
+    (single_quote_scalar)
+  ] @property)
 
 [
  ","
