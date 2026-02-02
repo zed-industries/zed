@@ -12,15 +12,15 @@ use editor::Editor;
 
 use futures::{FutureExt, channel::oneshot, future::Shared};
 use gpui::{
-    AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, WeakEntity, Window,
-    canvas,
+    Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
+    WeakEntity, Window, canvas,
 };
 use language::Point;
 use log::{debug, info};
 use open_path_prompt::OpenPathDelegate;
 use paths::{global_ssh_config_file, user_ssh_config_file};
-use picker::Picker;
+use picker::{Picker, PickerDelegate};
 use project::{Fs, Project};
 use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
@@ -64,6 +64,7 @@ pub struct RemoteServerProjects {
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
     create_new_window: bool,
+    dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
     _subscription: Subscription,
 }
 
@@ -207,6 +208,144 @@ struct ProjectPicker {
 struct EditNicknameState {
     index: SshServerIndex,
     editor: Entity<Editor>,
+}
+
+struct DevContainerPickerDelegate {
+    selected_index: usize,
+    candidates: Vec<DevContainerConfig>,
+    matching_candidates: Vec<DevContainerConfig>,
+    parent_modal: WeakEntity<RemoteServerProjects>,
+}
+impl DevContainerPickerDelegate {
+    fn new(
+        candidates: Vec<DevContainerConfig>,
+        parent_modal: WeakEntity<RemoteServerProjects>,
+    ) -> Self {
+        Self {
+            selected_index: 0,
+            matching_candidates: candidates.iter().map(|c| c.clone()).collect(),
+            candidates: candidates,
+            parent_modal,
+        }
+    }
+}
+
+impl PickerDelegate for DevContainerPickerDelegate {
+    type ListItem = AnyElement;
+
+    fn match_count(&self) -> usize {
+        self.matching_candidates.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select Dev Container Configuration".into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.matching_candidates = self
+            .candidates
+            .iter()
+            .filter(|c| c.name.contains(&query))
+            .map(|c| c.clone())
+            .collect();
+
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let selected_config = self.candidates.get(self.selected_index).map(|c| c.clone());
+        self.parent_modal
+            .update(cx, move |modal, cx| {
+                if secondary {
+                    modal.edit_in_dev_container_json(selected_config.clone(), window, cx);
+                } else {
+                    modal.open_dev_container(selected_config, window, cx);
+                }
+            })
+            .ok();
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.parent_modal
+            .update(cx, |modal, cx| {
+                modal.cancel(&menu::Cancel, window, cx);
+            })
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let Some(selected_candidate) = self.candidates.get(ix) else {
+            return None;
+        };
+        Some(
+            ListItem::new("li-what")
+                .inset(true)
+                .toggle_state(selected)
+                .child(Label::new(selected_candidate.name.clone()))
+                .into_any_element(),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_start()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("run-action", "Start Dev Container")
+                        .key_binding(
+                            KeyBinding::for_action(&menu::Confirm, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .child(
+                    Button::new("run-action-secondary", "Open devcontainer.json")
+                        .key_binding(
+                            KeyBinding::for_action(&menu::SecondaryConfirm, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                        }),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl EditNicknameState {
@@ -698,8 +837,13 @@ impl RemoteServerProjects {
                 .update_in(cx, |this, window, cx| {
                     if configs.len() > 1 {
                         // Multiple configs found - show selection UI
-                        let state = CreateRemoteDevContainer::new(window, cx)
-                            .with_configs(configs, window, cx);
+                        let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
+                        this.dev_container_picker = Some(
+                            cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)),
+                        );
+
+                        let mut state = CreateRemoteDevContainer::new(window, cx);
+                        state = state.progress(DevContainerCreationProgress::SelectingConfig);
                         this.mode = Mode::CreateRemoteDevContainer(state);
                         cx.notify();
                     } else {
@@ -774,6 +918,7 @@ impl RemoteServerProjects {
             ssh_config_updates,
             ssh_config_servers: BTreeSet::new(),
             create_new_window,
+            dev_container_picker: None,
             _subscription,
         }
     }
@@ -1664,8 +1809,12 @@ impl RemoteServerProjects {
 
             entity
                 .update_in(cx, |this, window, cx| {
-                    let state =
-                        CreateRemoteDevContainer::new(window, cx).with_configs(configs, window, cx);
+                    let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
+                    this.dev_container_picker =
+                        Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
+
+                    let mut state = CreateRemoteDevContainer::new(window, cx);
+                    state = state.progress(DevContainerCreationProgress::SelectingConfig);
                     this.mode = Mode::CreateRemoteDevContainer(state);
                     cx.notify();
                 })
@@ -1821,9 +1970,7 @@ impl RemoteServerProjects {
                     .into_any_element();
             }
             DevContainerCreationProgress::SelectingConfig => {
-                return self
-                    .render_config_selection(state, window, cx)
-                    .into_any_element();
+                return self.render_config_selection(window, cx).into_any_element();
             }
             _ => {}
         };
@@ -2047,117 +2194,18 @@ impl RemoteServerProjects {
 
     fn render_config_selection(
         &self,
-        state: &CreateRemoteDevContainer,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let configs = state.available_configs.clone();
-        let go_back_index = configs.len();
+        let Some(picker) = &self.dev_container_picker else {
+            return div().into_any_element();
+        };
 
-        let mut content = v_flex()
-            .pb_1()
-            .child(ModalHeader::new().child(
-                Headline::new("Select Dev Container Configuration").size(HeadlineSize::XSmall),
-            ))
-            .child(ListSeparator);
+        let content = v_flex().pb_1().child(picker.clone().into_any_element());
 
-        for (index, config) in configs.iter().enumerate() {
-            let config_clone = config.clone();
-            let config_name = config.name.clone();
-            let config_path = config.config_path.display().to_string();
+        picker.focus_handle(cx).focus(window, cx);
 
-            content = content.child(
-                div()
-                    .id(format!("devcontainer-config-{}", index))
-                    .track_focus(&state.entries[index].focus_handle)
-                    .on_action(cx.listener({
-                        let config = config_clone.clone();
-                        let configs = configs.clone();
-                        move |this, _: &menu::Confirm, window, cx| {
-                            let mut state = CreateRemoteDevContainer::new(window, cx);
-                            state.selected_config = Some(config.clone());
-                            state.available_configs = configs.clone();
-                            this.mode = Mode::CreateRemoteDevContainer(state);
-                            cx.notify();
-                        }
-                    }))
-                    .child(
-                        ListItem::new(format!("li-devcontainer-config-{}", index))
-                            .toggle_state(
-                                state.entries[index]
-                                    .focus_handle
-                                    .contains_focused(window, cx),
-                            )
-                            .inset(true)
-                            .spacing(ui::ListItemSpacing::Sparse)
-                            .start_slot(Icon::new(IconName::FileToml).color(Color::Muted))
-                            .child(
-                                v_flex().child(Label::new(config_name)).child(
-                                    Label::new(config_path)
-                                        .size(ui::LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                            )
-                            .on_click(cx.listener({
-                                let config = config_clone.clone();
-                                let configs = configs.clone();
-                                move |this, _, window, cx| {
-                                    let mut state = CreateRemoteDevContainer::new(window, cx);
-                                    state.selected_config = Some(config.clone());
-                                    state.available_configs = configs.clone();
-                                    this.mode = Mode::CreateRemoteDevContainer(state);
-                                    cx.notify();
-                                }
-                            })),
-                    ),
-            );
-        }
-
-        content = content.child(ListSeparator).child(
-            div()
-                .id("devcontainer-config-go-back")
-                .track_focus(&state.entries[go_back_index].focus_handle)
-                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                    cx.focus_self(window);
-                    cx.notify();
-                }))
-                .child(
-                    ListItem::new("li-devcontainer-config-go-back")
-                        .toggle_state(
-                            state.entries[go_back_index]
-                                .focus_handle
-                                .contains_focused(window, cx),
-                        )
-                        .inset(true)
-                        .spacing(ui::ListItemSpacing::Sparse)
-                        .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
-                        .child(Label::new("Go Back"))
-                        .end_slot(
-                            KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle, cx)
-                                .size(rems_from_px(12.)),
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                            cx.focus_self(window);
-                            cx.notify()
-                        })),
-                ),
-        );
-
-        let mut view = Navigable::new(
-            div()
-                .track_focus(&self.focus_handle(cx))
-                .size_full()
-                .child(content)
-                .into_any_element(),
-        );
-
-        for entry in &state.entries {
-            view = view.entry(entry.clone());
-        }
-
-        view.render(window, cx)
+        content.into_any_element()
     }
 
     fn render_create_remote_server(
