@@ -6,6 +6,9 @@ use settings::ToolPermissionMode;
 use std::sync::LazyLock;
 use util::shell::ShellKind;
 
+const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
+     harmful to be allowed, and cannot be overridden by settings.";
+
 /// Security rules that are always enforced and cannot be overridden by any setting.
 /// These protect against catastrophic operations like wiping filesystems.
 pub struct HardcodedSecurityRules {
@@ -48,9 +51,7 @@ fn check_hardcoded_security_rules(
     for pattern in patterns {
         if pattern.is_match(input) {
             return Some(ToolPermissionDecision::Deny(
-                "Blocked by built-in security rule. This operation is considered too \
-                 harmful to be allowed, and cannot be overridden by settings."
-                    .into(),
+                HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
             ));
         }
     }
@@ -64,9 +65,7 @@ fn check_hardcoded_security_rules(
                 for pattern in patterns {
                     if pattern.is_match(command) {
                         return Some(ToolPermissionDecision::Deny(
-                            "Blocked by built-in security rule. This operation is considered too \
-                             harmful to be allowed, and cannot be overridden by settings."
-                                .into(),
+                            HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
                         ));
                     }
                 }
