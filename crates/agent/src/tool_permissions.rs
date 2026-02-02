@@ -57,9 +57,7 @@ fn check_hardcoded_security_rules(
     }
 
     // Second: parse and check individual sub-commands (for chained commands)
-    let supports_chaining = shell_kind.supports_posix_chaining();
-
-    if supports_chaining {
+    if shell_kind.supports_posix_chaining() {
         if let Some(commands) = extract_commands(input) {
             for command in &commands {
                 for pattern in patterns {
