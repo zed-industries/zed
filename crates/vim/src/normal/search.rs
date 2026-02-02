@@ -1412,8 +1412,20 @@ mod test {
 
         // (regex, whole_word, case_sensitive, include_ignored) -> expected options
         let test_cases: [(bool, bool, bool, bool, Opts); 2] = [
-            (false, true, true, false, Opts::WHOLE_WORD | Opts::CASE_SENSITIVE),
-            (true, false, false, true, Opts::REGEX | Opts::INCLUDE_IGNORED),
+            (
+                false,
+                true,
+                true,
+                false,
+                Opts::WHOLE_WORD | Opts::CASE_SENSITIVE,
+            ),
+            (
+                true,
+                false,
+                false,
+                true,
+                Opts::REGEX | Opts::INCLUDE_IGNORED,
+            ),
         ];
 
         for (regex, whole_word, case_sensitive, include_ignored, expected) in test_cases {
@@ -1433,13 +1445,26 @@ mod test {
             cx.run_until_parked();
 
             let bar = cx.workspace(|ws, _, cx| {
-                ws.active_pane().read(cx).toolbar().read(cx)
-                    .item_of_type::<BufferSearchBar>().unwrap()
+                ws.active_pane()
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .unwrap()
             });
 
-            cx.update_entity(bar, |bar, _, _| {
-                for opt in [Opts::REGEX, Opts::WHOLE_WORD, Opts::CASE_SENSITIVE, Opts::INCLUDE_IGNORED] {
-                    assert_eq!(bar.has_search_option(opt), expected.contains(opt), "{opt:?}");
+            cx.update_entity(bar, move |bar, _, _| {
+                for opt in [
+                    Opts::REGEX,
+                    Opts::WHOLE_WORD,
+                    Opts::CASE_SENSITIVE,
+                    Opts::INCLUDE_IGNORED,
+                ] {
+                    assert_eq!(
+                        bar.has_search_option(opt),
+                        expected.contains(opt),
+                        "{opt:?}"
+                    );
                 }
             });
 
