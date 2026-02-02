@@ -10310,6 +10310,102 @@ async fn test_autoindent_preserve_indent_maintains_indentation_on_newline(cx: &m
 }
 
 #[gpui::test]
+async fn test_autoindent_preserve_indent_does_not_apply_syntax_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent)
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false, // Disable extra newline behavior to isolate syntax indent test
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+
+    let buffer =
+        cx.new(|cx| Buffer::local("fn foo() {\n}", cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Position cursor at end of line containing `{`
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(10)..MultiBufferOffset(10)]) // After "fn foo() {"
+        });
+        editor.newline(&Newline, window, cx);
+
+        // With PreserveIndent, the new line should have 0 indentation (same as the fn line)
+        // NOT 4 spaces (which tree-sitter would add for being inside `{}`)
+        assert_eq!(editor.text(cx), "fn foo() {\n\n}");
+    });
+}
+
+#[gpui::test]
+async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppContext) {
+    // Companion test to show that SyntaxAware DOES apply tree-sitter indentation
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware)
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false, // Disable extra newline behavior to isolate syntax indent test
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+
+    let buffer =
+        cx.new(|cx| Buffer::local("fn foo() {\n}", cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Position cursor at end of line containing `{`
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(10)..MultiBufferOffset(10)]) // After "fn foo() {"
+        });
+        editor.newline(&Newline, window, cx);
+
+        // With SyntaxAware, tree-sitter adds indentation for being inside `{}`
+        assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
+    });
+}
+
+#[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware);
