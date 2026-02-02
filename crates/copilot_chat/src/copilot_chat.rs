@@ -10,16 +10,19 @@ use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, prelude::*};
+use gpui::Task;
+use gpui::{App, AsyncApp, Context, Global, WeakEntity, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use language_model::ApiKey;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
+use credentials_provider::CredentialsProvider;
 use settings::watch_config_dir;
 
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+const COPILOT_STATS_KEYCHAIN_URL: &str = "https://api.github.com/copilot_stats";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct CopilotChatConfiguration {
@@ -27,6 +30,15 @@ pub struct CopilotChatConfiguration {
 }
 
 impl CopilotChatConfiguration {
+    pub fn stats_keychain_url(&self) -> String {
+        if let Some(enterprise_uri) = &self.enterprise_uri {
+            let domain = Self::parse_domain(enterprise_uri);
+            format!("https://api.{}/copilot_stats", domain)
+        } else {
+            COPILOT_STATS_KEYCHAIN_URL.to_string()
+        }
+    }
+
     pub fn token_url(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             let domain = Self::parse_domain(enterprise_uri);
@@ -65,6 +77,15 @@ impl CopilotChatConfiguration {
             domain.split('/').next().unwrap_or(domain).to_string()
         } else {
             uri.split('/').next().unwrap_or(uri).to_string()
+        }
+    }
+
+    pub fn user_stats_url(&self) -> String {
+        if let Some(enterprise_uri) = &self.enterprise_uri {
+            let domain = Self::parse_domain(enterprise_uri);
+            format!("https://api.{}/copilot_internal/user", domain)
+        } else {
+            "https://api.github.com/copilot_internal/user".to_string()
         }
     }
 }
@@ -458,6 +479,74 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct CopilotUserStats {
+    pub copilot_plan: Option<String>,
+    pub quota_reset_date: Option<String>,
+    pub quota_reset_date_utc: Option<String>,
+    pub quota_snapshots: Option<CopilotQuotaSnapshots>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CopilotQuotaSnapshots {
+    pub chat: Option<CopilotQuotaSnapshot>,
+    pub completions: Option<CopilotQuotaSnapshot>,
+    pub premium_interactions: Option<CopilotQuotaSnapshot>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CopilotQuotaSnapshot {
+    pub entitlement: f64,
+    pub overage_count: f64,
+    pub overage_permitted: bool,
+    pub percent_remaining: f64,
+    pub quota_id: String,
+    pub quota_remaining: f64,
+    pub remaining: f64,
+    pub unlimited: bool,
+    pub timestamp_utc: Option<String>,
+}
+
+impl CopilotQuotaSnapshot {
+    pub fn used(&self) -> f64 {
+        if self.unlimited {
+            0.0
+        } else {
+            self.quota_remaining - self.remaining
+        }
+    }
+
+    pub fn percent_used(&self) -> f64 {
+        if self.unlimited {
+            0.0
+        } else {
+            100.0 - self.percent_remaining
+        }
+    }
+
+    pub fn display_remaining(&self) -> String {
+        if self.unlimited {
+            "Unlimited".to_string()
+        } else {
+            format!("{:.2}", self.remaining)
+        }
+    }
+}
+
+impl CopilotUserStats {
+    pub fn chat_stats(&self) -> Option<&CopilotQuotaSnapshot> {
+        self.quota_snapshots.as_ref()?.chat.as_ref()
+    }
+
+    pub fn completions_stats(&self) -> Option<&CopilotQuotaSnapshot> {
+        self.quota_snapshots.as_ref()?.completions.as_ref()
+    }
+
+    pub fn premium_interactions_stats(&self) -> Option<&CopilotQuotaSnapshot> {
+        self.quota_snapshots.as_ref()?.premium_interactions.as_ref()
+    }
+}
+
 struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
@@ -468,6 +557,8 @@ pub struct CopilotChat {
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    user_stats: Option<CopilotUserStats>,
+    stats_api_key: Option<String>,
 }
 
 pub fn init(
@@ -515,6 +606,7 @@ impl CopilotChat {
     ) -> Self {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
+        println!("CopilotChat: Watching config directory {:?}", dir_path);
 
         cx.spawn(async move |this, cx| {
             let mut parent_watch_rx = watch_config_dir(
@@ -547,7 +639,37 @@ impl CopilotChat {
             models: None,
             configuration,
             client,
+            user_stats: None,
+            stats_api_key: None,
         };
+
+        cx.spawn(async move |this, cx| {
+            println!("CopilotChat: Spawning stats API key load task");
+
+            let task = cx.update(|cx| {
+                this.upgrade()
+                    .map(|this| this.update(cx, |this, cx| this.load_stats_api_key(cx)))
+            });
+
+            if let Some(task) = task {
+                match task.await {
+                    Ok(key) => {
+                        cx.update(|cx| {
+                            if let Some(this) = this.upgrade() {
+                                this.update(cx, |this, cx| {
+                                    this.stats_api_key = Some(key);
+                                    cx.notify();
+                                });
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        println!("CopilotChat: Failed to load stats API key result: {}", err);
+                    }
+                }
+            }
+        })
+        .detach();
 
         if this.oauth_token.is_some() {
             cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
@@ -592,12 +714,43 @@ impl CopilotChat {
         self.models.as_deref()
     }
 
+    pub fn fetch_user_stats(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(api_key) = self.stats_api_key.clone() else {
+            return Task::ready(Err(anyhow!("No Copilot stats API key configured")));
+        };
+
+        let client = self.client.clone();
+        let url: Arc<str> = self.configuration.user_stats_url().into();
+
+        cx.spawn(async move |this, cx| {
+            let stats = request_user_stats(client, api_key, url).await?;
+
+            this.update(cx, |this, cx| {
+                this.user_stats = Some(stats);
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
+    }
+
     pub async fn stream_completion(
         request: Request,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+
+        cx.update(|cx| {
+            if let Some(copilot_chat) = Self::global(cx) {
+                copilot_chat.update(cx, |this, cx| {
+                    println!("API Key: {}", this.has_stats_api_key());
+                    if this.has_stats_api_key() {
+                        this.fetch_user_stats(cx).detach_and_log_err(cx);
+                    }
+                })
+            }
+        });
 
         let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
         stream_completion(
@@ -616,6 +769,16 @@ impl CopilotChat {
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+
+        cx.update(|cx| {
+            if let Some(copilot_chat) = Self::global(cx) {
+                copilot_chat.update(cx, |this, cx| {
+                    if this.has_stats_api_key() {
+                        this.fetch_user_stats(cx).detach_and_log_err(cx);
+                    }
+                })
+            }
+        });
 
         let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);
         responses::stream_response(
@@ -678,6 +841,99 @@ impl CopilotChat {
             })
             .detach();
         }
+    }
+
+    pub fn user_stats(&self) -> Option<&CopilotUserStats> {
+        self.user_stats.as_ref()
+    }
+
+    pub fn stats_api_key(&self) -> Option<&str> {
+        self.stats_api_key.as_deref()
+    }
+
+    pub fn has_stats_api_key(&self) -> bool {
+        self.stats_api_key.is_some()
+    }
+
+    pub fn load_stats_api_key(&mut self, cx: &mut App) -> Task<Result<String>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let url = self.configuration.user_stats_url();
+        cx.spawn(async move |cx| {
+            println!("CopilotChat: Loading stats API key from {}", url);
+            let result =
+                ApiKey::load_from_system_keychain(&url, credentials_provider.as_ref(), cx).await;
+            match &result {
+                Ok(key) => println!(
+                    "CopilotChat: Successfully loaded stats API key (len: {})",
+                    key.key().len()
+                ),
+                Err(err) => println!("CopilotChat: Failed to load stats API key: {}", err),
+            }
+            Ok(result?.key().to_string())
+        })
+    }
+
+    pub fn set_stats_api_key(
+        &mut self,
+        api_key: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let url = self.configuration.user_stats_url();
+
+        cx.spawn(async move |this, cx| {
+            if let Some(key) = &api_key {
+                credentials_provider
+                    .write_credentials(&url, "Bearer", key.as_bytes(), &cx)
+                    .await?;
+            } else {
+                credentials_provider.delete_credentials(&url, &cx).await?;
+            }
+
+            this.update(cx, |this, cx| {
+                this.stats_api_key = api_key;
+                cx.notify();
+            })?;
+            Ok(())
+        })
+    }
+}
+
+async fn request_user_stats(
+    client: Arc<dyn HttpClient>,
+    api_key: String,
+    url: Arc<str>,
+) -> Result<CopilotUserStats> {
+    println!("CopilotChat: Requesting user stats from {}", url);
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(url.as_ref())
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Accept", "application/json")
+        .body(AsyncBody::empty())?;
+
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        println!("CopilotChat: Stats response: {}", body_str);
+        serde_json::from_str(body_str).context("Failed to parse Copilot user stats")
+    } else {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        println!(
+            "CopilotChat: Stats response error: {} {}",
+            response.status(),
+            body_str
+        );
+        anyhow::bail!(
+            "Failed to fetch Copilot user stats: {} {}",
+            response.status(),
+            body_str
+        )
     }
 }
 
