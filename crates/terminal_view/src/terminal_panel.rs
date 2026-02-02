@@ -1085,6 +1085,32 @@ impl TerminalPanel {
         self.assistant_enabled
     }
 
+    /// Returns all panes in the terminal panel.
+    pub fn panes(&self) -> Vec<&Entity<Pane>> {
+        self.center.panes()
+    }
+
+    /// Returns all non-empty terminal selections from all terminal views in all panes.
+    pub fn terminal_selections(&self, cx: &App) -> Vec<String> {
+        self.center
+            .panes()
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx).items().filter_map(|item| {
+                    let terminal_view = item.downcast::<crate::TerminalView>()?;
+                    terminal_view
+                        .read(cx)
+                        .terminal()
+                        .read(cx)
+                        .last_content
+                        .selection_text
+                        .clone()
+                        .filter(|text| !text.is_empty())
+                })
+            })
+            .collect()
+    }
+
     fn is_enabled(&self, cx: &App) -> bool {
         self.workspace
             .upgrade()

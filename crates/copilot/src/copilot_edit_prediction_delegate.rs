@@ -186,6 +186,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         Some(EditPrediction::Local {
             id: None,
             edits,
+            cursor_position: None,
             edit_preview: Some(edit_preview.clone()),
         })
     }

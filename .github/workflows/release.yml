@@ -567,6 +567,19 @@ jobs:
     - upload_release_assets
     - validate_release_assets
     - auto_release_preview
+    - run_tests_mac
+    - run_tests_linux
+    - run_tests_windows
+    - clippy_mac
+    - clippy_linux
+    - clippy_windows
+    - check_scripts
+    - bundle_linux_aarch64
+    - bundle_linux_x86_64
+    - bundle_mac_aarch64
+    - bundle_mac_x86_64
+    - bundle_windows_aarch64
+    - bundle_windows_x86_64
     if: always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -586,6 +599,35 @@ jobs:
             RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
             if [ "$UPLOAD_RESULT" == "failure" ]; then
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
+            elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
+                FAILED_JOBS=""
+                if [ "${{ needs.run_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
+                if [ "${{ needs.run_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
+                if [ "${{ needs.run_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
+                if [ "${{ needs.clippy_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
+                if [ "${{ needs.clippy_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
+                if [ "${{ needs.clippy_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
+                if [ "${{ needs.check_scripts.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "${{ needs.bundle_linux_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
+                if [ "${{ needs.bundle_linux_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
+                if [ "${{ needs.bundle_mac_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
+                if [ "${{ needs.bundle_mac_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
+                if [ "${{ needs.bundle_windows_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
+                if [ "${{ needs.bundle_windows_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
+                FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
+                if [ "$UPLOAD_RESULT" == "cancelled" ]; then
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Release job for $TAG was cancelled, most likely because tests \`$FAILED_JOBS\` failed: $RUN_URL"
+                    else
+                        echo "❌ Release job for $TAG was cancelled: $RUN_URL"
+                    fi
+                else
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
+                    else
+                        echo "❌ Tests for $TAG failed: $RUN_URL"
+                    fi
+                fi
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
                 echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
