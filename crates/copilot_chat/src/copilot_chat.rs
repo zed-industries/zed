@@ -710,7 +710,6 @@ impl CopilotChat {
         cx.spawn(async move |this, cx| {
             let stats = request_user_stats(client, api_key, url).await?;
             println!("Fetched Copilot user stats: {:?}", stats);
-                
             this.update(cx, |this, cx| {
                 this.user_stats = Some(stats);
                 cx.notify();
@@ -720,13 +719,7 @@ impl CopilotChat {
         })
     }
 
-    pub async fn stream_completion(
-        request: Request,
-        is_user_initiated: bool,
-        mut cx: AsyncApp,
-    ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
-
+    fn get_user_stats(cx: &mut AsyncApp) {
         cx.update(|cx| {
             if let Some(copilot_chat) = Self::global(cx) {
                 copilot_chat.update(cx, |this, cx| {
@@ -736,6 +729,16 @@ impl CopilotChat {
                 })
             }
         });
+    }
+
+    pub async fn stream_completion(
+        request: Request,
+        is_user_initiated: bool,
+        mut cx: AsyncApp,
+    ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+        let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+
+        Self::get_user_stats(&mut cx);
 
         let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
         stream_completion(
@@ -755,15 +758,7 @@ impl CopilotChat {
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
-        cx.update(|cx| {
-            if let Some(copilot_chat) = Self::global(cx) {
-                copilot_chat.update(cx, |this, cx| {
-                    if this.has_stats_api_key() {
-                        this.fetch_user_stats(cx).detach_and_log_err(cx);
-                    }
-                })
-            }
-        });
+        Self::get_user_stats(&mut cx);
 
         let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);
         responses::stream_response(
