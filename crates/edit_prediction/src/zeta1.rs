@@ -274,6 +274,7 @@ fn process_completion_response(
             &buffer,
             &snapshot,
             edits,
+            None,
             buffer_snapshotted_at,
             received_response_at,
             inputs,

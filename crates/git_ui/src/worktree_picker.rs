@@ -15,8 +15,8 @@ use project::{
     git_store::Repository,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
-use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
+use remote_connection::{RemoteConnectionModal, connect};
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;

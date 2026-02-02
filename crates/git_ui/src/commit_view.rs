@@ -406,7 +406,11 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
+        let avatar = CommitAvatar::new(
+            sha,
+            Some(self.commit.author_email.clone()),
+            self.remote.as_ref(),
+        );
 
         v_flex()
             .w(size)

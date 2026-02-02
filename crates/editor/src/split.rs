@@ -3,9 +3,7 @@ use std::ops::{Bound, Range};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
-use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
-};
+use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
 use language::{Buffer, Capability};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
@@ -23,10 +21,7 @@ use crate::{
     display_map::MultiBufferRowMapping,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
-use workspace::{
-    ActivatePaneLeft, ActivatePaneRight, Item, ItemHandle, Pane, PaneGroup, SplitDirection,
-    Workspace,
-};
+use workspace::{ActivatePaneLeft, ActivatePaneRight, Item, Workspace};
 
 use crate::{
     Autoscroll, DisplayMap, Editor, EditorEvent, ToggleCodeActions, ToggleSoftWrap,
@@ -273,7 +268,6 @@ pub struct SplittableEditor {
     rhs_multibuffer: Entity<MultiBuffer>,
     rhs_editor: Entity<Editor>,
     lhs: Option<LhsEditor>,
-    panes: PaneGroup,
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
     locked_cursors: bool,
@@ -283,7 +277,6 @@ pub struct SplittableEditor {
 struct LhsEditor {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    pane: Entity<Pane>,
     has_latest_selection: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -324,22 +317,6 @@ impl SplittableEditor {
             editor.set_expand_all_diff_hunks(cx);
             editor
         });
-        let pane = cx.new(|cx| {
-            let mut pane = Pane::new(
-                workspace.downgrade(),
-                project,
-                Default::default(),
-                None,
-                NoAction.boxed_clone(),
-                true,
-                window,
-                cx,
-            );
-            pane.set_should_display_tab_bar(|_, _| false);
-            pane.add_item(rhs_editor.boxed_clone(), true, true, None, window, cx);
-            pane
-        });
-        let panes = PaneGroup::new(pane);
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
         let subscriptions =
             vec![cx.subscribe(
@@ -380,7 +357,6 @@ impl SplittableEditor {
             rhs_editor,
             rhs_multibuffer,
             lhs: None,
-            panes,
             workspace: workspace.downgrade(),
             split_state,
             locked_cursors: false,
@@ -408,31 +384,11 @@ impl SplittableEditor {
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
-            editor.number_deleted_lines = true;
+            editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
-        });
-        let lhs_pane = cx.new(|cx| {
-            let mut pane = Pane::new(
-                workspace.downgrade(),
-                workspace.read(cx).project().clone(),
-                Default::default(),
-                None,
-                NoAction.boxed_clone(),
-                true,
-                window,
-                cx,
-            );
-            pane.set_should_display_tab_bar(|_, _| false);
-            pane.add_item(
-                ItemHandle::boxed_clone(&lhs_editor),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
-            pane
         });
 
         let subscriptions =
@@ -467,7 +423,6 @@ impl SplittableEditor {
         let mut lhs = LhsEditor {
             editor: lhs_editor,
             multibuffer: lhs_multibuffer,
-            pane: lhs_pane.clone(),
             has_latest_selection: false,
             _subscriptions: subscriptions,
         };
@@ -527,12 +482,19 @@ impl SplittableEditor {
             dm.set_companion(Some((rhs_display_map.downgrade(), companion)), cx);
         });
 
-        let rhs_weak = self.rhs_editor.downgrade();
-        let lhs_weak = lhs.editor.downgrade();
+        let shared_scroll_anchor = self
+            .rhs_editor
+            .read(cx)
+            .scroll_manager
+            .scroll_anchor_entity();
+        lhs.editor.update(cx, |editor, _cx| {
+            editor
+                .scroll_manager
+                .set_shared_scroll_anchor(shared_scroll_anchor);
+        });
 
         let this = cx.entity().downgrade();
         self.rhs_editor.update(cx, |editor, _cx| {
-            editor.set_scroll_companion(Some(lhs_weak));
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
@@ -549,7 +511,6 @@ impl SplittableEditor {
             )));
         });
         lhs.editor.update(cx, |editor, _cx| {
-            editor.set_scroll_companion(Some(rhs_weak));
             let this = this.clone();
             editor.set_on_local_selections_changed(Some(Box::new(
                 move |cursor_position, window, cx| {
@@ -566,13 +527,6 @@ impl SplittableEditor {
             )));
         });
 
-        let rhs_scroll_position = self
-            .rhs_editor
-            .update(cx, |editor, cx| editor.scroll_position(cx));
-        lhs.editor.update(cx, |editor, cx| {
-            editor.set_scroll_position_internal(rhs_scroll_position, false, false, window, cx);
-        });
-
         // Copy soft wrap state from rhs (source of truth) to lhs
         let rhs_soft_wrap_override = self.rhs_editor.read(cx).soft_wrap_mode_override;
         lhs.editor.update(cx, |editor, cx| {
@@ -582,10 +536,6 @@ impl SplittableEditor {
 
         self.lhs = Some(lhs);
 
-        let rhs_pane = self.panes.first_pane();
-        self.panes
-            .split(&rhs_pane, &lhs_pane, SplitDirection::Left, cx)
-            .unwrap();
         cx.notify();
     }
 
@@ -846,10 +796,18 @@ impl SplittableEditor {
         let Some(lhs) = self.lhs.take() else {
             return;
         };
-        self.panes.remove(&lhs.pane, cx).unwrap();
         self.rhs_editor.update(cx, |rhs, cx| {
+            let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
+            let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
+            let rhs_display_map_id = rhs_snapshot.display_map_id;
+            rhs.scroll_manager
+                .scroll_anchor_entity()
+                .update(cx, |shared, _| {
+                    shared.scroll_anchor = native_anchor;
+                    shared.display_map_id = Some(rhs_display_map_id);
+                });
+
             rhs.set_on_local_selections_changed(None);
-            rhs.set_scroll_companion(None);
             rhs.set_delegate_expand_excerpts(false);
             rhs.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
@@ -861,7 +819,6 @@ impl SplittableEditor {
         });
         lhs.editor.update(cx, |editor, _cx| {
             editor.set_on_local_selections_changed(None);
-            editor.set_scroll_companion(None);
         });
         cx.notify();
     }
@@ -1671,6 +1628,7 @@ mod tests {
 
     async fn init_test(
         cx: &mut gpui::TestAppContext,
+        soft_wrap: SoftWrap,
     ) -> (Entity<SplittableEditor>, &mut VisualTestContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -1696,7 +1654,7 @@ mod tests {
             );
             editor.split(&Default::default(), window, cx);
             editor.rhs_editor.update(cx, |editor, cx| {
-                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                editor.set_soft_wrap_mode(soft_wrap, cx);
             });
             editor
                 .lhs
@@ -1704,7 +1662,7 @@ mod tests {
                 .unwrap()
                 .editor
                 .update(cx, |editor, cx| {
-                    editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                    editor.set_soft_wrap_mode(soft_wrap, cx);
                 });
             editor
         });
@@ -1775,7 +1733,7 @@ mod tests {
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use rand::prelude::*;
 
-        let (editor, cx) = init_test(cx).await;
+        let (editor, cx) = init_test(cx, SoftWrap::EditorWidth).await;
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -1859,7 +1817,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -1988,7 +1946,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text1 = "
             aaa
@@ -2146,7 +2104,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -2265,7 +2223,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -2394,7 +2352,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -2519,7 +2477,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -2632,7 +2590,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let text = "aaaa bbbb cccc dddd eeee ffff";
 
@@ -2700,7 +2658,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -2762,7 +2720,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -2816,10 +2774,10 @@ mod tests {
             aaaa bbbb\x20
             cccc dddd\x20
             eeee ffff
-            deleted\x20
-            line one
-            deleted\x20
-            line two
+            deleted line\x20
+            one
+            deleted line\x20
+            two
             after"
                 .unindent(),
             &mut cx,
@@ -2831,7 +2789,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -2943,7 +2901,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let (buffer1, diff1) = buffer_with_diff("xxx\nyyy", "xxx\nyyy", &mut cx);
 
@@ -3047,7 +3005,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -3129,7 +3087,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "aaaa bbbb cccc dddd eeee ffff\n";
 
@@ -3208,7 +3166,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -3330,7 +3288,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "";
         let current_text = "
@@ -3406,7 +3364,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
 
         let base_text = "
             aaa
@@ -3492,6 +3450,90 @@ mod tests {
             ccc"
             .unindent(),
             &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scrolling(cx: &mut gpui::TestAppContext) {
+        use crate::test::editor_content_with_blocks_and_size;
+        use gpui::size;
+        use rope::Point;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None).await;
+
+        let long_line = "x".repeat(200);
+        let mut lines: Vec<String> = (0..50).map(|i| format!("line {i}")).collect();
+        lines[25] = long_line;
+        let content = lines.join("\n");
+
+        let (buffer, diff) = buffer_with_diff(&content, &content, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _cx| {
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
+            (editor.rhs_editor.clone(), lhs.editor.clone())
+        });
+
+        rhs_editor.update_in(cx, |e, window, cx| {
+            e.set_scroll_position(gpui::Point::new(0., 10.), window, cx);
+        });
+
+        let rhs_pos =
+            rhs_editor.update_in(cx, |e, window, cx| e.snapshot(window, cx).scroll_position());
+        let lhs_pos =
+            lhs_editor.update_in(cx, |e, window, cx| e.snapshot(window, cx).scroll_position());
+        assert_eq!(rhs_pos.y, 10., "RHS should be scrolled to row 10");
+        assert_eq!(
+            lhs_pos.y, rhs_pos.y,
+            "LHS should have same scroll position as RHS after set_scroll_position"
+        );
+
+        let draw_size = size(px(300.), px(300.));
+
+        rhs_editor.update_in(cx, |e, window, cx| {
+            e.change_selections(Some(crate::Autoscroll::fit()).into(), window, cx, |s| {
+                s.select_ranges([Point::new(25, 150)..Point::new(25, 150)]);
+            });
+        });
+
+        let _ = editor_content_with_blocks_and_size(&rhs_editor, draw_size, &mut cx);
+        cx.run_until_parked();
+        let _ = editor_content_with_blocks_and_size(&lhs_editor, draw_size, &mut cx);
+        cx.run_until_parked();
+
+        let rhs_pos =
+            rhs_editor.update_in(cx, |e, window, cx| e.snapshot(window, cx).scroll_position());
+        let lhs_pos =
+            lhs_editor.update_in(cx, |e, window, cx| e.snapshot(window, cx).scroll_position());
+
+        assert!(
+            rhs_pos.y > 0.,
+            "RHS should have scrolled vertically to show cursor at row 25"
+        );
+        assert!(
+            rhs_pos.x > 0.,
+            "RHS should have scrolled horizontally to show cursor at column 150"
+        );
+        assert_eq!(
+            lhs_pos.y, rhs_pos.y,
+            "LHS should have same vertical scroll position as RHS after autoscroll"
+        );
+        assert_eq!(
+            lhs_pos.x, rhs_pos.x,
+            "LHS should have same horizontal scroll position as RHS after autoscroll"
         );
     }
 }

@@ -67,7 +67,7 @@ use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
-    unified_diff_with_offsets, word_diff_ranges,
+    unified_diff_with_context, unified_diff_with_offsets, word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{

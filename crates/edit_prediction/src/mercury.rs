@@ -206,6 +206,7 @@ impl Mercury {
                     &buffer,
                     &old_snapshot,
                     edits.into(),
+                    None,
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,
