@@ -3302,6 +3302,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "icons",
  "language",
  "language_models",
  "log",
@@ -3734,6 +3735,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "icons",
  "indoc",
  "language",
  "log",
@@ -5444,6 +5446,7 @@ version = "0.1.0"
 dependencies = [
  "client",
  "gpui",
+ "icons",
  "language",
  "text",
 ]
