@@ -6,7 +6,7 @@ use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
 };
-use language::{LanguageRegistry, Point, ToOffset, language_settings};
+use language::{LanguageRegistry, Point, language_settings};
 use markdown::{Markdown, MarkdownStyle};
 use project::InlayId;
 use settings::Settings as _;
@@ -370,7 +370,9 @@ impl RatePredictionsModal {
                     if let Some(buffer_snapshot) =
                         multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
                     {
-                        let cursor_offset = cursor_position.anchor.to_offset(buffer_snapshot)
+                        let cursor_offset = prediction
+                            .edit_preview
+                            .anchor_to_offset_in_result(cursor_position.anchor)
                             + cursor_position.offset;
                         let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
 
