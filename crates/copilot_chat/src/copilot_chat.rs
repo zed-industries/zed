@@ -644,32 +644,17 @@ impl CopilotChat {
         };
 
         cx.spawn(async move |this, cx| {
-            println!("CopilotChat: Spawning stats API key load task");
-
-            let task = cx.update(|cx| {
-                this.upgrade()
-                    .map(|this| this.update(cx, |this, cx| this.load_stats_api_key(cx)))
-            });
-
-            if let Some(task) = task {
-                match task.await {
-                    Ok(key) => {
-                        cx.update(|cx| {
-                            if let Some(this) = this.upgrade() {
-                                this.update(cx, |this, cx| {
-                                    this.stats_api_key = Some(key);
-                                    cx.notify();
-                                });
-                            }
-                        });
-                    }
-                    Err(err) => {
-                        println!("CopilotChat: Failed to load stats API key result: {}", err);
-                    }
-                }
+            if let Some(this) = this.upgrade() {
+                let task = this.update(cx, |this, cx| this.load_stats_api_key(cx));
+                let key = task.await?;
+                this.update(cx, |this, cx| {
+                    this.stats_api_key = Some(key);
+                    cx.notify();
+                });
             }
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
 
         if this.oauth_token.is_some() {
             cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
@@ -724,7 +709,8 @@ impl CopilotChat {
 
         cx.spawn(async move |this, cx| {
             let stats = request_user_stats(client, api_key, url).await?;
-
+            println!("Fetched Copilot user stats: {:?}", stats);
+                
             this.update(cx, |this, cx| {
                 this.user_stats = Some(stats);
                 cx.notify();
@@ -744,7 +730,6 @@ impl CopilotChat {
         cx.update(|cx| {
             if let Some(copilot_chat) = Self::global(cx) {
                 copilot_chat.update(cx, |this, cx| {
-                    println!("API Key: {}", this.has_stats_api_key());
                     if this.has_stats_api_key() {
                         this.fetch_user_stats(cx).detach_and_log_err(cx);
                     }
@@ -859,16 +844,8 @@ impl CopilotChat {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let url = self.configuration.user_stats_url();
         cx.spawn(async move |cx| {
-            println!("CopilotChat: Loading stats API key from {}", url);
             let result =
                 ApiKey::load_from_system_keychain(&url, credentials_provider.as_ref(), cx).await;
-            match &result {
-                Ok(key) => println!(
-                    "CopilotChat: Successfully loaded stats API key (len: {})",
-                    key.key().len()
-                ),
-                Err(err) => println!("CopilotChat: Failed to load stats API key: {}", err),
-            }
             Ok(result?.key().to_string())
         })
     }
@@ -904,7 +881,6 @@ async fn request_user_stats(
     api_key: String,
     url: Arc<str>,
 ) -> Result<CopilotUserStats> {
-    println!("CopilotChat: Requesting user stats from {}", url);
     let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(url.as_ref())
@@ -918,17 +894,11 @@ async fn request_user_stats(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        println!("CopilotChat: Stats response: {}", body_str);
         serde_json::from_str(body_str).context("Failed to parse Copilot user stats")
     } else {
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        println!(
-            "CopilotChat: Stats response error: {} {}",
-            response.status(),
-            body_str
-        );
         anyhow::bail!(
             "Failed to fetch Copilot user stats: {} {}",
             response.status(),
