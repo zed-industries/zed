@@ -160,12 +160,6 @@ impl Render for EditPredictionButton {
                         .on_open({
                             let file = file.clone();
                             Rc::new(move |_window, cx| {
-                                let edit_predictions_provider =
-                                    language_settings::all_language_settings(file.as_ref(), cx)
-                                        .edit_predictions
-                                        .provider;
-                                let copilot_enabled =
-                                    edit_predictions_provider == EditPredictionProvider::Copilot;
                                 let copilot_enabled_for_language =
                                     language_settings::language_settings(None, file.as_ref(), cx)
                                         .show_edit_predictions;
@@ -182,9 +176,7 @@ impl Render for EditPredictionButton {
                                     name = "Edit Predictions",
                                     provider = "copilot",
                                     file_extension,
-                                    copilot_enabled,
                                     copilot_enabled_for_language,
-                                    edit_predictions_provider,
                                     is_via_ssh,
                                 );
                             })
@@ -259,12 +251,6 @@ impl Render for EditPredictionButton {
                         .on_open({
                             let file = file.clone();
                             Rc::new(move |_window, cx| {
-                                let edit_predictions_provider =
-                                    language_settings::all_language_settings(file.as_ref(), cx)
-                                        .edit_predictions
-                                        .provider;
-                                let copilot_enabled =
-                                    edit_predictions_provider == EditPredictionProvider::Copilot;
                                 let copilot_enabled_for_language =
                                     language_settings::language_settings(None, file.as_ref(), cx)
                                         .show_edit_predictions;
@@ -281,9 +267,7 @@ impl Render for EditPredictionButton {
                                     name = "Edit Predictions",
                                     provider = "supermaven",
                                     file_extension,
-                                    copilot_enabled,
                                     copilot_enabled_for_language,
-                                    edit_predictions_provider,
                                     is_via_ssh,
                                 );
                             })
@@ -354,12 +338,6 @@ impl Render for EditPredictionButton {
                         .on_open({
                             let file = file.clone();
                             Rc::new(move |_window, cx| {
-                                let edit_predictions_provider =
-                                    language_settings::all_language_settings(file.as_ref(), cx)
-                                        .edit_predictions
-                                        .provider;
-                                let copilot_enabled =
-                                    edit_predictions_provider == EditPredictionProvider::Copilot;
                                 let copilot_enabled_for_language =
                                     language_settings::language_settings(None, file.as_ref(), cx)
                                         .show_edit_predictions;
@@ -376,9 +354,7 @@ impl Render for EditPredictionButton {
                                     name = "Edit Predictions",
                                     provider = "codestral",
                                     file_extension,
-                                    copilot_enabled,
                                     copilot_enabled_for_language,
-                                    edit_predictions_provider,
                                     is_via_ssh,
                                 );
                             })
@@ -616,12 +592,6 @@ impl Render for EditPredictionButton {
                     .on_open({
                         let file = file.clone();
                         Rc::new(move |_window, cx| {
-                            let edit_predictions_provider =
-                                language_settings::all_language_settings(file.as_ref(), cx)
-                                    .edit_predictions
-                                    .provider;
-                            let copilot_enabled =
-                                edit_predictions_provider == EditPredictionProvider::Copilot;
                             let copilot_enabled_for_language =
                                 language_settings::language_settings(None, file.as_ref(), cx)
                                     .show_edit_predictions;
@@ -638,9 +608,7 @@ impl Render for EditPredictionButton {
                                 name = "Edit Predictions",
                                 provider = provider_name,
                                 file_extension,
-                                copilot_enabled,
                                 copilot_enabled_for_language,
-                                edit_predictions_provider,
                                 is_via_ssh,
                             );
                         })
