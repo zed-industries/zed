@@ -9207,6 +9207,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sysinfo 0.37.2",
+ "telemetry",
  "theme",
  "tree-sitter",
  "ui",
