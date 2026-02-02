@@ -19,10 +19,5 @@ derive_more.workspace = true
 text.workspace = true
 menu.workspace = true
 
-# Needed to compile fork of `data_table.rs`
-itertools.workspace = true
-ui_macros.workspace = true
-component.workspace = true
-
 [lints]
 workspace = true
