@@ -2918,7 +2918,7 @@ impl Project {
         // because SSH projects have client_state: Local but still need to communicate with remote server
         let project_id = self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID);
         let downloading_files = self.downloading_files.clone();
-        let path_str = path.as_ref().as_unix_str().to_string();
+        let path_str = path.to_proto();
 
         static NEXT_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let file_id = NEXT_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
