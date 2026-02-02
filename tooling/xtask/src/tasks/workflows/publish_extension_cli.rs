@@ -69,6 +69,8 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
         named::bash("cargo xtask workflows")
     }
 
+    let (get_short_sha_step, short_sha) = get_short_sha();
+
     named::job(
         Job::default()
             .with_repository_owner_guard()
@@ -77,31 +79,26 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
             .add_step(generate_token)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(get_short_sha_step)
             .add_step(replace_sha())
             .add_step(regenerate_workflows())
-            .add_step(create_pull_request_zed(&generated_token)),
+            .add_step(create_pull_request_zed(&generated_token, &short_sha)),
     )
 }
 
-fn create_pull_request_zed(generated_token: &StepOutput) -> Step<Use> {
+fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput) -> Step<Use> {
+    let title = format!("Bump extension CLI version to `{}`", short_sha);
+
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
-            .add(
-                "title",
-                "Update `ZED_EXTENSION_CLI_SHA` to ${{ github.sha }}",
-            )
+            .add("title", title.clone())
             .add(
                 "body",
                 indoc! {r#"
-                    This PR updates the `ZED_EXTENSION_CLI_SHA` constant to `${{ github.sha }}`.
-
-                    This was triggered by a new release of the `zed-extension` CLI.
+                    This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
                 "#},
             )
-            .add(
-                "commit-message",
-                "Update ZED_EXTENSION_CLI_SHA to ${{ github.sha }}",
-            )
+            .add("commit-message", title)
             .add("branch", "update-extension-cli-sha")
             .add(
                 "committer",
@@ -140,37 +137,37 @@ fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
         "#})
     }
 
+    let (get_short_sha_step, short_sha) = get_short_sha();
+
     named::job(
         Job::default()
             .with_repository_owner_guard()
             .needs(vec![publish_job.name.clone()])
             .runs_on(runners::LINUX_SMALL)
             .add_step(generate_token)
+            .add_step(get_short_sha_step)
             .add_step(checkout_extensions_repo(&generated_token))
             .add_step(replace_sha())
-            .add_step(create_pull_request_extensions(&generated_token)),
+            .add_step(create_pull_request_extensions(&generated_token, &short_sha)),
     )
 }
 
-fn create_pull_request_extensions(generated_token: &StepOutput) -> Step<Use> {
+fn create_pull_request_extensions(
+    generated_token: &StepOutput,
+    short_sha: &StepOutput,
+) -> Step<Use> {
+    let title = format!("Bump extension CLI version to `{}`", short_sha);
+
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
-            .add(
-                "title",
-                "Update `ZED_EXTENSION_CLI_SHA` to ${{ github.sha }}",
-            )
+            .add("title", title.clone())
             .add(
                 "body",
                 indoc! {r#"
-                    This PR updates the `ZED_EXTENSION_CLI_SHA` constant to `${{ github.sha }}`.
-
-                    This was triggered by a new release of the `zed-extension` CLI.
+                    This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
                 "#},
             )
-            .add(
-                "commit-message",
-                "Update ZED_EXTENSION_CLI_SHA to ${{ github.sha }}",
-            )
+            .add("commit-message", title)
             .add("branch", "update-extension-cli-sha")
             .add(
                 "committer",
@@ -183,4 +180,15 @@ fn create_pull_request_extensions(generated_token: &StepOutput) -> Step<Use> {
             .add("labels", "allow-no-extension")
             .add("assignees", Context::github().actor().to_string()),
     )
+}
+
+fn get_short_sha() -> (Step<Run>, StepOutput) {
+    let step = named::bash(indoc::indoc! {r#"
+        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+    "#})
+    .id("short-sha");
+
+    let step_output = vars::StepOutput::new(&step, "sha_short");
+
+    (step, step_output)
 }

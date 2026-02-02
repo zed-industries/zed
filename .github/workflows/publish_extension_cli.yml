@@ -52,6 +52,10 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - id: short-sha
+      name: publish_extension_cli::get_short_sha
+      run: |
+        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - name: publish_extension_cli::update_sha_in_zed::replace_sha
       run: |
         sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
@@ -61,12 +65,10 @@ jobs:
     - name: publish_extension_cli::create_pull_request_zed
       uses: peter-evans/create-pull-request@v7
       with:
-        title: Update `ZED_EXTENSION_CLI_SHA` to ${{ github.sha }}
+        title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
-          This PR updates the `ZED_EXTENSION_CLI_SHA` constant to `${{ github.sha }}`.
-
-          This was triggered by a new release of the `zed-extension` CLI.
-        commit-message: Update ZED_EXTENSION_CLI_SHA to ${{ github.sha }}
+          This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
+        commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-extension-cli-sha
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
@@ -88,6 +90,10 @@ jobs:
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         owner: zed-industries
         repositories: extensions
+    - id: short-sha
+      name: publish_extension_cli::get_short_sha
+      run: |
+        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - name: publish_extension_cli::update_sha_in_extensions::checkout_extensions_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -100,12 +106,10 @@ jobs:
     - name: publish_extension_cli::create_pull_request_extensions
       uses: peter-evans/create-pull-request@v7
       with:
-        title: Update `ZED_EXTENSION_CLI_SHA` to ${{ github.sha }}
+        title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
-          This PR updates the `ZED_EXTENSION_CLI_SHA` constant to `${{ github.sha }}`.
-
-          This was triggered by a new release of the `zed-extension` CLI.
-        commit-message: Update ZED_EXTENSION_CLI_SHA to ${{ github.sha }}
+          This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
+        commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-extension-cli-sha
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
