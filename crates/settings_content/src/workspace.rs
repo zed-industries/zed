@@ -118,8 +118,8 @@ pub struct WorkspaceSettingsContent {
     pub window_decorations: Option<WindowDecorations>,
     /// Whether to reduce motion in UI animations.
     /// When set to "system", follows the OS accessibility setting.
-    /// When set to true, animations are always reduced.
-    /// When set to false, animations always play.
+    /// When set to "on", animations are always reduced.
+    /// When set to "off", animations always play.
     ///
     /// Default: system
     pub reduce_motion: Option<ReduceMotion>,
