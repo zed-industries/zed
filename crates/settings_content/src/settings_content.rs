@@ -254,7 +254,6 @@ pub struct ExtensionsSettingsContent {
     MergeFrom,
     PartialEq,
     Eq,
-    Default,
     strum::VariantArray,
 )]
 pub enum BaseKeymapContent {

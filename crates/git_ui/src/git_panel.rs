@@ -1692,12 +1692,11 @@ impl GitPanel {
             return;
         };
         let untracked_changes = self.untracked_changes;
-        let tracked_repo_paths = if stage
-            && !matches!(
-                untracked_changes,
-                GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
-            )
-        {
+        let stage_all_includes_untracked = matches!(
+            untracked_changes,
+            GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+        );
+        let tracked_repo_paths = if stage && !stage_all_includes_untracked {
             Some(self.tracked_repo_paths())
         } else {
             None
@@ -1709,10 +1708,7 @@ impl GitPanel {
                         let tracked_repo_paths = tracked_repo_paths.unwrap_or_default();
                         let task = active_repository.update(cx, |repo, cx| {
                             if stage {
-                                if matches!(
-                                    untracked_changes,
-                                    GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
-                                ) {
+                                if stage_all_includes_untracked {
                                     repo.stage_all(cx)
                                 } else {
                                     repo.stage_entries(tracked_repo_paths, cx)
