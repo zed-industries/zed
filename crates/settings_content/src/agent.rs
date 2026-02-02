@@ -70,6 +70,10 @@ pub struct AgentSettingsContent {
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
+    /// **Security note**: Even with this enabled, Zed's built-in security rules
+    /// still block `rm -rf /` and `rm -rf ~` to prevent catastrophic filesystem
+    /// destruction. These hardcoded protections cannot be bypassed by any setting.
+    ///
     /// This setting has no effect on external agents that support permission modes, such as Claude Code.
     ///
     /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
