@@ -242,7 +242,7 @@ impl LspStore {
                             let request = SemanticTokensFull {
                                 for_server: Some(server_id),
                             };
-                            if !request.check_capabilities(capabilities) {
+                            if !dbg!(request.check_capabilities(capabilities)) {
                                 return None;
                             }
                             self.request_lsp(

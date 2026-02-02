@@ -99,7 +99,7 @@ impl Editor {
                                 None
                             } else {
                                 let task = sema.semantic_tokens(buffer, for_server, cx);
-                                Some(async move { (buffer_id, query_version, task.await) })
+                                Some(async move { (buffer_id, query_version, dbg!(task.await)) })
                             }
                         })
                         .collect::<Vec<_>>()
@@ -370,7 +370,9 @@ mod tests {
     use gpui::{AppContext as _, Entity, Focusable as _, TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
-    use multi_buffer::{AnchorRangeExt as _, ExcerptRange, MultiBuffer, MultiBufferOffset};
+    use multi_buffer::{
+        AnchorRangeExt as _, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset,
+    };
     use project::Project;
     use rope::Point;
     use serde_json::json;
@@ -380,9 +382,7 @@ mod tests {
     use crate::{
         Capability,
         editor_tests::{init_test, update_test_language_settings},
-        test::{
-            build_editor, build_editor_with_project, editor_lsp_test_context::EditorLspTestContext,
-        },
+        test::{build_editor_with_project, editor_lsp_test_context::EditorLspTestContext},
     };
 
     use super::*;
@@ -691,6 +691,12 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+        let full_counter_toml_1 = Arc::new(AtomicUsize::new(0));
+        let full_counter_toml_1_clone = full_counter_toml_1.clone();
+        let full_counter_toml_2 = Arc::new(AtomicUsize::new(0));
+        let full_counter_toml_2_clone = full_counter_toml_2.clone();
+
         let mut toml_server_1 = language_registry.register_fake_lsp(
             toml_language.name(),
             FakeLspAdapter {
@@ -701,13 +707,40 @@ mod tests {
                             lsp::SemanticTokensOptions {
                                 legend: toml_legend_1,
                                 full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
-                                ..Default::default()
+                                ..lsp::SemanticTokensOptions::default()
                             },
                         ),
                     ),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                initializer: Some(Box::new({
+                    let full_counter_toml_1_clone = full_counter_toml_1_clone.clone();
+                    move |fake_server| {
+                        let full_counter = full_counter_toml_1_clone.clone();
+                        fake_server
+                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                                move |_, _| {
+                                    full_counter.fetch_add(1, atomic::Ordering::Release);
+                                    async move {
+                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                            lsp::SemanticTokens {
+                                                // highlight 'a' as a property
+                                                data: vec![
+                                                    0, // delta_line
+                                                    0, // delta_start
+                                                    1, // length
+                                                    0, // token_type
+                                                    0, // token_modifiers_bitset
+                                                ],
+                                                result_id: Some("a".into()),
+                                            },
+                                        )))
+                                    }
+                                },
+                            );
+                    }
+                })),
+                ..FakeLspAdapter::default()
             },
         );
         let mut toml_server_2 = language_registry.register_fake_lsp(
@@ -720,13 +753,40 @@ mod tests {
                             lsp::SemanticTokensOptions {
                                 legend: toml_legend_2,
                                 full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
-                                ..Default::default()
+                                ..lsp::SemanticTokensOptions::default()
                             },
                         ),
                     ),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                initializer: Some(Box::new({
+                    let full_counter_toml_2_clone = full_counter_toml_2_clone.clone();
+                    move |fake_server| {
+                        let full_counter = full_counter_toml_2_clone.clone();
+                        fake_server
+                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                                move |_, _| {
+                                    full_counter.fetch_add(1, atomic::Ordering::Release);
+                                    async move {
+                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                            lsp::SemanticTokens {
+                                                // highlight '3' as a literal
+                                                data: vec![
+                                                    0, // delta_line
+                                                    4, // delta_start
+                                                    1, // length
+                                                    0, // token_type
+                                                    0, // token_modifiers_bitset
+                                                ],
+                                                result_id: Some("a".into()),
+                                            },
+                                        )))
+                                    }
+                                },
+                            );
+                    }
+                })),
+                ..FakeLspAdapter::default()
             },
         );
         language_registry.add(toml_language.clone());
@@ -782,64 +842,18 @@ mod tests {
             window.focus(&editor.focus_handle(cx), cx)
         });
 
-        let toml_server_1 = toml_server_1.next().await.unwrap();
-        let toml_server_2 = toml_server_2.next().await.unwrap();
-
-        let full_counter_toml_1 = Arc::new(AtomicUsize::new(0));
-        let full_counter_toml_1_clone = full_counter_toml_1.clone();
-        let full_counter_toml_2 = Arc::new(AtomicUsize::new(0));
-        let full_counter_toml_2_clone = full_counter_toml_2.clone();
-
-        let mut toml_full_1_request = toml_server_1
-            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _| {
-                full_counter_toml_1_clone.fetch_add(1, atomic::Ordering::Release);
-                async move {
-                    Ok(Some(lsp::SemanticTokensResult::Tokens(
-                        lsp::SemanticTokens {
-                            // highlight 'a' as a property
-                            data: vec![
-                                0, // delta_line
-                                0, // delta_start
-                                1, // length
-                                0, // token_type
-                                0, // token_modifiers_bitset
-                            ],
-                            result_id: Some("a".into()),
-                        },
-                    )))
-                }
-            });
-
-        let mut toml_full_2_request = toml_server_2
-            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _| {
-                full_counter_toml_2_clone.fetch_add(1, atomic::Ordering::Release);
-                async move {
-                    Ok(Some(lsp::SemanticTokensResult::Tokens(
-                        lsp::SemanticTokens {
-                            // highlight '3' as a literal
-                            data: vec![
-                                0, // delta_line
-                                4, // delta_start
-                                1, // length
-                                0, // token_type
-                                0, // token_modifiers_bitset
-                            ],
-                            result_id: Some("a".into()),
-                        },
-                    )))
-                }
-            });
+        let _toml_server_1 = toml_server_1.next().await.unwrap();
+        let _toml_server_2 = toml_server_2.next().await.unwrap();
 
         // Trigger semantic tokens.
         editor.update_in(&mut cx, |editor, _, cx| {
             editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
         });
-        let res = join_all([toml_full_1_request.next(), toml_full_2_request.next()]).await;
-        assert!(res[0].is_some(), "server 1 did not get a request");
-        assert!(res[1].is_some(), "server 2 did not get a request");
+        cx.executor().advance_clock(Duration::from_millis(200));
         let task = editor.update_in(&mut cx, |e, _, _| {
             std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
         });
+        cx.run_until_parked();
         task.await;
 
         assert_eq!(
@@ -917,6 +931,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let full_counter_toml = Arc::new(AtomicUsize::new(0));
+        let full_counter_toml_clone = full_counter_toml.clone();
+
         let mut toml_server = language_registry.register_fake_lsp(
             toml_language.name(),
             FakeLspAdapter {
@@ -927,13 +944,50 @@ mod tests {
                             lsp::SemanticTokensOptions {
                                 legend: toml_legend,
                                 full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
-                                ..Default::default()
+                                ..lsp::SemanticTokensOptions::default()
                             },
                         ),
                     ),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                initializer: Some(Box::new({
+                    let full_counter_toml_clone = full_counter_toml_clone.clone();
+                    move |fake_server| {
+                        let full_counter = full_counter_toml_clone.clone();
+                        fake_server
+                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                                move |_, _| {
+                                    full_counter.fetch_add(1, atomic::Ordering::Release);
+                                    async move {
+                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                            lsp::SemanticTokens {
+                                                // highlight 'a', 'b', 'c' as properties on lines 0, 1, 2
+                                                data: vec![
+                                                    0, // delta_line (line 0)
+                                                    0, // delta_start
+                                                    1, // length
+                                                    0, // token_type
+                                                    0, // token_modifiers_bitset
+                                                    1, // delta_line (line 1)
+                                                    0, // delta_start
+                                                    1, // length
+                                                    0, // token_type
+                                                    0, // token_modifiers_bitset
+                                                    1, // delta_line (line 2)
+                                                    0, // delta_start
+                                                    1, // length
+                                                    0, // token_type
+                                                    0, // token_modifiers_bitset
+                                                ],
+                                                result_id: Some("a".into()),
+                                            },
+                                        )))
+                                    }
+                                },
+                            );
+                    }
+                })),
+                ..FakeLspAdapter::default()
             },
         );
         language_registry.add(toml_language.clone());
@@ -947,13 +1001,13 @@ mod tests {
                             lsp::SemanticTokensOptions {
                                 legend: rust_legend,
                                 full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
-                                ..Default::default()
+                                ..lsp::SemanticTokensOptions::default()
                             },
                         ),
                     ),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                ..FakeLspAdapter::default()
             },
         );
         language_registry.add(rust_language.clone());
@@ -966,7 +1020,7 @@ mod tests {
                 json!({
                     ".git": {},
                     "dir": {
-                        "foo.toml": "a = 1\nb = 2\n",
+                        "foo.toml": "a = 1\nb = 2\nc = 3\n",
                         "bar.rs": "const c: usize = 3;\n",
                     }
                 }),
@@ -1027,7 +1081,7 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.push_excerpts(
                 toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
                 cx,
             );
             multibuffer.push_excerpts(
@@ -1039,7 +1093,7 @@ mod tests {
         });
 
         let editor = workspace.update_in(&mut cx, |_, window, cx| {
-            cx.new(|cx| build_editor(multibuffer, window, cx))
+            cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx))
         });
         editor.update_in(&mut cx, |editor, window, cx| {
             let nav_history = workspace
@@ -1051,52 +1105,45 @@ mod tests {
             window.focus(&editor.focus_handle(cx), cx)
         });
 
-        let toml_server = toml_server.next().await.unwrap();
+        let _toml_server = toml_server.next().await.unwrap();
         let _rust_server = rust_server.next().await.unwrap();
 
-        let full_counter_toml = Arc::new(AtomicUsize::new(0));
-        let full_counter_toml_clone = full_counter_toml.clone();
-
-        let mut toml_full_request = toml_server
-            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _| {
-                full_counter_toml_clone.fetch_add(1, atomic::Ordering::Release);
-                async move {
-                    Ok(Some(lsp::SemanticTokensResult::Tokens(
-                        lsp::SemanticTokens {
-                            // highlight 'a' as a property
-                            data: vec![
-                                0, // delta_line
-                                0, // delta_start
-                                1, // length
-                                0, // token_type
-                                0, // token_modifiers_bitset
-                            ],
-                            result_id: Some("a".into()),
-                        },
-                    )))
-                }
-            });
-
         // Initial request.
-        toml_full_request.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(200));
         let task = editor.update_in(&mut cx, |e, _, _| {
             std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
         });
+        cx.run_until_parked();
         task.await;
         assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
+        cx.run_until_parked();
 
-        // Only edit the first part of the buffer, which is the TOML bit.
+        // Initially, excerpt only covers line 0, so only the 'a' token should be highlighted.
+        // The excerpt content is "a = 1\n" (6 chars), so 'a' is at offset 0.
+        assert_eq!(
+            extract_semantic_highlights(&editor, &cx),
+            vec![MultiBufferOffset(0)..MultiBufferOffset(1)]
+        );
+
+        // Get the excerpt id for the TOML excerpt and expand it down by 2 lines.
+        let toml_excerpt_id =
+            editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
         editor.update_in(&mut cx, |editor, _, cx| {
-            editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
+            editor.buffer().update(cx, |buffer, cx| {
+                buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
+            });
         });
-        toml_full_request.next().await.unwrap();
-        let task = editor.update_in(&mut cx, |e, _, _| {
-            std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
-        });
-        // This task will only complete once all servers have responded.
-        task.await;
-
-        assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);
+        // After expansion, the excerpt covers lines 0-2, so 'a', 'b', 'c' should all be highlighted.
+        // Content is now "a = 1\nb = 2\nc = 3\n" (18 chars).
+        // 'a' at offset 0, 'b' at offset 6, 'c' at offset 12.
+        assert_eq!(
+            extract_semantic_highlights(&editor, &cx),
+            vec![
+                MultiBufferOffset(0)..MultiBufferOffset(1),
+                MultiBufferOffset(6)..MultiBufferOffset(7),
+                MultiBufferOffset(12)..MultiBufferOffset(13),
+            ]
+        );
     }
 
     #[gpui::test]
@@ -1140,6 +1187,9 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let full_counter_toml = Arc::new(AtomicUsize::new(0));
+        let full_counter_toml_clone = full_counter_toml.clone();
+
         let mut toml_server = language_registry.register_fake_lsp(
             toml_language.name(),
             FakeLspAdapter {
@@ -1150,13 +1200,40 @@ mod tests {
                             lsp::SemanticTokensOptions {
                                 legend: toml_legend,
                                 full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
-                                ..Default::default()
+                                ..lsp::SemanticTokensOptions::default()
                             },
                         ),
                     ),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                initializer: Some(Box::new({
+                    let full_counter_toml_clone = full_counter_toml_clone.clone();
+                    move |fake_server| {
+                        let full_counter = full_counter_toml_clone.clone();
+                        fake_server
+                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                                move |_, _| {
+                                    full_counter.fetch_add(1, atomic::Ordering::Release);
+                                    async move {
+                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                            lsp::SemanticTokens {
+                                                // highlight 'a' as a property
+                                                data: vec![
+                                                    0, // delta_line
+                                                    0, // delta_start
+                                                    1, // length
+                                                    0, // token_type
+                                                    0, // token_modifiers_bitset
+                                                ],
+                                                result_id: Some("a".into()),
+                                            },
+                                        )))
+                                    }
+                                },
+                            );
+                    }
+                })),
+                ..FakeLspAdapter::default()
             },
         );
         language_registry.add(toml_language.clone());
@@ -1237,36 +1314,14 @@ mod tests {
             window.focus(&editor.focus_handle(cx), cx)
         });
 
-        let toml_server = toml_server.next().await.unwrap();
-
-        let full_counter_toml = Arc::new(AtomicUsize::new(0));
-        let full_counter_toml_clone = full_counter_toml.clone();
-
-        let mut toml_full_request = toml_server
-            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _| {
-                full_counter_toml_clone.fetch_add(1, atomic::Ordering::Release);
-                async move {
-                    Ok(Some(lsp::SemanticTokensResult::Tokens(
-                        lsp::SemanticTokens {
-                            // highlight 'a' as a property
-                            data: vec![
-                                0, // delta_line
-                                0, // delta_start
-                                1, // length
-                                0, // token_type
-                                0, // token_modifiers_bitset
-                            ],
-                            result_id: Some("a".into()),
-                        },
-                    )))
-                }
-            });
+        let _toml_server = toml_server.next().await.unwrap();
 
         // Initial request.
-        toml_full_request.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(200));
         let task = editor.update_in(&mut cx, |e, _, _| {
             std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
         });
+        cx.run_until_parked();
         task.await;
         assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
 
@@ -1278,10 +1333,11 @@ mod tests {
             editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
             editor.edit([(MultiBufferOffset(12)..MultiBufferOffset(13), "c")], cx);
         });
-        toml_full_request.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(200));
         let task = editor.update_in(&mut cx, |e, _, _| {
             std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
         });
+        cx.run_until_parked();
         task.await;
         assert_eq!(
             extract_semantic_highlights(&editor, &cx),
