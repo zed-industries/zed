@@ -1309,12 +1309,12 @@ impl DisplayMap {
     pub fn clear_highlights_with(&mut self, mut f: impl FnMut(&HighlightKey) -> bool) -> bool {
         let mut cleared = false;
         self.text_highlights.retain(|k, _| {
-            let b = f(k);
+            let b = !f(k);
             cleared |= b;
             b
         });
         self.inlay_highlights.retain(|k, _| {
-            let b = f(k);
+            let b = !f(k);
             cleared |= b;
             b
         });
