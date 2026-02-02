@@ -286,7 +286,7 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
-        // Collapses the selected entry and its children in the project tree.
+        /// Collapses the selected entry and its children in the project tree.
         CollapseSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
