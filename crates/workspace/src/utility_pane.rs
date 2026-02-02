@@ -268,6 +268,41 @@ impl UtilityPaneFrame {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_utility_pane_state_slot_left() {
+        let state = UtilityPaneState::default();
+        assert!(state.slot(UtilityPaneSlot::Left).is_none());
+        assert!(state.slot(UtilityPaneSlot::Left) as *const _ == &state.left_slot as *const _);
+    }
+
+    #[test]
+    fn test_utility_pane_state_slot_right() {
+        let state = UtilityPaneState::default();
+        assert!(state.slot(UtilityPaneSlot::Right).is_none());
+        assert!(state.slot(UtilityPaneSlot::Right) as *const _ == &state.right_slot as *const _);
+    }
+
+    #[test]
+    fn test_utility_slot_for_dock_position() {
+        assert_eq!(
+            utility_slot_for_dock_position(DockPosition::Left),
+            UtilityPaneSlot::Left
+        );
+        assert_eq!(
+            utility_slot_for_dock_position(DockPosition::Right),
+            UtilityPaneSlot::Right
+        );
+        assert_eq!(
+            utility_slot_for_dock_position(DockPosition::Bottom),
+            UtilityPaneSlot::Left
+        );
+    }
+}
+
 impl RenderOnce for UtilityPaneFrame {
     fn render(self, _window: &mut Window, cx: &mut ui::App) -> impl IntoElement {
         let workspace = self.workspace.clone();

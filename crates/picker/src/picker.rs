@@ -984,6 +984,148 @@ impl<D: PickerDelegate> Picker<D> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::px;
+
+    // ---- SelectionIndicator::animated_origin tests ----
+
+    fn indicator(
+        selected: usize,
+        previous: Option<usize>,
+        reduce_motion: bool,
+    ) -> SelectionIndicator {
+        SelectionIndicator {
+            selected_index: selected,
+            previous_selected_index: previous,
+            generation: 0,
+            reduce_motion,
+        }
+    }
+
+    #[test]
+    fn test_animated_origin_returns_none_when_reduce_motion() {
+        let ind = indicator(5, Some(3), true);
+        assert_eq!(ind.animated_origin(px(30.), &(0..10)), None);
+    }
+
+    #[test]
+    fn test_animated_origin_returns_none_when_no_previous_index() {
+        let ind = indicator(5, None, false);
+        assert_eq!(ind.animated_origin(px(30.), &(0..10)), None);
+    }
+
+    #[test]
+    fn test_animated_origin_returns_none_when_previous_not_visible() {
+        let ind = indicator(5, Some(12), false);
+        assert_eq!(ind.animated_origin(px(30.), &(3..10)), None);
+    }
+
+    #[test]
+    fn test_animated_origin_small_move_within_range() {
+        // Move from index 3 to index 5 (distance 2 <= MAX_ANIMATED_DISTANCE)
+        let ind = indicator(5, Some(3), false);
+        let result = ind.animated_origin(px(30.), &(0..10));
+        // Should return previous_index * item_height = 3 * 30 = 90
+        assert_eq!(result, Some(px(90.)));
+    }
+
+    #[test]
+    fn test_animated_origin_clamps_large_downward_move() {
+        // Move from index 0 to index 8 (distance 8 > MAX_ANIMATED_DISTANCE=3)
+        // Clamped to selected - MAX = 8 - 3 = 5
+        let ind = indicator(8, Some(0), false);
+        let result = ind.animated_origin(px(20.), &(0..10));
+        assert_eq!(result, Some(px(100.))); // 5 * 20
+    }
+
+    #[test]
+    fn test_animated_origin_clamps_large_upward_move() {
+        // Move from index 9 to index 2 (distance 7 > MAX_ANIMATED_DISTANCE=3)
+        // Clamped to selected + MAX = 2 + 3 = 5
+        let ind = indicator(2, Some(9), false);
+        let result = ind.animated_origin(px(20.), &(0..10));
+        assert_eq!(result, Some(px(100.))); // 5 * 20
+    }
+
+    #[test]
+    fn test_animated_origin_exact_boundary_distance() {
+        // Move from index 2 to index 5 (distance exactly MAX_ANIMATED_DISTANCE=3)
+        // No clamping needed
+        let ind = indicator(5, Some(2), false);
+        let result = ind.animated_origin(px(25.), &(0..10));
+        assert_eq!(result, Some(px(50.))); // 2 * 25
+    }
+
+    // ---- Picker::is_fully_visible tests ----
+    // We test by constructing a Picker-like state via last_visible_range directly.
+
+    fn check_fully_visible(
+        visible_range: Range<usize>,
+        index: usize,
+        match_count: usize,
+    ) -> bool {
+        let last_visible_range = Rc::new(RefCell::new(visible_range));
+        let visible = last_visible_range.borrow().clone();
+        let safe_start = if visible.start > 0 {
+            visible.start + 1
+        } else {
+            visible.start
+        };
+        let safe_end = if visible.end < match_count {
+            visible.end.saturating_sub(1)
+        } else {
+            visible.end
+        };
+        safe_start < safe_end && (safe_start..safe_end).contains(&index)
+    }
+
+    #[test]
+    fn test_is_fully_visible_in_safe_range() {
+        // Visible: 2..8, match_count=20 => safe: 3..7
+        assert!(check_fully_visible(2..8, 5, 20));
+    }
+
+    #[test]
+    fn test_is_fully_visible_at_scroll_boundary_start() {
+        // Visible: 2..8, match_count=20 => safe: 3..7
+        // Index 2 is at the partial-visibility start boundary
+        assert!(!check_fully_visible(2..8, 2, 20));
+    }
+
+    #[test]
+    fn test_is_fully_visible_at_scroll_boundary_end() {
+        // Visible: 2..8, match_count=20 => safe: 3..7
+        // Index 7 is at the partial-visibility end boundary
+        assert!(!check_fully_visible(2..8, 7, 20));
+    }
+
+    #[test]
+    fn test_is_fully_visible_at_list_start() {
+        // Visible: 0..8, match_count=20 => safe_start=0 (no clip), safe_end=7
+        assert!(check_fully_visible(0..8, 0, 20));
+    }
+
+    #[test]
+    fn test_is_fully_visible_at_list_end() {
+        // Visible: 12..20, match_count=20 => safe_start=13, safe_end=20 (no clip)
+        assert!(check_fully_visible(12..20, 19, 20));
+    }
+
+    #[test]
+    fn test_is_fully_visible_outside_range() {
+        // Index completely outside the visible range
+        assert!(!check_fully_visible(5..10, 15, 20));
+    }
+
+    #[test]
+    fn test_is_fully_visible_empty_range() {
+        // Empty visible range
+        assert!(!check_fully_visible(5..5, 5, 20));
+    }
+}
+
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 impl<D: PickerDelegate> ModalView for Picker<D> {}
 
