@@ -1425,7 +1425,7 @@ impl WorkspaceDb {
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
         let kind;
-        let mut user = None;
+        let user: Option<String>;
         let mut host = None;
         let mut port = None;
         let mut distro = None;
@@ -1455,6 +1455,7 @@ impl WorkspaceDb {
             RemoteConnectionOptions::Mock(options) => {
                 kind = RemoteConnectionKind::Ssh;
                 host = Some(format!("mock-{}", options.id));
+                user = Some(format!("mock-user-{}", options.id));
             }
         }
         Self::get_or_create_remote_connection_query(
