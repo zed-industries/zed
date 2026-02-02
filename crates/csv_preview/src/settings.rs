@@ -34,32 +34,12 @@ pub enum RowIdentifiers {
     RowNum,
 }
 
-// TODO: Finish implementation of column driven width first
-// #[derive(Default, Clone, Copy, PartialEq)]
-// pub(crate) enum TableWidthMode {
-//     /// Table width adjusts to container (fractional column resizing)
-//     #[default]
-//     Responsive,
-//     /// Table width grows with columns (absolute column resizing)
-//     ColumnDriven,
-// }
-
-// impl From<TableWidthMode> for TableWidth {
-//     fn from(mode: TableWidthMode) -> Self {
-//         match mode {
-//             TableWidthMode::Responsive => TableWidth::Unset,
-//             TableWidthMode::ColumnDriven => TableWidth::ColumnDriven,
-//         }
-//     }
-// }
-
 #[derive(Clone, Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) font_type: FontType,
     pub(crate) numbering_type: RowIdentifiers,
-    // pub(crate) table_width_mode: TableWidthMode,
     pub(crate) show_debug_info: bool,
     pub(crate) show_perf_metrics_overlay: bool,
     pub(crate) multiline_cells_enabled: bool,
