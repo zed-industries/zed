@@ -519,7 +519,7 @@ pub struct GitPanelSettingsContent {
     pub status_style: Option<StatusStyle>,
     /// How untracked files are displayed and staged in the git panel.
     ///
-    /// Default: separate
+    /// Default: classic
     pub untracked_changes: Option<GitPanelUntrackedChanges>,
     /// How and when the scrollbar should be displayed.
     ///
@@ -552,6 +552,7 @@ pub struct GitPanelSettingsContent {
 #[derive(
     Copy,
     Clone,
+    Default,
     Debug,
     Serialize,
     Deserialize,
@@ -564,10 +565,12 @@ pub struct GitPanelSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GitPanelUntrackedChanges {
+    /// Preserve the classic Zed behavior: show untracked separately while Stage All includes them.
+    #[default]
+    Classic,
     /// Show untracked files alongside tracked files and include them in stage/commit-all actions.
     Mixed,
     /// Show untracked files in their own section and exclude them from stage/commit-all actions.
-    #[default]
     Separate,
     /// Hide untracked files entirely and exclude them from stage/commit-all actions.
     Hidden,

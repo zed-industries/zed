@@ -1692,7 +1692,12 @@ impl GitPanel {
             return;
         };
         let untracked_changes = self.untracked_changes;
-        let tracked_repo_paths = if stage && untracked_changes != GitPanelUntrackedChanges::Mixed {
+        let tracked_repo_paths = if stage
+            && !matches!(
+                untracked_changes,
+                GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+            )
+        {
             Some(self.tracked_repo_paths())
         } else {
             None
@@ -1704,7 +1709,10 @@ impl GitPanel {
                         let tracked_repo_paths = tracked_repo_paths.unwrap_or_default();
                         let task = active_repository.update(cx, |repo, cx| {
                             if stage {
-                                if untracked_changes == GitPanelUntrackedChanges::Mixed {
+                                if matches!(
+                                    untracked_changes,
+                                    GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+                                ) {
                                     repo.stage_all(cx)
                                 } else {
                                     repo.stage_entries(tracked_repo_paths, cx)
@@ -3759,7 +3767,10 @@ impl GitPanel {
     }
 
     fn stage_scope_counts(&self) -> (usize, usize) {
-        if self.untracked_changes == GitPanelUntrackedChanges::Mixed {
+        if matches!(
+            self.untracked_changes,
+            GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+        ) {
             (self.total_staged_count(), self.entry_count)
         } else {
             (
@@ -4212,7 +4223,10 @@ impl GitPanel {
 
         let (staged_count, total_count) = self.stage_scope_counts();
         let is_fully_staged = total_count > 0 && staged_count == total_count;
-        let stage_tooltip = if self.untracked_changes == GitPanelUntrackedChanges::Mixed {
+        let stage_tooltip = if matches!(
+            self.untracked_changes,
+            GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+        ) {
             "git add --all"
         } else {
             "git add -u"
@@ -7110,6 +7124,53 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             assert!(panel.can_commit());
             assert_eq!(panel.commit_button_title(), "Commit");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_classic_mode_preserves_stage_all_behavior(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "new.txt": "new\n",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("new.txt", FileStatus::Untracked)],
+        );
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().untracked_changes =
+                        Some(GitPanelUntrackedChanges::Classic);
+                })
+            });
+        });
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(panel.can_stage_all());
+            assert!(!panel.can_commit());
+            assert_eq!(panel.commit_button_title(), "Commit Tracked");
         });
     }
 
