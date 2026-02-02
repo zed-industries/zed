@@ -8,7 +8,9 @@ use gpui::{
 };
 use language::{Buffer, CodeLabel, LanguageRegistry, Point, ToOffset, language_settings};
 use markdown::{Markdown, MarkdownStyle};
-use project::{Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, InlayId};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, InlayId,
+};
 use settings::Settings as _;
 use std::rc::Rc;
 use std::{fmt::Write, sync::Arc, time::Duration};
