@@ -121,6 +121,10 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn is_sidebar_open(&self) -> bool {
+        self.sidebar_open
+    }
+
     pub fn workspace(&self) -> &Entity<Workspace> {
         &self.workspaces[self.active_workspace_index]
     }
@@ -268,6 +272,7 @@ impl MultiWorkspace {
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
+        let ui_font = theme::setup_ui_font(window, cx);
 
         let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
             self.sidebar.as_ref().map(|sidebar_handle| {
@@ -320,8 +325,6 @@ impl Render for MultiWorkspace {
 
         client_side_decorations(
             h_flex()
-                // .items_start()
-                // .flex_1()
                 .size_full()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {

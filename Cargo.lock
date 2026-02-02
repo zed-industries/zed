@@ -12355,6 +12355,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "platform_title_bar"
 version = "0.1.0"
 dependencies = [
+ "feature_flags",
  "gpui",
  "settings",
  "smallvec",
@@ -17196,6 +17197,7 @@ dependencies = [
  "cloud_api_types",
  "collections",
  "db",
+ "feature_flags",
  "git_ui",
  "gpui",
  "http_client",
