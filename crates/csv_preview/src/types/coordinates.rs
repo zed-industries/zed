@@ -125,20 +125,3 @@ impl DisplayCellId {
         (self.row.0, self.col.0)
     }
 }
-
-/// Original CSV cell position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DataCellId {
-    pub row: DataRow,
-    pub col: AnyColumn,
-}
-
-impl DataCellId {
-    /// Create a new data cell ID
-    pub fn new(row: impl Into<DataRow>, col: impl Into<AnyColumn>) -> Self {
-        Self {
-            row: row.into(),
-            col: col.into(),
-        }
-    }
-}

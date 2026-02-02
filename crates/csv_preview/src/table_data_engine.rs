@@ -15,16 +15,12 @@ use ui::table_row::TableRow;
 use crate::{
     table_data_engine::{
         filtering_by_column::{FilterEntry, FilterStack, calculate_available_filters, retain_rows},
-        selection::{NavigationDirection, NavigationOperation, TableSelection},
         sorting_by_column::{AppliedSorting, sort_data_rows},
     },
-    types::{
-        AnyColumn, DataCellId, DataRow, DisplayCellId, DisplayRow, TableCell, TableLikeContent,
-    },
+    types::{AnyColumn, DataRow, DisplayRow, TableCell, TableLikeContent},
 };
 
 pub mod filtering_by_column;
-pub mod selection;
 pub mod sorting_by_column;
 
 #[derive(Default)]
@@ -35,7 +31,6 @@ pub(crate) struct TableDataEngine {
     pub applied_sorting: Option<AppliedSorting>,
     d2d_mapping: DisplayToDataMapping,
     pub contents: TableLikeContent,
-    pub selection: TableSelection,
 }
 
 impl TableDataEngine {
@@ -71,40 +66,6 @@ impl TableDataEngine {
         self.all_filters =
             calculate_available_filters(&self.contents.rows, self.contents.number_of_cols);
     }
-
-    pub(crate) fn change_selection(
-        &mut self,
-        direction: NavigationDirection,
-        operation: NavigationOperation,
-    ) {
-        let max_rows = self.contents.rows.len();
-        let max_cols = self.contents.number_of_cols;
-
-        self.selection
-            .navigate(direction, operation, &self.d2d_mapping, max_rows, max_cols);
-    }
-
-    pub(crate) fn start_mouse_selection(
-        &mut self,
-        display_cell_id: DisplayCellId,
-        preserve_existing: bool,
-    ) {
-        self.selection
-            .start_mouse_selection(display_cell_id, &self.d2d_mapping, preserve_existing);
-    }
-
-    pub(crate) fn extend_mouse_selection(
-        &mut self,
-        display_cell_id: &DisplayCellId,
-        preserve_existing: bool,
-    ) {
-        self.selection.extend_mouse_selection(
-            display_cell_id.row,
-            display_cell_id.col,
-            &self.d2d_mapping,
-            preserve_existing,
-        );
-    }
 }
 
 /// Relation of Display (rendered) rows to Data (src) rows with applied transformations
@@ -122,12 +83,6 @@ pub struct DisplayToDataMapping {
 }
 
 impl DisplayToDataMapping {
-    pub(crate) fn display_to_data_cell(&self, display_cid: &DisplayCellId) -> DataCellId {
-        let data_row = self.get_data_row(display_cid.row).unwrap_or_else(|| {
-            panic!("Expected {display_cid:?} to correspond to real DataCell, but it's not")
-        });
-        DataCellId::new(data_row, display_cid.col)
-    }
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()

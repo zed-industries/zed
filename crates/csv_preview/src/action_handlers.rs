@@ -2,8 +2,6 @@ use gpui::ListAlignment;
 
 use crate::{CsvPreviewView, types::AnyColumn};
 
-mod selection_handlers;
-
 impl CsvPreviewView {
     pub fn clear_filters(&mut self, col_idx: AnyColumn) {
         self.engine.clear_filters_for_col(col_idx);

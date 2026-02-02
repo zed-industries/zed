@@ -21,35 +21,7 @@ mod settings;
 mod table_data_engine;
 mod types;
 
-actions!(
-    csv,
-    [
-        OpenPreview,
-        SelectAll,
-        ClearSelection,
-        ///// Single cell selection /////
-        SelectUp,
-        SelectDown,
-        SelectLeft,
-        SelectRight,
-        ///// Selection extension /////
-        ExtendSelectionUp,
-        ExtendSelectionDown,
-        ExtendSelectionLeft,
-        ExtendSelectionRight,
-        ///// Single cell selection at edge /////
-        SelectAtTopEdge,
-        SelectAtBottomEdge,
-        SelectAtLeftEdge,
-        SelectAtRightEdge,
-        ///// Selection extension to edge /////
-        ExtendSelectionToTopEdge,
-        ExtendSelectionToBottomEdge,
-        ExtendSelectionToLeftEdge,
-        ExtendSelectionToRightEdge,
-    ]
-);
-const TABLE_CONTEXT_NAME: &'static str = "CsvPreview";
+actions!(csv, [OpenPreview]);
 
 pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,

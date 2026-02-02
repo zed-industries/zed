@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use ui::{ScrollAxes, WithScrollbar, div, prelude::*};
 
-use crate::{CsvPreviewView, TABLE_CONTEXT_NAME, settings::FontType};
+use crate::{CsvPreviewView, settings::FontType};
 
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -15,25 +15,6 @@ impl Render for CsvPreviewView {
             .bg(theme.colors().editor_background)
             // Apparently, this should make newly created CSV preview to get focus automatically
             .track_focus(&self.focus_handle)
-            .key_context(TABLE_CONTEXT_NAME)
-            .on_action(cx.listener(Self::clear_selection))
-            .on_action(cx.listener(Self::select_up))
-            .on_action(cx.listener(Self::select_down))
-            .on_action(cx.listener(Self::select_left))
-            .on_action(cx.listener(Self::select_right))
-            .on_action(cx.listener(Self::extend_selection_up))
-            .on_action(cx.listener(Self::extend_selection_down))
-            .on_action(cx.listener(Self::extend_selection_left))
-            .on_action(cx.listener(Self::extend_selection_right))
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::select_at_top_edge))
-            .on_action(cx.listener(Self::select_at_bottom_edge))
-            .on_action(cx.listener(Self::select_at_left_edge))
-            .on_action(cx.listener(Self::select_at_right_edge))
-            .on_action(cx.listener(Self::extend_selection_to_top_edge))
-            .on_action(cx.listener(Self::extend_selection_to_bottom_edge))
-            .on_action(cx.listener(Self::extend_selection_to_left_edge))
-            .on_action(cx.listener(Self::extend_selection_to_right_edge))
             .child(self.render_settings_panel(window, cx))
             .child({
                 if self.engine.contents.number_of_cols == 0 {

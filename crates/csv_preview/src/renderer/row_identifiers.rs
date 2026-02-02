@@ -152,7 +152,6 @@ impl CsvPreviewView {
         &self,
         display_row: DisplayRow,
         data_row: DataRow,
-        row_identifier_text_color: gpui::Hsla,
         cx: &Context<'_, CsvPreviewView>,
     ) -> Option<AnyElement> {
         let row_identifier: SharedString = match self.settings.numbering_type {
@@ -169,22 +168,12 @@ impl CsvPreviewView {
                 .into(),
             RowIdentifiers::RowNum => (*display_row + 1).to_string().into(),
         };
-        // Check if this row has focus to highlight the line number
-        let is_focused = self.engine.selection.is_row_focused(display_row);
-
-        // Use normal text color for focused row, muted color otherwise
-        let text_color = if is_focused {
-            cx.theme().colors().text
-        } else {
-            row_identifier_text_color
-        };
 
         let value = div()
             .flex()
             .px_1()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .text_color(text_color)
             .h_full()
             .text_ui(cx)
             // Row identifiers are always centered

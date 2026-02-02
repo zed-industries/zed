@@ -90,7 +90,6 @@ impl CsvPreviewView {
             .disable_base_style()
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
-                let selected_bg = cx.theme().colors().element_selected;
                 match self.settings.rendering_with {
                     RowRenderMechanism::VariableList => {
                         table.variable_row_height_list(row_count, self.list_state.clone(), {
@@ -104,7 +103,6 @@ impl CsvPreviewView {
                                     cols,
                                     display_row,
                                     row_identifier_text_color,
-                                    selected_bg,
                                     cx,
                                 )
                                 .unwrap_or_else(|| panic!("Expected to render a table row"))
@@ -126,7 +124,6 @@ impl CsvPreviewView {
                                             cols,
                                             DisplayRow(display_index),
                                             row_identifier_text_color,
-                                            selected_bg,
                                             cx,
                                         )
                                     })
@@ -145,7 +142,6 @@ impl CsvPreviewView {
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
-        selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
@@ -153,12 +149,7 @@ impl CsvPreviewView {
         let row = this.engine.contents.get_row(data_row)?;
 
         let mut elements = Vec::with_capacity(cols);
-        elements.push(this.create_row_identifier_cell(
-            display_row,
-            data_row,
-            row_identifier_text_color,
-            cx,
-        )?);
+        elements.push(this.create_row_identifier_cell(display_row, data_row, cx)?);
 
         // Remaining columns: actual CSV data
         for col in (0..this.engine.contents.number_of_cols).map(AnyColumn) {
@@ -169,28 +160,10 @@ impl CsvPreviewView {
 
             let display_cell_id = DisplayCellId::new(display_row, col);
 
-            // Check if this cell is selected using display coordinates
-            let is_selected = this.engine.selection.is_cell_selected(
-                display_row,
-                col,
-                &this.engine.d2d_mapping(),
-            );
-
-            // Check if this cell is focused using display coordinates
-            let is_focused = this.engine.selection.is_cell_focused(display_row, col);
-
-            // Check if this cell is the selection anchor using display coordinates
-            let is_anchor = this.engine.selection.is_cell_anchor(display_row, col);
-
             let cell = div().size_full().whitespace_nowrap().text_ellipsis().child(
                 CsvPreviewView::create_selectable_cell(
                     display_cell_id,
                     cell_content,
-                    cx.entity(),
-                    selected_bg,
-                    is_selected,
-                    is_focused,
-                    is_anchor,
                     this.settings.vertical_alignment,
                     this.settings.font_type,
                     cx,
