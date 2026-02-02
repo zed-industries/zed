@@ -205,6 +205,7 @@ impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let titlebar_height = platform_title_bar_height(window);
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
+        let ui_font = theme::setup_ui_font(window, cx);
 
         let sidebar = if multi_workspace_enabled && self.sidebar_open {
             let items: Vec<_> = self
@@ -234,8 +235,6 @@ impl Render for MultiWorkspace {
                         .toggle_state(is_active)
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.activate_index(index, cx);
-                            this.sidebar_open = false;
-                            cx.notify();
                         }))
                         .child(Label::new(label))
                 })
@@ -244,6 +243,7 @@ impl Render for MultiWorkspace {
             Some(
                 v_flex()
                     .id("workspace-sidebar")
+                    .font(ui_font)
                     .h_full()
                     .w_64()
                     .bg(cx.theme().colors().surface_background)
