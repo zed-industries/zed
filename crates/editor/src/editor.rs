@@ -23853,8 +23853,16 @@ impl Editor {
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_document_highlights(cx);
+                let snapshot = multibuffer.read(cx).snapshot(cx);
                 for id in ids {
                     self.fetched_tree_sitter_chunks.remove(id);
+                    if let Some(buffer) = snapshot.buffer_for_excerpt(*id) {
+                        let buffer_id = buffer.remote_id();
+                        self.semantic_tokens_fetched_for_buffers.remove(&buffer_id);
+                        self.display_map.update(cx, |display_map, _| {
+                            display_map.invalidate_semantic_highlights(buffer_id);
+                        });
+                    }
                 }
                 self.colorize_brackets(false, cx);
                 self.update_lsp_data(None, window, cx);

@@ -1130,6 +1130,15 @@ mod tests {
                 buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
             });
         });
+
+        // Wait for semantic tokens to be re-fetched after expansion.
+        cx.executor().advance_clock(Duration::from_millis(200));
+        let task = editor.update_in(&mut cx, |e, _, _| {
+            std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        });
+        cx.run_until_parked();
+        task.await;
+
         // After expansion, the excerpt covers lines 0-2, so 'a', 'b', 'c' should all be highlighted.
         // Content is now "a = 1\nb = 2\nc = 3\n" (18 chars).
         // 'a' at offset 0, 'b' at offset 6, 'c' at offset 12.
