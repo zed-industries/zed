@@ -48,7 +48,7 @@ use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{Anchor, OffsetRangeExt, ToPoint as _};
-use theme::{AgentFontSize, ThemeSettings};
+use theme::AgentFontSize;
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
     DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
@@ -6327,7 +6327,6 @@ impl AcpServerView {
                                 })
                             })
                             .children(self.render_selection_indicator(cx))
-                            })
                             .child(self.render_send_button(cx)),
                     ),
             )
