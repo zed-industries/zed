@@ -460,7 +460,12 @@ fn runnable_ranges(
                 }
                 else{
                     // either the cursor is in the first cell or there's no cell in whole file, run codes above cursor, exclude the current line.
-                    snippet_range = cell_range(buffer, 0, range.start.row-1);
+                    if range.start.row > 0 {
+                        snippet_range = cell_range(buffer, 0, range.start.row-1);
+                    } else {
+                        // cursor is in the first line, return empty
+                        return (Vec::new(), None);
+                    }
                 }
             } else {
                 // func jupytext_cells search jupytext_prefixes backward
