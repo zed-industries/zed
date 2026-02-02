@@ -263,6 +263,8 @@ pub enum IconName {
     UserRoundPen,
     Warning,
     WholeWord,
+    WorkspaceSidebarClosed,
+    WorkspaceSidebarOpen,
     XCircle,
     XCircleFilled,
     ZedAgent,

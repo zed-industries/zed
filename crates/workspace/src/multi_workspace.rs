@@ -2,7 +2,7 @@ use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{Action, App, Context, Entity, ManagedView, Render, Window, actions, px};
 use project::Project;
 use theme::ActiveTheme;
-use ui::{ListItem, ListSeparator, prelude::*};
+use ui::{ListItem, ListSeparator, Tooltip, prelude::*, utils::TRAFFIC_LIGHT_PADDING};
 
 use crate::{
     DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
@@ -47,6 +47,10 @@ impl MultiWorkspace {
         }
         self.sidebar_open = !self.sidebar_open;
         cx.notify();
+    }
+
+    pub fn is_sidebar_open(&self) -> bool {
+        self.sidebar_open
     }
 
     pub fn workspace(&self) -> &Entity<Workspace> {
@@ -246,12 +250,29 @@ impl Render for MultiWorkspace {
                             .h(titlebar_height)
                             .w_full()
                             .pr_2()
-                            .pl(px(80.))
+                            .when(cfg!(target_os = "macos"), |this| {
+                                this.pl(px(TRAFFIC_LIGHT_PADDING))
+                            })
                             .justify_between()
-                            .child(Label::new("Workspaces").size(LabelSize::Small))
+                            .child(
+                                IconButton::new("close-sidebar", IconName::WorkspaceSidebarOpen)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::for_action(
+                                            "Close Sidebar",
+                                            &ToggleWorkspaceSidebar,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.sidebar_open = false;
+                                        cx.notify();
+                                    })),
+                            )
                             .child(
                                 IconButton::new("new-workspace", IconName::Plus)
                                     .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("New Workspace"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         window.dispatch_action(
                                             NewWorkspaceInWindow.boxed_clone(),
@@ -278,8 +299,6 @@ impl Render for MultiWorkspace {
 
         client_side_decorations(
             h_flex()
-                // .items_start()
-                // .flex_1()
                 .size_full()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {

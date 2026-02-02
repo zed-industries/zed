@@ -1,16 +1,18 @@
 mod platforms;
 mod system_window_tabs;
 
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
+    AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
+    WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
-use ui::prelude::*;
+use ui::{prelude::*, utils::TRAFFIC_LIGHT_PADDING};
 
 use crate::{
-    platforms::{platform_linux, platform_mac, platform_windows},
+    platforms::{platform_linux, platform_windows},
     system_window_tabs::SystemWindowTabs,
 };
 
@@ -24,6 +26,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    workspace_sidebar_open: bool,
 }
 
 impl PlatformTitleBar {
@@ -37,6 +40,7 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            workspace_sidebar_open: false,
         }
     }
 
@@ -73,6 +77,18 @@ impl PlatformTitleBar {
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
     }
+
+    pub fn is_workspace_sidebar_open(&self) -> bool {
+        self.workspace_sidebar_open
+    }
+
+    pub fn set_workspace_sidebar_open(&mut self, open: bool) {
+        self.workspace_sidebar_open = open;
+    }
+
+    pub fn is_multi_workspace_enabled(cx: &App) -> bool {
+        cx.has_flag::<AgentV2FeatureFlag>()
+    }
 }
 
 impl Render for PlatformTitleBar {
@@ -83,6 +99,9 @@ impl Render for PlatformTitleBar {
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
+
+        let is_multiworkspace_sidebar_open =
+            PlatformTitleBar::is_multi_workspace_enabled(cx) && self.is_workspace_sidebar_open();
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -132,8 +151,10 @@ impl Render for PlatformTitleBar {
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
-                } else if self.platform_style == PlatformStyle::Mac {
-                    this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                } else if self.platform_style == PlatformStyle::Mac
+                    && !is_multiworkspace_sidebar_open
+                {
+                    this.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else {
                     this.pl_2()
                 }

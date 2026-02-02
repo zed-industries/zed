@@ -22,6 +22,7 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
@@ -41,7 +42,10 @@ use ui::{
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::ResultExt;
-use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
+use workspace::{
+    MultiWorkspace, SwitchProject, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
+    notifications::NotifyResultExt,
+};
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
@@ -171,6 +175,7 @@ impl Render for TitleBar {
                                 title_bar.child(menu)
                             },
                         )
+                        .children(self.render_workspace_sidebar_toggle(window, cx))
                         .children(self.render_restricted_mode(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
@@ -339,6 +344,44 @@ impl TitleBar {
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
+
+        // Set up observer to sync sidebar state from MultiWorkspace to PlatformTitleBar.
+        {
+            let platform_titlebar = platform_titlebar.clone();
+            let window_handle = window.window_handle();
+            cx.spawn(async move |this: WeakEntity<TitleBar>, cx| {
+                let Some(multi_workspace_handle) = window_handle.downcast::<MultiWorkspace>()
+                else {
+                    return;
+                };
+
+                let _ = cx.update(|cx| {
+                    let Ok(multi_workspace) = multi_workspace_handle.entity(cx) else {
+                        return;
+                    };
+
+                    let is_open = multi_workspace.read(cx).is_sidebar_open();
+                    platform_titlebar.update(cx, |titlebar, _| {
+                        titlebar.set_workspace_sidebar_open(is_open);
+                    });
+
+                    let platform_titlebar = platform_titlebar.clone();
+                    let subscription = cx.observe(&multi_workspace, move |mw, cx| {
+                        let is_open = mw.read(cx).is_sidebar_open();
+                        platform_titlebar.update(cx, |titlebar, _| {
+                            titlebar.set_workspace_sidebar_open(is_open);
+                        });
+                    });
+
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, _| {
+                            this._subscriptions.push(subscription);
+                        });
+                    }
+                });
+            })
+            .detach();
+        }
 
         Self {
             platform_titlebar,
@@ -622,6 +665,34 @@ impl TitleBar {
                             })
                             .log_err();
                     })
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_workspace_sidebar_toggle(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return None;
+        }
+
+        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
+
+        if is_sidebar_open {
+            return None;
+        }
+
+        Some(
+            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceSidebarClosed)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Toggle Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
                 })
                 .into_any_element(),
         )
