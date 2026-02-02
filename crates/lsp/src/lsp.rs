@@ -1208,6 +1208,11 @@ impl LanguageServer {
         self.server_id
     }
 
+    /// Get the process ID of the running language server, if available.
+    pub fn process_id(&self) -> Option<u32> {
+        self.server.lock().as_ref().map(|child| child.id())
+    }
+
     /// Language server's binary information.
     pub fn binary(&self) -> &LanguageServerBinary {
         &self.binary
