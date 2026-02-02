@@ -263,7 +263,7 @@ struct ProjectState {
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     user_actions: VecDeque<UserActionRecord>,
-    _subscription: gpui::Subscription,
+    _subscriptions: [gpui::Subscription; 2],
     copilot: Option<Entity<Copilot>>,
 }
 
@@ -838,7 +838,13 @@ impl EditPredictionStore {
                 last_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
                 user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
-                _subscription: cx.subscribe(&project, Self::handle_project_event),
+                _subscriptions: [
+                    cx.subscribe(&project, Self::handle_project_event),
+                    cx.observe_release(&project, move |this, _, cx| {
+                        this.projects.remove(&entity_id);
+                        cx.notify();
+                    }),
+                ],
                 copilot: None,
             })
     }
