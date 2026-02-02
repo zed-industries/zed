@@ -125,14 +125,14 @@ per language.
 These commands help you manage multiple cursors in Zed.
 
 | Command                                                                           | Default Shortcut |
-| ----------------------------------------------------------------------------------| ---------------- |
+| --------------------------------------------------------------------------------- | ---------------- |
 | Add a cursor selecting the next copy of the current word                          | `g l`            |
 | Add a cursor selecting the previous copy of the current word                      | `g L`            |
+| Add a cursor at the end of every line in the current visual selection             | `g A`            |
+| Add a cursor at the first character of every line in the current visual selection | `g I`            |
+| Add a visual selection for every copy of the current word                         | `g a`            |
 | Skip latest word selection, and add next                                          | `g >`            |
 | Skip latest word selection, and add previous                                      | `g <`            |
-| Add a visual selection for every copy of the current word                         | `g a`            |
-| Add a cursor at the first character of every line in the current visual selection | `g I`            |
-| Add a cursor at the end of every line in the current visual selection             | `g A`            |
 
 ### Pane management
 
@@ -207,7 +207,6 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
-
   - Prefer traditional Vim behavior
   - Want consistent character-based selection prioritizing innermost delimiters
   - Need behavior that closely matches vanilla Vim's text objects
