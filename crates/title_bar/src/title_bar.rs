@@ -686,7 +686,7 @@ impl TitleBar {
         }
 
         Some(
-            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceSidebarClosed)
+            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
                     Tooltip::for_action("Toggle Workspace Sidebar", &ToggleWorkspaceSidebar, cx)

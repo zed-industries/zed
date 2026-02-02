@@ -122,7 +122,7 @@ impl Render for Sidebar {
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        IconButton::new("close-sidebar", IconName::WorkspaceSidebarOpen)
+                        IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
                             .icon_size(IconSize::Small)
                             .tooltip(|_window, cx| {
                                 Tooltip::for_action("Close Sidebar", &ToggleWorkspaceSidebar, cx)
