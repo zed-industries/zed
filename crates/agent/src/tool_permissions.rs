@@ -33,7 +33,7 @@ fn check_hardcoded_security_rules(
     shell_kind: ShellKind,
 ) -> Option<ToolPermissionDecision> {
     // Currently only terminal tool has hardcoded rules
-    if tool_name != "terminal" {
+    if tool_name != TerminalTool::name() {
         return None;
     }
 
@@ -131,7 +131,8 @@ impl ToolPermissionDecision {
         always_allow_tool_actions: bool,
         shell_kind: ShellKind,
     ) -> ToolPermissionDecision {
-        // FIRST: Check hardcoded security rules - these CANNOT be bypassed by any setting
+        // First, check hardcoded security rules, such as banning `rm -rf /` in terminal tool.
+        // These cannot be bypassed by any user settings.
         if let Some(denial) = check_hardcoded_security_rules(tool_name, input, shell_kind) {
             return denial;
         }
@@ -1062,9 +1063,7 @@ mod tests {
         }
     }
 
-    // =====================================================================
     // Hardcoded security rules tests - these rules CANNOT be bypassed
-    // =====================================================================
 
     #[test]
     fn hardcoded_blocks_rm_rf_root() {
