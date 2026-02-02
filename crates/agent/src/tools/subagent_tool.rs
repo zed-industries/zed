@@ -92,10 +92,6 @@ pub struct SubagentTool {
     context_server_registry: Entity<ContextServerRegistry>,
     templates: Arc<Templates>,
     current_depth: u8,
-    /// The tools available to the parent thread, captured before SubagentTool was added.
-    /// Subagents inherit from this set (or a subset via `allowed_tools` in the config).
-    /// This is captured early so subagents don't get the subagent tool themselves.
-    parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
 }
 
 impl SubagentTool {
@@ -106,7 +102,6 @@ impl SubagentTool {
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         current_depth: u8,
-        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     ) -> Self {
         Self {
             parent_thread,
@@ -115,29 +110,30 @@ impl SubagentTool {
             context_server_registry,
             templates,
             current_depth,
-            parent_tools,
         }
     }
 
-    pub fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
-        let Some(tools) = allowed_tools else {
+    pub fn validate_allowed_tools(
+        &self,
+        allowed_tools: &Option<Vec<String>>,
+        cx: &App,
+    ) -> Result<()> {
+        let Some(allowed_tools) = allowed_tools else {
             return Ok(());
         };
 
-        let invalid_tools: Vec<&str> = tools
-            .iter()
-            .filter(|tool| !self.parent_tools.contains_key(tool.as_str()))
-            .map(|s| s.as_str())
-            .collect();
+        let invalid_tools: Vec<_> = self.parent_thread.read_with(cx, |thread, _cx| {
+            allowed_tools
+                .iter()
+                .filter(|tool| !thread.tools.contains_key(tool.as_str()))
+                .map(|s| format!("'{s}'"))
+                .collect()
+        })?;
 
         if !invalid_tools.is_empty() {
             return Err(anyhow!(
                 "The following tools do not exist: {}",
-                invalid_tools
-                    .iter()
-                    .map(|t| format!("'{}'", t))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                invalid_tools.join(", ")
             ));
         }
 
@@ -180,7 +176,7 @@ impl AgentTool for SubagentTool {
             )));
         }
 
-        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools) {
+        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
             return Task::ready(Err(e));
         }
 
@@ -209,7 +205,10 @@ impl AgentTool for SubagentTool {
         let project_context = self.project_context.clone();
         let context_server_registry = self.context_server_registry.clone();
         let templates = self.templates.clone();
-        let parent_tools = self.parent_tools.clone();
+        let parent_tools = self
+            .parent_thread
+            .read_with(cx, |thread, _cx| thread.tools.clone())
+            .unwrap_or_default();
         let current_depth = self.current_depth;
         let parent_thread_weak = self.parent_thread.clone();
 
