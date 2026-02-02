@@ -266,3 +266,38 @@ mod easing {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ease_out_cubic_boundaries() {
+        assert_eq!(ease_out_cubic(0.0), 0.0);
+        assert_eq!(ease_out_cubic(1.0), 1.0);
+    }
+
+    #[test]
+    fn test_ease_out_cubic_monotonically_increasing() {
+        let mut previous = 0.0f32;
+        for i in 1..=100 {
+            let t = i as f32 / 100.0;
+            let value = ease_out_cubic(t);
+            assert!(
+                value >= previous,
+                "ease_out_cubic should be monotonically increasing: f({t}) = {value} < f({}) = {previous}",
+                (i - 1) as f32 / 100.0
+            );
+            previous = value;
+        }
+    }
+
+    #[test]
+    fn test_ease_out_cubic_midpoint() {
+        let mid = ease_out_cubic(0.5);
+        assert!(
+            mid > 0.5,
+            "ease-out should be above linear at midpoint, got {mid}"
+        );
+    }
+}
