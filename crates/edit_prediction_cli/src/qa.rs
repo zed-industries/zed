@@ -3,17 +3,20 @@
 //! This module uses LLM Batch APIs to evaluate prediction quality.
 //! Caching is handled by the underlying client.
 
-use crate::BatchProvider;
-use crate::anthropic_client::AnthropicClient;
-use crate::example::Example;
-use crate::format_prompt::extract_cursor_excerpt_from_example;
-use crate::openai_client::OpenAiClient;
-use crate::paths::LLM_CACHE_DB;
-use crate::word_diff::unified_to_word_diff;
-use anyhow::Result;
+use crate::{
+    BatchProvider,
+    anthropic_client::AnthropicClient,
+    example::Example,
+    format_prompt::extract_cursor_excerpt_from_example,
+    openai_client::OpenAiClient,
+    parse_output::run_parse_output,
+    paths::LLM_CACHE_DB,
+    progress::{ExampleProgress, Step},
+    word_diff::unified_to_word_diff,
+};
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Arguments for the QA command.
 #[derive(Debug, Clone, clap::Args)]
@@ -21,10 +24,6 @@ pub struct QaArgs {
     /// Use synchronous API instead of batch
     #[clap(long)]
     pub no_batch: bool,
-
-    /// Wait for batch to complete (polls every 30s)
-    #[clap(long)]
-    pub wait: bool,
 
     /// Which LLM provider to use (anthropic or openai)
     #[clap(long, default_value = "openai")]
@@ -63,15 +62,24 @@ pub struct QaResult {
 }
 
 /// Build the assessment prompt for an example.
-pub fn build_prompt(example: &Example) -> Option<String> {
-    let prediction = example.predictions.first()?;
-    let actual_patch = prediction.actual_patch.as_ref()?;
-    let prompt_inputs = example.prompt_inputs.as_ref()?;
+pub fn build_prompt(example: &Example) -> Result<String> {
+    let prediction = example
+        .predictions
+        .first()
+        .context("no predictions available")?;
+    let actual_patch = prediction
+        .actual_patch
+        .as_ref()
+        .context("no actual_patch available (run predict first)")?;
+    let prompt_inputs = example
+        .prompt_inputs
+        .as_ref()
+        .context("prompt_inputs missing (run context retrieval first)")?;
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
-    // Format cursor excerpt (reuse from format_prompt)
-    let cursor_excerpt = extract_cursor_excerpt_from_example(example)?;
+    let cursor_excerpt =
+        extract_cursor_excerpt_from_example(example).context("failed to extract cursor excerpt")?;
 
     let mut edit_history = String::new();
     for event in &prompt_inputs.edit_history {
@@ -93,15 +101,12 @@ pub fn build_prompt(example: &Example) -> Option<String> {
     }
 
     let prompt_template = crate::prompt_assets::get_prompt("qa.md");
-    Some(
-        prompt_template
-            .replace("{edit_history}", &edit_history)
-            .replace("{cursor_excerpt}", &cursor_excerpt)
-            .replace("{actual_patch_word_diff}", &actual_patch_word_diff),
-    )
+    Ok(prompt_template
+        .replace("{edit_history}", &edit_history)
+        .replace("{cursor_excerpt}", &cursor_excerpt)
+        .replace("{actual_patch_word_diff}", &actual_patch_word_diff))
 }
 
-/// Extract a code block from a response.
 fn extract_codeblock(response: &str) -> Option<String> {
     let lines: Vec<&str> = response.lines().collect();
     for (i, line) in lines.iter().enumerate() {
@@ -118,11 +123,9 @@ fn extract_codeblock(response: &str) -> Option<String> {
     None
 }
 
-/// Parse the LLM response into a QaResult.
 fn parse_response(response_text: &str) -> QaResult {
     let codeblock = extract_codeblock(response_text);
 
-    // Try parsing codeblock first, then fall back to raw response
     for text_to_parse in [codeblock.as_deref(), Some(response_text.trim())] {
         let Some(text) = text_to_parse else {
             continue;
@@ -145,7 +148,6 @@ fn parse_response(response_text: &str) -> QaResult {
         }
     }
 
-    // If all parsing attempts fail, return error
     QaResult {
         reasoning: Some(response_text.to_string()),
         reverts_edits: None,
@@ -155,239 +157,148 @@ fn parse_response(response_text: &str) -> QaResult {
     }
 }
 
-enum QaClient {
-    Anthropic(AnthropicClient),
-    OpenAi(OpenAiClient),
-}
+static ANTHROPIC_CLIENT_BATCH: OnceLock<AnthropicClient> = OnceLock::new();
+static ANTHROPIC_CLIENT_PLAIN: OnceLock<AnthropicClient> = OnceLock::new();
+static OPENAI_CLIENT_BATCH: OnceLock<OpenAiClient> = OnceLock::new();
+static OPENAI_CLIENT_PLAIN: OnceLock<OpenAiClient> = OnceLock::new();
 
-impl QaClient {
-    async fn generate(&self, model: &str, max_tokens: u64, prompt: &str) -> Result<Option<String>> {
-        match self {
-            QaClient::Anthropic(client) => {
-                let messages = vec![anthropic::Message {
-                    role: anthropic::Role::User,
-                    content: vec![anthropic::RequestContent::Text {
-                        text: prompt.to_string(),
-                        cache_control: None,
-                    }],
-                }];
-                let response = client
-                    .generate(model, max_tokens, messages, None, false)
-                    .await?;
-                Ok(response.map(|r| {
-                    r.content
-                        .iter()
-                        .filter_map(|c| match c {
-                            anthropic::ResponseContent::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-            QaClient::OpenAi(client) => {
-                let messages = vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt.to_string()),
-                }];
-                let response = client
-                    .generate(model, max_tokens, messages, None, false)
-                    .await?;
-                Ok(response.map(|r| {
-                    r.choices
-                        .into_iter()
-                        .filter_map(|choice| match choice.message {
-                            open_ai::RequestMessage::Assistant { content, .. } => {
-                                content.map(|c| match c {
-                                    open_ai::MessageContent::Plain(text) => text,
-                                    open_ai::MessageContent::Multipart(parts) => parts
-                                        .into_iter()
-                                        .filter_map(|p| match p {
-                                            open_ai::MessagePart::Text { text } => Some(text),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(""),
-                                })
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-        }
-    }
-
-    async fn sync_batches(&self) -> Result<()> {
-        match self {
-            QaClient::Anthropic(client) => client.sync_batches().await,
-            QaClient::OpenAi(client) => client.sync_batches().await,
-        }
-    }
-}
-
-/// Run the QA evaluation on a set of examples.
+/// Run QA evaluation for a single example.
 pub async fn run_qa(
-    examples: &mut [Example],
+    example: &mut Example,
     args: &QaArgs,
-    output_path: Option<&PathBuf>,
+    example_progress: &ExampleProgress,
 ) -> Result<()> {
+    if example
+        .qa
+        .first()
+        .and_then(|q| q.as_ref())
+        .and_then(|q| q.confidence)
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    run_parse_output(example).context("Failed to execute run_parse_output")?;
+
+    if example.prompt_inputs.is_none() {
+        anyhow::bail!("prompt_inputs missing (run context retrieval first)");
+    }
+
+    let step_progress = example_progress.start(Step::Qa);
+
     let model = model_for_backend(args.backend);
-    let client = match args.backend {
+    let prompt = build_prompt(example).context("Failed to build QA prompt")?;
+
+    step_progress.set_substatus("generating");
+
+    let response = match args.backend {
         BatchProvider::Anthropic => {
-            if args.no_batch {
-                QaClient::Anthropic(AnthropicClient::plain()?)
+            let client = if args.no_batch {
+                ANTHROPIC_CLIENT_PLAIN.get_or_init(|| {
+                    AnthropicClient::plain().expect("Failed to create Anthropic client")
+                })
             } else {
-                QaClient::Anthropic(AnthropicClient::batch(&LLM_CACHE_DB)?)
-            }
+                ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                    AnthropicClient::batch(&LLM_CACHE_DB)
+                        .expect("Failed to create Anthropic client")
+                })
+            };
+
+            let messages = vec![anthropic::Message {
+                role: anthropic::Role::User,
+                content: vec![anthropic::RequestContent::Text {
+                    text: prompt,
+                    cache_control: None,
+                }],
+            }];
+
+            let Some(response) = client.generate(model, 1024, messages, None, false).await? else {
+                return Ok(());
+            };
+
+            response
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    anthropic::ResponseContent::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
         }
         BatchProvider::Openai => {
-            if args.no_batch {
-                QaClient::OpenAi(OpenAiClient::plain()?)
+            let client = if args.no_batch {
+                OPENAI_CLIENT_PLAIN
+                    .get_or_init(|| OpenAiClient::plain().expect("Failed to create OpenAI client"))
             } else {
-                QaClient::OpenAi(OpenAiClient::batch(&LLM_CACHE_DB)?)
-            }
-        }
-    };
+                OPENAI_CLIENT_BATCH.get_or_init(|| {
+                    OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+                })
+            };
 
-    eprintln!(
-        "Using model: {}, backend: {:?}, batching: {}",
-        model, args.backend, !args.no_batch
-    );
+            let messages = vec![open_ai::RequestMessage::User {
+                content: open_ai::MessageContent::Plain(prompt),
+            }];
 
-    // First pass: send requests (client handles caching internally)
-    let mut prompts: Vec<(usize, String)> = Vec::new();
-    let mut skipped_count = 0;
+            let Some(response) = client.generate(model, 1024, messages, None, false).await? else {
+                return Ok(());
+            };
 
-    for (idx, example) in examples.iter().enumerate() {
-        let Some(prompt) = build_prompt(example) else {
-            skipped_count += 1;
-            continue;
-        };
-        prompts.push((idx, prompt));
-    }
-
-    if skipped_count > 0 {
-        eprintln!("Skipping {} items with missing actual_patch", skipped_count);
-    }
-
-    eprintln!("{} items to process", prompts.len());
-
-    // Process all items
-    let mut results: Vec<(usize, Option<QaResult>)> = Vec::new();
-
-    if args.no_batch {
-        // Synchronous processing
-        for (i, (idx, prompt)) in prompts.iter().enumerate() {
-            eprint!("\rProcessing {}/{}", i + 1, prompts.len());
-
-            let response = client.generate(model, 1024, prompt).await?;
-            let result = response.map(|text| parse_response(&text));
-            results.push((*idx, result));
-        }
-        eprintln!();
-    } else {
-        // Queue all for batching
-        for (idx, prompt) in &prompts {
-            let response = client.generate(model, 1024, prompt).await?;
-            let result = response.map(|text| parse_response(&text));
-            results.push((*idx, result));
-        }
-
-        // Sync batches (upload pending, download finished)
-        client.sync_batches().await?;
-
-        if args.wait {
-            eprintln!("Waiting for batch to complete...");
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                client.sync_batches().await?;
-
-                // Re-check all items that didn't have results
-                let mut all_done = true;
-                for (result_idx, (idx, prompt)) in prompts.iter().enumerate() {
-                    if results[result_idx].1.is_none() {
-                        let response = client.generate(model, 1024, prompt).await?;
-                        if let Some(text) = response {
-                            results[result_idx] = (*idx, Some(parse_response(&text)));
-                        } else {
-                            all_done = false;
-                        }
+            response
+                .choices
+                .into_iter()
+                .filter_map(|choice| match choice.message {
+                    open_ai::RequestMessage::Assistant { content, .. } => {
+                        content.map(|c| match c {
+                            open_ai::MessageContent::Plain(text) => text,
+                            open_ai::MessageContent::Multipart(parts) => parts
+                                .into_iter()
+                                .filter_map(|p| match p {
+                                    open_ai::MessagePart::Text { text } => Some(text),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join(""),
+                        })
                     }
-                }
-
-                let done_count = results.iter().filter(|(_, r)| r.is_some()).count();
-                if all_done {
-                    break;
-                }
-                eprintln!("Still waiting... {}/{} results", done_count, prompts.len());
-            }
-        } else {
-            let pending_count = results.iter().filter(|(_, r)| r.is_none()).count();
-            if pending_count > 0 {
-                eprintln!(
-                    "Batch submitted. {} pending. Run again later to retrieve results.",
-                    pending_count
-                );
-            }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
         }
-    }
-
-    // Build results map by index
-    let mut results_by_idx: std::collections::HashMap<usize, QaResult> =
-        std::collections::HashMap::new();
-    for (idx, result) in results {
-        if let Some(r) = result {
-            results_by_idx.insert(idx, r);
-        }
-    }
-
-    // Output results
-    let mut writer: Box<dyn Write> = if let Some(path) = output_path {
-        Box::new(BufWriter::new(std::fs::File::create(path)?))
-    } else {
-        Box::new(std::io::stdout())
     };
 
-    let mut num_total = 0;
-    let mut num_reverts_edits = 0;
+    let result = parse_response(&response);
 
-    for (idx, example) in examples.iter_mut().enumerate() {
-        // Skip examples that couldn't be processed
-        if build_prompt(example).is_none() {
-            continue;
+    example.qa = example
+        .predictions
+        .iter()
+        .enumerate()
+        .map(|(i, _)| if i == 0 { Some(result.clone()) } else { None })
+        .collect();
+
+    Ok(())
+}
+
+/// Sync batches for QA (upload pending requests, download finished results).
+pub async fn sync_batches(args: &QaArgs) -> Result<()> {
+    if args.no_batch {
+        return Ok(());
+    }
+
+    match args.backend {
+        BatchProvider::Anthropic => {
+            let client = ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                AnthropicClient::batch(&LLM_CACHE_DB).expect("Failed to create Anthropic client")
+            });
+            client.sync_batches().await?;
         }
-
-        let result = results_by_idx.get(&idx).cloned();
-
-        if result.as_ref().and_then(|r| r.reverts_edits) == Some(true) {
-            num_reverts_edits += 1;
+        BatchProvider::Openai => {
+            let client = OPENAI_CLIENT_BATCH.get_or_init(|| {
+                OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+            });
+            client.sync_batches().await?;
         }
-        num_total += 1;
-
-        // Populate QA results for each prediction (currently only first prediction is evaluated)
-        example.qa = example
-            .predictions
-            .iter()
-            .enumerate()
-            .map(|(i, _)| if i == 0 { result.clone() } else { None })
-            .collect();
-
-        writeln!(writer, "{}", serde_json::to_string(&example)?)?;
     }
-
-    if let Some(path) = output_path {
-        eprintln!("Results written to {}", path.display());
-    }
-
-    eprintln!("Processed:     {} items", num_total);
-    if num_total > 0 {
-        eprintln!(
-            "Reverts edits: {} ({:.2}%)",
-            num_reverts_edits,
-            num_reverts_edits as f64 / num_total as f64 * 100.0
-        );
-    }
-
     Ok(())
 }
