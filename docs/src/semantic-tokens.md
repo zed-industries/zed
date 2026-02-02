@@ -206,6 +206,10 @@ Common modifiers include: `declaration`, `definition`, `readonly`, `static`, `de
 
 For the complete specification, see the [LSP Semantic Tokens documentation](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes).
 
+## Inspecting Semantic Tokens
+
+To see semantic tokens applied to your code in real-time, use the `dev: open highlights tree view` command from the command palette. This opens a panel showing all highlights (including semantic tokens) for the current buffer, making it easier to understand which tokens are being applied and debug your custom rules.
+
 ## Troubleshooting
 
 ### Semantic highlighting not appearing
