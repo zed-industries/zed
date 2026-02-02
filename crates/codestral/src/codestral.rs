@@ -1,11 +1,12 @@
 use anyhow::Result;
 use edit_prediction::cursor_excerpt;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate, EditPredictionIconSet};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
+use icons::IconName;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
+    Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint, language_settings::all_language_settings,
 };
 use language_models::MistralLanguageModelProvider;
 use mistral::CODESTRAL_API_URL;
@@ -170,6 +171,10 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
 
     fn show_predictions_in_menu() -> bool {
         true
+    }
+
+    fn icons(&self, _cx: &App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::AiMistral)
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {

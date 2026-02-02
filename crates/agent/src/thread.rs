@@ -784,16 +784,16 @@ pub struct Thread {
     /// Used to signal that the turn should end at the next message boundary.
     has_queued_message: bool,
     pending_message: Option<AgentMessage>,
-    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
-    context_server_registry: Entity<ContextServerRegistry>,
+    pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
-    templates: Arc<Templates>,
+    pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
@@ -1280,16 +1280,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let parent_tools = self.tools.clone();
-            self.add_tool(SubagentTool::new(
-                cx.weak_entity(),
-                self.project.clone(),
-                self.project_context.clone(),
-                self.context_server_registry.clone(),
-                self.templates.clone(),
-                self.depth(),
-                parent_tools,
-            ));
+            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
         }
     }
 

@@ -4,7 +4,7 @@ use gpui::{
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    Point, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
     size,
 };
@@ -56,6 +56,7 @@ pub struct LayoutState {
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
+#[derive(Copy, Clone)]
 struct DisplayCursor {
     line: i32,
     col: usize,
@@ -499,28 +500,13 @@ impl TerminalElement {
         (rects, batched_runs)
     }
 
-    /// Computes the cursor position and expected block width, may return a zero width if x_for_index returns
-    /// the same position for sequential indexes. Use em_width instead
-    fn shape_cursor(
-        cursor_point: DisplayCursor,
-        size: TerminalBounds,
-        text_fragment: &ShapedLine,
-    ) -> Option<(Point<Pixels>, Pixels)> {
+    /// Computes the cursor position based on the cursor point and terminal dimensions.
+    fn cursor_position(cursor_point: DisplayCursor, size: TerminalBounds) -> Option<Point<Pixels>> {
         if cursor_point.line() < size.total_lines() as i32 {
-            let cursor_width = if text_fragment.width == Pixels::ZERO {
-                size.cell_width()
-            } else {
-                text_fragment.width
-            };
-
-            // Cursor should always surround as much of the text as possible,
-            // hence when on pixel boundaries round the origin down and the width up
-            Some((
-                point(
-                    (cursor_point.col() as f32 * size.cell_width()).floor(),
-                    (cursor_point.line() as f32 * size.line_height()).floor(),
-                ),
-                cursor_width.ceil(),
+            // When on pixel boundaries round the origin down
+            Some(point(
+                (cursor_point.col() as f32 * size.cell_width()).floor(),
+                (cursor_point.line() as f32 * size.line_height()).floor(),
             ))
         } else {
             None
@@ -1148,13 +1134,20 @@ impl Element for TerminalElement {
                     )
                 };
 
-                let ime_cursor_bounds =
-                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                        |(cursor_position, block_width)| Bounds {
-                            origin: cursor_position,
-                            size: size(block_width, dimensions.line_height),
-                        },
-                    );
+                // For whitespace, use cell width to avoid cursor stretching.
+                // For other characters, use the larger of shaped width and cell width
+                // to properly cover wide characters like emojis.
+                let cursor_width = if cursor_char.is_whitespace() {
+                    dimensions.cell_width()
+                } else {
+                    cursor_text.width.max(dimensions.cell_width())
+                };
+
+                let ime_cursor_bounds = TerminalElement::cursor_position(cursor_point, dimensions)
+                    .map(|cursor_position| Bounds {
+                        origin: cursor_position,
+                        size: size(cursor_width.ceil(), dimensions.line_height),
+                    });
 
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
