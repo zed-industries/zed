@@ -30,6 +30,7 @@ serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
+sysinfo.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
