@@ -126,6 +126,7 @@
   // over symbols in the editor.
   "hover_popover_enabled": true,
   // Time to wait in milliseconds before showing the informational hover box.
+  // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
@@ -731,6 +732,8 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
+    // Whether to show folder names with bold text in the project panel.
+    "bold_folder_labels": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the project panel.
@@ -1112,6 +1115,11 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    //
+    // Default: true
+    "cancel_generation_on_terminal_stop": true,
     // Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     //
     // Default: false
@@ -1368,6 +1376,8 @@
     // Whether to show the project diagnostics button in the status bar.
     "button": true,
     // Whether to show warnings or not by default.
+    //
+    // Default: true
     "include_warnings": true,
     // Settings for using LSP pull diagnostics mechanism in Zed.
     "lsp_pull_diagnostics": {
@@ -1522,11 +1532,13 @@
     //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false
+    //   "enable_next_edit_suggestions": true
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
+      "enable_next_edit_suggestions": true,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
@@ -1584,15 +1596,18 @@
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
     // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory. Fallback to the
+    // May take 5 values:
+    // 1. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "working_directory": "current_file_directory"
+    // 2. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
+    // 3. Use the first project in this workspace's directory
     //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
+    // 4. Always use this platform's home directory (if we can find it)
     //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
+    // 5. Always use a specific directory. This value will be shell expanded.
     //    If this path is not a valid directory the terminal will default to
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
@@ -2236,6 +2251,11 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    "notifications": {
+      // Timeout in milliseconds for automatically dismissing language server notifications.
+      // Set to 0 to disable auto-dismiss.
+      "dismiss_timeout_ms": 5000,
+    },
   },
   // Jupyter settings
   "jupyter": {
@@ -2262,6 +2282,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
     // Cursor shape for each mode.

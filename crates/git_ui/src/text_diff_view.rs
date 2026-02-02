@@ -268,7 +268,7 @@ async fn update_diff_buffer(
             diff.update_diff(
                 source_buffer_snapshot.text.clone(),
                 Some(Arc::from(base_text.as_str())),
-                true,
+                Some(true),
                 language.clone(),
                 cx,
             )

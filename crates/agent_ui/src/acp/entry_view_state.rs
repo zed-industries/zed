@@ -1,6 +1,7 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use super::thread_history::AcpThreadHistory;
+use crate::user_slash_command::{CommandLoadError, UserSlashCommand};
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
@@ -30,6 +31,8 @@ pub struct EntryViewState {
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     agent_name: SharedString,
 }
 
@@ -42,6 +45,8 @@ impl EntryViewState {
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         agent_name: SharedString,
     ) -> Self {
         Self {
@@ -53,6 +58,8 @@ impl EntryViewState {
             entries: Vec::new(),
             prompt_capabilities,
             available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
             agent_name,
         }
     }
@@ -86,7 +93,7 @@ impl EntryViewState {
                     }
                 } else {
                     let message_editor = cx.new(|cx| {
-                        let mut editor = MessageEditor::new(
+                        let mut editor = MessageEditor::new_with_cache(
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
@@ -94,6 +101,8 @@ impl EntryViewState {
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
+                            self.cached_user_commands.clone(),
+                            self.cached_user_command_errors.clone(),
                             self.agent_name.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
@@ -467,6 +476,8 @@ mod tests {
                 thread_store,
                 history.downgrade(),
                 None,
+                Default::default(),
+                Default::default(),
                 Default::default(),
                 Default::default(),
                 "Test Agent".into(),

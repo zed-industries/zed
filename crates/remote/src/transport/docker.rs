@@ -143,11 +143,9 @@ impl DockerExecConnection {
         commit: Option<AppCommitSha>,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
-        let remote_platform = if self.remote_platform.is_some() {
-            self.remote_platform.unwrap()
-        } else {
-            anyhow::bail!("No remote platform defined; cannot proceed.")
-        };
+        let remote_platform = self
+            .remote_platform
+            .context("No remote platform defined; cannot proceed.")?;
 
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
@@ -165,9 +163,23 @@ impl DockerExecConnection {
         let dst_path =
             paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
+        let binary_exists_on_server = self
+            .run_docker_exec(
+                &dst_path.display(self.path_style()),
+                Some(&remote_dir_for_server),
+                &Default::default(),
+                &["version"],
+            )
+            .await
+            .is_ok();
         #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
-        if let Some(remote_server_path) =
-            super::build_remote_server_from_source(&remote_platform, delegate.as_ref(), cx).await?
+        if let Some(remote_server_path) = super::build_remote_server_from_source(
+            &remote_platform,
+            delegate.as_ref(),
+            binary_exists_on_server,
+            cx,
+        )
+        .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
                 RelPath::unix(&format!(
@@ -190,16 +202,7 @@ impl DockerExecConnection {
             return Ok(dst_path);
         }
 
-        if self
-            .run_docker_exec(
-                &dst_path.display(self.path_style()),
-                Some(&remote_dir_for_server),
-                &Default::default(),
-                &["version"],
-            )
-            .await
-            .is_ok()
-        {
+        if binary_exists_on_server {
             return Ok(dst_path);
         }
 
@@ -611,13 +614,22 @@ impl RemoteConnection for DockerExecConnection {
         let mut proxy_process = self.proxy_process.lock();
         *proxy_process = Some(child.id());
 
-        super::handle_rpc_messages_over_child_process_stdio(
-            child,
-            incoming_tx,
-            outgoing_rx,
-            connection_activity_tx,
-            cx,
-        )
+        cx.spawn(async move |cx| {
+            super::handle_rpc_messages_over_child_process_stdio(
+                child,
+                incoming_tx,
+                outgoing_rx,
+                connection_activity_tx,
+                cx,
+            )
+            .await
+            .and_then(|status| {
+                if status != 0 {
+                    anyhow::bail!("Remote server exited with status {status}");
+                }
+                Ok(0)
+            })
+        })
     }
 
     fn upload_directory(

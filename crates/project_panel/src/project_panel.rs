@@ -21,11 +21,12 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
     DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
-    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -1087,7 +1088,8 @@ impl ProjectPanel {
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_remote();
-            let is_local = project.is_local();
+            let is_collab = project.is_via_collab();
+            let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1118,11 +1120,17 @@ impl ProjectPanel {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
-                            .when(is_local && cfg!(target_os = "macos"), |menu| {
-                                menu.action("Reveal in Finder", Box::new(RevealInFileManager))
-                            })
-                            .when(is_local && cfg!(not(target_os = "macos")), |menu| {
-                                menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                            .when(is_local, |menu| {
+                                menu.action(
+                                    if cfg!(target_os = "macos") && !is_remote {
+                                        "Reveal in Finder"
+                                    } else if cfg!(target_os = "windows") && !is_remote {
+                                        "Reveal in File Explorer"
+                                    } else {
+                                        "Reveal in File Manager"
+                                    },
+                                    Box::new(RevealInFileManager),
+                                )
                             })
                             .when(is_local, |menu| {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
@@ -1177,7 +1185,7 @@ impl ProjectPanel {
                             .when(!is_root, |menu| {
                                 menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(!is_remote && is_root, |menu| {
+                            .when(!is_collab && is_root, |menu| {
                                 menu.separator()
                                     .action(
                                         "Add Folder to Project…",
@@ -1827,6 +1835,7 @@ impl ProjectPanel {
                                             ),
                                             abs_path
                                         ),
+                                        link: None,
                                     })
                                 });
                                 None
@@ -3076,7 +3085,9 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            cx.reveal_path(&worktree.read(cx).absolutize(&entry.path));
+            let path = worktree.read(cx).absolutize(&entry.path);
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&path, cx));
         }
     }
 
@@ -5264,6 +5275,7 @@ impl ProjectPanel {
                                         kind.is_file(),
                                         is_active || is_marked,
                                         settings.drag_and_drop,
+                                        settings.bold_folder_labels,
                                         item_colors.drag_over,
                                         folded_directory_drag_target,
                                         filename_text_color,
@@ -5275,6 +5287,10 @@ impl ProjectPanel {
                                     Label::new(file_name)
                                         .single_line()
                                         .color(filename_text_color)
+                                        .when(
+                                            settings.bold_folder_labels && kind.is_dir(),
+                                            |this| this.weight(FontWeight::SEMIBOLD),
+                                        )
                                         .into_any_element(),
                                 ),
                             })
@@ -5328,6 +5344,7 @@ impl ProjectPanel {
         is_file: bool,
         is_active_or_marked: bool,
         drag_and_drop_enabled: bool,
+        bold_folder_labels: bool,
         drag_over_color: Hsla,
         folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
         filename_text_color: Color,
@@ -5351,6 +5368,7 @@ impl ProjectPanel {
                             "project_panel_path_component_{}_{index}",
                             entry_id.to_usize()
                         )))
+                        .when(index == 0, |this| this.ml_neg_0p5())
                         .px_0p5()
                         .rounded_xs()
                         .hover(|style| style.bg(cx.theme().colors().element_active))
@@ -5437,6 +5455,9 @@ impl ProjectPanel {
                             Label::new(component)
                                 .single_line()
                                 .color(filename_text_color)
+                                .when(bold_folder_labels && !is_file, |this| {
+                                    this.weight(FontWeight::SEMIBOLD)
+                                })
                                 .when(index == active_index && is_active_or_marked, |this| {
                                     this.underline()
                                 }),

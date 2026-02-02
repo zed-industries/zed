@@ -12,6 +12,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use picker::{Picker, PickerDelegate};
+use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
@@ -20,8 +21,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
-use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
+use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
@@ -445,10 +446,12 @@ impl PickerDelegate for RulePickerDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
+        editor: &Arc<dyn ErasedEditor>,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
+        let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
+
         h_flex()
             .py_1()
             .px_1p5()
@@ -983,7 +986,7 @@ impl RulesLibrary {
 
     fn move_down_from_title(
         &mut self,
-        _: &editor::actions::MoveDown,
+        _: &zed_actions::editor::MoveDown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -996,7 +999,7 @@ impl RulesLibrary {
 
     fn move_up_from_body(
         &mut self,
-        _: &editor::actions::MoveUp,
+        _: &zed_actions::editor::MoveUp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -8,6 +8,7 @@ use strum::{EnumIter, EnumString, IntoStaticStr};
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum IconName {
+    AcpRegistry,
     Ai,
     AiAnthropic,
     AiBedrock,
@@ -221,12 +222,17 @@ pub enum IconName {
     SupermavenInit,
     SwatchBook,
     SweepAi,
+    SweepAiDisabled,
+    SweepAiDown,
+    SweepAiError,
+    SweepAiUp,
     Tab,
     Terminal,
     TerminalAlt,
     TerminalGhost,
     TextSnippet,
     TextThread,
+    ThinkingMode,
     Thread,
     ThreadFromSummary,
     ThumbsDown,

@@ -406,7 +406,11 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
+        let avatar = CommitAvatar::new(
+            sha,
+            Some(self.commit.author_email.clone()),
+            self.remote.as_ref(),
+        );
 
         v_flex()
             .w(size)
@@ -884,7 +888,7 @@ async fn build_buffer_diff(
             diff.update_diff(
                 buffer.text.clone(),
                 old_text.map(|old_text| Arc::from(old_text.as_str())),
-                true,
+                Some(true),
                 language.clone(),
                 cx,
             )

@@ -1,6 +1,7 @@
 mod base_keymap_setting;
 mod content_into_gpui;
 mod editable_setting_control;
+mod editorconfig_store;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -33,6 +34,9 @@ pub use ::settings_content::*;
 pub use base_keymap_setting::*;
 pub use content_into_gpui::IntoGpui;
 pub use editable_setting_control::*;
+pub use editorconfig_store::{
+    Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
+};
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -40,9 +44,9 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, MigrationStatus,
-    Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
-    SettingsParseResult, SettingsStore,
+    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, LocalSettingsPath,
+    MigrationStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey,
+    SettingsLocation, SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};

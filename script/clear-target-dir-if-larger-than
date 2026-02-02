@@ -15,7 +15,7 @@ fi
 max_size_gb=$1
 
 current_size=$(du -s target | cut -f1)
-current_size_gb=$(expr ${current_size} / 1024 / 1024)
+current_size_gb=$(( ${current_size} / 1024 / 1024 ))
 
 echo "target directory size: ${current_size_gb}gb. max size: ${max_size_gb}gb"
 

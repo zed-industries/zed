@@ -26,6 +26,20 @@ pub struct Terminals {
 }
 
 impl Project {
+    pub fn active_entry_directory(&self, cx: &App) -> Option<PathBuf> {
+        let entry_id = self.active_entry()?;
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let entry = worktree.entry_for_id(entry_id)?;
+
+        let absolute_path = worktree.absolutize(entry.path.as_ref());
+        if entry.is_dir() {
+            Some(absolute_path)
+        } else {
+            absolute_path.parent().map(|p| p.to_path_buf())
+        }
+    }
+
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
         self.active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
@@ -91,8 +105,8 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
         };
-        let is_windows = self.path_style(cx).is_windows();
-        let shell_kind = ShellKind::new(&shell, is_windows);
+        let path_style = self.path_style(cx);
+        let shell_kind = ShellKind::new(&shell, path_style.is_windows());
 
         // Prepare a task for resolving the environment
         let env_task =
@@ -129,9 +143,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
-                    );
+                    let future =
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                    return Some(future.await);
                 }
                 None
             })
@@ -199,14 +213,7 @@ impl Project {
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
-                                    let mut arg =
-                                        format!("{activation_script}{separator} {to_run}");
-                                    if shell_kind == ShellKind::Cmd {
-                                        // We need to put the entire command in quotes since otherwise CMD tries to execute them
-                                        // as separate commands rather than chaining one after another.
-                                        arg = format!("\"{arg}\"");
-                                    }
-
+                                    let arg = format!("{activation_script}{separator} {to_run}");
                                     let args = shell_kind.args_for_shell(false, arg);
 
                                     (
@@ -248,6 +255,7 @@ impl Project {
                         Some(completion_tx),
                         cx,
                         activation_script,
+                        path_style,
                     ))
                 })??
                 .await?;
@@ -356,7 +364,7 @@ impl Project {
             None => settings.shell.program(),
         };
 
-        let is_windows = self.path_style(cx).is_windows();
+        let path_style = self.path_style(cx);
 
         // Prepare a task for resolving the environment
         let env_task =
@@ -364,7 +372,7 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, is_windows);
+            let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -378,9 +386,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
-                    );
+                    let future =
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                    return Some(future.await);
                 }
                 None
             })
@@ -412,6 +420,7 @@ impl Project {
                         None,
                         cx,
                         activation_script,
+                        path_style,
                     ))
                 })??
                 .await?;

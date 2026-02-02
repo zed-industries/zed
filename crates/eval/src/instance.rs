@@ -202,7 +202,10 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         );
 

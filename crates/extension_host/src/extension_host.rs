@@ -981,7 +981,7 @@ impl ExtensionStore {
                         .compile_extension(
                             &extension_source_path,
                             &mut extension_manifest,
-                            CompileExtensionOptions { release: false },
+                            CompileExtensionOptions::dev(),
                             fs,
                         )
                         .await
@@ -1041,12 +1041,7 @@ impl ExtensionStore {
         let compile = cx.background_spawn(async move {
             let mut manifest = ExtensionManifest::load(fs.clone(), &path).await?;
             builder
-                .compile_extension(
-                    &path,
-                    &mut manifest,
-                    CompileExtensionOptions { release: true },
-                    fs,
-                )
+                .compile_extension(&path, &mut manifest, CompileExtensionOptions::dev(), fs)
                 .await
         });
 
@@ -1257,10 +1252,12 @@ impl ExtensionStore {
                     (path, icons_root_path)
                 },
             ));
-            snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
-                let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
-                path
+            snippets_to_add.extend(extension.manifest.snippets.iter().flat_map(|snippets| {
+                snippets.paths().map(|snippets_path| {
+                    let mut path = self.installed_dir.clone();
+                    path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
+                    path
+                })
             }));
         }
 

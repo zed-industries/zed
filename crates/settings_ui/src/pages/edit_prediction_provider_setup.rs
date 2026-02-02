@@ -1,115 +1,153 @@
 use edit_prediction::{
-    ApiKeyState, EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag,
+    ApiKeyState, MercuryFeatureFlag, SweepFeatureFlag,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
+use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
+use language::language_settings::AllLanguageSettings;
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
-use project::Project;
-use ui::{ButtonLink, ConfiguredApiCard, WithScrollbar, prelude::*};
+use settings::Settings as _;
+use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
+use workspace::AppState;
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
     components::{SettingsInputField, SettingsSectionHeader},
 };
 
-pub struct EditPredictionSetupPage {
-    settings_window: Entity<SettingsWindow>,
-    scroll_handle: ScrollHandle,
-}
-
-impl EditPredictionSetupPage {
-    pub fn new(settings_window: Entity<SettingsWindow>) -> Self {
-        Self {
-            settings_window,
-            scroll_handle: ScrollHandle::new(),
-        }
-    }
-}
-
-impl Render for EditPredictionSetupPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings_window = self.settings_window.clone();
-        let project = settings_window
-            .read(cx)
-            .original_window
-            .as_ref()
-            .and_then(|window| {
-                window
-                    .read_with(cx, |workspace, _| workspace.project().clone())
-                    .ok()
-            });
-        let providers = [
-            project.and_then(|project| {
-                Some(render_github_copilot_provider(project, window, cx)?.into_any_element())
-            }),
-            cx.has_flag::<MercuryFeatureFlag>().then(|| {
-                render_api_key_provider(
-                    IconName::Inception,
-                    "Mercury",
-                    "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
-                    mercury_api_token(cx),
-                    |_cx| MERCURY_CREDENTIALS_URL,
-                    None,
-                    window,
-                    cx,
-                )
-                .into_any_element()
-            }),
-            cx.has_flag::<SweepFeatureFlag>().then(|| {
-                render_api_key_provider(
-                    IconName::SweepAi,
-                    "Sweep",
-                    "https://app.sweep.dev/".into(),
-                    sweep_api_token(cx),
-                    |_cx| SWEEP_CREDENTIALS_URL,
-                    None,
-                    window,
-                    cx,
-                )
-                .into_any_element()
-            }),
-            Some(
-                render_api_key_provider(
-                    IconName::AiMistral,
-                    "Codestral",
-                    "https://console.mistral.ai/codestral".into(),
-                    codestral_api_key(cx),
-                    |cx| language_models::MistralLanguageModelProvider::api_url(cx),
-                    Some(settings_window.update(cx, |settings_window, cx| {
-                        let codestral_settings = codestral_settings();
-                        settings_window
-                            .render_sub_page_items_section(
-                                codestral_settings.iter().enumerate(),
-                                None,
-                                window,
-                                cx,
-                            )
-                            .into_any_element()
-                    })),
-                    window,
-                    cx,
-                )
-                .into_any_element(),
-            ),
-        ];
-
-        div()
-            .size_full()
-            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
-            .child(
-                v_flex()
-                    .id("ep-setup-page")
-                    .min_w_0()
-                    .size_full()
-                    .px_8()
-                    .pb_16()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .children(providers.into_iter().flatten()),
+pub(crate) fn render_edit_prediction_setup_page(
+    settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let providers = [
+        Some(render_provider_dropdown(window, cx)),
+        render_github_copilot_provider(window, cx).map(IntoElement::into_any_element),
+        cx.has_flag::<MercuryFeatureFlag>().then(|| {
+            render_api_key_provider(
+                IconName::Inception,
+                "Mercury",
+                "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+                mercury_api_token(cx),
+                |_cx| MERCURY_CREDENTIALS_URL,
+                None,
+                window,
+                cx,
             )
-    }
+            .into_any_element()
+        }),
+        cx.has_flag::<SweepFeatureFlag>().then(|| {
+            render_api_key_provider(
+                IconName::SweepAi,
+                "Sweep",
+                "https://app.sweep.dev/".into(),
+                sweep_api_token(cx),
+                |_cx| SWEEP_CREDENTIALS_URL,
+                None,
+                window,
+                cx,
+            )
+            .into_any_element()
+        }),
+        Some(
+            render_api_key_provider(
+                IconName::AiMistral,
+                "Codestral",
+                "https://console.mistral.ai/codestral".into(),
+                codestral_api_key(cx),
+                |cx| language_models::MistralLanguageModelProvider::api_url(cx),
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            codestral_settings().iter().enumerate(),
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ),
+    ];
+
+    div()
+        .size_full()
+        .child(
+            v_flex()
+                .id("ep-setup-page")
+                .min_w_0()
+                .size_full()
+                .px_8()
+                .pb_16()
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
+                .children(providers.into_iter().flatten()),
+        )
+        .into_any_element()
+}
+
+fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
+    let current_provider = AllLanguageSettings::get_global(cx)
+        .edit_predictions
+        .provider;
+    let current_provider_name = current_provider.display_name().unwrap_or("No provider set");
+
+    let menu = ContextMenu::build(window, cx, move |mut menu, _, cx| {
+        let available_providers = get_available_providers(cx);
+        let fs = <dyn fs::Fs>::global(cx);
+
+        for provider in available_providers {
+            let Some(name) = provider.display_name() else {
+                continue;
+            };
+            let is_current = provider == current_provider;
+
+            menu = menu.toggleable_entry(name, is_current, IconPosition::Start, None, {
+                let fs = fs.clone();
+                move |_, cx| {
+                    set_completion_provider(fs.clone(), cx, provider);
+                }
+            });
+        }
+        menu
+    });
+
+    v_flex()
+        .id("provider-selector")
+        .min_w_0()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("Active Provider")
+                .icon(IconName::Sparkle)
+                .no_padding(true),
+        )
+        .child(
+            h_flex()
+                .pt_2p5()
+                .w_full()
+                .justify_between()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .max_w_1_2()
+                        .child(Label::new("Provider"))
+                        .child(
+                            Label::new("Select which provider to use for edit predictions.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    DropdownMenu::new("provider-dropdown", current_provider_name, menu)
+                        .style(DropdownStyle::Outlined),
+                ),
+        )
+        .into_any_element()
 }
 
 fn render_api_key_provider(
@@ -120,7 +158,7 @@ fn render_api_key_provider(
     current_url: fn(&mut App) -> SharedString,
     additional_fields: Option<AnyElement>,
     window: &mut Window,
-    cx: &mut Context<EditPredictionSetupPage>,
+    cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
     _ = window.use_keyed_state(title, cx, |_, cx| {
@@ -228,7 +266,7 @@ fn render_api_key_provider(
                     SettingsInputField::new()
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
-                        .on_confirm(move |api_key, cx| {
+                        .on_confirm(move |api_key, _window, cx| {
                             write_key(api_key.filter(|key| !key.is_empty()), cx);
                         }),
                 ),
@@ -348,20 +386,16 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
     ])
 }
 
-fn render_github_copilot_provider(
-    project: Entity<Project>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<impl IntoElement> {
-    let copilot = EditPredictionStore::try_global(cx)?
-        .read(cx)
-        .copilot_for_project(&project);
+fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
             move |cx| {
-                copilot
-                    .as_ref()
-                    .is_some_and(|copilot| copilot.read(cx).is_authenticated())
+                if let Some(app_state) = AppState::global(cx).upgrade() {
+                    copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
+                } else {
+                    false
+                }
             },
             copilot_ui::ConfigurationMode::EditPrediction,
             cx,
@@ -372,6 +406,7 @@ fn render_github_copilot_provider(
         v_flex()
             .id("github-copilot")
             .min_w_0()
+            .pt_8()
             .gap_1p5()
             .child(
                 SettingsSectionHeader::new("GitHub Copilot")

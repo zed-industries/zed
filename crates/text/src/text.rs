@@ -2417,7 +2417,7 @@ impl BufferSnapshot {
         {
             Anchor::max_for_buffer(self.remote_id)
         } else {
-            if self
+            if !self
                 .visible_text
                 .assert_char_boundary::<{ cfg!(debug_assertions) }>(offset)
             {
@@ -3125,7 +3125,7 @@ impl ToOffset for Point {
 impl ToOffset for usize {
     #[track_caller]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        if snapshot
+        if !snapshot
             .as_rope()
             .assert_char_boundary::<{ cfg!(debug_assertions) }>(*self)
         {

@@ -330,13 +330,7 @@ async fn devcontainer_up(
         Ok(output) => {
             if output.status.success() {
                 let raw = String::from_utf8_lossy(&output.stdout);
-                serde_json::from_str::<DevContainerUp>(&raw).map_err(|e| {
-                    log::error!(
-                        "Unable to parse response from 'devcontainer up' command, error: {:?}",
-                        e
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })
+                parse_json_from_cli(&raw)
             } else {
                 let message = format!(
                     "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
@@ -355,6 +349,7 @@ async fn devcontainer_up(
         }
     }
 }
+
 async fn devcontainer_read_configuration(
     path_to_cli: &PathBuf,
     found_in_path: bool,
@@ -377,13 +372,7 @@ async fn devcontainer_read_configuration(
         Ok(output) => {
             if output.status.success() {
                 let raw = String::from_utf8_lossy(&output.stdout);
-                serde_json::from_str::<DevContainerConfigurationOutput>(&raw).map_err(|e| {
-                    log::error!(
-                        "Unable to parse response from 'devcontainer read-configuration' command, error: {:?}",
-                        e
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })
+                parse_json_from_cli(&raw)
             } else {
                 let message = format!(
                     "Non-success status running devcontainer read-configuration for workspace: out: {:?}, err: {:?}",
@@ -449,13 +438,7 @@ async fn devcontainer_template_apply(
         Ok(output) => {
             if output.status.success() {
                 let raw = String::from_utf8_lossy(&output.stdout);
-                serde_json::from_str::<DevContainerApply>(&raw).map_err(|e| {
-                    log::error!(
-                        "Unable to parse response from 'devcontainer templates apply' command, error: {:?}",
-                        e
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })
+                parse_json_from_cli(&raw)
             } else {
                 let message = format!(
                     "Non-success status running devcontainer templates apply for workspace: out: {:?}, err: {:?}",
@@ -473,6 +456,29 @@ async fn devcontainer_template_apply(
             Err(DevContainerError::DevContainerTemplateApplyFailed(message))
         }
     }
+}
+// Try to parse directly first (newer versions output pure JSON)
+// If that fails, look for JSON start (older versions have plaintext prefix)
+fn parse_json_from_cli<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, DevContainerError> {
+    serde_json::from_str::<T>(&raw)
+        .or_else(|e| {
+            log::error!("Error parsing json: {} - will try to find json object in larger plaintext", e);
+            let json_start = raw
+                .find(|c| c == '{')
+                .ok_or_else(|| {
+                    log::error!("No JSON found in devcontainer up output");
+                    DevContainerError::DevContainerParseFailed
+                })?;
+
+            serde_json::from_str(&raw[json_start..]).map_err(|e| {
+                log::error!(
+                    "Unable to parse JSON from devcontainer up output (starting at position {}), error: {:?}",
+                    json_start,
+                    e
+                );
+                DevContainerError::DevContainerParseFailed
+            })
+        })
 }
 
 fn devcontainer_cli_command(
@@ -522,7 +528,7 @@ fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
 }
 
 fn template_features_to_json(features_selected: &HashSet<DevContainerFeature>) -> String {
-    let things = features_selected
+    let features_map = features_selected
         .iter()
         .map(|feature| {
             let mut map = HashMap::new();
@@ -541,17 +547,28 @@ fn template_features_to_json(features_selected: &HashSet<DevContainerFeature>) -
             map
         })
         .collect::<Vec<HashMap<&str, String>>>();
-    serde_json::to_string(&things).unwrap()
+    serde_json::to_string(&features_map).unwrap()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::devcontainer_api::DevContainerUp;
+    use crate::devcontainer_api::{DevContainerUp, parse_json_from_cli};
 
     #[test]
     fn should_parse_from_devcontainer_json() {
         let json = r#"{"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}"#;
-        let up: DevContainerUp = serde_json::from_str(json).unwrap();
+        let up: DevContainerUp = parse_json_from_cli(json).unwrap();
+        assert_eq!(up._outcome, "success");
+        assert_eq!(
+            up.container_id,
+            "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
+        );
+        assert_eq!(up._remote_user, "vscode");
+        assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
+
+        let json_in_plaintext = r#"[2026-01-22T16:19:08.802Z] @devcontainers/cli 0.80.1. Node.js v22.21.1. darwin 24.6.0 arm64.
+            {"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}"#;
+        let up: DevContainerUp = parse_json_from_cli(json_in_plaintext).unwrap();
         assert_eq!(up._outcome, "success");
         assert_eq!(
             up.container_id,

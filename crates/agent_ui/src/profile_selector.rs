@@ -237,7 +237,7 @@ enum ProfilePickerEntry {
     Profile(ProfileMatchEntry),
 }
 
-pub(crate) struct ProfilePickerDelegate {
+pub struct ProfilePickerDelegate {
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     foreground: ForegroundExecutor,
