@@ -183,7 +183,7 @@ impl AcpThreadView {
 
     // turns
 
-    pub fn start_turn(&mut self, cx: &mut Context<AcpServerView>) -> usize {
+    pub fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
         self.turn_fields.turn_generation += 1;
         let generation = self.turn_fields.turn_generation;
         self.turn_fields.turn_started_at = Some(Instant::now());
@@ -229,8 +229,9 @@ impl AcpThreadView {
         message_editor: Entity<MessageEditor>,
         agent_name: SharedString,
         login: Option<task::SpawnInTerminal>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let thread = &self.thread;
 
@@ -244,7 +245,7 @@ impl AcpThreadView {
         let has_queued = self.has_queued_messages();
         if is_editor_empty && self.can_fast_track_queue && has_queued {
             self.can_fast_track_queue = false;
-            self.send_queued_message_at_index(0, true, window, cx);
+            self.send_queued_message_at_index(0, true, server_view, window, cx);
             return;
         }
 
@@ -253,7 +254,7 @@ impl AcpThreadView {
         }
 
         if is_generating {
-            self.queue_message(message_editor, window, cx);
+            self.queue_message(message_editor, server_view, window, cx);
             return;
         }
 
@@ -272,10 +273,9 @@ impl AcpThreadView {
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
 
-                let this = cx.weak_entity();
                 window.defer(cx, |window, cx| {
                     AcpServerView::handle_auth_required(
-                        this,
+                        server_view,
                         AuthRequired::new(),
                         agent_name,
                         window,
@@ -287,14 +287,15 @@ impl AcpThreadView {
             }
         }
 
-        self.send_impl(message_editor, window, cx)
+        self.send_impl(message_editor, server_view, window, cx)
     }
 
     pub fn send_impl(
         &mut self,
         message_editor: Entity<MessageEditor>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
             // Include full contents when using minimal profile
@@ -344,14 +345,15 @@ impl AcpThreadView {
             Ok(Some((contents, tracked_buffers)))
         });
 
-        self.send_content(contents_task, window, cx);
+        self.send_content(contents_task, server_view, window, cx);
     }
 
     pub fn send_content(
         &mut self,
         contents_task: Task<anyhow::Result<Option<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let session_id = self.thread.read(cx).session_id().clone();
         let agent_telemetry_id = self.thread.read(cx).connection().telemetry_id();
@@ -363,83 +365,83 @@ impl AcpThreadView {
         let mode_id = self.current_mode_id(cx);
         let guard = cx.new(|_| ());
         cx.observe_release(&guard, |this, _guard, cx| {
-            if let Some(thread) = this.as_active_thread_mut() {
-                thread.is_loading_contents = false;
-            }
+            this.is_loading_contents = false;
             cx.notify();
         })
         .detach();
 
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let Some((contents, tracked_buffers)) = contents_task.await? else {
-                return Ok(());
-            };
+        let task = cx.spawn_in(window, {
+            let server_view = server_view.clone();
+            async move |this, cx| {
+                let Some((contents, tracked_buffers)) = contents_task.await? else {
+                    return Ok(());
+                };
 
-            let generation = this.update_in(cx, |this, _window, cx| {
-                this.in_flight_prompt = Some(contents.clone());
-                let generation = this.start_turn(cx);
-                this.set_editor_is_expanded(false, cx);
-                this.scroll_to_bottom(cx);
-                generation
-            })?;
+                let generation = server_view.update_in(cx, |this, _window, cx| {
+                    this.in_flight_prompt = Some(contents.clone());
+                    let generation = this.start_turn(cx);
+                    this.set_editor_is_expanded(false, cx);
+                    this.scroll_to_bottom(cx);
+                    generation
+                })?;
 
-            let _stop_turn = defer({
-                let this = this.clone();
-                let mut cx = cx.clone();
-                move || {
-                    this.update(&mut cx, |this, cx| {
-                        this.stop_turn(generation);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            });
-            let turn_start_time = Instant::now();
-            let send = thread.update(cx, |thread, cx| {
-                thread.action_log().update(cx, |action_log, cx| {
-                    for buffer in tracked_buffers {
-                        action_log.buffer_read(buffer, cx)
+                let _stop_turn = defer({
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    move || {
+                        this.update(&mut cx, |this, cx| {
+                            this.stop_turn(generation);
+                            cx.notify();
+                        })
+                        .ok();
                     }
                 });
-                drop(guard);
+                let turn_start_time = Instant::now();
+                let send = thread.update(cx, |thread, cx| {
+                    thread.action_log().update(cx, |action_log, cx| {
+                        for buffer in tracked_buffers {
+                            action_log.buffer_read(buffer, cx)
+                        }
+                    });
+                    drop(guard);
 
+                    telemetry::event!(
+                        "Agent Message Sent",
+                        agent = agent_telemetry_id,
+                        session = session_id,
+                        model = model_id,
+                        mode = mode_id
+                    );
+
+                    thread.send(contents, cx)
+                })?;
+                let res = send.await;
+                let turn_time_ms = turn_start_time.elapsed().as_millis();
+                drop(_stop_turn);
+                let status = if res.is_ok() {
+                    server_view.update(cx, |this, _| this.in_flight_prompt.take()).ok();
+                    "success"
+                } else {
+                    "failure"
+                };
                 telemetry::event!(
-                    "Agent Message Sent",
+                    "Agent Turn Completed",
                     agent = agent_telemetry_id,
                     session = session_id,
                     model = model_id,
-                    mode = mode_id
+                    mode = mode_id,
+                    status,
+                    turn_time_ms,
                 );
-
-                thread.send(contents, cx)
-            })?;
-            let res = send.await;
-            let turn_time_ms = turn_start_time.elapsed().as_millis();
-            drop(_stop_turn);
-            let status = if res.is_ok() {
-                this.update(cx, |this, _| this.in_flight_prompt.take()).ok();
-                "success"
-            } else {
-                "failure"
-            };
-            telemetry::event!(
-                "Agent Turn Completed",
-                agent = agent_telemetry_id,
-                session = session_id,
-                model = model_id,
-                mode = mode_id,
-                status,
-                turn_time_ms,
-            );
-            res
+                res
+            }
         });
 
         cx.spawn(async move |this, cx| {
             if let Err(err) = task.await {
-                this.update(cx, |this, cx| {
+                server_view.update(cx, |this, cx| {
                     this.handle_thread_error(err, cx);
-                })
-                .ok();
+                }).ok();
             } else {
                 this.update(cx, |this, cx| {
                     let should_be_following = this
@@ -448,9 +450,7 @@ impl AcpThreadView {
                             workspace.is_being_followed(CollaboratorId::Agent)
                         })
                         .unwrap_or_default();
-                    if let Some(thread) = this.as_active_thread_mut() {
-                        thread.should_be_following = should_be_following;
-                    }
+                    this.should_be_following = should_be_following;
                 })
                 .ok();
             }
@@ -461,8 +461,9 @@ impl AcpThreadView {
     pub fn interrupt_and_send(
         &mut self,
         message_editor: Entity<MessageEditor>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let thread = &self.thread;
 
@@ -471,17 +472,19 @@ impl AcpThreadView {
         }
 
         if thread.read(cx).status() == ThreadStatus::Idle {
-            self.send_impl(message_editor, window, cx);
+            self.send_impl(message_editor, server_view, window, cx);
             return;
         }
 
-        self.stop_current_and_send_new_message(window, cx);
+        self.stop_current_and_send_new_message(message_editor, server_view, window, cx);
     }
 
-    pub fn stop_current_and_send_new_message(
+    fn stop_current_and_send_new_message(
         &mut self,
+        message_editor: Entity<MessageEditor>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let thread = self.thread.clone();
         self.skip_queue_processing_count = 0;
@@ -493,7 +496,7 @@ impl AcpThreadView {
             cancelled.await;
 
             this.update_in(cx, |this, window, cx| {
-                this.send_impl(this.message_editor.clone(), window, cx);
+                this.send_impl(message_editor, server_view, window, cx);
             })
             .ok();
         })
@@ -502,14 +505,14 @@ impl AcpThreadView {
 
     // generation
 
-    pub fn cancel_generation(&mut self, cx: &mut Context<AcpServerView>) {
+    pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_retry_status.take();
         self.thread_error.take();
         self.user_interrupted_generation = true;
         self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
     }
 
-    pub fn retry_generation(&mut self, cx: &mut Context<AcpServerView>) {
+    pub fn retry_generation(&mut self, server_view: WeakEntity<AcpServerView>, cx: &mut Context<Self>) {
         self.thread_error.take();
 
         let thread = &self.thread;
@@ -518,10 +521,10 @@ impl AcpThreadView {
         }
 
         let task = thread.update(cx, |thread, cx| thread.retry(cx));
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, cx| {
             let result = task.await;
 
-            this.update(cx, |this, cx| {
+            server_view.update(cx, |this, cx| {
                 if let Err(err) = result {
                     this.handle_thread_error(err, cx);
                 }
@@ -534,8 +537,9 @@ impl AcpThreadView {
         &mut self,
         entry_ix: usize,
         message_editor: Entity<MessageEditor>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         if self.is_loading_contents {
             return;
@@ -548,7 +552,7 @@ impl AcpThreadView {
             return;
         };
 
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |_this, cx| {
             // Check if there are any edits from prompts before the one being regenerated.
             //
             // If there are, we keep/accept them since we're not regenerating the prompt that created them.
@@ -574,7 +578,7 @@ impl AcpThreadView {
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
                 .await?;
-            this.update_in(cx, |this, window, cx| {
+            server_view.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
                 this.focus_handle(cx).focus(window, cx);
             })?;
@@ -588,13 +592,14 @@ impl AcpThreadView {
     pub fn queue_message(
         &mut self,
         message_editor: Entity<MessageEditor>,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let is_idle = self.thread.read(cx).status() == acp_thread::ThreadStatus::Idle;
 
         if is_idle {
-            self.send_impl(message_editor.clone(), window, cx);
+            self.send_impl(message_editor.clone(), server_view, window, cx);
             return;
         }
 
@@ -626,8 +631,7 @@ impl AcpThreadView {
 
             this.update_in(cx, |this, window, cx| {
                 this.add_to_queue(content, tracked_buffers, cx);
-                // Enable fast-track: user can press Enter again to send this queued message immediately
-                this.set_can_fast_track_queue(true);
+                this.can_fast_track_queue = true;
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
@@ -638,10 +642,23 @@ impl AcpThreadView {
         .detach_and_log_err(cx);
     }
 
+    pub fn add_to_queue(
+        &mut self,
+        content: Vec<acp::ContentBlock>,
+        tracked_buffers: Vec<Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.local_queued_messages.push(QueuedMessage {
+            content,
+            tracked_buffers,
+        });
+        self.sync_queue_flag_to_native_thread(cx);
+    }
+
     pub fn remove_from_queue(
         &mut self,
         index: usize,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) -> Option<QueuedMessage> {
         if index < self.local_queued_messages.len() {
             let removed = self.local_queued_messages.remove(index);
@@ -652,7 +669,7 @@ impl AcpThreadView {
         }
     }
 
-    pub fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<AcpServerView>) {
+    pub fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
         if let Some(native_thread) = self.as_native_thread(cx) {
             let has_queued = self.has_queued_messages();
             native_thread.update(cx, |thread, _| {
@@ -665,8 +682,9 @@ impl AcpThreadView {
         &mut self,
         index: usize,
         is_send_now: bool,
+        server_view: WeakEntity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let Some(queued) = self.remove_from_queue(index, cx) else {
             return;
@@ -702,7 +720,7 @@ impl AcpThreadView {
             Ok(Some((content, tracked_buffers)))
         });
 
-        self.send_content(contents_task, window, cx);
+        self.send_content(contents_task, server_view, window, cx);
     }
 
     // editor methods
@@ -710,7 +728,7 @@ impl AcpThreadView {
     pub fn expand_message_editor(
         &mut self,
         message_editor: Entity<MessageEditor>,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         self.set_editor_is_expanded(!self.editor_expanded, message_editor, cx);
         cx.stop_propagation();
@@ -721,7 +739,7 @@ impl AcpThreadView {
         &mut self,
         is_expanded: bool,
         message_editor: Entity<MessageEditor>,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         self.editor_expanded = is_expanded;
         message_editor.update(cx, |editor, cx| {
@@ -753,7 +771,7 @@ impl AcpThreadView {
         title_editor: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let thread = &self.thread;
 
@@ -781,7 +799,7 @@ impl AcpThreadView {
         &mut self,
         focus_handle: FocusHandle,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(index) = self.editing_message.take()
             && let Some(editor) = &self
@@ -815,7 +833,7 @@ impl AcpThreadView {
         option_id: acp::PermissionOptionId,
         option_kind: acp::PermissionOptionKind,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let thread = &self.thread;
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
@@ -844,7 +862,7 @@ impl AcpThreadView {
         &mut self,
         kind: acp::PermissionOptionKind,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let thread = self.thread.read(cx);
         let tool_call = thread.first_tool_awaiting_confirmation()?;
@@ -867,7 +885,7 @@ impl AcpThreadView {
     pub fn handle_select_permission_granularity(
         &mut self,
         action: &SelectPermissionGranularity,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
         self.selected_permission_granularity
@@ -878,7 +896,7 @@ impl AcpThreadView {
 
     // edits
 
-    pub fn keep_all(&mut self, cx: &mut Context<AcpServerView>) {
+    pub fn keep_all(&mut self, cx: &mut Context<Self>) {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
@@ -887,7 +905,7 @@ impl AcpThreadView {
         });
     }
 
-    pub fn reject_all(&mut self, cx: &mut Context<AcpServerView>) {
+    pub fn reject_all(&mut self, cx: &mut Context<Self>) {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
@@ -902,7 +920,7 @@ impl AcpThreadView {
         &mut self,
         buffer: &Entity<Buffer>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         let thread = &self.thread;
 
@@ -922,8 +940,9 @@ impl AcpThreadView {
     pub fn sync_thread(
         &mut self,
         project: Entity<Project>,
+        server_view: Entity<AcpServerView>,
         window: &mut Window,
-        cx: &mut Context<AcpServerView>,
+        cx: &mut Context<Self>,
     ) {
         if !self.is_imported_thread(cx) {
             return;
@@ -967,11 +986,8 @@ impl AcpThreadView {
             };
 
             this.update_in(cx, |this, window, cx| {
-                if let Some(thread) = this.as_active_thread_mut() {
-                    let resume_thread_metadata = &mut thread.resume_thread_metadata;
-                    *resume_thread_metadata = Some(thread_metadata);
-                }
-                this.reset(window, cx);
+                this.resume_thread_metadata = Some(thread_metadata);
+                server_view.update(cx, |server_view, cx| server_view.reset(window, cx));
             })?;
 
             this.update_in(cx, |this, _window, cx| {
@@ -995,11 +1011,7 @@ impl AcpThreadView {
         .detach_and_log_err(cx);
     }
 
-    pub fn restore_checkpoint(
-        &mut self,
-        message_id: &UserMessageId,
-        cx: &mut Context<AcpServerView>,
-    ) {
+    pub fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
                 thread.restore_checkpoint(message_id.clone(), cx)
@@ -1007,7 +1019,7 @@ impl AcpThreadView {
             .detach_and_log_err(cx);
     }
 
-    pub fn clear_thread_error(&mut self, cx: &mut Context<AcpServerView>) {
+    pub fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
         self.thread_error = None;
         self.thread_error_markdown = None;
         self.token_limit_callout_dismissed = true;
@@ -1043,7 +1055,7 @@ impl AcpThreadView {
 
     pub fn render_command_load_errors(
         &self,
-        cx: &mut Context<AcpServerView>,
+        cx: &Context<AcpServerView>,
     ) -> Option<impl IntoElement> {
         let errors = self.cached_user_command_errors.borrow();
 
@@ -1156,7 +1168,7 @@ impl AcpThreadView {
         )
     }
 
-    pub fn handle_open_rules(&mut self, window: &mut Window, cx: &mut Context<AcpServerView>) {
+    pub fn handle_open_rules(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };

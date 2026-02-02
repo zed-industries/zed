@@ -350,16 +350,9 @@ pub struct AcpServerView {
 }
 
 impl AcpServerView {
-    pub fn as_active_thread(&self) -> Option<&AcpThreadView> {
+    pub fn as_active_thread(&self) -> Option<Entity<AcpThreadView>> {
         match &self.server_state {
-            ServerState::Connected(connected) => Some(&connected.current),
-            _ => None,
-        }
-    }
-
-    pub fn as_active_thread_mut(&mut self) -> Option<&mut AcpThreadView> {
-        match &mut self.server_state {
-            ServerState::Connected(connected) => Some(&mut connected.current),
+            ServerState::Connected(connected) => Some(connected.current.clone()),
             _ => None,
         }
     }
@@ -389,7 +382,7 @@ enum ServerState {
 // hashmap of threads, current becomes session_id
 pub struct ConnectedServerState {
     auth_state: AuthState,
-    current: AcpThreadView,
+    current: Entity<AcpThreadView>,
     connection: Rc<dyn AgentConnection>,
 }
 
@@ -416,8 +409,8 @@ struct LoadingView {
 }
 
 impl ConnectedServerState {
-    pub fn has_thread_error(&self) -> bool {
-        self.current.thread_error.is_some()
+    pub fn has_thread_error(&self, cx: &App) -> bool {
+        self.current.read(cx).thread_error.is_some()
     }
 }
 
@@ -599,7 +592,7 @@ impl AcpServerView {
 
         let resume_thread_metadata = self
             .as_active_thread()
-            .and_then(|thread| thread.resume_thread_metadata.clone());
+            .and_then(|thread| thread.read(cx).resume_thread_metadata.clone());
 
         self.message_editor.update(cx, |editor, cx| {
             editor.set_command_state(
@@ -900,10 +893,8 @@ impl AcpServerView {
                                 })
                             });
 
-                        this.server_state = ServerState::Connected(ConnectedServerState {
-                            connection,
-                            auth_state: AuthState::Ok,
-                            current: AcpThreadView::new(
+                        let current = cx.new(|cx| {
+                            AcpThreadView::new(
                                 thread,
                                 workspace.clone(),
                                 entry_view_state,
@@ -921,7 +912,13 @@ impl AcpServerView {
                                 resume_thread.clone(),
                                 subscriptions,
                                 cx,
-                            ),
+                            )
+                        });
+
+                        this.server_state = ServerState::Connected(ConnectedServerState {
+                            connection,
+                            auth_state: AuthState::Ok,
+                            current,
                         });
 
                         if this.focus_handle.contains_focused(window, cx) {
@@ -942,8 +939,10 @@ impl AcpServerView {
             while let Ok(new_version) = new_version_available_rx.recv().await {
                 if let Some(new_version) = new_version {
                     this.update(cx, |this, cx| {
-                        if let Some(thread) = this.as_active_thread_mut() {
-                            thread.new_server_version_available = Some(new_version.into());
+                        if let Some(thread) = this.as_active_thread() {
+                            thread.update(cx, |thread, _cx| {
+                                thread.new_server_version_available = Some(new_version.into());
+                            });
                         }
                         cx.notify();
                     })
@@ -1069,14 +1068,16 @@ impl AcpServerView {
             ServerState::Loading(_) => false,
             ServerState::LoadError(_) => true,
             ServerState::Connected(connected) => {
-                connected.auth_state.is_ok() && connected.has_thread_error()
+                connected.auth_state.is_ok() && connected.has_thread_error(cx)
             }
         };
 
         if should_retry {
-            if let Some(active) = self.as_active_thread_mut() {
-                active.thread_error = None;
-                active.thread_error_markdown = None;
+            if let Some(active) = self.as_active_thread() {
+                active.update(cx, |active, _cx| {
+                    active.thread_error = None;
+                    active.thread_error_markdown = None;
+                });
             }
             self.reset(window, cx);
         }
@@ -1102,8 +1103,10 @@ impl AcpServerView {
     }
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.cancel_generation(cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.cancel_generation(cx);
+            });
         }
     }
 
@@ -1172,69 +1175,12 @@ impl AcpServerView {
             return;
         };
 
-        let Some(session_list) = self
-            .as_native_connection(cx)
-            .and_then(|connection| connection.session_list(cx))
-            .and_then(|list| list.downcast::<NativeAgentSessionList>())
-        else {
-            return;
-        };
-        let thread_store = session_list.thread_store().clone();
+        let project = self.project.clone();
+        let this = cx.entity();
 
-        let client = self.project.read(cx).client();
-        let session_id = active.thread.read(cx).session_id().clone();
-
-        cx.spawn_in(window, async move |this, cx| {
-            let response = client
-                .request(proto::GetSharedAgentThread {
-                    session_id: session_id.to_string(),
-                })
-                .await?;
-
-            let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
-
-            let db_thread = shared_thread.to_db_thread();
-
-            thread_store
-                .update(&mut cx.clone(), |store, cx| {
-                    store.save_thread(session_id.clone(), db_thread, cx)
-                })
-                .await?;
-
-            let thread_metadata = AgentSessionInfo {
-                session_id,
-                cwd: None,
-                title: Some(format!("🔗 {}", response.title).into()),
-                updated_at: Some(chrono::Utc::now()),
-                meta: None,
-            };
-
-            this.update_in(cx, |this, window, cx| {
-                if let Some(active) = this.as_active_thread_mut() {
-                    active.resume_thread_metadata = Some(thread_metadata);
-                }
-                this.reset(window, cx);
-            })?;
-
-            this.update_in(cx, |this, _window, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct ThreadSyncedToast;
-                        workspace.show_toast(
-                            Toast::new(
-                                NotificationId::unique::<ThreadSyncedToast>(),
-                                "Thread synced with latest version",
-                            )
-                            .autohide(),
-                            cx,
-                        );
-                    });
-                }
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        active.update(cx, |active, cx| {
+            active.sync_thread(project, this, window, cx)
+        });
     }
 
     pub fn expand_message_editor(
@@ -1244,15 +1190,19 @@ impl AcpServerView {
         cx: &mut Context<Self>,
     ) {
         let editor = self.message_editor.clone();
-        if let Some(active) = self.as_active_thread_mut() {
-            active.expand_message_editor(editor, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.expand_message_editor(editor, cx);
+            });
         }
     }
 
     fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
         let editor = self.message_editor.clone();
-        if let Some(active) = self.as_active_thread_mut() {
-            active.set_editor_is_expanded(is_expanded, editor, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.set_editor_is_expanded(is_expanded, editor, cx);
+            });
         }
     }
 
@@ -1263,8 +1213,10 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.handle_title_editor_event(title_editor, event, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.handle_title_editor_event(title_editor, event, window, cx);
+            });
         }
     }
 
@@ -1296,45 +1248,59 @@ impl AcpServerView {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_edit_card {
-                    if let Some(active) = self.as_active_thread_mut() {
-                        active.expanded_tool_calls.insert(tool_call_id.clone());
+                    if let Some(active) = self.as_active_thread() {
+                        active.update(cx, |active, _cx| {
+                            active.expanded_tool_calls.insert(tool_call_id.clone());
+                        });
                     }
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
-                    if let Some(active) = self.as_active_thread_mut() {
-                        active.expanded_tool_calls.insert(tool_call_id.clone());
+                    if let Some(active) = self.as_active_thread() {
+                        active.update(cx, |active, _cx| {
+                            active.expanded_tool_calls.insert(tool_call_id.clone());
+                        });
                     }
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.expanded_tool_calls.remove(tool_call_id);
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.expanded_tool_calls.remove(tool_call_id);
+                    });
                 }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(active) = self.as_active_thread()
-                    && let Some(AgentThreadEntry::UserMessage(user_message)) =
-                        active.thread.read(cx).entries().get(event.entry_index)
+                    && let Some(AgentThreadEntry::UserMessage(user_message)) = active
+                        .read(cx)
+                        .thread
+                        .read(cx)
+                        .entries()
+                        .get(event.entry_index)
                     && user_message.id.is_some()
                 {
-                    if let Some(active) = self.as_active_thread_mut() {
+                    active.update(cx, |active, _cx| {
                         active.editing_message = Some(event.entry_index);
-                    }
+                    });
                     cx.notify();
                 }
             }
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::LostFocus) => {
                 if let Some(active) = self.as_active_thread()
-                    && let Some(AgentThreadEntry::UserMessage(user_message)) =
-                        active.thread.read(cx).entries().get(event.entry_index)
+                    && let Some(AgentThreadEntry::UserMessage(user_message)) = active
+                        .read(cx)
+                        .thread
+                        .read(cx)
+                        .entries()
+                        .get(event.entry_index)
                     && user_message.id.is_some()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
-                        if let Some(active) = self.as_active_thread_mut() {
+                        active.update(cx, |active, _cx| {
                             active.editing_message = None;
-                        }
+                        });
                         cx.notify();
                     }
                 }
@@ -1354,8 +1320,11 @@ impl AcpServerView {
     }
 
     fn retry_generation(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.retry_generation(cx);
+        let this = cx.weak_entity();
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.retry_generation(this, cx);
+            });
         };
     }
 
@@ -1364,33 +1333,43 @@ impl AcpServerView {
         let login = self.login.clone();
         let agent_name = self.agent.name();
 
-        if let Some(active) = self.as_active_thread_mut() {
-            active.send(message_editor, agent_name, login, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            let this = cx.weak_entity();
+            active.update(cx, |active, cx| {
+                active.send(message_editor, agent_name, login, this, window, cx);
+            });
         }
     }
 
     fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let message_editor = self.message_editor.clone();
-        if let Some(active) = self.as_active_thread_mut() {
-            active.interrupt_and_send(message_editor, window, cx);
+        let this = cx.weak_entity();
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.interrupt_and_send(message_editor, this, window, cx);
+            });
         };
     }
 
     fn start_turn(&mut self, cx: &mut Context<Self>) -> usize {
-        self.as_active_thread_mut()
-            .map(|active| active.start_turn(cx))
+        self.as_active_thread()
+            .map(|active| active.update(cx, |active, cx| active.start_turn(cx)))
             .unwrap_or(0)
     }
 
-    fn stop_turn(&mut self, generation: usize) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.stop_turn(generation);
+    fn stop_turn(&mut self, generation: usize, cx: &mut Context<Self>) {
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.stop_turn(generation);
+            });
         }
     }
 
-    fn update_turn_tokens(&mut self, cx: &App) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.update_turn_tokens(cx);
+    fn update_turn_tokens(&mut self, cx: &mut Context<Self>) {
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.update_turn_tokens(cx);
+            });
         }
     }
 
@@ -1420,16 +1399,21 @@ impl AcpServerView {
             )
         });
 
-        if let Some(thread) = self.as_active_thread_mut() {
-            thread.thread_error.take();
-            thread.thread_feedback.clear();
-            thread.editing_message.take();
+        let should_be_following = if let Some(thread) = self.as_active_thread() {
+            thread.update(cx, |thread, _cx| {
+                thread.thread_error.take();
+                thread.thread_feedback.clear();
+                thread.editing_message.take();
+                thread.should_be_following
+            })
+        } else {
+            false
+        };
 
-            if thread.should_be_following {
-                let _ = self.workspace.update(cx, |workspace, cx| {
-                    workspace.follow(CollaboratorId::Agent, window, cx);
-                });
-            }
+        if should_be_following {
+            let _ = self.workspace.update(cx, |workspace, cx| {
+                workspace.follow(CollaboratorId::Agent, window, cx);
+            });
         }
 
         let contents_task = cx.spawn_in(window, async move |this, cx| {
@@ -1457,8 +1441,11 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.send_content(contents_task, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            let this = cx.weak_entity();
+            active.update(cx, |active, cx| {
+                active.send_content(contents_task, this, window, cx);
+            });
         };
     }
 
@@ -1469,15 +1456,20 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.send_queued_message_at_index(index, is_send_now, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            let this = cx.weak_entity();
+            active.update(cx, |active, cx| {
+                active.send_queued_message_at_index(index, is_send_now, this, window, cx);
+            });
         }
     }
 
     fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let focus_handle = self.focus_handle(cx);
-        if let Some(active) = self.as_active_thread_mut() {
-            active.cancel_editing(focus_handle, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.cancel_editing(focus_handle, window, cx);
+            });
         }
     }
 
@@ -1488,8 +1480,11 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.regenerate(entry_ix, message_editor, window, cx);
+        let this = cx.weak_entity();
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.regenerate(entry_ix, message_editor, this, window, cx);
+            });
         }
     }
 
@@ -1499,22 +1494,28 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.open_edited_buffer(buffer, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.open_edited_buffer(buffer, window, cx);
+            });
         };
     }
 
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.handle_open_rules(window, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.handle_open_rules(window, cx);
+            });
         }
     }
 
     fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
         let error = ThreadError::from_err(error, &self.agent);
         self.emit_thread_error_telemetry(&error, cx);
-        if let Some(thread) = self.as_active_thread_mut() {
-            thread.thread_error = Some(error);
+        if let Some(thread) = self.as_active_thread() {
+            thread.update(cx, |thread, _cx| {
+                thread.thread_error = Some(error);
+            });
         }
         cx.notify();
     }
@@ -1548,7 +1549,7 @@ impl AcpServerView {
         let (agent_telemetry_id, session_id) = self
             .as_active_thread()
             .map(|r| {
-                let thread = r.thread.read(cx);
+                let thread = r.read(cx).thread.read(cx);
                 (
                     thread.connection().telemetry_id(),
                     thread.session_id().clone(),
@@ -1567,8 +1568,10 @@ impl AcpServerView {
     }
 
     fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.clear_thread_error(cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.clear_thread_error(cx);
+            });
         }
     }
 
@@ -1583,10 +1586,12 @@ impl AcpServerView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.entry_view_state.update(cx, |view_state, cx| {
+                if let Some(active) = self.as_active_thread() {
+                    let entry_view_state = active.read(cx).entry_view_state.clone();
+                    let list_state = active.read(cx).list_state.clone();
+                    entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(index, thread, window, cx);
-                        active.list_state.splice_focusable(
+                        list_state.splice_focusable(
                             index..index,
                             [view_state
                                 .entry(index)
@@ -1598,8 +1603,7 @@ impl AcpServerView {
             AcpThreadEvent::EntryUpdated(index) => {
                 if let Some(entry_view_state) = self
                     .as_active_thread()
-                    .map(|active| &active.entry_view_state)
-                    .cloned()
+                    .map(|active| active.read(cx).entry_view_state.clone())
                 {
                     entry_view_state.update(cx, |view_state, cx| {
                         view_state.sync_entry(*index, thread, window, cx)
@@ -1607,24 +1611,28 @@ impl AcpServerView {
                 }
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                if let Some(active) = self.as_active_thread_mut() {
-                    active
-                        .entry_view_state
-                        .update(cx, |view_state, _cx| view_state.remove(range.clone()));
-                    active.list_state.splice(range.clone(), 0);
+                if let Some(active) = self.as_active_thread() {
+                    let entry_view_state = active.read(cx).entry_view_state.clone();
+                    let list_state = active.read(cx).list_state.clone();
+                    entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
+                    list_state.splice(range.clone(), 0);
                 }
             }
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             AcpThreadEvent::Retry(retry) => {
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.thread_retry_status = Some(retry.clone());
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.thread_retry_status = Some(retry.clone());
+                    });
                 }
             }
             AcpThreadEvent::Stopped => {
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.thread_retry_status.take();
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.thread_retry_status.take();
+                    });
                 }
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
@@ -1638,24 +1646,26 @@ impl AcpServerView {
                     cx,
                 );
 
-                let should_send_queued = if let Some(active) = self.as_active_thread_mut() {
-                    if active.skip_queue_processing_count > 0 {
-                        active.skip_queue_processing_count -= 1;
-                        false
-                    } else if active.user_interrupted_generation {
-                        // Manual interruption: don't auto-process queue.
-                        // Reset the flag so future completions can process normally.
-                        active.user_interrupted_generation = false;
-                        false
-                    } else {
-                        let has_queued = !active.local_queued_messages.is_empty();
-                        // Don't auto-send if the first message editor is currently focused
-                        let is_first_editor_focused = active
-                            .queued_message_editors
-                            .first()
-                            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
-                        has_queued && !is_first_editor_focused
-                    }
+                let should_send_queued = if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, cx| {
+                        if active.skip_queue_processing_count > 0 {
+                            active.skip_queue_processing_count -= 1;
+                            false
+                        } else if active.user_interrupted_generation {
+                            // Manual interruption: don't auto-process queue.
+                            // Reset the flag so future completions can process normally.
+                            active.user_interrupted_generation = false;
+                            false
+                        } else {
+                            let has_queued = !active.local_queued_messages.is_empty();
+                            // Don't auto-send if the first message editor is currently focused
+                            let is_first_editor_focused = active
+                                .queued_message_editors
+                                .first()
+                                .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
+                            has_queued && !is_first_editor_focused
+                        }
+                    })
                 } else {
                     false
                 };
@@ -1669,9 +1679,11 @@ impl AcpServerView {
                 let error = ThreadError::Refusal;
                 self.emit_thread_error_telemetry(&error, cx);
 
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.thread_retry_status.take();
-                    active.thread_error = Some(error);
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.thread_retry_status.take();
+                        active.thread_error = Some(error);
+                    });
                 }
                 let model_or_agent_name = self.current_model_name(cx);
                 let notification_message =
@@ -1679,8 +1691,10 @@ impl AcpServerView {
                 self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.thread_retry_status.take();
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.thread_retry_status.take();
+                    });
                 }
                 self.notify_with_sound(
                     "Agent stopped due to an error",
@@ -1699,7 +1713,7 @@ impl AcpServerView {
                 let title = thread.read(cx).title();
                 if let Some(title_editor) = self
                     .as_active_thread()
-                    .and_then(|active| active.title_editor.as_ref())
+                    .and_then(|active| active.read(cx).title_editor.clone())
                 {
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
@@ -1710,10 +1724,12 @@ impl AcpServerView {
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
-                if let Some(active) = self.as_active_thread_mut() {
-                    active
-                        .prompt_capabilities
-                        .replace(thread.read(cx).prompt_capabilities());
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active
+                            .prompt_capabilities
+                            .replace(thread.read(_cx).prompt_capabilities());
+                    });
                 }
             }
             AcpThreadEvent::TokenUsageUpdated => {
@@ -1734,8 +1750,10 @@ impl AcpServerView {
                 }
 
                 let has_commands = !available_commands.is_empty();
-                if let Some(active) = self.as_active_thread_mut() {
-                    active.available_commands.replace(available_commands);
+                if let Some(active) = self.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.available_commands.replace(available_commands);
+                    });
                 }
                 self.refresh_cached_user_commands(cx);
 
@@ -2128,12 +2146,18 @@ impl AcpServerView {
 
     pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
         self.as_active_thread().is_some_and(|active| {
-            active.thread.read(cx).entries().iter().any(|entry| {
-                matches!(
-                    entry,
-                    AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
-                )
-            })
+            active
+                .read(cx)
+                .thread
+                .read(cx)
+                .entries()
+                .iter()
+                .any(|entry| {
+                    matches!(
+                        entry,
+                        AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
+                    )
+                })
         })
     }
 
@@ -2145,8 +2169,10 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
+            });
         };
     }
 
@@ -2165,8 +2191,10 @@ impl AcpServerView {
     }
 
     fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.restore_checkpoint(message_id, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.restore_checkpoint(message_id, cx);
+            });
         };
     }
 
@@ -2182,6 +2210,7 @@ impl AcpServerView {
         let is_first_indented = is_indented
             && self.as_active_thread().is_some_and(|active| {
                 active
+                    .read(cx)
                     .thread
                     .read(cx)
                     .entries()
@@ -2193,7 +2222,7 @@ impl AcpServerView {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(entry_view_state) = self
                     .as_active_thread()
-                    .map(|active| &active.entry_view_state)
+                    .map(|active| active.read(cx).entry_view_state.clone())
                 else {
                     return Empty.into_any_element();
                 };
@@ -2208,7 +2237,7 @@ impl AcpServerView {
 
                 let editing = self
                     .as_active_thread()
-                    .and_then(|active| active.editing_message)
+                    .and_then(|active| active.read(cx).editing_message)
                     == Some(entry_ix);
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
@@ -2306,7 +2335,7 @@ impl AcpServerView {
                                     .bg(cx.theme().colors().editor_background)
                                     .overflow_hidden();
 
-                                let is_loading_contents = matches!(&self.server_state, ServerState::Connected(ConnectedServerState { current: AcpThreadView { is_loading_contents: true, .. }, ..}));
+                                let is_loading_contents = self.as_active_thread().is_some_and(|active| active.read(cx).is_loading_contents);
                                 if message.id.is_some() {
                                     this.child(
                                         base_container
@@ -2498,6 +2527,9 @@ impl AcpServerView {
             return primary;
         };
 
+        let thread = active.read(cx).thread.clone();
+        let comments_editor = active.read(cx).thread_feedback.comments_editor.clone();
+
         let primary = if entry_ix == total_entries - 1 {
             v_flex()
                 .w_full()
@@ -2506,13 +2538,12 @@ impl AcpServerView {
                     if needs_confirmation {
                         this.child(self.render_generating(true, cx))
                     } else {
-                        this.child(self.render_thread_controls(&active.thread, cx))
+                        this.child(self.render_thread_controls(&thread, cx))
                     }
                 })
-                .when_some(
-                    active.thread_feedback.comments_editor.clone(),
-                    |this, editor| this.child(Self::render_feedback_feedback_editor(editor, cx)),
-                )
+                .when_some(comments_editor, |this, editor| {
+                    this.child(Self::render_feedback_feedback_editor(editor, cx))
+                })
                 .into_any_element()
         } else {
             primary
@@ -2520,7 +2551,7 @@ impl AcpServerView {
 
         if let Some(editing_index) = self
             .as_active_thread()
-            .and_then(|active| active.editing_message)
+            .and_then(|active| active.read(cx).editing_message)
             && editing_index < entry_ix
         {
             let backdrop = div()
@@ -2562,12 +2593,14 @@ impl AcpServerView {
                 ContextMenu::build(window, cx, move |menu, _, cx| {
                     let active_thread = entity.read(cx).as_active_thread();
                     let is_at_top = active_thread
-                        .map(|active| &active.list_state)
-                        .map_or(true, |state| state.logical_scroll_top().item_ix == 0);
+                        .as_ref()
+                        .map(|active| active.read(cx).list_state.logical_scroll_top().item_ix == 0)
+                        .unwrap_or(true);
 
                     let has_selection = active_thread
-                        .and_then(|active| active.thread.read(cx).entries().get(entry_ix))
-                        .and_then(|entry| match entry {
+                        .as_ref()
+                        .and_then(|active| active.read(cx).thread.read(cx).entries().get(entry_ix))
+                        .and_then(|entry| match &entry {
                             AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
                             _ => None,
                         })
@@ -2588,7 +2621,7 @@ impl AcpServerView {
                             move |_, cx| {
                                 entity.update(cx, |this, cx| {
                                     if let Some(active) = this.as_active_thread() {
-                                        let entries = active.thread.read(cx).entries();
+                                        let entries = active.read(cx).thread.read(cx).entries();
                                         if let Some(text) =
                                             Self::get_agent_message_content(entries, entry_ix, cx)
                                         {
@@ -2677,17 +2710,18 @@ impl AcpServerView {
 
         let key = (entry_ix, chunk_ix);
 
-        let is_open = matches!(&self.server_state, ServerState::Connected(ConnectedServerState {current: AcpThreadView { expanded_thinking_blocks, .. }, ..}) if expanded_thinking_blocks.contains(&key));
-
-        let scroll_handle = self
+        let is_open = self
             .as_active_thread()
-            .map(|active| &active.entry_view_state)
-            .and_then(|entry_view_state| {
-                entry_view_state
-                    .read(cx)
-                    .entry(entry_ix)
-                    .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix))
-            });
+            .is_some_and(|active| active.read(cx).expanded_thinking_blocks.contains(&key));
+
+        let scroll_handle = self.as_active_thread().and_then(|active| {
+            active
+                .read(cx)
+                .entry_view_state
+                .read(cx)
+                .entry(entry_ix)
+                .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix))
+        });
 
         let thinking_content = {
             div()
@@ -2737,12 +2771,14 @@ impl AcpServerView {
                             .visible_on_hover(&card_header_id)
                             .on_click(cx.listener({
                                 move |this, _event, _window, cx| {
-                                    if let Some(active) = this.as_active_thread_mut() {
-                                        if is_open {
-                                            active.expanded_thinking_blocks.remove(&key);
-                                        } else {
-                                            active.expanded_thinking_blocks.insert(key);
-                                        }
+                                    if let Some(active) = this.as_active_thread() {
+                                        active.update(cx, |active, _cx| {
+                                            if is_open {
+                                                active.expanded_thinking_blocks.remove(&key);
+                                            } else {
+                                                active.expanded_thinking_blocks.insert(key);
+                                            }
+                                        });
                                         cx.notify();
                                     }
                                 }
@@ -2750,12 +2786,14 @@ impl AcpServerView {
                     )
                     .on_click(cx.listener({
                         move |this, _event, _window, cx| {
-                            if let Some(active) = this.as_active_thread_mut() {
-                                if is_open {
-                                    active.expanded_thinking_blocks.remove(&key);
-                                } else {
-                                    active.expanded_thinking_blocks.insert(key);
-                                }
+                            if let Some(active) = this.as_active_thread() {
+                                active.update(cx, |active, _cx| {
+                                    if is_open {
+                                        active.expanded_thinking_blocks.remove(&key);
+                                    } else {
+                                        active.expanded_thinking_blocks.insert(key);
+                                    }
+                                });
                                 cx.notify();
                             }
                         }
@@ -2809,6 +2847,7 @@ impl AcpServerView {
             self.as_active_thread()
                 .and_then(|active| {
                     active
+                        .read(cx)
                         .entry_view_state
                         .read(cx)
                         .entry(entry_ix)
@@ -2822,12 +2861,9 @@ impl AcpServerView {
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let mut is_open = match &self.server_state {
-            ServerState::Connected(ConnectedServerState { current, .. }) => {
-                current.expanded_tool_calls.contains(&tool_call.id)
-            }
-            _ => false,
-        };
+        let mut is_open = self
+            .as_active_thread()
+            .is_some_and(|active| active.read(cx).expanded_tool_calls.contains(&tool_call.id));
 
         is_open |= needs_confirmation;
 
@@ -2840,16 +2876,13 @@ impl AcpServerView {
                 .buffer_font(cx)
         };
 
-        let tool_output_display = if is_open {
-            match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
-                    .w_full()
-                    .children(
-                        tool_call
-                            .content
-                            .iter()
-                            .enumerate()
-                            .map(|(content_ix, content)| {
+        let tool_output_display =
+            if is_open {
+                match &tool_call.status {
+                    ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+                        .w_full()
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
                                 div()
                                     .child(self.render_tool_call_content(
                                         entry_ix,
@@ -2863,59 +2896,117 @@ impl AcpServerView {
                                         cx,
                                     ))
                                     .into_any_element()
-                            }),
-                    )
-                    .when(should_show_raw_input, |this| {
-                        let is_raw_input_expanded =
-                            matches!(&self.server_state, ServerState::Connected(ConnectedServerState {current: AcpThreadView { expanded_tool_call_raw_inputs, .. }, ..}) if expanded_tool_call_raw_inputs.contains(&tool_call.id));
+                            },
+                        ))
+                        .when(should_show_raw_input, |this| {
+                            let is_raw_input_expanded =
+                                self.as_active_thread().is_some_and(|active| {
+                                    active
+                                        .read(cx)
+                                        .expanded_tool_call_raw_inputs
+                                        .contains(&tool_call.id)
+                                });
 
-                        let input_header = if is_raw_input_expanded {
-                            "Raw Input:"
-                        } else {
-                            "View Raw Input"
-                        };
+                            let input_header = if is_raw_input_expanded {
+                                "Raw Input:"
+                            } else {
+                                "View Raw Input"
+                            };
 
-                        this.child(
-                            v_flex()
-                                .p_2()
-                                .gap_1()
-                                .border_t_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    h_flex()
-                                        .id("disclosure_container")
-                                        .pl_0p5()
-                                        .gap_1()
-                                        .justify_between()
-                                        .rounded_xs()
-                                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                        .child(input_output_header(input_header.into()))
-                                        .child(
-                                            Disclosure::new(
-                                                ("raw-input-disclosure", entry_ix),
-                                                is_raw_input_expanded,
+                            this.child(
+                                v_flex()
+                                    .p_2()
+                                    .gap_1()
+                                    .border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(
+                                        h_flex()
+                                            .id("disclosure_container")
+                                            .pl_0p5()
+                                            .gap_1()
+                                            .justify_between()
+                                            .rounded_xs()
+                                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                            .child(input_output_header(input_header.into()))
+                                            .child(
+                                                Disclosure::new(
+                                                    ("raw-input-disclosure", entry_ix),
+                                                    is_raw_input_expanded,
+                                                )
+                                                .opened_icon(IconName::ChevronUp)
+                                                .closed_icon(IconName::ChevronDown),
                                             )
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronDown),
-                                        )
-                                        .on_click(cx.listener({
-                                            let id = tool_call.id.clone();
+                                            .on_click(cx.listener({
+                                                let id = tool_call.id.clone();
 
-                                            move |this: &mut Self, _, _, cx| {
-                                                if let Some(active) = this.as_active_thread_mut() {
-                                                    if active.expanded_tool_call_raw_inputs.contains(&id) {
-                                                        active.expanded_tool_call_raw_inputs.remove(&id);
-                                                    } else {
-                                                        active.expanded_tool_call_raw_inputs.insert(id.clone());
+                                                move |this: &mut Self, _, _, cx| {
+                                                    if let Some(active) = this.as_active_thread() {
+                                                        active.update(cx, |active, _cx| {
+                                                            if active
+                                                                .expanded_tool_call_raw_inputs
+                                                                .contains(&id)
+                                                            {
+                                                                active
+                                                                    .expanded_tool_call_raw_inputs
+                                                                    .remove(&id);
+                                                            } else {
+                                                                active
+                                                                    .expanded_tool_call_raw_inputs
+                                                                    .insert(id.clone());
+                                                            }
+                                                        });
+                                                        cx.notify();
                                                     }
-                                                    cx.notify();
                                                 }
-                                            }
-                                        })),
-                                )
-                                .when(is_raw_input_expanded, |this| {
-                                    this.children(tool_call.raw_input_markdown.clone().map(
-                                        |input| {
+                                            })),
+                                    )
+                                    .when(is_raw_input_expanded, |this| {
+                                        this.children(tool_call.raw_input_markdown.clone().map(
+                                            |input| {
+                                                self.render_markdown(
+                                                    input,
+                                                    MarkdownStyle::themed(
+                                                        MarkdownFont::Agent,
+                                                        window,
+                                                        cx,
+                                                    ),
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            )
+                        })
+                        .child(self.render_permission_buttons(
+                            options,
+                            entry_ix,
+                            tool_call.id.clone(),
+                            cx,
+                        ))
+                        .into_any(),
+                    ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        if is_edit
+                            && tool_call.content.is_empty()
+                            && self.as_native_connection(cx).is_some() =>
+                    {
+                        self.render_diff_loading(cx).into_any()
+                    }
+                    ToolCallStatus::Pending
+                    | ToolCallStatus::InProgress
+                    | ToolCallStatus::Completed
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Canceled => v_flex()
+                        .when(should_show_raw_input, |this| {
+                            this.mt_1p5().w_full().child(
+                                v_flex()
+                                    .ml(rems(0.4))
+                                    .px_3p5()
+                                    .pb_1()
+                                    .gap_1()
+                                    .border_l_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(input_output_header("Raw Input:".into()))
+                                    .children(tool_call.raw_input_markdown.clone().map(|input| {
+                                        div().id(("tool-call-raw-input-markdown", entry_ix)).child(
                                             self.render_markdown(
                                                 input,
                                                 MarkdownStyle::themed(
@@ -2923,58 +3014,14 @@ impl AcpServerView {
                                                     window,
                                                     cx,
                                                 ),
-                                            )
-                                        },
-                                    ))
-                                }),
-                        )
-                    })
-                    .child(self.render_permission_buttons(
-                        options,
-                        entry_ix,
-                        tool_call.id.clone(),
-                        cx,
-                    ))
-                    .into_any(),
-                ToolCallStatus::Pending | ToolCallStatus::InProgress
-                    if is_edit
-                        && tool_call.content.is_empty()
-                        && self.as_native_connection(cx).is_some() =>
-                {
-                    self.render_diff_loading(cx).into_any()
-                }
-                ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                | ToolCallStatus::Completed
-                | ToolCallStatus::Failed
-                | ToolCallStatus::Canceled => v_flex()
-                    .when(should_show_raw_input, |this| {
-                        this.mt_1p5().w_full().child(
-                            v_flex()
-                                .ml(rems(0.4))
-                                .px_3p5()
-                                .pb_1()
-                                .gap_1()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(input_output_header("Raw Input:".into()))
-                                .children(tool_call.raw_input_markdown.clone().map(|input| {
-                                    div().id(("tool-call-raw-input-markdown", entry_ix)).child(
-                                        self.render_markdown(
-                                            input,
-                                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                        ),
-                                    )
-                                }))
-                                .child(input_output_header("Output:".into())),
-                        )
-                    })
-                    .children(
-                        tool_call
-                            .content
-                            .iter()
-                            .enumerate()
-                            .map(|(content_ix, content)| {
+                                            ),
+                                        )
+                                    }))
+                                    .child(input_output_header("Output:".into())),
+                            )
+                        })
+                        .children(tool_call.content.iter().enumerate().map(
+                            |(content_ix, content)| {
                                 div().id(("tool-call-output", entry_ix)).child(
                                     self.render_tool_call_content(
                                         entry_ix,
@@ -2988,15 +3035,15 @@ impl AcpServerView {
                                         cx,
                                     ),
                                 )
-                            }),
-                    )
-                    .into_any(),
-                ToolCallStatus::Rejected => Empty.into_any(),
-            }
-            .into()
-        } else {
-            None
-        };
+                            },
+                        ))
+                        .into_any(),
+                    ToolCallStatus::Rejected => Empty.into_any(),
+                }
+                .into()
+            } else {
+                None
+            };
 
         v_flex()
             .map(|this| {
@@ -3068,12 +3115,14 @@ impl AcpServerView {
                                                 .on_click(cx.listener({
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                        if let Some(active) = this.as_active_thread_mut() {
-                                                            if is_open {
-                                                                active.expanded_tool_calls.remove(&id);
-                                                            } else {
-                                                                active.expanded_tool_calls.insert(id.clone());
-                                                            }
+                                                        if let Some(active) = this.as_active_thread() {
+                                                            active.update(cx, |active, _cx| {
+                                                                if is_open {
+                                                                    active.expanded_tool_calls.remove(&id);
+                                                                } else {
+                                                                    active.expanded_tool_calls.insert(id.clone());
+                                                                }
+                                                            });
                                                             cx.notify();
                                                         }
                                                     }
@@ -3106,7 +3155,7 @@ impl AcpServerView {
                                         })
                                         .when_some(diff_for_discard, |this, diff| {
                                             let tool_call_id = tool_call.id.clone();
-                                            let is_discarded = matches!(&self.server_state, ServerState::Connected(ConnectedServerState{current: AcpThreadView { discarded_partial_edits, .. }, ..}) if discarded_partial_edits.contains(&tool_call_id));
+                                            let is_discarded = self.as_active_thread().is_some_and(|active| active.read(cx).discarded_partial_edits.contains(&tool_call_id));
                                             this.when(!is_discarded, |this| {
                                                 this.child(
                                                     IconButton::new(
@@ -3129,8 +3178,10 @@ impl AcpServerView {
                                                             buffer.update(cx, |buffer, cx| {
                                                                 buffer.set_text(base_text.as_ref(), cx);
                                                             });
-                                                            if let Some(active) = this.as_active_thread_mut() {
-                                                                active.discarded_partial_edits.insert(tool_call_id.clone());
+                                                            if let Some(active) = this.as_active_thread() {
+                                                                active.update(cx, |active, _cx| {
+                                                                    active.discarded_partial_edits.insert(tool_call_id.clone());
+                                                                });
                                                             }
                                                             cx.notify();
                                                         }
@@ -3394,11 +3445,9 @@ impl AcpServerView {
         let action_log = thread_read.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let is_expanded = if let Some(active) = self.as_active_thread() {
-            active.expanded_subagents.contains(&session_id)
-        } else {
-            false
-        };
+        let is_expanded = self
+            .as_active_thread()
+            .is_some_and(|active| active.read(cx).expanded_subagents.contains(&session_id));
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
@@ -3534,14 +3583,21 @@ impl AcpServerView {
                                 .when(has_expandable_content, |button| {
                                     button.on_click(cx.listener({
                                         move |this, _, _, cx| {
-                                            if let Some(active) = this.as_active_thread_mut() {
-                                                if active.expanded_subagents.contains(&session_id) {
-                                                    active.expanded_subagents.remove(&session_id);
-                                                } else {
-                                                    active
+                                            if let Some(active) = this.as_active_thread() {
+                                                active.update(cx, |active, _cx| {
+                                                    if active
                                                         .expanded_subagents
-                                                        .insert(session_id.clone());
-                                                }
+                                                        .contains(&session_id)
+                                                    {
+                                                        active
+                                                            .expanded_subagents
+                                                            .remove(&session_id);
+                                                    } else {
+                                                        active
+                                                            .expanded_subagents
+                                                            .insert(session_id.clone());
+                                                    }
+                                                });
                                             }
                                             cx.notify();
                                         }
@@ -3611,6 +3667,7 @@ impl AcpServerView {
             .as_active_thread()
             .map(|state| {
                 state
+                    .read(cx)
                     .subagent_scroll_handles
                     .borrow_mut()
                     .entry(session_id.clone())
@@ -3696,8 +3753,10 @@ impl AcpServerView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                if let Some(active) = this.as_active_thread_mut() {
-                                    active.expanded_tool_calls.remove(&tool_call_id);
+                                if let Some(active) = this.as_active_thread() {
+                                    active.update(cx, |active, _cx| {
+                                        active.expanded_tool_calls.remove(&tool_call_id);
+                                    });
                                     cx.notify();
                                 }
                             }
@@ -3865,6 +3924,7 @@ impl AcpServerView {
     ) -> Div {
         let is_first = self.as_active_thread().is_some_and(|active| {
             active
+                .read(cx)
                 .thread
                 .read(cx)
                 .first_tool_awaiting_confirmation()
@@ -3874,6 +3934,7 @@ impl AcpServerView {
         // Get the selected granularity index, defaulting to the last option ("Only this time")
         let selected_index = if let Some(active) = self.as_active_thread() {
             active
+                .read(cx)
                 .selected_permission_granularity
                 .get(&tool_call_id)
                 .copied()
@@ -4008,7 +4069,7 @@ impl AcpServerView {
             .collect();
 
         let permission_dropdown_handle = match self.as_active_thread() {
-            Some(thread) => thread.permission_dropdown_handle.clone(),
+            Some(thread) => thread.read(cx).permission_dropdown_handle.clone(),
             None => return div().into_any_element(),
         };
 
@@ -4075,6 +4136,7 @@ impl AcpServerView {
     ) -> Div {
         let is_first = self.as_active_thread().is_some_and(|active| {
             active
+                .read(cx)
                 .thread
                 .read(cx)
                 .first_tool_awaiting_confirmation()
@@ -4299,6 +4361,7 @@ impl AcpServerView {
     ) -> Div {
         let selected_index = if let Some(active) = self.as_active_thread() {
             active
+                .read(cx)
                 .selected_permission_granularity
                 .get(&tool_call_id)
                 .copied()
@@ -4434,7 +4497,7 @@ impl AcpServerView {
             .collect();
 
         let permission_dropdown_handle = match self.as_active_thread() {
-            Some(thread) => thread.permission_dropdown_handle.clone(),
+            Some(thread) => thread.read(_cx).permission_dropdown_handle.clone(),
             _ => return div().into_any_element(),
         };
 
@@ -4553,7 +4616,7 @@ impl AcpServerView {
 
         let revealed_diff_editor = if let Some(entry_view_state) = self
             .as_active_thread()
-            .map(|active| &active.entry_view_state)
+            .map(|active| active.read(cx).entry_view_state.clone())
             && let Some(entry) = entry_view_state.read(cx).entry(entry_ix)
             && let Some(editor) = entry.editor_for_diff(diff)
             && diff.read(cx).has_revealed_range(cx)
@@ -4693,9 +4756,12 @@ impl AcpServerView {
         let command_element =
             self.render_collapsible_command(false, command_content, &tool_call.id, cx);
 
-        let is_expanded = self
-            .as_connected()
-            .is_some_and(|c| c.current.expanded_tool_calls.contains(&tool_call.id));
+        let is_expanded = self.as_connected().is_some_and(|c| {
+            c.current
+                .read(cx)
+                .expanded_tool_calls
+                .contains(&tool_call.id)
+        });
 
         let header = h_flex()
             .id(header_id)
@@ -4831,13 +4897,15 @@ impl AcpServerView {
                 .visible_on_hover(&header_group)
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
-                    move |this, _event, _window, _cx| {
-                        if let Some(active) = this.as_active_thread_mut() {
-                            if is_expanded {
-                                active.expanded_tool_calls.remove(&id);
-                            } else {
-                                active.expanded_tool_calls.insert(id.clone());
-                            }
+                    move |this, _event, _window, cx| {
+                        if let Some(active) = this.as_active_thread() {
+                            active.update(cx, |active, _cx| {
+                                if is_expanded {
+                                    active.expanded_tool_calls.remove(&id);
+                                } else {
+                                    active.expanded_tool_calls.insert(id.clone());
+                                }
+                            });
                         }
                     }
                 })),
@@ -4845,7 +4913,7 @@ impl AcpServerView {
 
         let terminal_view = self
             .as_active_thread()
-            .map(|active| &active.entry_view_state)
+            .map(|active| active.read(cx).entry_view_state.clone())
             .and_then(|entry_view_state| {
                 entry_view_state
                     .read(cx)
@@ -5350,7 +5418,7 @@ impl AcpServerView {
         let telemetry = ActionLogTelemetry::from(thread);
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let plan = thread.plan();
-        let queue_is_empty = !self.has_queued_messages();
+        let queue_is_empty = !self.has_queued_messages(cx);
 
         if changed_buffers.is_empty() && plan.is_empty() && queue_is_empty {
             return None;
@@ -5366,6 +5434,10 @@ impl AcpServerView {
         let Some(active) = self.as_active_thread() else {
             return None;
         };
+
+        let plan_expanded = active.read(cx).plan_expanded;
+        let edits_expanded = active.read(cx).edits_expanded;
+        let queue_expanded = active.read(cx).queue_expanded;
 
         v_flex()
             .mt_1()
@@ -5383,7 +5455,7 @@ impl AcpServerView {
             }])
             .when(!plan.is_empty(), |this| {
                 this.child(self.render_plan_summary(plan, window, cx))
-                    .when(active.plan_expanded, |parent| {
+                    .when(plan_expanded, |parent| {
                         parent.child(self.render_plan_entries(plan, window, cx))
                     })
             })
@@ -5393,11 +5465,11 @@ impl AcpServerView {
             .when(!changed_buffers.is_empty(), |this| {
                 this.child(self.render_edits_summary(
                     &changed_buffers,
-                    active.edits_expanded,
+                    edits_expanded,
                     pending_edits,
                     cx,
                 ))
-                .when(active.edits_expanded, |parent| {
+                .when(edits_expanded, |parent| {
                     parent.child(self.render_edited_files(
                         action_log,
                         telemetry.clone(),
@@ -5412,7 +5484,7 @@ impl AcpServerView {
                     this.child(Divider::horizontal().color(DividerColor::Border))
                 })
                 .child(self.render_message_queue_summary(window, cx))
-                .when(active.queue_expanded, |parent| {
+                .when(queue_expanded, |parent| {
                     parent.child(self.render_message_queue_entries(window, cx))
                 })
             })
@@ -5429,10 +5501,11 @@ impl AcpServerView {
         let Some(active) = self.as_active_thread() else {
             return Empty.into_any_element();
         };
+        let plan_expanded = active.read(cx).plan_expanded;
         let stats = plan.stats();
 
         let title = if let Some(entry) = stats.in_progress_entry
-            && !active.plan_expanded
+            && !plan_expanded
         {
             h_flex()
                 .cursor_default()
@@ -5507,16 +5580,18 @@ impl AcpServerView {
             .p_1()
             .w_full()
             .gap_1()
-            .when(active.plan_expanded, |this| {
+            .when(plan_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
-            .child(Disclosure::new("plan_disclosure", active.plan_expanded))
+            .child(Disclosure::new("plan_disclosure", plan_expanded))
             .child(title)
             .on_click(cx.listener(|this, _, _, cx| {
-                let Some(active) = this.as_active_thread_mut() else {
+                let Some(active) = this.as_active_thread() else {
                     return;
                 };
-                active.plan_expanded = !active.plan_expanded;
+                active.update(cx, |active, _cx| {
+                    active.plan_expanded = !active.plan_expanded;
+                });
                 cx.notify();
             }))
             .into_any_element()
@@ -5664,10 +5739,12 @@ impl AcpServerView {
                         }
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let Some(active) = this.as_active_thread_mut() else {
+                        let Some(active) = this.as_active_thread() else {
                             return;
                         };
-                        active.edits_expanded = !active.edits_expanded;
+                        active.update(cx, |active, _cx| {
+                            active.edits_expanded = !active.edits_expanded;
+                        });
                         cx.notify();
                     })),
             )
@@ -5745,12 +5822,14 @@ impl AcpServerView {
             .gap_1()
             .bg(editor_bg_color)
             .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                if let Some(active) = this.as_active_thread_mut() {
-                    if *is_hovered {
-                        active.hovered_edited_file_buttons = Some(index);
-                    } else if active.hovered_edited_file_buttons == Some(index) {
-                        active.hovered_edited_file_buttons = None;
-                    }
+                if let Some(active) = this.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        if *is_hovered {
+                            active.hovered_edited_file_buttons = Some(index);
+                        } else if active.hovered_edited_file_buttons == Some(index) {
+                            active.hovered_edited_file_buttons = None;
+                        }
+                    });
                 }
                 cx.notify();
             }))
@@ -5922,7 +6001,8 @@ impl AcpServerView {
                                     .when(
                                         match self.as_active_thread() {
                                             Some(thread) => {
-                                                thread.hovered_edited_file_buttons == Some(index)
+                                                thread.read(cx).hovered_edited_file_buttons
+                                                    == Some(index)
                                             }
                                             None => false,
                                         },
@@ -5961,7 +6041,7 @@ impl AcpServerView {
         _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let queue_count = self.queued_messages_len();
+        let queue_count = self.queued_messages_len(cx);
         let title: SharedString = if queue_count == 1 {
             "1 Queued Message".into()
         } else {
@@ -5972,25 +6052,29 @@ impl AcpServerView {
             return Empty.into_any_element();
         };
 
+        let queue_expanded = active.read(cx).queue_expanded;
+
         h_flex()
             .p_1()
             .w_full()
             .gap_1()
             .justify_between()
-            .when(active.queue_expanded, |this| {
+            .when(queue_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
             .child(
                 h_flex()
                     .id("queue_summary")
                     .gap_1()
-                    .child(Disclosure::new("queue_disclosure", active.queue_expanded))
+                    .child(Disclosure::new("queue_disclosure", queue_expanded))
                     .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let Some(active) = this.as_active_thread_mut() else {
+                        let Some(active) = this.as_active_thread() else {
                             return;
                         };
-                        active.queue_expanded = !active.queue_expanded;
+                        active.update(cx, |active, _cx| {
+                            active.queue_expanded = !active.queue_expanded;
+                        });
                         cx.notify();
                     })),
             )
@@ -6000,8 +6084,10 @@ impl AcpServerView {
                     .key_binding(KeyBinding::for_action(&ClearMessageQueue, cx))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.clear_queue(cx);
-                        if let Some(active) = this.as_active_thread_mut() {
-                            active.can_fast_track_queue = false;
+                        if let Some(active) = this.as_active_thread() {
+                            active.update(cx, |active, _cx| {
+                                active.can_fast_track_queue = false;
+                            });
                         }
                         cx.notify();
                     })),
@@ -6019,12 +6105,12 @@ impl AcpServerView {
 
         let queued_message_editors = self
             .as_connected()
-            .map(|c| c.current.queued_message_editors.as_slice())
-            .unwrap_or(&[]);
+            .map(|c| c.current.read(cx).queued_message_editors.clone())
+            .unwrap_or_default();
 
         let queue_len = queued_message_editors.len();
         let can_fast_track = if let Some(active) = self.as_active_thread() {
-            active.can_fast_track_queue && queue_len > 0
+            active.read(cx).can_fast_track_queue && queue_len > 0
         } else {
             false
         };
@@ -6230,7 +6316,7 @@ impl AcpServerView {
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self
             .as_active_thread()
-            .is_some_and(|active| active.editor_expanded);
+            .is_some_and(|active| active.read(cx).editor_expanded);
         let (expand_icon, expand_tooltip) = if editor_expanded {
             (IconName::Minimize, "Minimize Message Editor")
         } else {
@@ -6314,15 +6400,17 @@ impl AcpServerView {
                             .gap_1()
                             .children(self.render_token_usage(cx))
                             .when_some(self.as_active_thread(), |this, active| {
-                                this.children(active.profile_selector.clone()).map(|this| {
-                                    // Either config_options_view OR (mode_selector + model_selector)
-                                    match active.config_options_view.clone() {
-                                        Some(config_view) => this.child(config_view),
-                                        None => this
-                                            .children(active.mode_selector.clone())
-                                            .children(active.model_selector.clone()),
-                                    }
-                                })
+                                let active_read = active.read(cx);
+                                this.children(active_read.profile_selector.clone())
+                                    .map(|this| {
+                                        // Either config_options_view OR (mode_selector + model_selector)
+                                        match active_read.config_options_view.clone() {
+                                            Some(config_view) => this.child(config_view),
+                                            None => this
+                                                .children(active_read.mode_selector.clone())
+                                                .children(active_read.model_selector.clone()),
+                                        }
+                                    })
                             })
                             .child(self.render_send_button(cx)),
                     ),
@@ -6335,54 +6423,31 @@ impl AcpServerView {
         &self,
         cx: &App,
     ) -> Option<Rc<agent::NativeAgentConnection>> {
-        let acp_thread = self.as_active_thread()?.thread.read(cx);
+        let acp_thread = self.as_active_thread()?.read(cx).thread.read(cx);
         acp_thread.connection().clone().downcast()
     }
 
     pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
-        let acp_thread = self.as_active_thread()?.thread.read(cx);
+        let acp_thread = self.as_active_thread()?.read(cx).thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
     }
 
-    fn queued_messages_len(&self) -> usize {
+    fn queued_messages_len(&self, cx: &App) -> usize {
         self.as_active_thread()
-            .map(|thread| thread.local_queued_messages.len())
+            .map(|thread| thread.read(cx).local_queued_messages.len())
             .unwrap_or_default()
     }
 
-    fn has_queued_messages(&self) -> bool {
+    fn has_queued_messages(&self, cx: &App) -> bool {
         self.as_active_thread()
-            .map(|active| active.has_queued_messages())
+            .map(|active| active.read(cx).has_queued_messages())
             .unwrap_or(false)
     }
 
-    /// Syncs the has_queued_message flag to the native thread (if applicable).
-    /// This flag tells the native thread to end its turn at the next message boundary.
-    fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread() {
-            active.sync_queue_flag_to_native_thread(cx);
-        }
-    }
-
-    fn add_to_queue(
-        &mut self,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.local_queued_messages.push(QueuedMessage {
-                content,
-                tracked_buffers,
-            });
-        }
-        self.sync_queue_flag_to_native_thread(cx);
-    }
-
     fn remove_from_queue(&mut self, index: usize, cx: &mut Context<Self>) -> Option<QueuedMessage> {
-        self.as_active_thread_mut()
-            .and_then(|active| active.remove_from_queue(index, cx))
+        self.as_active_thread()
+            .and_then(|active| active.update(cx, |active, cx| active.remove_from_queue(index, cx)))
     }
 
     fn update_queued_message(
@@ -6390,31 +6455,38 @@ impl AcpServerView {
         index: usize,
         content: Vec<acp::ContentBlock>,
         tracked_buffers: Vec<Entity<Buffer>>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
-        match self.as_active_thread_mut() {
-            Some(thread) if index < thread.local_queued_messages.len() => {
-                thread.local_queued_messages[index] = QueuedMessage {
-                    content,
-                    tracked_buffers,
-                };
-                true
-            }
-            Some(_) | None => false,
+        match self.as_active_thread() {
+            Some(thread) => thread.update(cx, |thread, _cx| {
+                if index < thread.local_queued_messages.len() {
+                    thread.local_queued_messages[index] = QueuedMessage {
+                        content,
+                        tracked_buffers,
+                    };
+                    true
+                } else {
+                    false
+                }
+            }),
+            None => false,
         }
     }
 
     fn clear_queue(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.local_queued_messages.clear();
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.local_queued_messages.clear();
+                active.sync_queue_flag_to_native_thread(cx);
+            });
         }
-        self.sync_queue_flag_to_native_thread(cx);
     }
 
-    fn queued_message_contents(&self) -> Vec<Vec<acp::ContentBlock>> {
+    fn queued_message_contents(&self, cx: &App) -> Vec<Vec<acp::ContentBlock>> {
         match self.as_active_thread() {
             None => Vec::new(),
             Some(thread) => thread
+                .read(cx)
                 .local_queued_messages
                 .iter()
                 .map(|q| q.content.clone())
@@ -6424,7 +6496,7 @@ impl AcpServerView {
 
     fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
         let editor = match self.as_active_thread() {
-            Some(thread) => thread.queued_message_editors.get(index).cloned(),
+            Some(thread) => thread.read(cx).queued_message_editors.get(index).cloned(),
             None => None,
         };
         let Some(editor) = editor else {
@@ -6449,8 +6521,8 @@ impl AcpServerView {
     }
 
     fn sync_queued_message_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let needed_count = self.queued_messages_len();
-        let queued_messages = self.queued_message_contents();
+        let needed_count = self.queued_messages_len(cx);
+        let queued_messages = self.queued_message_contents(cx);
 
         let agent_name = self.agent.name();
         let workspace = self.workspace.clone();
@@ -6458,25 +6530,29 @@ impl AcpServerView {
         let history = self.history.downgrade();
         let message_editor = self.message_editor.clone();
 
-        let Some(thread) = self.as_active_thread_mut() else {
+        let Some(thread) = self.as_active_thread() else {
             return;
         };
-        let prompt_capabilities = thread.prompt_capabilities.clone();
-        let available_commands = thread.available_commands.clone();
+        let prompt_capabilities = thread.read(cx).prompt_capabilities.clone();
+        let available_commands = thread.read(cx).available_commands.clone();
 
-        let current_count = thread.queued_message_editors.len();
+        let current_count = thread.read(cx).queued_message_editors.len();
+        let last_synced = thread.read(cx).last_synced_queue_length;
 
-        if current_count == needed_count && needed_count == thread.last_synced_queue_length {
+        if current_count == needed_count && needed_count == last_synced {
             return;
         }
 
         if current_count > needed_count {
-            thread.queued_message_editors.truncate(needed_count);
-            thread
-                .queued_message_editor_subscriptions
-                .truncate(needed_count);
+            thread.update(cx, |thread, _cx| {
+                thread.queued_message_editors.truncate(needed_count);
+                thread
+                    .queued_message_editor_subscriptions
+                    .truncate(needed_count);
+            });
 
-            for (index, editor) in thread.queued_message_editors.iter().enumerate() {
+            let editors = thread.read(cx).queued_message_editors.clone();
+            for (index, editor) in editors.into_iter().enumerate() {
                 if let Some(content) = queued_messages.get(index) {
                     editor.update(cx, |editor, cx| {
                         editor.set_message(content.clone(), window, cx);
@@ -6485,8 +6561,8 @@ impl AcpServerView {
             }
         }
 
-        while thread.queued_message_editors.len() < needed_count {
-            let index = thread.queued_message_editors.len();
+        while thread.read(cx).queued_message_editors.len() < needed_count {
+            let index = thread.read(cx).queued_message_editors.len();
             let content = queued_messages.get(index).cloned().unwrap_or_default();
 
             let editor = cx.new(|cx| {
@@ -6532,20 +6608,24 @@ impl AcpServerView {
                 },
             );
 
-            thread.queued_message_editors.push(editor);
-            thread
-                .queued_message_editor_subscriptions
-                .push(subscription);
+            thread.update(cx, |thread, _cx| {
+                thread.queued_message_editors.push(editor);
+                thread
+                    .queued_message_editor_subscriptions
+                    .push(subscription);
+            });
         }
 
-        if let Some(active) = self.as_active_thread_mut() {
-            active.last_synced_queue_length = needed_count;
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.last_synced_queue_length = needed_count;
+            });
         }
     }
 
     fn is_imported_thread(&self, cx: &App) -> bool {
         if let Some(active) = self.as_active_thread() {
-            active.is_imported_thread(cx)
+            active.read(cx).is_imported_thread(cx)
         } else {
             false
         }
@@ -6559,7 +6639,7 @@ impl AcpServerView {
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
         let active = self.as_active_thread()?;
-        let thread = active.thread.read(cx);
+        let thread = active.read(cx).thread.read(cx);
         let usage = thread.token_usage()?;
         let is_generating = thread.status() != ThreadStatus::Idle;
         let show_split = self.supports_split_token_display(cx);
@@ -6707,14 +6787,18 @@ impl AcpServerView {
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.keep_all(cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.keep_all(cx);
+            });
         };
     }
 
     fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.reject_all(cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.reject_all(cx);
+            });
         };
     }
 
@@ -6737,7 +6821,7 @@ impl AcpServerView {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let active = self.as_active_thread()?;
-        let thread = active.thread.read(cx);
+        let thread = active.read(cx).thread.read(cx);
         let tool_call = thread.first_tool_awaiting_confirmation()?;
         let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
             return None;
@@ -6756,6 +6840,7 @@ impl AcpServerView {
         // Get selected index, defaulting to last option ("Only this time")
         let selected_index = if let Some(active) = self.as_active_thread() {
             active
+                .read(cx)
                 .selected_permission_granularity
                 .get(&tool_call_id)
                 .copied()
@@ -6790,7 +6875,11 @@ impl AcpServerView {
         cx: &mut Context<Self>,
     ) {
         if let Some(active) = self.as_active_thread() {
-            active.permission_dropdown_handle.toggle(window, cx);
+            active
+                .read(cx)
+                .permission_dropdown_handle
+                .clone()
+                .toggle(window, cx);
         }
     }
 
@@ -6800,8 +6889,10 @@ impl AcpServerView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.handle_select_permission_granularity(action, cx);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, cx| {
+                active.handle_select_permission_granularity(action, cx);
+            });
         }
     }
 
@@ -6830,8 +6921,9 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        self.as_active_thread_mut()?
-            .authorize_pending_tool_call(kind, window, cx)
+        self.as_active_thread()?.update(cx, |active, cx| {
+            active.authorize_pending_tool_call(kind, window, cx)
+        })
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -6841,11 +6933,11 @@ impl AcpServerView {
 
         let is_generating = self
             .as_active_thread()
-            .is_some_and(|active| active.thread.read(cx).status() != ThreadStatus::Idle);
+            .is_some_and(|active| active.read(cx).thread.read(cx).status() != ThreadStatus::Idle);
 
         if self
             .as_active_thread()
-            .is_some_and(|thread| thread.is_loading_contents)
+            .is_some_and(|thread| thread.read(cx).is_loading_contents)
         {
             div()
                 .id("loading-message-content")
@@ -6918,7 +7010,7 @@ impl AcpServerView {
     fn is_following(&self, cx: &App) -> bool {
         match self
             .as_active_thread()
-            .map(|active| active.thread.read(cx).status())
+            .map(|active| active.read(cx).thread.read(cx).status())
         {
             Some(ThreadStatus::Generating) => self
                 .workspace
@@ -6928,19 +7020,21 @@ impl AcpServerView {
                 .unwrap_or(false),
             _ => self
                 .as_active_thread()
-                .is_some_and(|thread| thread.should_be_following),
+                .is_some_and(|thread| thread.read(cx).should_be_following),
         }
     }
 
     fn toggle_following(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let following = self.is_following(cx);
 
-        if let Some(active) = self.as_active_thread_mut() {
-            active.should_be_following = !following;
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.should_be_following = !following;
+            });
         }
         if self
             .as_active_thread()
-            .map(|active| active.thread.read(cx).status())
+            .map(|active| active.read(cx).thread.read(cx).status())
             == Some(ThreadStatus::Generating)
         {
             self.workspace
@@ -7038,7 +7132,7 @@ impl AcpServerView {
         let workspace = self.workspace.clone();
         let supports_images = self
             .as_active_thread()
-            .map(|active| active.prompt_capabilities.borrow().image)
+            .map(|active| active.read(cx).prompt_capabilities.borrow().image)
             .unwrap_or_default();
 
         let has_editor_selection = workspace
@@ -7313,6 +7407,7 @@ impl AcpServerView {
     ) -> Option<()> {
         let (tool_call_location, agent_location) = self
             .as_active_thread()?
+            .read(cx)
             .thread
             .read(cx)
             .entries()
@@ -7376,7 +7471,7 @@ impl AcpServerView {
             .language_for_name("Markdown");
 
         let (thread_title, markdown) = if let Some(active) = self.as_active_thread() {
-            let thread = active.thread.read(cx);
+            let thread = active.read(cx).thread.read(cx);
             (thread.title().to_string(), thread.to_markdown(cx))
         } else {
             return Task::ready(Ok(()));
@@ -7419,11 +7514,8 @@ impl AcpServerView {
     }
 
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
-        if let Some(list_state) = self
-            .as_active_thread_mut()
-            .map(|active| &mut active.list_state)
-        {
-            list_state.scroll_to(ListOffset::default());
+        if let Some(active) = self.as_active_thread() {
+            active.read(cx).list_state.scroll_to(ListOffset::default());
             cx.notify();
         }
     }
@@ -7433,7 +7525,7 @@ impl AcpServerView {
             return;
         };
 
-        let entries = active.thread.read(cx).entries();
+        let entries = active.read(cx).thread.read(cx).entries();
         if entries.is_empty() {
             return;
         }
@@ -7444,16 +7536,11 @@ impl AcpServerView {
             .iter()
             .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
         {
-            if let Some(list_state) = self
-                .as_active_thread_mut()
-                .map(|active| &mut active.list_state)
-            {
-                list_state.scroll_to(ListOffset {
-                    item_ix: ix,
-                    offset_in_item: px(0.0),
-                });
-                cx.notify();
-            }
+            active.read(cx).list_state.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
         } else {
             self.scroll_to_bottom(cx);
         }
@@ -7461,8 +7548,8 @@ impl AcpServerView {
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         if let Some(active) = self.as_active_thread() {
-            let entry_count = active.thread.read(cx).entries().len();
-            active.list_state.reset(entry_count);
+            let entry_count = active.read(cx).thread.read(cx).entries().len();
+            active.read(cx).list_state.reset(entry_count);
             cx.notify();
         }
     }
@@ -7638,19 +7725,25 @@ impl AcpServerView {
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let elapsed_label = show_stats
             .then(|| {
-                active.turn_fields.turn_started_at.and_then(|started_at| {
-                    let elapsed = started_at.elapsed();
-                    (elapsed > STOPWATCH_THRESHOLD).then(|| duration_alt_display(elapsed))
-                })
+                active
+                    .read(cx)
+                    .turn_fields
+                    .turn_started_at
+                    .and_then(|started_at| {
+                        let elapsed = started_at.elapsed();
+                        (elapsed > STOPWATCH_THRESHOLD).then(|| duration_alt_display(elapsed))
+                    })
             })
             .flatten();
 
-        let is_waiting = confirmation || active.thread.read(cx).has_in_progress_tool_calls();
+        let is_waiting =
+            confirmation || active.read(cx).thread.read(cx).has_in_progress_tool_calls();
 
         let turn_tokens_label = elapsed_label
             .is_some()
             .then(|| {
                 active
+                    .read(cx)
                     .turn_fields
                     .turn_tokens
                     .filter(|&tokens| tokens > TOKEN_THRESHOLD)
@@ -7758,10 +7851,11 @@ impl AcpServerView {
             return div().into_any_element();
         };
 
+        let active_read = active.read(cx);
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let last_turn_clock = show_stats
             .then(|| {
-                active
+                active_read
                     .turn_fields
                     .last_turn_duration
                     .filter(|&duration| duration > STOPWATCH_THRESHOLD)
@@ -7776,7 +7870,7 @@ impl AcpServerView {
         let last_turn_tokens_label = last_turn_clock
             .is_some()
             .then(|| {
-                active
+                active_read
                     .turn_fields
                     .last_turn_tokens
                     .filter(|&tokens| tokens > TOKEN_THRESHOLD)
@@ -7813,10 +7907,16 @@ impl AcpServerView {
             );
 
         if let Some(active) = self.as_active_thread() {
+            let active_read = active.read(cx);
             if AgentSettings::get_global(cx).enable_feedback
-                && active.thread.read(cx).connection().telemetry().is_some()
+                && active_read
+                    .thread
+                    .read(cx)
+                    .connection()
+                    .telemetry()
+                    .is_some()
             {
-                let feedback = active.thread_feedback.feedback;
+                let feedback = active_read.thread_feedback.feedback;
 
                 let tooltip_meta = || {
                     SharedString::new(
@@ -7921,8 +8021,10 @@ impl AcpServerView {
         h_flex()
             .key_context("AgentFeedbackMessageEditor")
             .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
-                if let Some(active) = this.as_active_thread_mut() {
-                    active.thread_feedback.dismiss_comments();
+                if let Some(active) = this.as_active_thread() {
+                    active.update(cx, |active, _cx| {
+                        active.thread_feedback.dismiss_comments();
+                    });
                 }
                 cx.notify();
             }))
@@ -7946,8 +8048,10 @@ impl AcpServerView {
                             .icon_size(IconSize::XSmall)
                             .shape(ui::IconButtonShape::Square)
                             .on_click(cx.listener(move |this, _, _window, cx| {
-                                if let Some(active) = this.as_active_thread_mut() {
-                                    active.thread_feedback.dismiss_comments();
+                                if let Some(active) = this.as_active_thread() {
+                                    active.update(cx, |active, _cx| {
+                                        active.thread_feedback.dismiss_comments();
+                                    });
                                 }
                                 cx.notify();
                             })),
@@ -7969,24 +8073,26 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active) = self.as_active_thread_mut() else {
+        let Some(active) = self.as_active_thread() else {
             return;
         };
 
-        active
-            .thread_feedback
-            .submit(active.thread.clone(), feedback, window, cx);
+        let thread = active.read(cx).thread.clone();
+        active.update(cx, |active, cx| {
+            active.thread_feedback.submit(thread, feedback, window, cx);
+        });
         cx.notify();
     }
 
     fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let Some(active) = self.as_active_thread_mut() else {
+        let Some(active) = self.as_active_thread() else {
             return;
         };
 
-        active
-            .thread_feedback
-            .submit_comments(active.thread.clone(), cx);
+        let thread = active.read(cx).thread.clone();
+        active.update(cx, |active, cx| {
+            active.thread_feedback.submit_comments(thread, cx);
+        });
         cx.notify();
     }
 
@@ -7995,11 +8101,12 @@ impl AcpServerView {
             return None;
         };
 
-        if active.token_limit_callout_dismissed {
+        let active_read = active.read(cx);
+        if active_read.token_limit_callout_dismissed {
             return None;
         }
 
-        let token_usage = active.thread.read(cx).token_usage()?;
+        let token_usage = active_read.thread.read(cx).token_usage()?;
         let ratio = token_usage.ratio();
 
         let (severity, icon, title) = match ratio {
@@ -8032,7 +8139,8 @@ impl AcpServerView {
                                 let Some(active) = this.as_active_thread() else {
                                     return;
                                 };
-                                let session_id = active.thread.read(cx).session_id().clone();
+                                let session_id =
+                                    active.read(cx).thread.read(cx).session_id().clone();
                                 window.dispatch_action(
                                     crate::NewNativeAgentThreadFromSummary {
                                         from_session_id: session_id,
@@ -8050,8 +8158,7 @@ impl AcpServerView {
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_view_state) = self
             .as_active_thread()
-            .map(|active| &active.entry_view_state)
-            .cloned()
+            .map(|active| active.read(cx).entry_view_state.clone())
         {
             entry_view_state.update(cx, |entry_view_state, cx| {
                 entry_view_state.agent_ui_font_size_changed(cx);
@@ -8139,8 +8246,10 @@ impl AcpServerView {
     }
 
     fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.command_load_errors_dismissed = true;
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.command_load_errors_dismissed = true;
+            });
         }
         cx.notify();
     }
@@ -8157,10 +8266,12 @@ impl AcpServerView {
         registry: &Entity<SlashCommandRegistry>,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread_state) = self.as_active_thread_mut() else {
+        let Some(thread_state) = self.as_active_thread() else {
             return;
         };
-        thread_state.refresh_cached_user_commands_from_registry(registry, cx);
+        thread_state.update(cx, |thread_state, cx| {
+            thread_state.refresh_cached_user_commands_from_registry(registry, cx);
+        });
         cx.notify();
     }
 
@@ -8172,7 +8283,7 @@ impl AcpServerView {
         let Some(thread_state) = &self.as_active_thread() else {
             return collections::HashMap::default();
         };
-        thread_state.cached_user_commands.borrow().clone()
+        thread_state.read(_cx).cached_user_commands.borrow().clone()
     }
 
     /// Returns the cached slash command errors, if available.
@@ -8180,11 +8291,15 @@ impl AcpServerView {
         let Some(thread_state) = &self.as_active_thread() else {
             return Vec::new();
         };
-        thread_state.cached_user_command_errors.borrow().clone()
+        thread_state
+            .read(_cx)
+            .cached_user_command_errors
+            .borrow()
+            .clone()
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
-        let content = match self.as_active_thread()?.thread_error.as_ref()? {
+        let content = match self.as_active_thread()?.read(cx).thread_error.as_ref()? {
             ThreadError::Other { message, .. } => {
                 self.render_any_thread_error(message.clone(), window, cx)
             }
@@ -8236,7 +8351,7 @@ impl AcpServerView {
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
             self.as_active_thread()
-                .and_then(|active| active.model_selector.as_ref())
+                .and_then(|active| active.read(cx).model_selector.clone())
                 .and_then(|selector| selector.read(cx).active_model(cx))
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
@@ -8264,9 +8379,11 @@ impl AcpServerView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn set_can_fast_track_queue(&mut self, value: bool) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.can_fast_track_queue = value;
+    fn set_can_fast_track_queue(&mut self, value: bool, cx: &mut Context<Self>) {
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.can_fast_track_queue = value;
+            });
         }
     }
 
@@ -8276,18 +8393,20 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Callout {
-        let can_resume = self
-            .as_active_thread()
-            .map_or(false, |active| active.thread.read(cx).can_retry(cx));
+        let can_resume = self.as_active_thread().map_or(false, |active| {
+            active.read(cx).thread.read(cx).can_retry(cx)
+        });
 
         let markdown = if let Some(thread_state) = self.as_active_thread()
-            && let Some(markdown) = &thread_state.thread_error_markdown
+            && let Some(markdown) = &thread_state.read(cx).thread_error_markdown
         {
             markdown.clone()
         } else {
             let markdown = cx.new(|cx| Markdown::new(error.clone(), None, None, cx));
-            if let Some(thread_state) = self.as_active_thread_mut() {
-                thread_state.thread_error_markdown = Some(markdown.clone());
+            if let Some(thread_state) = self.as_active_thread() {
+                thread_state.update(cx, |thread_state, _cx| {
+                    thread_state.thread_error_markdown = Some(markdown.clone());
+                });
             }
             markdown
         };
@@ -8435,8 +8554,9 @@ impl AcpServerView {
     /// edited or the editor for a new message.
     fn active_editor(&self, cx: &App) -> Entity<MessageEditor> {
         if let Some(thread_state) = self.as_active_thread()
-            && let Some(index) = thread_state.editing_message
+            && let Some(index) = thread_state.read(cx).editing_message
             && let Some(editor) = thread_state
+                .read(cx)
                 .entry_view_state
                 .read(cx)
                 .entry(index)
@@ -8538,8 +8658,10 @@ impl AcpServerView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.expanded_tool_calls.insert(tool_call_id);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.expanded_tool_calls.insert(tool_call_id);
+            });
             cx.notify();
         }
     }
@@ -8547,8 +8669,10 @@ impl AcpServerView {
     /// Expands a subagent card so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_subagent(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread_mut() {
-            active.expanded_subagents.insert(session_id);
+        if let Some(active) = self.as_active_thread() {
+            active.update(cx, |active, _cx| {
+                active.expanded_subagents.insert(session_id);
+            });
             cx.notify();
         }
     }
@@ -8560,7 +8684,7 @@ impl Render for AcpServerView {
 
         let has_messages = self
             .as_active_thread()
-            .is_some_and(|active| active.list_state.item_count() > 0);
+            .is_some_and(|active| active.read(cx).list_state.item_count() > 0);
 
         v_flex()
             .size_full()
@@ -8593,22 +8717,20 @@ impl Render for AcpServerView {
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
                 if let Some(active) = this.as_active_thread()
-                    && let Some(editor) = active.queued_message_editors.first()
+                    && let Some(editor) = active.read(cx).queued_message_editors.first()
                 {
                     window.focus(&editor.focus_handle(cx), cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.clear_queue(cx);
-                if let Some(state) = this.as_active_thread_mut() {
-                    state.can_fast_track_queue = false;
-                }
+                this.set_can_fast_track_queue(false, cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(config_options_view) = this
                     .as_active_thread()
-                    .and_then(|active| active.config_options_view.as_ref())
+                    .and_then(|active| active.read(cx).config_options_view.clone())
                 {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -8624,12 +8746,12 @@ impl Render for AcpServerView {
 
                 if let Some(profile_selector) = this
                     .as_active_thread()
-                    .and_then(|active| active.profile_selector.as_ref())
+                    .and_then(|active| active.read(cx).profile_selector.clone())
                 {
                     profile_selector.read(cx).menu_handle().toggle(window, cx);
                 } else if let Some(mode_selector) = this
                     .as_active_thread()
-                    .and_then(|active| active.mode_selector.as_ref())
+                    .and_then(|active| active.read(cx).mode_selector.clone())
                 {
                     mode_selector.read(cx).menu_handle().toggle(window, cx);
                 }
@@ -8637,7 +8759,7 @@ impl Render for AcpServerView {
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
                 if let Some(config_options_view) = this
                     .as_active_thread()
-                    .and_then(|active| active.config_options_view.as_ref())
+                    .and_then(|active| active.read(cx).config_options_view.clone())
                 {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
@@ -8653,14 +8775,14 @@ impl Render for AcpServerView {
 
                 if let Some(profile_selector) = this
                     .as_active_thread()
-                    .and_then(|active| active.profile_selector.as_ref())
+                    .and_then(|active| active.read(cx).profile_selector.clone())
                 {
                     profile_selector.update(cx, |profile_selector, cx| {
                         profile_selector.cycle_profile(cx);
                     });
                 } else if let Some(mode_selector) = this
                     .as_active_thread()
-                    .and_then(|active| active.mode_selector.as_ref())
+                    .and_then(|active| active.read(cx).mode_selector.clone())
                 {
                     mode_selector.update(cx, |mode_selector, cx| {
                         mode_selector.cycle_mode(window, cx);
@@ -8670,7 +8792,7 @@ impl Render for AcpServerView {
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                 if let Some(config_options_view) = this
                     .as_active_thread()
-                    .and_then(|active| active.config_options_view.as_ref())
+                    .and_then(|active| active.read(cx).config_options_view.clone())
                 {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -8686,7 +8808,7 @@ impl Render for AcpServerView {
 
                 if let Some(model_selector) = this
                     .as_active_thread()
-                    .and_then(|active| active.model_selector.as_ref())
+                    .and_then(|active| active.read(cx).model_selector.clone())
                 {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
@@ -8695,7 +8817,7 @@ impl Render for AcpServerView {
             .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
                 if let Some(config_options_view) = this
                     .as_active_thread()
-                    .and_then(|active| active.config_options_view.as_ref())
+                    .and_then(|active| active.read(cx).config_options_view.clone())
                 {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.cycle_category_option(
@@ -8711,7 +8833,7 @@ impl Render for AcpServerView {
 
                 if let Some(model_selector) = this
                     .as_active_thread()
-                    .and_then(|active| active.model_selector.as_ref())
+                    .and_then(|active| active.read(cx).model_selector.clone())
                 {
                     model_selector.update(cx, |model_selector, cx| {
                         model_selector.cycle_favorite_models(window, cx);
@@ -8756,17 +8878,20 @@ impl Render for AcpServerView {
                     ))
                     .into_any_element(),
                 ServerState::Connected(connected) => v_flex().flex_1().map(|this| {
-                    let this = this.when(connected.current.resumed_without_history, |this| {
-                        this.child(self.render_resume_notice(cx))
-                    });
+                    let this = this
+                        .when(connected.current.read(cx).resumed_without_history, |this| {
+                            this.child(self.render_resume_notice(cx))
+                        });
                     if has_messages {
+                        let list_state = connected.current.read(cx).list_state.clone();
                         this.child(
                             list(
-                                connected.current.list_state.clone(),
+                                connected.current.read(cx).list_state.clone(),
                                 cx.processor(|this, index: usize, window, cx| {
                                     let Some((entry, len)) =
                                         this.as_active_thread().and_then(|active| {
-                                            let entries = &active.thread.read(cx).entries();
+                                            let entries =
+                                                &active.read(cx).thread.read(cx).entries();
                                             Some((entries.get(index)?, entries.len()))
                                         })
                                     else {
@@ -8779,7 +8904,7 @@ impl Render for AcpServerView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .vertical_scrollbar_for(&connected.current.list_state, window, cx)
+                        .vertical_scrollbar_for(&list_state, window, cx)
                         .into_any()
                     } else {
                         this.child(self.render_recent_history(cx)).into_any()
@@ -8790,15 +8915,17 @@ impl Render for AcpServerView {
             // above so that the scrollbar doesn't render behind it. The current setup allows
             // the scrollbar to stop exactly at the activity bar start.
             .when(has_messages, |this| match self.as_active_thread() {
-                Some(thread) => this.children(self.render_activity_bar(&thread.thread, window, cx)),
+                Some(thread) => {
+                    this.children(self.render_activity_bar(&thread.read(cx).thread, window, cx))
+                }
                 _ => this,
             })
             .when(self.show_codex_windows_warning, |this| {
                 this.child(self.render_codex_windows_warning(cx))
             })
             .when_some(self.as_active_thread(), |this, thread_state| {
-                this.children(thread_state.render_thread_retry_status_callout())
-                    .children(thread_state.render_command_load_errors(cx))
+                this.children(thread_state.read(cx).render_thread_retry_status_callout())
+                    .children(thread_state.read(cx).render_command_load_errors(cx))
             })
             .children(self.render_thread_error(window, cx))
             .when_some(
@@ -8806,9 +8933,9 @@ impl Render for AcpServerView {
                     true => None,
                     false => self
                         .as_active_thread()
-                        .and_then(|active| active.new_server_version_available.as_ref()),
+                        .and_then(|active| active.read(cx).new_server_version_available.clone()),
                 },
-                |this, version| this.child(self.render_new_version_callout(version, cx)),
+                |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
             .child(self.render_message_editor(window, cx))
@@ -9029,10 +9156,10 @@ pub(crate) mod tests {
 
         cx.run_until_parked();
 
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             let state = view.as_active_thread().unwrap();
-            assert!(state.resumed_without_history);
-            assert_eq!(state.list_state.item_count(), 0);
+            assert!(state.read(cx).resumed_without_history);
+            assert_eq!(state.read(cx).list_state.item_count(), 0);
         });
     }
 
@@ -9055,10 +9182,10 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Check that the refusal error is set
-        thread_view.read_with(cx, |thread_view, _cx| {
+        thread_view.read_with(cx, |thread_view, cx| {
             let state = thread_view.as_active_thread().unwrap();
             assert!(
-                matches!(state.thread_error, Some(ThreadError::Refusal)),
+                matches!(state.read(cx).thread_error, Some(ThreadError::Refusal)),
                 "Expected refusal error to be set"
             );
         });
@@ -9676,8 +9803,8 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let thread = thread_view
-            .read_with(cx, |view, _| {
-                view.as_active_thread().map(|r| r.thread.clone())
+            .read_with(cx, |view, cx| {
+                view.as_active_thread().map(|r| r.read(cx).thread.clone())
             })
             .unwrap();
 
@@ -9697,14 +9824,14 @@ pub(crate) mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.entries().len(), 2);
         });
 
         thread_view.read_with(cx, |view, cx| {
             let entry_view_state = view
                 .as_active_thread()
-                .map(|active| &active.entry_view_state)
+                .map(|active| active.read(cx).entry_view_state.clone())
                 .unwrap();
             entry_view_state.read_with(cx, |entry_view_state, _| {
                 assert!(
@@ -9743,7 +9870,12 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, cx| {
-            let entry_view_state = &view.as_active_thread().unwrap().entry_view_state;
+            let entry_view_state = view
+                .as_active_thread()
+                .unwrap()
+                .read(cx)
+                .entry_view_state
+                .clone();
             entry_view_state.read_with(cx, |entry_view_state, _| {
                 assert!(
                     entry_view_state
@@ -9779,6 +9911,7 @@ pub(crate) mod tests {
         thread_view.read_with(cx, |view, cx| {
             let active = view.as_active_thread().unwrap();
             active
+                .read(cx)
                 .entry_view_state
                 .read_with(cx, |entry_view_state, _| {
                     assert!(
@@ -9812,8 +9945,8 @@ pub(crate) mod tests {
             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
 
         let thread = thread_view
-            .read_with(cx, |view, _| {
-                view.as_active_thread().map(|r| r.thread.clone())
+            .read_with(cx, |view, cx| {
+                view.as_active_thread().map(|r| r.read(cx).thread.clone())
             })
             .unwrap();
 
@@ -9843,7 +9976,7 @@ pub(crate) mod tests {
             view.scroll_to_most_recent_user_prompt(cx);
             let scroll_top = view
                 .as_active_thread()
-                .map(|active| &active.list_state)
+                .map(|active| &active.read(cx).list_state)
                 .unwrap()
                 .logical_scroll_top();
             // Entries layout is: [User1, Assistant1, User2, Assistant2]
@@ -9864,7 +9997,7 @@ pub(crate) mod tests {
             view.scroll_to_most_recent_user_prompt(cx);
             let scroll_top = view
                 .as_active_thread()
-                .map(|active| &active.list_state)
+                .map(|active| &active.read(cx).list_state)
                 .unwrap()
                 .logical_scroll_top();
             assert_eq!(scroll_top.item_ix, 0);
@@ -9897,12 +10030,12 @@ pub(crate) mod tests {
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 None
             );
 
             view.as_active_thread()
-                .map(|active| &active.entry_view_state)
+                .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -9915,10 +10048,10 @@ pub(crate) mod tests {
 
         // Focus
         cx.focus(&user_message_editor);
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
         });
@@ -9933,10 +10066,10 @@ pub(crate) mod tests {
             window.dispatch_action(Box::new(editor::actions::Cancel), cx);
         });
 
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 None
             );
         });
@@ -9965,6 +10098,7 @@ pub(crate) mod tests {
                 .read(cx)
                 .as_active_thread()
                 .unwrap()
+                .read(cx)
                 .thread
                 .clone()
         });
@@ -10009,12 +10143,13 @@ pub(crate) mod tests {
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 None
             );
             assert_eq!(
                 view.as_active_thread()
                     .unwrap()
+                    .read(cx)
                     .thread
                     .read(cx)
                     .entries()
@@ -10023,7 +10158,7 @@ pub(crate) mod tests {
             );
 
             view.as_active_thread()
-                .map(|active| &active.entry_view_state)
+                .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -10056,11 +10191,17 @@ pub(crate) mod tests {
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 None
             );
 
-            let entries = view.as_active_thread().unwrap().thread.read(cx).entries();
+            let entries = view
+                .as_active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .entries();
             assert_eq!(entries.len(), 2);
             assert_eq!(
                 entries[0].to_markdown(cx),
@@ -10073,7 +10214,7 @@ pub(crate) mod tests {
 
             let entry_view_state = view
                 .as_active_thread()
-                .map(|active| &active.entry_view_state)
+                .map(|active| &active.read(cx).entry_view_state)
                 .unwrap();
             let new_editor = entry_view_state.read_with(cx, |state, _cx| {
                 assert!(!state.entry(1).unwrap().has_content());
@@ -10105,12 +10246,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.as_active_thread().unwrap().thread.read(cx);
+            let thread = view.as_active_thread().unwrap().read(cx).thread.read(cx);
             assert_eq!(thread.entries().len(), 1);
 
             let editor = view
                 .as_active_thread()
-                .map(|active| &active.entry_view_state)
+                .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -10126,10 +10267,10 @@ pub(crate) mod tests {
         // Focus
         cx.focus(&user_message_editor);
 
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
         });
@@ -10139,10 +10280,10 @@ pub(crate) mod tests {
             editor.set_text("Edited message content", window, cx);
         });
 
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
         });
@@ -10157,10 +10298,10 @@ pub(crate) mod tests {
             connection.end_turn(session_id, acp::StopReason::EndTurn);
         });
 
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
         });
@@ -10174,7 +10315,7 @@ pub(crate) mod tests {
                 thread_view
                     .read(cx)
                     .as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
             assert_eq!(
@@ -10208,7 +10349,13 @@ pub(crate) mod tests {
         });
 
         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.as_active_thread().as_ref().unwrap().thread.clone();
+            let thread = view
+                .as_active_thread()
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .thread
+                .clone();
             (thread.clone(), thread.read(cx).session_id().clone())
         });
 
@@ -10296,8 +10443,8 @@ pub(crate) mod tests {
             setup_thread_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
         add_to_workspace(thread_view.clone(), cx);
 
-        let thread = thread_view.read_with(cx, |view, _cx| {
-            view.as_active_thread().unwrap().thread.clone()
+        let thread = thread_view.read_with(cx, |view, cx| {
+            view.as_active_thread().unwrap().read(cx).thread.clone()
         });
 
         thread.read_with(cx, |thread, _cx| {
@@ -10339,7 +10486,7 @@ pub(crate) mod tests {
         });
 
         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.as_active_thread().unwrap().thread.clone();
+            let thread = view.as_active_thread().unwrap().read(cx).thread.clone();
 
             (thread.clone(), thread.read(cx).session_id().clone())
         });
@@ -10473,7 +10620,7 @@ pub(crate) mod tests {
         let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
             thread_view
                 .as_active_thread()
-                .map(|active| &active.entry_view_state)
+                .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -10485,10 +10632,10 @@ pub(crate) mod tests {
         });
 
         cx.focus(&user_message_editor);
-        thread_view.read_with(cx, |view, _cx| {
+        thread_view.read_with(cx, |view, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
         });
@@ -10527,7 +10674,7 @@ pub(crate) mod tests {
         thread_view.update_in(cx, |view, window, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
             view.insert_selections(window, cx);
@@ -10586,7 +10733,7 @@ pub(crate) mod tests {
         thread_view.update_in(cx, |view, window, cx| {
             assert_eq!(
                 view.as_active_thread()
-                    .and_then(|active| active.editing_message),
+                    .and_then(|active| active.read(cx).editing_message),
                 None
             );
             view.insert_selections(window, cx);
@@ -10648,6 +10795,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -10756,6 +10904,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -10844,6 +10993,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -10933,6 +11083,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -11032,6 +11183,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -11059,7 +11211,7 @@ pub(crate) mod tests {
 
         // Verify tool call is no longer waiting for confirmation (was authorized)
         thread_view.read_with(cx, |thread_view, cx| {
-            let thread = thread_view.as_active_thread().expect("Thread should exist").thread.clone();
+            let thread = thread_view.as_active_thread().expect("Thread should exist").read(cx).thread.clone();
             let thread = thread.read(cx);
             let tool_call = thread.first_tool_awaiting_confirmation();
             assert!(
@@ -11148,6 +11300,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -11203,9 +11356,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Verify default granularity is the last option (index 2 = "Only this time")
-        thread_view.read_with(cx, |thread_view, _cx| {
+        thread_view.read_with(cx, |thread_view, cx| {
             let state = thread_view.as_active_thread().unwrap();
-            let selected = state.selected_permission_granularity.get(&tool_call_id);
+            let selected = state
+                .read(cx)
+                .selected_permission_granularity
+                .get(&tool_call_id);
             assert!(
                 selected.is_none(),
                 "Should have no selection initially (defaults to last)"
@@ -11227,9 +11383,12 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         // Verify the selection was updated
-        thread_view.read_with(cx, |thread_view, _cx| {
+        thread_view.read_with(cx, |thread_view, cx| {
             let state = thread_view.as_active_thread().unwrap();
-            let selected = state.selected_permission_granularity.get(&tool_call_id);
+            let selected = state
+                .read(cx)
+                .selected_permission_granularity
+                .get(&tool_call_id);
             assert_eq!(selected, Some(&0), "Should have selected index 0");
         });
     }
@@ -11326,6 +11485,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);
@@ -11393,6 +11553,7 @@ pub(crate) mod tests {
             let thread = thread_view
                 .as_active_thread()
                 .expect("Thread should exist")
+                .read(cx)
                 .thread
                 .clone();
             let thread = thread.read(cx);

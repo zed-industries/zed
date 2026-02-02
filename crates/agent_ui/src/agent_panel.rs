@@ -158,7 +158,7 @@ pub fn init(cx: &mut App) {
                             thread_view
                                 .read(cx)
                                 .as_active_thread()
-                                .map(|r| r.thread.clone())
+                                .map(|r| r.read(cx).thread.clone())
                         });
 
                     if let Some(thread) = thread {
@@ -1421,7 +1421,7 @@ impl AgentPanel {
             ActiveView::AgentThread { thread_view, .. } => thread_view
                 .read(cx)
                 .as_active_thread()
-                .map(|r| r.thread.clone()),
+                .map(|r| r.read(cx).thread.clone()),
             _ => None,
         }
     }
@@ -1849,7 +1849,7 @@ impl AgentPanel {
                 if let Some(title_editor) = thread_view
                     .read(cx)
                     .as_active_thread()
-                    .and_then(|ready| ready.title_editor.clone())
+                    .and_then(|r| r.read(cx).title_editor.clone())
                 {
                     let container = div()
                         .w_full()
