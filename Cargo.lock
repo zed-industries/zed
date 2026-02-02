@@ -7471,6 +7471,7 @@ dependencies = [
  "core-text",
  "core-video",
  "cosmic-text",
+ "criterion",
  "ctor",
  "derive_more 0.99.20",
  "embed-resource",

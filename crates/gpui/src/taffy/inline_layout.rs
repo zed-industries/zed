@@ -405,7 +405,7 @@ pub(crate) fn compute_inline_layout_impl(
             };
 
             let outer_width = intrinsic_width.0 + padding_border_sum.width;
-            let outer_height = line_height.0 + padding_border_sum.height;
+            let outer_height = layout.content_size.height.0 + padding_border_sum.height;
 
             return (
                 LayoutOutput::from_outer_size(TaffySize {
