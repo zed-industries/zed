@@ -77,12 +77,6 @@ impl CsvPreviewView {
 
         Table::new(cols)
             .interactable(&self.table_interaction_state)
-            // .width(Length::Definite(DefiniteLength::Absolute( // Uncomment to apply width bigger than the parent
-            //     AbsoluteLength::Pixels(3000u32.into()),
-            // )))
-            // .fixed_width(DefiniteLength::Fraction(1.))
-            // .column_driven_width()
-            // .width(self.settings.table_width_mode.into())
             .striped()
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)

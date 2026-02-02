@@ -63,14 +63,9 @@ impl Render for CsvPreviewView {
         );
 
         div()
-            // .id("csv-preview-pane")
-            // .overflow_scroll()
             .relative()
             .w_full()
             .h_full()
             .child(table_with_settings)
-            .when(self.settings.show_perf_metrics_overlay, |div| {
-                div.child(self.render_performance_metrics_overlay(cx))
-            })
     }
 }

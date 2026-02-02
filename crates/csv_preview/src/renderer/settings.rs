@@ -196,22 +196,6 @@ fn create_experimental_popover_menu(
                 let settings = view.settings.clone();
                 Some(ContextMenu::build(window, cx, |menu, _, _| {
                     menu.toggleable_entry(
-                        "Show perf metrics",
-                        settings.show_perf_metrics_overlay,
-                        IconPosition::Start,
-                        None,
-                        {
-                            let view_entity = view_entity.clone();
-                            move |_w, cx| {
-                                view_entity.update(cx, |view, cx| {
-                                    view.settings.show_perf_metrics_overlay =
-                                        !view.settings.show_perf_metrics_overlay;
-                                    cx.notify();
-                                })
-                            }
-                        },
-                    )
-                    .toggleable_entry(
                         "Show cell positions",
                         settings.show_debug_info,
                         IconPosition::Start,

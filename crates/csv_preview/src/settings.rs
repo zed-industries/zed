@@ -41,6 +41,5 @@ pub(crate) struct CsvPreviewSettings {
     pub(crate) font_type: FontType,
     pub(crate) numbering_type: RowIdentifiers,
     pub(crate) show_debug_info: bool,
-    pub(crate) show_perf_metrics_overlay: bool,
     pub(crate) multiline_cells_enabled: bool,
 }
