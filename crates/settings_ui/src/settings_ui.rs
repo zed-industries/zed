@@ -846,7 +846,8 @@ impl SettingsPageItem {
         &self,
         settings_window: &SettingsWindow,
         item_index: usize,
-        is_last: bool,
+        bottom_border: bool,
+        extra_bottom_padding: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> AnyElement {
@@ -854,7 +855,7 @@ impl SettingsPageItem {
 
         let apply_padding = |element: Stateful<Div>| -> Stateful<Div> {
             let element = element.pt_4();
-            if is_last {
+            if extra_bottom_padding {
                 element.pb_10()
             } else {
                 element.pb_4()
@@ -933,7 +934,7 @@ impl SettingsPageItem {
                     .group("setting-item")
                     .px_8()
                     .child(field_with_padding)
-                    .when(!is_last, |this| this.child(Divider::horizontal()))
+                    .when(bottom_border, |this| this.child(Divider::horizontal()))
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => v_flex()
@@ -1010,7 +1011,7 @@ impl SettingsPageItem {
                             cx,
                         )),
                 )
-                .when(!is_last, |this| this.child(Divider::horizontal()))
+                .when(bottom_border, |this| this.child(Divider::horizontal()))
                 .into_any_element(),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: discriminant_setting_item,
@@ -1036,7 +1037,7 @@ impl SettingsPageItem {
                             .px_8()
                             .child(discriminant_element.when(has_sub_fields, |this| this.pb_4())),
                     )
-                    .when(!has_sub_fields && !is_last, |this| {
+                    .when(!has_sub_fields && bottom_border, |this| {
                         this.child(h_flex().px_8().child(Divider::horizontal()))
                     });
 
@@ -1057,7 +1058,9 @@ impl SettingsPageItem {
                                 .p_4()
                                 .border_t_1()
                                 .when(is_last_sub_field, |this| this.border_b_1())
-                                .when(is_last_sub_field && is_last, |this| this.mb_8())
+                                .when(is_last_sub_field && extra_bottom_padding, |this| {
+                                    this.mb_8()
+                                })
                                 .border_dashed()
                                 .border_color(cx.theme().colors().border_variant)
                                 .bg(cx.theme().colors().element_background.opacity(0.2)),
@@ -1114,7 +1117,7 @@ impl SettingsPageItem {
                             }),
                         ),
                 )
-                .when(!is_last, |this| this.child(Divider::horizontal()))
+                .when(bottom_border, |this| this.child(Divider::horizontal()))
                 .into_any_element(),
         }
     }
@@ -2927,12 +2930,16 @@ impl SettingsWindow {
                         return gpui::Empty.into_any_element();
                     };
 
-                    let no_bottom_border = visible_items
+                    let next_is_header = visible_items
                         .next()
                         .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
                         .unwrap_or(false);
 
                     let is_last = Some(actual_item_index) == last_non_header_index;
+                    let is_last_in_section = next_is_header || is_last;
+
+                    let bottom_border = !is_last_in_section;
+                    let extra_bottom_padding = is_last_in_section;
 
                     let item_focus_handle = this.content_handles[current_page_index]
                         [actual_item_index]
@@ -2946,7 +2953,8 @@ impl SettingsWindow {
                         .child(item.render(
                             this,
                             actual_item_index,
-                            no_bottom_border || is_last,
+                            bottom_border,
+                            extra_bottom_padding,
                             window,
                             cx,
                         ))
@@ -2974,12 +2982,13 @@ impl SettingsWindow {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(scroll_handle);
-        self.render_sub_page_items_in(page_content, items, window, cx)
+        self.render_sub_page_items_in(page_content, items, false, window, cx)
     }
 
     fn render_sub_page_items_section<'a, Items>(
         &self,
         items: Items,
+        is_inline_section: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -2987,13 +2996,14 @@ impl SettingsWindow {
         Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
     {
         let page_content = v_flex().id("settings-ui-sub-page-section").size_full();
-        self.render_sub_page_items_in(page_content, items, window, cx)
+        self.render_sub_page_items_in(page_content, items, is_inline_section, window, cx)
     }
 
     fn render_sub_page_items_in<'a, Items>(
         &self,
         page_content: Stateful<Div>,
         items: Items,
+        is_inline_section: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement
@@ -3030,12 +3040,14 @@ impl SettingsWindow {
                 })
                 .children(items.clone().into_iter().enumerate().map(
                     |(index, (actual_item_index, item))| {
-                        let no_bottom_border =
-                            items.get(index + 1).is_some_and(|(_, next_item)| {
-                                matches!(next_item, SettingsPageItem::SectionHeader(_))
-                            });
+                        let is_last_item = Some(index) == last_non_header_index;
+                        let next_is_header = items.get(index + 1).is_some_and(|(_, next_item)| {
+                            matches!(next_item, SettingsPageItem::SectionHeader(_))
+                        });
+                        let bottom_border = !is_inline_section && !next_is_header && !is_last_item;
 
-                        let is_last = Some(index) == last_non_header_index;
+                        let extra_bottom_padding =
+                            !is_inline_section && (next_is_header || is_last_item);
 
                         v_flex()
                             .w_full()
@@ -3044,7 +3056,8 @@ impl SettingsWindow {
                             .child(item.render(
                                 self,
                                 actual_item_index,
-                                no_bottom_border || is_last,
+                                bottom_border,
+                                extra_bottom_padding,
                                 window,
                                 cx,
                             ))
