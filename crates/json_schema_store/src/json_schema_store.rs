@@ -264,14 +264,22 @@ async fn resolve_dynamic_schema(
             let mut lsp_adapter_names: Vec<String> = languages
                 .all_lsp_adapters()
                 .into_iter()
-                .map(|adapter| adapter.name().to_string())
+                .map(|adapter| adapter.name())
+                .chain(languages.available_lsp_adapter_names().into_iter())
+                .map(|name| name.to_string())
                 .collect();
 
-            for name in languages.available_lsp_adapter_names() {
-                let name_str = name.to_string();
-                if !lsp_adapter_names.contains(&name_str) {
-                    lsp_adapter_names.push(name_str);
+            let mut i = 0;
+            while i < lsp_adapter_names.len() {
+                let mut j = i + 1;
+                while j < lsp_adapter_names.len() {
+                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
+                        lsp_adapter_names.swap_remove(j);
+                    } else {
+                        j += 1;
+                    }
                 }
+                i += 1;
             }
 
             cx.update(|cx| {
