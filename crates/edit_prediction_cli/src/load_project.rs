@@ -78,6 +78,7 @@ pub async fn run_load_project(
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
                 cursor_offset: cursor_position.to_offset(&buffer),
+                excerpt_start_row: Some(0),
                 edit_history,
                 related_files: example
                     .prompt_inputs

@@ -302,6 +302,20 @@ impl MessageEditor {
         }
     }
 
+    pub fn set_command_state(
+        &mut self,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
+        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<collections::HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.prompt_capabilities = prompt_capabilities;
+        self.available_commands = available_commands;
+        self.cached_user_commands = cached_user_commands;
+        self.cached_user_command_errors = cached_user_command_errors;
+    }
+
     fn command_hint(&self, snapshot: &MultiBufferSnapshot) -> Option<Inlay> {
         let available_commands = self.available_commands.borrow();
         if available_commands.is_empty() {
@@ -672,7 +686,22 @@ impl MessageEditor {
     }
 
     pub fn trigger_completion_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.insert_context_prefix("@", window, cx);
+    }
+
+    pub fn insert_context_type(
+        &mut self,
+        context_keyword: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prefix = format!("@{}", context_keyword);
+        self.insert_context_prefix(&prefix, window, cx);
+    }
+
+    fn insert_context_prefix(&mut self, prefix: &str, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
+        let prefix = prefix.to_string();
 
         cx.spawn_in(window, async move |_, cx| {
             editor
@@ -682,27 +711,27 @@ impl MessageEditor {
                             matches!(menu, CodeContextMenu::Completions(_)) && menu.visible()
                         });
 
-                    let has_at_sign = {
+                    let has_prefix = {
                         let snapshot = editor.display_snapshot(cx);
                         let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                         let offset = cursor.to_offset(&snapshot);
-                        if offset.0 > 0 {
-                            snapshot
-                                .buffer_snapshot()
-                                .reversed_chars_at(offset)
-                                .next()
-                                .map(|sign| sign == '@')
-                                .unwrap_or(false)
+                        if offset.0 >= prefix.len() {
+                            let start_offset = MultiBufferOffset(offset.0 - prefix.len());
+                            let buffer_snapshot = snapshot.buffer_snapshot();
+                            let text = buffer_snapshot
+                                .text_for_range(start_offset..offset)
+                                .collect::<String>();
+                            text == prefix
                         } else {
                             false
                         }
                     };
 
-                    if menu_is_open && has_at_sign {
+                    if menu_is_open && has_prefix {
                         return;
                     }
 
-                    editor.insert("@", window, cx);
+                    editor.insert(&prefix, window, cx);
                     editor.show_completions(&editor::actions::ShowCompletions, window, cx);
                 })
                 .log_err();
@@ -974,61 +1003,130 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+        });
+        for (text, crease_title) in creases {
+            self.insert_crease_impl(text, crease_title, IconName::TextSnippet, true, window, cx);
+        }
+    }
+
+    pub fn insert_terminal_crease(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let line_count = text.lines().count() as u32;
+        let mention_uri = MentionUri::TerminalSelection { line_count };
+        let mention_text = mention_uri.as_link().to_string();
+
+        let (excerpt_id, text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
+            let text_anchor = editor
+                .selections
+                .newest_anchor()
+                .start
+                .text_anchor
+                .bias_left(&buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+            editor.insert(" ", window, cx);
+
+            (*excerpt_id, text_anchor, mention_text.len())
+        });
+
+        let Some((crease_id, tx)) = insert_crease_for_mention(
+            excerpt_id,
+            text_anchor,
+            content_len,
+            mention_uri.name().into(),
+            mention_uri.icon_path(cx),
+            None,
+            self.editor.clone(),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        drop(tx);
+
+        let mention_task = Task::ready(Ok(Mention::Text {
+            content: text,
+            tracked_buffers: vec![],
+        }))
+        .shared();
+
+        self.mention_set.update(cx, |mention_set, _| {
+            mention_set.insert_mention(crease_id, mention_uri, mention_task);
+        });
+    }
+
+    fn insert_crease_impl(
+        &mut self,
+        text: String,
+        title: String,
+        icon: IconName,
+        add_trailing_newline: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use editor::display_map::{Crease, FoldPlaceholder};
         use multi_buffer::MultiBufferRow;
         use rope::Point;
 
         self.editor.update(cx, |editor, cx| {
-            editor.insert("\n", window, cx);
-            for (text, crease_title) in creases {
-                let point = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx))
-                    .head();
-                let start_row = MultiBufferRow(point.row);
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            let start_row = MultiBufferRow(point.row);
 
-                editor.insert(&text, window, cx);
+            editor.insert(&text, window, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let anchor_before = snapshot.anchor_after(point);
-                let anchor_after = editor
-                    .selections
-                    .newest_anchor()
-                    .head()
-                    .bias_left(&snapshot);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor_before = snapshot.anchor_after(point);
+            let anchor_after = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .bias_left(&snapshot);
 
+            if add_trailing_newline {
                 editor.insert("\n", window, cx);
-
-                let fold_placeholder = FoldPlaceholder {
-                    render: Arc::new({
-                        let title = crease_title.clone();
-                        move |_fold_id, _fold_range, _cx| {
-                            ButtonLike::new("code-crease")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ElevatedSurface)
-                                .child(Icon::new(IconName::TextSnippet))
-                                .child(Label::new(title.clone()).single_line())
-                                .into_any_element()
-                        }
-                    }),
-                    merge_adjacent: false,
-                    ..Default::default()
-                };
-
-                let crease = Crease::inline(
-                    anchor_before..anchor_after,
-                    fold_placeholder,
-                    |row, is_folded, fold, _window, _cx| {
-                        Disclosure::new(("code-crease-toggle", row.0 as u64), !is_folded)
-                            .toggle_state(is_folded)
-                            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
-                            .into_any_element()
-                    },
-                    |_, _, _, _| gpui::Empty.into_any(),
-                );
-                editor.insert_creases(vec![crease], cx);
-                editor.fold_at(start_row, window, cx);
             }
+
+            let fold_placeholder = FoldPlaceholder {
+                render: Arc::new({
+                    let title = title.clone();
+                    move |_fold_id, _fold_range, _cx| {
+                        ButtonLike::new("crease")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .child(Icon::new(icon))
+                            .child(Label::new(title.clone()).single_line())
+                            .into_any_element()
+                    }
+                }),
+                merge_adjacent: false,
+                ..Default::default()
+            };
+
+            let crease = Crease::inline(
+                anchor_before..anchor_after,
+                fold_placeholder,
+                |row, is_folded, fold, _window, _cx| {
+                    Disclosure::new(("crease-toggle", row.0 as u64), !is_folded)
+                        .toggle_state(is_folded)
+                        .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
+                        .into_any_element()
+                },
+                |_, _, _, _| gpui::Empty.into_any(),
+            );
+            editor.insert_creases(vec![crease], cx);
+            editor.fold_at(start_row, window, cx);
         });
     }
 
@@ -1066,6 +1164,69 @@ impl MessageEditor {
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
         }
+    }
+
+    pub fn add_images_from_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.prompt_capabilities.borrow().image {
+            return;
+        }
+
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.clone();
+
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Select Images".into()),
+        });
+
+        window
+            .spawn(cx, async move |cx| {
+                let paths = match paths_receiver.await {
+                    Ok(Ok(Some(paths))) => paths,
+                    _ => return Ok::<(), anyhow::Error>(()),
+                };
+
+                let supported_formats = [
+                    ("png", gpui::ImageFormat::Png),
+                    ("jpg", gpui::ImageFormat::Jpeg),
+                    ("jpeg", gpui::ImageFormat::Jpeg),
+                    ("webp", gpui::ImageFormat::Webp),
+                    ("gif", gpui::ImageFormat::Gif),
+                    ("bmp", gpui::ImageFormat::Bmp),
+                    ("tiff", gpui::ImageFormat::Tiff),
+                    ("tif", gpui::ImageFormat::Tiff),
+                    ("ico", gpui::ImageFormat::Ico),
+                ];
+
+                let mut images = Vec::new();
+                for path in paths {
+                    let extension = path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|s| s.to_lowercase());
+
+                    let Some(format) = extension.and_then(|ext| {
+                        supported_formats
+                            .iter()
+                            .find(|(e, _)| *e == ext)
+                            .map(|(_, f)| *f)
+                    }) else {
+                        continue;
+                    };
+
+                    let Ok(content) = async_fs::read(&path).await else {
+                        continue;
+                    };
+
+                    images.push(gpui::Image::from_bytes(format, content));
+                }
+
+                crate::mention_set::insert_images_as_context(images, editor, mention_set, cx).await;
+                Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {

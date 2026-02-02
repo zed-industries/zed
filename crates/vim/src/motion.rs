@@ -2871,8 +2871,7 @@ fn window_top(
 ) -> (DisplayPoint, SelectionGoal) {
     let first_visible_line = text_layout_details
         .scroll_anchor
-        .anchor
-        .to_display_point(map);
+        .scroll_top_display_point(map);
 
     if first_visible_line.row() != DisplayRow(0)
         && text_layout_details.vertical_scroll_margin as usize > times
@@ -2907,8 +2906,7 @@ fn window_middle(
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let first_visible_line = text_layout_details
             .scroll_anchor
-            .anchor
-            .to_display_point(map);
+            .scroll_top_display_point(map);
 
         let max_visible_rows =
             (visible_rows as u32).min(map.max_point().row().0 - first_visible_line.row().0);
@@ -2933,10 +2931,10 @@ fn window_bottom(
     if let Some(visible_rows) = text_layout_details.visible_rows {
         let first_visible_line = text_layout_details
             .scroll_anchor
-            .anchor
-            .to_display_point(map);
+            .scroll_top_display_point(map);
         let bottom_row = first_visible_line.row().0
-            + (visible_rows + text_layout_details.scroll_anchor.offset.y - 1.).floor() as u32;
+            + (visible_rows + text_layout_details.scroll_anchor.scroll_anchor.offset.y - 1.).floor()
+                as u32;
         if bottom_row < map.max_point().row().0
             && text_layout_details.vertical_scroll_margin as usize > times
         {
@@ -3290,6 +3288,29 @@ mod test {
 
                 third and
                 final"});
+    }
+
+    #[gpui::test]
+    async fn test_paragraph_motion_with_whitespace_lines(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test that whitespace-only lines are NOT treated as paragraph boundaries
+        // Per vim's :help paragraph - only truly empty lines are boundaries
+        // Line 2 has 4 spaces (whitespace-only), line 4 is truly empty
+        cx.set_shared_state("ˇfirst\n    \nstill first\n\nsecond")
+            .await;
+        cx.simulate_shared_keystrokes("}").await;
+
+        // Should skip whitespace-only line and stop at truly empty line
+        let mut shared_state = cx.shared_state().await;
+        shared_state.assert_eq("first\n    \nstill first\nˇ\nsecond");
+        shared_state.assert_matches();
+
+        // Should go back to original position
+        cx.simulate_shared_keystrokes("{").await;
+        let mut shared_state = cx.shared_state().await;
+        shared_state.assert_eq("ˇfirst\n    \nstill first\n\nsecond");
+        shared_state.assert_matches();
     }
 
     #[gpui::test]

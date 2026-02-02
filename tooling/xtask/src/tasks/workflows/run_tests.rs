@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression},
     vars::{self, PathCondition},
 };
 
@@ -175,12 +175,7 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
             "fetch-depth",
             "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
         )))
-        .add_step(
-            Step::new(step_name.clone())
-                .run(script)
-                .id(step_name)
-                .shell(BASH_SHELL),
-        );
+        .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
 }
@@ -320,9 +315,10 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
             .runs_on(runner)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,

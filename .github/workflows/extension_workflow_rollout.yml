@@ -75,7 +75,6 @@ jobs:
         fi
         echo "Found previous rollout at commit: $PREV_COMMIT"
         echo "prev_commit=$PREV_COMMIT" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
       working-directory: zed
     - id: calc-changes
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_removed_files
@@ -101,7 +100,6 @@ jobs:
 
         echo "Files to remove: $REMOVED_FILES"
         echo "removed_files=$REMOVED_FILES" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
       working-directory: zed
     - name: extension_workflow_rollout::rollout_workflows_to_extension::sync_workflow_files
       run: |
@@ -125,12 +123,10 @@ jobs:
         else
             cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
         fi
-      shell: bash -euxo pipefail {0}
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
       run: |
         echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
       working-directory: zed
     - id: create-pr
       name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
@@ -156,7 +152,6 @@ jobs:
             cd extension
             gh pr merge "$PR_NUMBER" --auto --squash
         fi
-      shell: bash -euxo pipefail {0}
       env:
         GH_TOKEN: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 10
@@ -182,7 +177,6 @@ jobs:
       run: |
         git config user.name "zed-zippy[bot]"
         git config user.email "234243425+zed-zippy[bot]@users.noreply.github.com"
-      shell: bash -euxo pipefail {0}
     - name: extension_workflow_rollout::create_rollout_tag::update_rollout_tag
       run: |
         if git rev-parse "extension-workflows" >/dev/null 2>&1; then
@@ -193,5 +187,7 @@ jobs:
         echo "Creating new tag 'extension-workflows' at $(git rev-parse --short HEAD)"
         git tag "extension-workflows"
         git push origin "extension-workflows"
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 1
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

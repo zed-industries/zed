@@ -36,6 +36,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
     *CACHED
 }
 
+// Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =

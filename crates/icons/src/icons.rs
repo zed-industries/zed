@@ -228,6 +228,7 @@ pub enum IconName {
     TerminalGhost,
     TextSnippet,
     TextThread,
+    ThinkingMode,
     Thread,
     ThreadFromSummary,
     ThumbsDown,

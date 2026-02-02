@@ -10,7 +10,7 @@ use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
-    Vim,
+    Vim, VimSettings,
     command::CommandRange,
     motion::Motion,
     state::{Mode, SearchState},
@@ -75,8 +75,8 @@ pub(crate) struct SearchUnderCursorPrevious {
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
-    #[serde(default = "default_true")]
-    regex: bool,
+    #[serde(default)]
+    regex: Option<bool>,
 }
 
 /// Executes a find command to search for patterns in the buffer.
@@ -225,45 +225,68 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
-        pane.update(cx, |pane, cx| {
-            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.show(window, cx) {
-                        return;
-                    }
 
-                    search_bar.select_query(window, cx);
-                    cx.focus_self(window);
+        let Some(search_bar) = pane
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<BufferSearchBar>()
+        else {
+            return;
+        };
 
-                    search_bar.set_replacement(None, cx);
-                    let mut options = SearchOptions::NONE;
-                    if action.regex {
-                        options |= SearchOptions::REGEX;
-                    }
-                    if action.backwards {
-                        options |= SearchOptions::BACKWARDS;
-                    }
-                    if EditorSettings::get_global(cx).search.case_sensitive {
-                        options |= SearchOptions::CASE_SENSITIVE;
-                    }
-                    search_bar.set_search_options(options, cx);
-                    let prior_mode = if self.temp_mode {
-                        Mode::Insert
-                    } else {
-                        self.mode
-                    };
-
-                    self.search = SearchState {
-                        direction,
-                        count,
-                        prior_selections,
-                        prior_operator: self.operator_stack.last().cloned(),
-                        prior_mode,
-                        helix_select: false,
-                    }
-                });
+        let shown = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(window, cx) {
+                return false;
             }
-        })
+
+            search_bar.select_query(window, cx);
+            cx.focus_self(window);
+
+            search_bar.set_replacement(None, cx);
+            let mut options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+            if let Some(regex) = action.regex {
+                options.set(SearchOptions::REGEX, regex);
+            }
+            if action.backwards {
+                options |= SearchOptions::BACKWARDS;
+            }
+            search_bar.set_search_options(options, cx);
+            true
+        });
+
+        if !shown {
+            return;
+        }
+
+        let subscription = cx.subscribe_in(&search_bar, window, |vim, _, event, window, cx| {
+            if let buffer_search::Event::Dismissed = event {
+                if !vim.search.prior_selections.is_empty() {
+                    let prior_selections: Vec<_> = vim.search.prior_selections.drain(..).collect();
+                    vim.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(prior_selections);
+                        });
+                    });
+                }
+            }
+        });
+
+        let prior_mode = if self.temp_mode {
+            Mode::Insert
+        } else {
+            self.mode
+        };
+
+        self.search = SearchState {
+            direction,
+            count,
+            prior_selections,
+            prior_operator: self.operator_stack.last().cloned(),
+            prior_mode,
+            helix_select: false,
+            _dismiss_subscription: Some(subscription),
+        }
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
@@ -581,7 +604,9 @@ impl Vim {
                 )
             }
 
-            if !replacement.flag_g {
+            // gdefault inverts the behavior of the 'g' flag.
+            let replace_all = VimSettings::get_global(cx).gdefault != replacement.flag_g;
+            if !replace_all {
                 options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
             }
 
@@ -704,7 +729,7 @@ impl Replacement {
 
         for c in flags.chars() {
             match c {
-                'g' => replacement.flag_g = true,
+                'g' => replacement.flag_g = !replacement.flag_g,
                 'n' => replacement.flag_n = true,
                 'c' => replacement.flag_c = true,
                 'i' => replacement.case_sensitive = Some(false),
@@ -728,7 +753,7 @@ mod test {
     use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
-    use search::BufferSearchBar;
+    use search::{self, BufferSearchBar};
     use settings::SettingsStore;
 
     #[gpui::test]
@@ -1144,6 +1169,59 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_replace_gdefault(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Set the `gdefault` option in both Zed and Neovim.
+        cx.simulate_shared_keystrokes(": s e t space g d e f a u l t")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.set_shared_state(indoc! {
+            "ˇaa aa aa aa
+                aa
+                aa"
+        })
+        .await;
+
+        // With gdefault on, :s/// replaces all matches (like :s///g normally).
+        cx.simulate_shared_keystrokes(": s / a a / b b").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇbb bb bb bb
+                aa
+                aa"
+        });
+
+        // With gdefault on, :s///g replaces only the first match.
+        cx.simulate_shared_keystrokes(": s / b b / c c / g").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇcc bb bb bb
+                aa
+                aa"
+        });
+
+        // Each successive `/g` flag should invert the one before it.
+        cx.simulate_shared_keystrokes(": s / b b / d d / g g").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇcc dd dd dd
+                aa
+                aa"
+        });
+
+        cx.simulate_shared_keystrokes(": s / c c / e e / g g g")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇee dd dd dd
+                aa
+                aa"
+        });
+    }
+
+    #[gpui::test]
     async fn test_replace_c(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state(
@@ -1238,6 +1316,194 @@ mod test {
                 ˇa
                 a
                  "
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should return to line 2
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Cursor should be restored to line 2 where it was when search was opened
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor_no_matches(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇapple\nbanana\ncherry\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+
+        // Open search and type query for something that doesn't exist
+        cx.simulate_keystrokes("/ n o n e x i s t e n t");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should still be at original position
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_after_editor_focus_does_not_restore(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search and type a query that matches line 3
+        cx.simulate_keystrokes("/ a g a i n");
+        cx.run_until_parked();
+
+        // Simulate the editor gaining focus while search is still open
+        // This represents the user clicking in the editor
+        cx.update_editor(|_, window, cx| cx.focus_self(window));
+        cx.run_until_parked();
+
+        // Now dismiss the search bar directly
+        cx.workspace(|workspace, window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            if let Some(search_bar) = pane
+                .toolbar()
+                .read(cx)
+                .item_of_type::<search::BufferSearchBar>()
+            {
+                search_bar.update(cx, |bar, cx| {
+                    bar.dismiss(&search::buffer_search::Dismiss, window, cx)
+                });
+            }
+        });
+        cx.run_until_parked();
+
+        // Cursor should NOT be restored to line 2 (row 1) where search was opened.
+        // Since the user "clicked" in the editor (by focusing it), prior_selections
+        // was cleared, so dismiss should not restore the cursor.
+        // The cursor should be at the match location on line 3 (row 2).
+        cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_vim_search_respects_search_settings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test 1: Verify that search settings are respected when opening vim search
+        // Set search settings: regex=false, whole_word=true, case_sensitive=true
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.search = Some(settings::SearchSettingsContent {
+                    button: Some(true),
+                    whole_word: Some(true),
+                    case_sensitive: Some(true),
+                    include_ignored: Some(false),
+                    regex: Some(false),
+                    center_on_match: Some(false),
+                });
+            });
+        });
+
+        cx.set_state("ˇhello Hello HELLO helloworld", Mode::Normal);
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Verify search options are set from settings
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be deployed")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            // Should have WHOLE_WORD and CASE_SENSITIVE from settings
+            assert!(
+                bar.has_search_option(search::SearchOptions::WHOLE_WORD),
+                "whole_word setting should be respected"
+            );
+            assert!(
+                bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
+                "case_sensitive setting should be respected"
+            );
+            // Should NOT have REGEX since we set regex=false
+            assert!(
+                !bar.has_search_option(search::SearchOptions::REGEX),
+                "regex=false setting should be respected"
+            );
+        });
+
+        // Dismiss and test with different settings
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Test 2: Change settings to regex=true, whole_word=false
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.search = Some(settings::SearchSettingsContent {
+                    button: Some(true),
+                    whole_word: Some(false),
+                    case_sensitive: Some(false),
+                    include_ignored: Some(true),
+                    regex: Some(true),
+                    center_on_match: Some(false),
+                });
+            });
+        });
+
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be deployed")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            // Should have REGEX and INCLUDE_IGNORED from settings
+            assert!(
+                bar.has_search_option(search::SearchOptions::REGEX),
+                "regex=true setting should be respected"
+            );
+            assert!(
+                bar.has_search_option(search::SearchOptions::INCLUDE_IGNORED),
+                "include_ignored=true setting should be respected"
+            );
+            // Should NOT have WHOLE_WORD or CASE_SENSITIVE
+            assert!(
+                !bar.has_search_option(search::SearchOptions::WHOLE_WORD),
+                "whole_word=false setting should be respected"
+            );
+            assert!(
+                !bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
+                "case_sensitive=false setting should be respected"
+            );
         });
     }
 }

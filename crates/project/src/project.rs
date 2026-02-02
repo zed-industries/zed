@@ -40,6 +40,7 @@ use crate::{
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{
@@ -1122,7 +1123,8 @@ impl Project {
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
-            let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
             if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
@@ -1329,12 +1331,13 @@ impl Project {
                         remote.connection_options(),
                     )
                 });
-            let worktree_store = cx.new(|_| {
+            let worktree_store = cx.new(|cx| {
                 WorktreeStore::remote(
                     false,
                     remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
                     path_style,
+                    WorktreeIdCounter::get(cx),
                 )
             });
 
@@ -1557,6 +1560,7 @@ impl Project {
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
             BufferStore::init(&remote_proto);
+            WorktreeStore::init_remote(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
             TaskStore::init(Some(&remote_proto));
@@ -1636,12 +1640,13 @@ impl Project {
             PathStyle::Posix
         };
 
-        let worktree_store = cx.new(|_| {
+        let worktree_store = cx.new(|cx| {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
                 response.payload.project_id,
                 path_style,
+                WorktreeIdCounter::get(cx),
             )
         });
         let buffer_store = cx.new(|cx| {

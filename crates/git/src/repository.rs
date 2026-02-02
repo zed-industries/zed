@@ -1162,8 +1162,42 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
+            let working_directory = working_directory?;
+            let mut child = new_smol_command(&git_binary_path)
+                .current_dir(&working_directory)
+                .envs(env.iter())
+                .args([
+                    "checkout",
+                    &commit,
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("failed to spawn git checkout")?;
+
+            let mut stdin = child.stdin.take().context("failed to get stdin")?;
+            for path in &paths {
+                stdin.write_all(path.as_unix_str().as_bytes()).await?;
+                stdin.write_all(b"\0").await?;
+            }
+            drop(stdin);
+
+            let output = child.output().await?;
+            if output.status.success() {
+                return Ok(());
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("pathspec-from-file") {
+                anyhow::bail!("Failed to checkout files:\n{}", stderr);
+            }
+
+            // Fallback for older git versions: pass paths as command-line arguments
             let output = new_smol_command(&git_binary_path)
-                .current_dir(&working_directory?)
+                .current_dir(&working_directory)
                 .envs(env.iter())
                 .args(["checkout", &commit, "--"])
                 .args(paths.iter().map(|path| path.as_unix_str()))
@@ -1850,20 +1884,33 @@ impl GitRepository for RealGitRepository {
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
-                if !paths.is_empty() {
-                    let output = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory?)
-                        .envs(env.iter())
-                        .args(["update-index", "--add", "--remove", "--"])
-                        .args(paths.iter().map(|p| p.as_unix_str()))
-                        .output()
-                        .await?;
-                    anyhow::ensure!(
-                        output.status.success(),
-                        "Failed to stage paths:\n{}",
-                        String::from_utf8_lossy(&output.stderr),
-                    );
+                if paths.is_empty() {
+                    return Ok(());
                 }
+
+                let mut child = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["update-index", "--add", "--remove", "-z", "--stdin"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .context("failed to spawn git update-index")?;
+
+                let mut stdin = child.stdin.take().context("failed to get stdin")?;
+                for path in &paths {
+                    stdin.write_all(path.as_unix_str().as_bytes()).await?;
+                    stdin.write_all(b"\0").await?;
+                }
+                drop(stdin);
+
+                let output = child.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stage paths:\n{}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
                 Ok(())
             })
             .boxed()
@@ -1879,21 +1926,57 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                if !paths.is_empty() {
-                    let output = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory?)
-                        .envs(env.iter())
-                        .args(["reset", "--quiet", "--"])
-                        .args(paths.iter().map(|p| p.as_std_path()))
-                        .output()
-                        .await?;
-
-                    anyhow::ensure!(
-                        output.status.success(),
-                        "Failed to unstage:\n{}",
-                        String::from_utf8_lossy(&output.stderr),
-                    );
+                if paths.is_empty() {
+                    return Ok(());
                 }
+
+                let working_directory = working_directory?;
+                let mut child = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .envs(env.iter())
+                    .args([
+                        "reset",
+                        "--quiet",
+                        "--pathspec-from-file=-",
+                        "--pathspec-file-nul",
+                    ])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .context("failed to spawn git reset")?;
+
+                let mut stdin = child.stdin.take().context("failed to get stdin")?;
+                for path in &paths {
+                    stdin.write_all(path.as_unix_str().as_bytes()).await?;
+                    stdin.write_all(b"\0").await?;
+                }
+                drop(stdin);
+
+                let output = child.output().await?;
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("pathspec-from-file") {
+                    anyhow::bail!("Failed to unstage:\n{}", stderr);
+                }
+
+                // Fallback for older git versions: pass paths as command-line arguments
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .envs(env.iter())
+                    .args(["reset", "--quiet", "--"])
+                    .args(paths.iter().map(|p| p.as_std_path()))
+                    .output()
+                    .await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
                 Ok(())
             })
             .boxed()
@@ -3491,7 +3574,7 @@ mod tests {
                     sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
                     subject: "generated protobuf".into(),
                     commit_timestamp: 1733187470,
-                    author_name: SharedString::new("John Doe"),
+                    author_name: SharedString::new_static("John Doe"),
                     has_parent: false,
                 })
             }]
@@ -3516,7 +3599,7 @@ mod tests {
                         sha: "eb0cae33272689bd11030822939dd2701c52f81e".into(),
                         subject: "Add feature".into(),
                         commit_timestamp: 1762948725,
-                        author_name: SharedString::new("Zed"),
+                        author_name: SharedString::new_static("Zed"),
                         has_parent: true,
                     })
                 },
@@ -3528,7 +3611,7 @@ mod tests {
                         sha: "895951d681e5561478c0acdd6905e8aacdfd2249".into(),
                         subject: "Initial commit".into(),
                         commit_timestamp: 1762948695,
-                        author_name: SharedString::new("Zed"),
+                        author_name: SharedString::new_static("Zed"),
                         has_parent: false,
                     })
                 }

@@ -99,6 +99,7 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @comment                 | Captures comments                      |
 | @comment.doc             | Captures documentation comments        |
 | @constant                | Captures constants                     |
+| @constant.builtin        | Captures built-in constants            |
 | @constructor             | Captures constructors                  |
 | @embedded                | Captures embedded content              |
 | @emphasis                | Captures emphasized text               |
@@ -131,8 +132,10 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @text.literal            | Captures literal text                  |
 | @title                   | Captures titles                        |
 | @type                    | Captures types                         |
+| @type.builtin            | Captures built-in types                |
 | @variable                | Captures variables                     |
 | @variable.special        | Captures special variables             |
+| @variable.parameter      | Captures function/method parameters    |
 | @variant                 | Captures variants                      |
 
 ### Bracket matching
