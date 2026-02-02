@@ -148,7 +148,7 @@ Since user rules are prepended to defaults and the first match wins, this empty 
 
 For more extensive customization, create `~/.config/zed/semantic_token_rules.json`:
 
-```json [~/.config/zed/semantic_token_rules.json]
+```json [semantic_token_rules]
 [
   {
     "token_type": "variable",
