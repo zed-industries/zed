@@ -4257,43 +4257,12 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
-            WorktreeStoreEvent::WorktreeDeletedEntry(_, entry_id) => {
-                self.on_entry_deleted(*entry_id, cx);
-            }
             WorktreeStoreEvent::WorktreeReleased(..)
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedEntries(..)
-            | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..) => {}
+            | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
+            | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
         }
-    }
-
-    fn on_entry_deleted(&mut self, entry_id: ProjectEntryId, cx: &mut Context<Self>) {
-        let Some(buffer) = self.buffer_store.read(cx).get_by_entry_id(entry_id) else {
-            return;
-        };
-
-        let buffer_id = buffer.read(cx).remote_id();
-        let Some(local) = self.as_local_mut() else {
-            return;
-        };
-
-        if !local.registered_buffers.contains_key(&buffer_id) {
-            return;
-        }
-
-        let Some(file) = buffer.read(cx).file() else {
-            return;
-        };
-        let Some(local_file) = file.as_local() else {
-            return;
-        };
-
-        let abs_path = local_file.abs_path(cx);
-        let Ok(file_url) = lsp::Uri::from_file_path(&abs_path) else {
-            return;
-        };
-
-        local.unregister_buffer_from_language_servers(&buffer, &file_url, cx);
     }
 
     fn on_prettier_store_event(

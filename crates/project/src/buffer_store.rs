@@ -838,13 +838,6 @@ impl BufferStore {
         }
     }
 
-    fn as_local(&self) -> Option<&LocalBufferStore> {
-        match &self.state {
-            BufferStoreState::Local(state) => Some(state),
-            _ => None,
-        }
-    }
-
     fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
         match &mut self.state {
             BufferStoreState::Local(state) => Some(state),
@@ -1088,14 +1081,6 @@ impl BufferStore {
             self.as_remote()
                 .and_then(|remote| remote.loading_remote_buffers_by_id.get(&buffer_id).cloned())
         })
-    }
-
-    pub fn get_by_entry_id(&self, entry_id: ProjectEntryId) -> Option<Entity<Buffer>> {
-        let buffer_id = self
-            .as_local()
-            .and_then(|local| local.local_buffer_ids_by_entry_id.get(&entry_id))
-            .copied()?;
-        self.get(buffer_id)
     }
 
     pub fn buffer_version_info(&self, cx: &App) -> (Vec<proto::BufferVersion>, Vec<BufferId>) {

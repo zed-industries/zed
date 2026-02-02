@@ -12155,6 +12155,15 @@ async fn test_deleted_file_not_registered_with_language_server(cx: &mut gpui::Te
         );
     });
 
+    // Verify DidCloseTextDocument was sent (buffer automatically unregistered when file is deleted)
+    let close_notification = fake_rust_server
+        .receive_notification::<lsp::notification::DidCloseTextDocument>()
+        .await;
+    assert_eq!(
+        close_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap()
+    );
+
     // Attempt to re-register the buffer with language servers
     // This simulates what happens during BufferChangedFilePath event handling
     // where register_buffer_with_language_servers is called after unregister
@@ -12172,5 +12181,90 @@ async fn test_deleted_file_not_registered_with_language_server(cx: &mut gpui::Te
     assert!(
         !has_reopen,
         "Deleted file should not be re-registered with language server"
+    );
+}
+
+#[gpui::test]
+async fn test_externally_modified_file_not_registered_with_language_server(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "test.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(rust_lang());
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: lsp::ServerCapabilities {
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    // Open the buffer with LSP registration
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+
+    // Verify DidOpenTextDocument was sent initially
+    let open_notification = fake_rust_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        open_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap()
+    );
+
+    // Modify the file on disk (simulating git branch switch where file content changes)
+    // This changes the mtime without the buffer being reloaded
+    fs.save(
+        path!("/dir/test.rs").as_ref(),
+        &"fn main() { println!(\"changed\"); }".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    // Attempt to re-register the buffer with language servers
+    // This simulates what happens during BufferChangedFilePath event handling
+    project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // Verify no DidOpenTextDocument was sent after attempting re-registration
+    // (file with changed mtime should not be re-registered until buffer is reloaded)
+    let pending = fake_rust_server.collect_pending_notifications();
+    let has_reopen = pending
+        .iter()
+        .any(|(method, _)| method == lsp::notification::DidOpenTextDocument::METHOD);
+    assert!(
+        !has_reopen,
+        "Externally modified file should not be re-registered with language server"
     );
 }
