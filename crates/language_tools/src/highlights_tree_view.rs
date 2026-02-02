@@ -1,4 +1,3 @@
-use command_palette_hooks::CommandPaletteFilter;
 use editor::{Anchor, Editor, MultiBufferSnapshot, SelectionEffects, ToPoint, scroll::Autoscroll};
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
@@ -7,11 +6,11 @@ use gpui::{
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use menu::{SelectNext, SelectPrevious};
-use std::{any::TypeId, mem, ops::Range};
+use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use ui::{
-    ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, FluentBuilder as _,
-    IconButton, IconName, IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
+    ButtonCommon, ButtonLike, ButtonStyle, Color, ContextMenu, FluentBuilder as _, IconButton,
+    IconName, IconPosition, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
     PopoverMenuHandle, StyledExt, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
 };
 use workspace::{
@@ -31,8 +30,6 @@ actions!(
 actions!(
     highlights_tree_view,
     [
-        /// Update the highlights tree view to show the last focused file.
-        UseActiveEditor,
         /// Toggles showing text highlights.
         ToggleTextHighlights,
         /// Toggles showing semantic token highlights.
@@ -41,51 +38,18 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    let highlights_tree_actions = [TypeId::of::<UseActiveEditor>()];
-
-    CommandPaletteFilter::update_global(cx, |this, _| {
-        this.hide_action_types(&highlights_tree_actions);
-    });
-
     cx.observe_new(move |workspace: &mut Workspace, _, _| {
         workspace.register_action(move |workspace, _: &OpenHighlightsTreeView, window, cx| {
-            CommandPaletteFilter::update_global(cx, |this, _| {
-                this.show_action_types(&highlights_tree_actions);
-            });
-
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
-            let highlights_tree_view = cx.new(|cx| {
-                cx.on_release(move |view: &mut HighlightsTreeView, cx| {
-                    if view
-                        .workspace_handle
-                        .read_with(cx, |workspace, cx| {
-                            workspace.item_of_type::<HighlightsTreeView>(cx).is_none()
-                        })
-                        .unwrap_or_default()
-                    {
-                        CommandPaletteFilter::update_global(cx, |this, _| {
-                            this.hide_action_types(&highlights_tree_actions);
-                        });
-                    }
-                })
-                .detach();
-
-                HighlightsTreeView::new(workspace_handle, active_item, window, cx)
-            });
+            let highlights_tree_view =
+                cx.new(|cx| HighlightsTreeView::new(workspace_handle, active_item, window, cx));
             workspace.split_item(
                 SplitDirection::Right,
                 Box::new(highlights_tree_view),
                 window,
                 cx,
             )
-        });
-        workspace.register_action(|workspace, _: &UseActiveEditor, window, cx| {
-            if let Some(tree_view) = workspace.item_of_type::<HighlightsTreeView>(cx) {
-                tree_view.update(cx, |view, cx| {
-                    view.update_active_editor(&Default::default(), window, cx)
-                })
-            }
         });
     })
     .detach();
@@ -122,7 +86,6 @@ pub struct HighlightsTreeView {
     workspace_handle: WeakEntity<Workspace>,
     editor: Option<EditorState>,
     list_scroll_handle: UniformListScrollHandle,
-    last_active_editor: Option<Entity<Editor>>,
     selected_item_ix: Option<usize>,
     hovered_item_ix: Option<usize>,
     focus_handle: FocusHandle,
@@ -154,7 +117,6 @@ impl HighlightsTreeView {
             workspace_handle: workspace_handle.clone(),
             list_scroll_handle: UniformListScrollHandle::new(),
             editor: None,
-            last_active_editor: None,
             hovered_item_ix: None,
             selected_item_ix: None,
             focus_handle: cx.focus_handle(),
@@ -197,9 +159,11 @@ impl HighlightsTreeView {
             return;
         };
 
-        if let Some(editor_state) = self.editor.as_ref() {
-            self.last_active_editor = (editor_state.editor != editor).then_some(editor);
-        } else {
+        let is_different_editor = self
+            .editor
+            .as_ref()
+            .is_none_or(|state| state.editor != editor);
+        if is_different_editor {
             self.set_editor(editor, window, cx);
         }
     }
@@ -207,7 +171,7 @@ impl HighlightsTreeView {
     fn handle_item_removed(
         &mut self,
         item_id: &EntityId,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -217,21 +181,8 @@ impl HighlightsTreeView {
         {
             self.editor = None;
             self.cached_entries.clear();
-            self.update_active_editor(&Default::default(), window, cx);
             cx.notify();
         }
-    }
-
-    fn update_active_editor(
-        &mut self,
-        _: &UseActiveEditor,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(editor) = self.last_active_editor.take() else {
-            return;
-        };
-        self.set_editor(editor, window, cx);
     }
 
     fn set_editor(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
@@ -698,26 +649,6 @@ impl HighlightsTreeToolbarItemView {
         Some(ButtonLike::new("highlights header").child(Label::new(label)))
     }
 
-    fn render_update_button(&mut self, cx: &mut Context<Self>) -> Option<IconButton> {
-        self.tree_view.as_ref().and_then(|view| {
-            view.update(cx, |view, cx| {
-                view.last_active_editor.as_ref().map(|editor| {
-                    IconButton::new("highlights-view-update", IconName::RotateCw)
-                        .tooltip({
-                            let active_tab_name = editor.read_with(cx, |editor, cx| {
-                                editor.tab_content_text(Default::default(), cx)
-                            });
-
-                            Tooltip::text(format!("Update view to '{active_tab_name}'"))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.update_active_editor(&Default::default(), window, cx);
-                        }))
-                })
-            })
-        })
-    }
-
     fn render_settings_button(&self, cx: &Context<Self>) -> PopoverMenu<ContextMenu> {
         let (show_text, show_semantic) = self
             .tree_view
@@ -792,7 +723,6 @@ impl Render for HighlightsTreeToolbarItemView {
         h_flex()
             .gap_1()
             .children(self.render_header(cx))
-            .children(self.render_update_button(cx))
             .child(self.render_settings_button(cx))
     }
 }
