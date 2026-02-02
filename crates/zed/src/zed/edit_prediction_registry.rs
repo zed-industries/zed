@@ -10,7 +10,6 @@ use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
-use ollama::OllamaEditPredictionDelegate;
 use settings::{
     EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
@@ -196,12 +195,9 @@ fn assign_edit_prediction_provider(
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
-        EditPredictionProvider::Ollama => {
-            let http_client = client.http_client();
-            let provider = cx.new(|_| OllamaEditPredictionDelegate::new(http_client));
-            editor.set_edit_prediction_provider(Some(provider), window, cx);
-        }
-        value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+        value @ (EditPredictionProvider::Experimental(_)
+        | EditPredictionProvider::Zed
+        | EditPredictionProvider::Ollama) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
             if let Some(project) = editor.project()
@@ -209,28 +205,36 @@ fn assign_edit_prediction_provider(
                 && buffer.read(cx).file().is_some()
             {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
-                    let model = if let EditPredictionProvider::Experimental(name) = value {
-                        if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<SweepFeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Sweep
-                        } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<Zeta2FeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Zeta2 {
-                                version: Default::default(),
+                    let model = match value {
+                        EditPredictionProvider::Experimental(name) => {
+                            if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<SweepFeatureFlag>()
+                            {
+                                edit_prediction::EditPredictionModel::Sweep
+                            } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<Zeta2FeatureFlag>()
+                            {
+                                edit_prediction::EditPredictionModel::Zeta2 {
+                                    version: Default::default(),
+                                }
+                            } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<MercuryFeatureFlag>()
+                            {
+                                edit_prediction::EditPredictionModel::Mercury
+                            } else {
+                                return false;
                             }
-                        } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<MercuryFeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Mercury
-                        } else {
-                            return false;
                         }
-                    } else if user_store.read(cx).current_user().is_some() {
-                        edit_prediction::EditPredictionModel::Zeta1
-                    } else {
-                        return false;
+                        EditPredictionProvider::Ollama => {
+                            if !edit_prediction::ollama::is_available(cx) {
+                                return false;
+                            }
+                            edit_prediction::EditPredictionModel::Ollama
+                        }
+                        _ if user_store.read(cx).current_user().is_some() => {
+                            edit_prediction::EditPredictionModel::Zeta1
+                        }
+                        _ => return false,
                     };
 
                     ep_store.set_edit_prediction_model(model);

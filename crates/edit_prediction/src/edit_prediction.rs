@@ -56,6 +56,7 @@ pub mod cursor_excerpt;
 pub mod example_spec;
 mod license_detection;
 pub mod mercury;
+pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
@@ -76,6 +77,7 @@ use crate::capture_example::{
 };
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
+use crate::ollama::Ollama;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
@@ -153,6 +155,7 @@ pub struct EditPredictionStore {
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
+    pub ollama: Ollama,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -169,6 +172,7 @@ pub enum EditPredictionModel {
     },
     Sweep,
     Mercury,
+    Ollama,
 }
 
 #[derive(Clone)]
@@ -632,6 +636,7 @@ impl EditPredictionStore {
             },
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
+            ollama: Ollama::new(),
 
             data_collection_choice,
             reject_predictions_tx: reject_tx,
@@ -674,6 +679,9 @@ impl EditPredictionStore {
                     .with_up(IconName::ZedPredictUp)
                     .with_down(IconName::ZedPredictDown)
                     .with_error(IconName::ZedPredictError)
+            }
+            EditPredictionModel::Ollama => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::AiOllama)
             }
         }
     }
@@ -1207,7 +1215,7 @@ impl EditPredictionStore {
             EditPredictionModel::Sweep => {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
-            EditPredictionModel::Mercury => {}
+            EditPredictionModel::Mercury | EditPredictionModel::Ollama => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
@@ -1347,7 +1355,9 @@ impl EditPredictionStore {
                     return;
                 }
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
+            EditPredictionModel::Sweep
+            | EditPredictionModel::Mercury
+            | EditPredictionModel::Ollama => return,
         }
 
         self.reject_predictions_tx
@@ -1794,6 +1804,7 @@ impl EditPredictionStore {
             }
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
+            EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
         };
 
         cx.spawn(async move |this, cx| {

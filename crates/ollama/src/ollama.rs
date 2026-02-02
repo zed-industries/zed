@@ -1,7 +1,3 @@
-mod ollama_edit_prediction_delegate;
-
-pub use ollama_edit_prediction_delegate::OllamaEditPredictionDelegate;
-
 use anyhow::{Context, Result};
 
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};

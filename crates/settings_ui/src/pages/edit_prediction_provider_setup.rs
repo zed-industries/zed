@@ -64,7 +64,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element()
         }),
-        Some(render_ollama_provider(settings_window.clone(), window, cx).into_any_element()),
+        Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
                 IconName::AiMistral,
@@ -332,6 +332,34 @@ fn sweep_settings() -> Box<[SettingsPageItem]> {
     })])
 }
 
+fn render_ollama_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let ollama_settings = ollama_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(ollama_settings.iter().enumerate(), true, window, cx)
+        .into_any_element();
+
+    v_flex()
+        .id("ollama")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("Ollama")
+                .icon(IconName::ZedPredict)
+                .no_padding(true),
+        )
+        .child(
+            Label::new("Configure the local Ollama server and model used for edit predictions.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(additional_fields)
+}
+
 fn ollama_settings() -> Box<[SettingsPageItem]> {
     Box::new([
         SettingsPageItem::SettingItem(SettingItem {
@@ -401,36 +429,6 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
     ])
-}
-
-fn render_ollama_provider(
-    settings_window: Entity<SettingsWindow>,
-    window: &mut Window,
-    cx: &mut Context<EditPredictionSetupPage>,
-) -> impl IntoElement {
-    let ollama_settings = ollama_settings();
-    let additional_fields = settings_window.update(cx, |settings_window, cx| {
-        settings_window
-            .render_sub_page_items_section(ollama_settings.iter().enumerate(), None, window, cx)
-            .into_any_element()
-    });
-
-    v_flex()
-        .id("ollama")
-        .min_w_0()
-        .pt_8()
-        .gap_1p5()
-        .child(
-            SettingsSectionHeader::new("Ollama")
-                .icon(IconName::ZedPredict)
-                .no_padding(true),
-        )
-        .child(
-            Label::new("Configure the local Ollama server and model used for edit predictions.")
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
-        .child(additional_fields)
 }
 
 fn codestral_settings() -> Box<[SettingsPageItem]> {

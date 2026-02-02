@@ -22,8 +22,6 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
-use ollama::OllamaEditPredictionDelegate;
-use project::DisableAiSettings;
 use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
@@ -1348,7 +1346,7 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
     });
 }
 
-fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
+pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     let mut providers = Vec::new();
 
     providers.push(EditPredictionProvider::Zed);
@@ -1359,11 +1357,12 @@ fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         ));
     }
 
-    if let Some(copilot) = Copilot::global(cx) {
-        if matches!(copilot.read(cx).status(), Status::Authorized) {
-            providers.push(EditPredictionProvider::Copilot);
-        }
-    }
+    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
+        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
+    {
+        providers.push(EditPredictionProvider::Copilot);
+    };
 
     if let Some(supermaven) = Supermaven::global(cx) {
         if let Supermaven::Spawned(agent) = supermaven.read(cx) {
@@ -1377,7 +1376,7 @@ fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    if OllamaEditPredictionDelegate::is_available(cx) {
+    if edit_prediction::ollama::is_available(cx) {
         providers.push(EditPredictionProvider::Ollama);
     }
 
