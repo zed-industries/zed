@@ -1,13 +1,14 @@
 use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
-use editor::{Editor, ExcerptRange, MultiBuffer};
+use editor::{Editor, ExcerptRange, Inlay, MultiBuffer};
 use feature_flags::FeatureFlag;
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
 };
-use language::{LanguageRegistry, Point, language_settings};
+use language::{LanguageRegistry, Point, ToOffset, language_settings};
 use markdown::{Markdown, MarkdownStyle};
+use project::InlayId;
 use settings::Settings as _;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use theme::ThemeSettings;
@@ -348,9 +349,9 @@ impl RatePredictionsModal {
                 });
 
                 editor.disable_header_for_buffer(new_buffer_id, cx);
-                editor.buffer().update(cx, |multibuffer, cx| {
+                let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
-                    multibuffer.push_excerpts(
+                    let excerpt_ids = multibuffer.push_excerpts(
                         new_buffer,
                         vec![ExcerptRange {
                             context: start..end,
@@ -359,7 +360,31 @@ impl RatePredictionsModal {
                         cx,
                     );
                     multibuffer.add_diff(diff, cx);
+                    excerpt_ids.into_iter().next()
                 });
+
+                if let Some((excerpt_id, cursor_position)) =
+                    excerpt_id.zip(prediction.cursor_position.as_ref())
+                {
+                    let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                    if let Some(buffer_snapshot) =
+                        multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
+                    {
+                        let cursor_offset = cursor_position.anchor.to_offset(buffer_snapshot)
+                            + cursor_position.offset;
+                        let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
+
+                        if let Some(anchor) =
+                            multibuffer_snapshot.anchor_in_excerpt(excerpt_id, cursor_anchor)
+                        {
+                            editor.splice_inlays(
+                                &[InlayId::EditPrediction(0)],
+                                vec![Inlay::edit_prediction(0, anchor, "▏")],
+                                cx,
+                            );
+                        }
+                    }
+                }
             });
 
             let mut formatted_inputs = String::new();
