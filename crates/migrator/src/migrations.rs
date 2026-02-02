@@ -165,3 +165,9 @@ pub(crate) mod m_2025_12_15 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2026_02_02 {
+    mod settings;
+
+    pub(crate) use settings::move_edit_prediction_provider_to_edit_predictions;
+}

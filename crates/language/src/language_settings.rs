@@ -645,9 +645,9 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         let edit_prediction_provider = all_languages
-            .features
+            .edit_predictions
             .as_ref()
-            .and_then(|f| f.edit_prediction_provider);
+            .and_then(|ep| ep.provider);
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
