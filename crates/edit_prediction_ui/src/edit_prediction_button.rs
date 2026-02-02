@@ -1294,10 +1294,8 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     }
 
     if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::get_or_init(app_state, cx)
-            .0
-            .read(cx)
-            .is_authenticated()
+        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
     {
         providers.push(EditPredictionProvider::Copilot);
     };

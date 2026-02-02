@@ -391,8 +391,8 @@ fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<i
         copilot_ui::ConfigurationView::new(
             move |cx| {
                 if let Some(app_state) = AppState::global(cx).upgrade() {
-                    let copilot = copilot::GlobalCopilotAuth::get_or_init(app_state, cx);
-                    copilot.0.read(cx).is_authenticated()
+                    copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
                 } else {
                     false
                 }
