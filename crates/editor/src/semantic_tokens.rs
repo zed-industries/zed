@@ -213,6 +213,9 @@ fn buffer_into_editor_highlights<'a>(
                 token.token_modifiers,
             )?,
             token_type: stylizer.token_type(token.token_type).map(SharedString::new),
+            token_modifiers: stylizer
+                .token_modifiers(token.token_modifiers)
+                .map(SharedString::from),
         })
     })
 }
@@ -250,6 +253,20 @@ impl<'a> SemanticTokenStylizer<'a> {
             return false;
         };
         (token_modifiers & mask) != 0
+    }
+
+    pub fn token_modifiers(&self, token_modifiers: u32) -> Option<String> {
+        let modifiers: Vec<&str> = self
+            .modifier_mask
+            .iter()
+            .filter(|(_, mask)| (token_modifiers & *mask) != 0)
+            .map(|(name, _)| *name)
+            .collect();
+        if modifiers.is_empty() {
+            None
+        } else {
+            Some(modifiers.join(", "))
+        }
     }
 
     pub fn convert(

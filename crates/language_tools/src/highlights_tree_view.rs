@@ -61,17 +61,32 @@ pub fn init(cx: &mut App) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HighlightCategory {
     Text(HighlightKey),
-    SemanticToken(Option<SharedString>),
+    SemanticToken {
+        token_type: Option<SharedString>,
+        token_modifiers: Option<SharedString>,
+    },
 }
 
 impl HighlightCategory {
     fn label(&self) -> SharedString {
         match self {
             HighlightCategory::Text(key) => format!("text: {key:?}").into(),
-            HighlightCategory::SemanticToken(Some(token_type)) => {
-                format!("semantic token: {token_type}").into()
-            }
-            HighlightCategory::SemanticToken(None) => "semantic token".into(),
+            HighlightCategory::SemanticToken {
+                token_type: Some(token_type),
+                token_modifiers: Some(modifiers),
+            } => format!("semantic token: {token_type} [{modifiers}]").into(),
+            HighlightCategory::SemanticToken {
+                token_type: Some(token_type),
+                token_modifiers: None,
+            } => format!("semantic token: {token_type}").into(),
+            HighlightCategory::SemanticToken {
+                token_type: None,
+                token_modifiers: Some(modifiers),
+            } => format!("semantic token [{modifiers}]").into(),
+            HighlightCategory::SemanticToken {
+                token_type: None,
+                token_modifiers: None,
+            } => "semantic token".into(),
         }
     }
 }
@@ -253,7 +268,10 @@ impl HighlightsTreeView {
                         range: token.range.clone(),
                         range_display,
                         style: token.style,
-                        category: HighlightCategory::SemanticToken(token.token_type.clone()),
+                        category: HighlightCategory::SemanticToken {
+                            token_type: token.token_type.clone(),
+                            token_modifiers: token.token_modifiers.clone(),
+                        },
                         sort_key,
                     });
                 }
@@ -306,7 +324,7 @@ impl HighlightsTreeView {
             .enumerate()
             .filter(|(_, entry)| match entry.category {
                 HighlightCategory::Text(_) => self.show_text_highlights,
-                HighlightCategory::SemanticToken(_) => self.show_semantic_tokens,
+                HighlightCategory::SemanticToken { .. } => self.show_semantic_tokens,
             })
             .collect()
     }

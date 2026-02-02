@@ -336,6 +336,7 @@ pub struct SemanticTokenHighlight {
     pub range: Range<Anchor>,
     pub style: HighlightStyle,
     pub token_type: Option<SharedString>,
+    pub token_modifiers: Option<SharedString>,
 }
 
 impl DisplayMap {
@@ -1910,7 +1911,7 @@ impl DisplaySnapshot {
             },
         )
         .flat_map(|chunk| {
-            let highlight_style = chunk
+            let syntax_highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
 
@@ -1955,10 +1956,14 @@ impl DisplaySnapshot {
                     ..Default::default()
                 });
 
-            let style = [highlight_style, chunk_highlight, diagnostic_highlight]
-                .into_iter()
-                .flatten()
-                .reduce(|acc, highlight| acc.highlight(highlight));
+            let style = [
+                syntax_highlight_style,
+                chunk_highlight,
+                diagnostic_highlight,
+            ]
+            .into_iter()
+            .flatten()
+            .reduce(|acc, highlight| acc.highlight(highlight));
 
             HighlightedChunk {
                 text: chunk.text,
