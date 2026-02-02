@@ -1,4 +1,6 @@
-use edit_prediction_types::{EditPredictionDelegate, EditPredictionIconSet, PredictedCursorPosition};
+use edit_prediction_types::{
+    EditPredictionDelegate, EditPredictionIconSet, PredictedCursorPosition,
+};
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
