@@ -3073,12 +3073,10 @@ impl BackgroundScannerState {
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
             .log_err();
-        if !repository_dir_abs_path.starts_with(&common_dir_abs_path) {
-            watcher
-                .add(&repository_dir_abs_path)
-                .context("failed to add repository directory to watcher")
-                .log_err();
-        }
+        watcher
+            .add(&repository_dir_abs_path)
+            .context("failed to add repository directory to watcher")
+            .log_err();
 
         let work_directory_id = work_dir_entry.id;
 

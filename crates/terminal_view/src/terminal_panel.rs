@@ -562,6 +562,7 @@ impl TerminalPanel {
         }
 
         let remote_client = project.remote_client();
+        let is_windows = project.path_style(cx).is_windows();
         let remote_shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
@@ -574,7 +575,7 @@ impl TerminalPanel {
             task.shell.clone()
         };
 
-        let task = prepare_task_for_spawn(task, &shell);
+        let task = prepare_task_for_spawn(task, &shell, is_windows);
 
         if task.allow_concurrent_runs && task.use_new_terminal {
             return self.spawn_in_new_terminal(task, window, cx);
@@ -1161,8 +1162,12 @@ impl TerminalPanel {
 /// Prepares a `SpawnInTerminal` by computing the command, args, and command_label
 /// based on the shell configuration. This is a pure function that can be tested
 /// without spawning actual terminals.
-pub fn prepare_task_for_spawn(task: &SpawnInTerminal, shell: &Shell) -> SpawnInTerminal {
-    let builder = ShellBuilder::new(shell);
+pub fn prepare_task_for_spawn(
+    task: &SpawnInTerminal,
+    shell: &Shell,
+    is_windows: bool,
+) -> SpawnInTerminal {
+    let builder = ShellBuilder::new(shell, is_windows);
     let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
     let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
 
@@ -1854,7 +1859,7 @@ mod tests {
         let input = SpawnInTerminal::default();
         let shell = Shell::System;
 
-        let result = prepare_task_for_spawn(&input, &shell);
+        let result = prepare_task_for_spawn(&input, &shell, false);
 
         let expected_shell = util::get_system_shell();
         assert_eq!(result.env, HashMap::default());
@@ -1926,7 +1931,7 @@ mod tests {
         };
         let shell = Shell::System;
 
-        let result = prepare_task_for_spawn(&input, &shell);
+        let result = prepare_task_for_spawn(&input, &shell, false);
 
         let system_shell = util::get_system_shell();
         assert_eq!(result.env, HashMap::default());

@@ -715,16 +715,12 @@ impl MessageEditor {
                         let snapshot = editor.display_snapshot(cx);
                         let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
                         let offset = cursor.to_offset(&snapshot);
-                        if offset.0 >= prefix.len() {
-                            let start_offset = MultiBufferOffset(offset.0 - prefix.len());
-                            let buffer_snapshot = snapshot.buffer_snapshot();
-                            let text = buffer_snapshot
-                                .text_for_range(start_offset..offset)
-                                .collect::<String>();
-                            text == prefix
-                        } else {
-                            false
-                        }
+                        let buffer_snapshot = snapshot.buffer_snapshot();
+                        let prefix_char_count = prefix.chars().count();
+                        buffer_snapshot
+                            .reversed_chars_at(offset)
+                            .take(prefix_char_count)
+                            .eq(prefix.chars().rev())
                     };
 
                     if menu_is_open && has_prefix {
@@ -3192,6 +3188,88 @@ mod tests {
 
                 assert!(visible_range.contains(&cursor_row));
             })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_insert_context_with_multibyte_characters(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), json!({}))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let mut cx = VisualTestContext::from_window(*window, cx);
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
+
+        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new_with_cache(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    history.downgrade(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            let editor = message_editor.read(cx).editor().clone();
+            (message_editor, editor)
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("😄😄", window, cx);
+        });
+
+        cx.run_until_parked();
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.insert_context_type("file", window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "😄😄@file");
         });
     }
 }

@@ -1545,6 +1545,13 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
+    "sweep": {
+      // When enabled, Sweep will not store edit prediction inputs or outputs.
+      // When disabled, Sweep may collect data including buffer contents,
+      // diagnostics, file paths, repository names, and generated predictions
+      // to improve the service.
+      "privacy_mode": false,
+    },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true,
@@ -1596,15 +1603,18 @@
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
     // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory. Fallback to the
+    // May take 5 values:
+    // 1. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "working_directory": "current_file_directory"
+    // 2. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
+    // 3. Use the first project in this workspace's directory
     //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
+    // 4. Always use this platform's home directory (if we can find it)
     //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
+    // 5. Always use a specific directory. This value will be shell expanded.
     //    If this path is not a valid directory the terminal will default to
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
@@ -2343,7 +2353,6 @@
   "line_indicator_format": "long",
   // Set a proxy to use. The proxy protocol is specified by the URI scheme.
   //
-  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from

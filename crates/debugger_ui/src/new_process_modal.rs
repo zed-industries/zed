@@ -28,11 +28,7 @@ use ui::{
     prelude::*,
 };
 use ui_input::InputField;
-use util::{
-    ResultExt, debug_panic,
-    rel_path::RelPath,
-    shell::{PosixShell, ShellKind},
-};
+use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{
@@ -874,8 +870,7 @@ impl ConfigureMode {
             };
         }
         let command = self.program.read(cx).text(cx);
-        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
-        let mut args = ShellKind::Posix(PosixShell::Sh)
+        let mut args = ShellKind::Posix
             .split(&command)
             .into_iter()
             .flatten()
@@ -1303,8 +1298,7 @@ impl PickerDelegate for DebugDelegate {
             })
             .unwrap_or_default();
 
-        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
-        let mut args = ShellKind::Posix(PosixShell::Sh)
+        let mut args = ShellKind::Posix
             .split(&text)
             .into_iter()
             .flatten()
