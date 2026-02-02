@@ -56,6 +56,12 @@ impl AcpModelSelectorPopover {
             selector.delegate.cycle_favorite_models(window, cx);
         });
     }
+
+    pub fn select_favorite_by_index(&self, index: usize, cx: &mut Context<Self>) -> bool {
+        self.selector.update(cx, |selector, cx| {
+            selector.delegate.select_favorite_by_index(index, cx)
+        })
+    }
 }
 
 impl Render for AcpModelSelectorPopover {

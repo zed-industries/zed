@@ -142,6 +142,45 @@ impl AcpModelPickerDelegate {
         self.favorites.len()
     }
 
+    fn get_favorite_models(&self) -> Vec<AgentModelInfo> {
+        let Some(models) = &self.models else {
+            return Vec::new();
+        };
+
+        let all_models: Vec<&AgentModelInfo> = match models {
+            AgentModelList::Flat(list) => list.iter().collect(),
+            AgentModelList::Grouped(index_map) => index_map.values().flatten().collect(),
+        };
+
+        let iter = all_models
+            .into_iter()
+            .filter(|model| self.favorites.contains(&model.id))
+            .unique_by(|model| &model.id);
+
+        iter.cloned().collect()
+    }
+
+    pub fn select_favorite_by_index(
+        &mut self,
+        index: usize,
+        cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        let favorite_models = self.get_favorite_models();
+
+        let Some(model) = favorite_models.get(index) else {
+            return false;
+        };
+
+        self.selector
+            .select_model(model.id.clone(), cx)
+            .detach_and_log_err(cx);
+
+        self.selected_model = Some(model.clone());
+        cx.notify();
+
+        true
+    }
+
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if self.favorites.is_empty() {
             return;

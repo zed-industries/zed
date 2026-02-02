@@ -374,7 +374,9 @@ pub mod settings_profile_selector {
 }
 
 pub mod agent {
-    use gpui::actions;
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         agent,
@@ -408,6 +410,13 @@ pub mod agent {
             PasteRaw,
         ]
     );
+
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct SelectFavoriteByIndex {
+        pub index: usize,
+    }
 }
 
 pub mod assistant {

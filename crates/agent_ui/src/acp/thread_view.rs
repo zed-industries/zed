@@ -60,7 +60,7 @@ use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{
     CollaboratorId, NewTerminal, OpenOptions, Toast, Workspace, notifications::NotificationId,
 };
-use zed_actions::agent::{Chat, ToggleModelSelector};
+use zed_actions::agent::{Chat, SelectFavoriteByIndex, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
@@ -8224,6 +8224,19 @@ impl AcpThreadView {
         }
     }
 
+    fn select_favorite_by_index(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        let Some(model_selector) = self
+            .as_active_thread()
+            .and_then(|active| active.model_selector.as_ref())
+        else {
+            return false;
+        };
+
+        model_selector.update(cx, |selector, cx| {
+            selector.select_favorite_by_index(index, cx)
+        })
+    }
+
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
         let model_or_agent_name = self.current_model_name(cx);
         let refusal_message = format!(
@@ -8710,6 +8723,9 @@ impl Render for AcpThreadView {
                         model_selector.cycle_favorite_models(window, cx);
                     });
                 }
+            }))
+            .on_action(cx.listener(|this, action: &SelectFavoriteByIndex, _, cx| {
+                this.select_favorite_by_index(action.index, cx);
             }))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
