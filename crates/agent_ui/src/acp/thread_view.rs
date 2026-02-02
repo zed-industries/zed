@@ -1786,15 +1786,12 @@ impl AcpServerView {
         let agent_telemetry_id = connection.telemetry_id();
 
         // Check for the experimental "terminal-auth" _meta field
-        let auth_method =
-            connection
-            .auth_methods()
-            .iter()
-            .find(|m| m.id == method);
+        let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
 
-        if let Some(terminal_auth) = auth_method.and_then(|a| a.meta.as_ref()).and_then(|m| m.get(
-            "terminal-auth"
-        )) {
+        if let Some(terminal_auth) = auth_method
+            .and_then(|a| a.meta.as_ref())
+            .and_then(|m| m.get("terminal-auth"))
+        {
             // Extract terminal auth details from meta
             if let (Some(command), Some(label)) = (
                 terminal_auth.get("command").and_then(|v| v.as_str()),
@@ -1815,9 +1812,7 @@ impl AcpServerView {
                     .and_then(|v| v.as_object())
                     .map(|obj| {
                         obj.iter()
-                            .filter_map(|(k, v)| {
-                                v.as_str().map(|val| (k.clone(), val.to_string()))
-                            })
+                            .filter_map(|(k, v)| v.as_str().map(|val| (k.clone(), val.to_string())))
                             .collect::<HashMap<String, String>>()
                     })
                     .unwrap_or_default();

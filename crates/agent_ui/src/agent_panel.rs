@@ -1527,12 +1527,7 @@ impl AgentPanel {
             )
         });
 
-        self.set_active_view(
-            ActiveView::AgentThread { thread_view },
-            true,
-            window,
-            cx,
-        );
+        self.set_active_view(ActiveView::AgentThread { thread_view }, true, window, cx);
     }
 }
 
@@ -2007,9 +2002,7 @@ impl AgentPanel {
             };
 
         let active_thread = match &self.active_view {
-            ActiveView::AgentThread { thread_view } => {
-                thread_view.read(cx).as_native_thread(cx)
-            }
+            ActiveView::AgentThread { thread_view } => thread_view.read(cx).as_native_thread(cx),
             ActiveView::Uninitialized
             | ActiveView::TextThread { .. }
             | ActiveView::History { .. }

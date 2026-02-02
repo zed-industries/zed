@@ -1218,7 +1218,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         log::debug!("Creating new thread for project at: {cwd:?}");
-        Task::ready(Ok(self.0.update(cx, |agent, cx| agent.new_session(project, cx))))
+        Task::ready(Ok(self
+            .0
+            .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
     fn supports_load_session(&self, _cx: &App) -> bool {
