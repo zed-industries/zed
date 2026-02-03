@@ -209,7 +209,7 @@ impl PerformanceMetrics {
     }
 }
 
-////// todo: move to separate file
+/// Holds state of column widths for a table component in CSV preview.
 pub(crate) struct ColumnWidths {
     pub widths: Entity<TableColumnWidths>,
 }
