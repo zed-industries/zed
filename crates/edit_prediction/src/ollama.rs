@@ -14,8 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{Event, ZetaPromptInput};
 
-const MAX_REWRITE_TOKENS: usize = 150;
-const MAX_CONTEXT_TOKENS: usize = 350;
+const MAX_REWRITE_TOKENS: usize = 1024;
 
 const FILE_SEPARATOR: &str = "<|file_sep|>";
 const SWEEP_CONTEXT_LINES: usize = 10;
@@ -107,23 +106,23 @@ impl Ollama {
         let is_sweep_model = is_sweep_next_edit_model(&model);
 
         let result = cx.background_spawn(async move {
-            let (editable_range, context_range) =
+            let (excerpt_range, _) =
                 cursor_excerpt::editable_and_context_ranges_for_cursor_position(
                     cursor_point,
                     &snapshot,
-                    MAX_CONTEXT_TOKENS,
                     MAX_REWRITE_TOKENS,
+                    0,
                 );
 
             let related_files = crate::filter_redundant_excerpts(
                 related_files,
                 full_path.as_ref(),
-                context_range.start.row..context_range.end.row,
+                excerpt_range.start.row..excerpt_range.end.row,
             );
 
-            let context_offset_range = context_range.to_offset(&snapshot);
-            let context_start_row = context_range.start.row;
-            let editable_offset_range = editable_range.to_offset(&snapshot);
+            let context_offset_range = excerpt_range.to_offset(&snapshot);
+            let context_start_row = excerpt_range.start.row;
+            let editable_offset_range = excerpt_range.to_offset(&snapshot);
 
             let inputs = ZetaPromptInput {
                 events: events.clone(),
@@ -132,7 +131,7 @@ impl Ollama {
                     - context_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt: snapshot
-                    .text_for_range(context_range)
+                    .text_for_range(excerpt_range)
                     .collect::<String>()
                     .into(),
                 editable_range_in_excerpt: (editable_offset_range.start
@@ -147,7 +146,7 @@ impl Ollama {
                 (
                     output.prompt,
                     stop_tokens,
-                    512u32,
+                    max_tokens,
                     Some(output.editable_range_in_excerpt),
                 )
             } else {
@@ -155,7 +154,7 @@ impl Ollama {
                 let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
                 let prompt = format_fim_prompt(&model, &prefix, &suffix);
                 let stop_tokens = get_fim_stop_tokens();
-                (prompt, stop_tokens, max_tokens.unwrap_or(64), None)
+                (prompt, stop_tokens, max_tokens, None)
             };
 
             let request = OllamaGenerateRequest {
