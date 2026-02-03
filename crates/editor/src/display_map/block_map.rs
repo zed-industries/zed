@@ -67,6 +67,12 @@ impl<'a> Deref for BlockMapWriterCompanion<'a> {
     }
 }
 
+impl<'a> DerefMut for BlockMapWriterCompanion<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Clone)]
 pub struct BlockSnapshot {
     pub(super) wrap_snapshot: WrapSnapshot,
@@ -1586,7 +1592,7 @@ impl BlockMapWriter<'_> {
             };
             let new_block = Arc::new(CustomBlock {
                 id,
-                placement: block.placement,
+                placement: block.placement.clone(),
                 height: block.height,
                 render: Arc::new(Mutex::new(block.render)),
                 style: block.style,
@@ -1595,7 +1601,60 @@ impl BlockMapWriter<'_> {
             self.block_map
                 .custom_blocks
                 .insert(block_ix, new_block.clone());
-            self.block_map.custom_blocks_by_id.insert(id, new_block);
+            self.block_map
+                .custom_blocks_by_id
+                .insert(id, new_block.clone());
+
+            // Insert a matching custom block in the companion (if any)
+            if let Some(CompanionViewWithBlockMap {
+                view,
+                block_map: their_block_map,
+            }) = self.companion.as_deref_mut()
+            {
+                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
+                let my_anchor = block.placement.start();
+                let my_point = my_anchor.to_point(buffer);
+                let their_point = view
+                    .companion
+                    .convert_rows_to_companion(
+                        view.entity_id,
+                        view.wrap_snapshot.buffer_snapshot(),
+                        buffer,
+                        (Bound::Included(my_point), Bound::Included(my_point)),
+                    )
+                    .first()
+                    .unwrap()
+                    .boundaries
+                    .first()
+                    .unwrap()
+                    .1
+                    .start;
+                let anchor = view
+                    .wrap_snapshot
+                    .buffer_snapshot()
+                    .anchor_before(their_point);
+                let height = new_block.height.unwrap_or(1);
+                let their_new_block = BlockProperties {
+                    placement: BlockPlacement::Above(anchor),
+                    height: Some(height),
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(move |cx| {
+                        div()
+                            .id(cx.block_id)
+                            .size_full()
+                            .h(Pixels::from(cx.line_height * height as f32))
+                            .bg(pattern_slash(white(), 8.0, 8.0))
+                            .into_any()
+                    }),
+                    priority: 0,
+                };
+                log::debug!(
+                    "Inserting matching companion custom block: {new_block:#?} => {their_new_block:#?}"
+                );
+                their_block_map
+                    .write(view.wrap_snapshot.clone(), Patch::default(), None)
+                    .insert([their_new_block]);
+            }
 
             edits = edits.compose([Edit {
                 old: start_row..end_row,
