@@ -52,7 +52,7 @@ impl EditPredictionIconSet {
 /// exist in the original buffer, we store an anchor (which points to a position
 /// in the original buffer, typically the start of an edit) plus an offset into
 /// the inserted text.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct PredictedCursorPosition {
     /// An anchor in the original buffer. If the cursor is inside an edit,
     /// this points to the start of that edit's range.
