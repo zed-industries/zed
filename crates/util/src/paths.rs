@@ -486,13 +486,6 @@ pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
                         .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
-/// Checks if a path looks like it should be resolved as an absolute path.
-/// This includes filesystem absolute paths and home directory paths (~).
-/// Used for UI contexts like file pickers where users may type shell-style paths.
-pub fn looks_like_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    is_absolute(path_like, path_style) || path_like.starts_with('~')
-}
-
 #[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub struct NormalizeError;

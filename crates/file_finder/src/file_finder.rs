@@ -39,7 +39,7 @@ use ui::{
 };
 use util::{
     ResultExt, maybe,
-    paths::{PathStyle, PathWithPosition, looks_like_absolute},
+    paths::{PathWithPosition},
     post_inc,
     rel_path::RelPath,
 };
@@ -1424,21 +1424,16 @@ impl PickerDelegate for FileFinderDelegate {
                 path_position,
             };
 
-            let path_style = self.project.read(cx).path_style(cx);
-
             cx.spawn_in(window, async move |this, cx| {
                 let _ = maybe!(async move {
-                    let is_absolute_path = looks_like_absolute(path_str.unwrap_or(""), path_style);
-                    let did_resolve_abs_path = is_absolute_path
-                        && this
-                            .update_in(cx, |this, window, cx| {
-                                this.delegate
-                                    .lookup_absolute_path(query.clone(), window, cx)
-                            })?
-                            .await;
+                    let did_resolve_abs_path = this
+                        .update_in(cx, |this, window, cx| {
+                            this.delegate
+                                .lookup_absolute_path(query.clone(), window, cx)
+                        })?
+                        .await;
 
-                    // Only check for relative paths if no absolute paths were
-                    // found.
+                    // Only check for relative paths if no absolute paths were found.
                     if !did_resolve_abs_path {
                         this.update_in(cx, |this, window, cx| {
                             this.delegate.spawn_search(query, window, cx)
