@@ -232,6 +232,9 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
+        MigrationType::Json(
+            migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -650,21 +653,23 @@ mod tests {
     #[test]
     fn test_nested_string_replace_for_settings() {
         assert_migrate_settings(
-            r#"
-                {
-                    "features": {
-                        "inline_completion_provider": "zed"
-                    },
-                }
-            "#,
+            &r#"
+            {
+                "features": {
+                    "inline_completion_provider": "zed"
+                },
+            }
+            "#
+            .unindent(),
             Some(
-                r#"
+                &r#"
                 {
-                    "features": {
-                        "edit_prediction_provider": "zed"
-                    },
+                    "edit_predictions": {
+                        "provider": "zed"
+                    }
                 }
-            "#,
+                "#
+                .unindent(),
             ),
         )
     }
@@ -2358,6 +2363,111 @@ mod tests {
                 "#
                 .unindent(),
             ),
+        );
+    }
+
+    #[test]
+    fn test_move_edit_prediction_provider_to_edit_predictions() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "zed"
+                },
+                "edit_predictions": {
+                    "mode": "eager"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "zed",
+                        "mode": "eager"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "supermaven"
+                },
+                "edit_predictions": {
+                    "provider": "copilot"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": "zed"
+                }
+            }
+            "#
+            .unindent(),
+            None,
         );
     }
 }
