@@ -1,0 +1,15 @@
+{"Put":{"state":"ˇ1. First item"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"ˇ2. First item","mode":"Normal"}}
+{"Key":"ctrl-x"}
+{"Get":{"state":"ˇ1. First item","mode":"Normal"}}
+{"Put":{"state":"ˇ9. Ninth item"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"1ˇ0. Ninth item","mode":"Normal"}}
+{"Put":{"state":"ˇ5."}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"ˇ6.","mode":"Normal"}}
+{"Put":{"state":"ˇ1. First item"}}
+{"Key":"5"}
+{"Key":"ctrl-a"}
+{"Get":{"state":"ˇ6. First item","mode":"Normal"}}
