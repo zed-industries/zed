@@ -120,7 +120,7 @@ impl RenderOnce for ThreadItem {
             agent_icon.into_any_element()
         };
 
-        let has_no_changes = self.added.is_none() && self.removed.is_none();
+        // let has_no_changes = self.added.is_none() && self.removed.is_none();
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
@@ -158,23 +158,29 @@ impl RenderOnce for ThreadItem {
                         this.child(Label::new(name).size(LabelSize::Small).color(Color::Muted))
                     })
                     .child(
-                        Label::new(self.timestamp)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
                         Label::new("•")
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .alpha(0.5),
                     )
-                    .when(has_no_changes, |this| {
-                        this.child(
-                            Label::new("No Changes")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                    })
+                    .child(
+                        Label::new(self.timestamp)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    // .child(
+                    //     Label::new("•")
+                    //         .size(LabelSize::Small)
+                    //         .color(Color::Muted)
+                    //         .alpha(0.5),
+                    // )
+                    // .when(has_no_changes, |this| {
+                    //     this.child(
+                    //         Label::new("No Changes")
+                    //             .size(LabelSize::Small)
+                    //             .color(Color::Muted),
+                    //     )
+                    // })
                     .when(self.added.is_some() || self.removed.is_some(), |this| {
                         this.child(DiffStat::new(
                             self.id,
