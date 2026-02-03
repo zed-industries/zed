@@ -988,6 +988,7 @@ pub struct RemoteSettingsContent {
 )]
 pub struct DevContainerConnection {
     pub name: String,
+    pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
 }

@@ -1807,7 +1807,6 @@ mod tests {
             ("keyword", Hsla::default()),
             ("function", Hsla::default()),
             ("property", Hsla::default()),
-            ("variant", Hsla::default()),
         ]);
 
         language.set_theme(&theme);
@@ -1815,7 +1814,6 @@ mod tests {
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
-        let highlight_variant = grammar.highlight_id_for_name("variant").unwrap();
 
         assert_eq!(
             adapter
@@ -1857,7 +1855,7 @@ mod tests {
             Some(CodeLabel::new(
                 "Variant".to_string(),
                 0..7,
-                vec![(0..7, highlight_variant)],
+                vec![(0..7, highlight_type)],
             ))
         );
     }

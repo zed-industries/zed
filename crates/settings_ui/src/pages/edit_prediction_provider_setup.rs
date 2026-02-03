@@ -46,7 +46,16 @@ pub(crate) fn render_edit_prediction_setup_page(
                 "https://app.sweep.dev/".into(),
                 sweep_api_token(cx),
                 |_cx| SWEEP_CREDENTIALS_URL,
-                None,
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            sweep_settings().iter().enumerate(),
+                            true,
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
                 window,
                 cx,
             )
@@ -63,6 +72,7 @@ pub(crate) fn render_edit_prediction_setup_page(
                     settings_window
                         .render_sub_page_items_section(
                             codestral_settings().iter().enumerate(),
+                            true,
                             window,
                             cx,
                         )
@@ -285,6 +295,39 @@ fn render_api_key_provider(
     })
 }
 
+fn sweep_settings() -> Box<[SettingsPageItem]> {
+    Box::new([SettingsPageItem::SettingItem(SettingItem {
+        title: "Privacy Mode",
+        description: "When enabled, Sweep will not store edit prediction inputs or outputs. When disabled, Sweep may collect data including buffer contents, diagnostics, file paths, and generated predictions to improve the service.",
+        field: Box::new(SettingField {
+            pick: |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .edit_predictions
+                    .as_ref()?
+                    .sweep
+                    .as_ref()?
+                    .privacy_mode
+                    .as_ref()
+            },
+            write: |settings, value| {
+                settings
+                    .project
+                    .all_languages
+                    .edit_predictions
+                    .get_or_insert_default()
+                    .sweep
+                    .get_or_insert_default()
+                    .privacy_mode = value;
+            },
+            json_path: Some("edit_predictions.sweep.privacy_mode"),
+        }),
+        metadata: None,
+        files: USER,
+    })])
+}
+
 fn codestral_settings() -> Box<[SettingsPageItem]> {
     Box::new([
         SettingsPageItem::SettingItem(SettingItem {
@@ -391,8 +434,8 @@ fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<i
         copilot_ui::ConfigurationView::new(
             move |cx| {
                 if let Some(app_state) = AppState::global(cx).upgrade() {
-                    let copilot = copilot::GlobalCopilotAuth::get_or_init(app_state, cx);
-                    copilot.0.read(cx).is_authenticated()
+                    copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
                 } else {
                     false
                 }

@@ -37,10 +37,13 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_edit_prediction_cursor_position_inside_insertion(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |_| {
+        eprintln!("");
+    });
 
     let mut cx = EditorTestContext::new(cx).await;
     let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+
     assign_editor_completion_provider(provider.clone(), &mut cx);
     // Buffer: "fn foo() {}" - we'll insert text and position cursor inside the insertion
     cx.set_state("fn foo() ˇ{}");
