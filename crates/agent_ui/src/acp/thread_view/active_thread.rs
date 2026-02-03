@@ -1222,6 +1222,18 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx);
+    }
+
+    fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_with_granularity(true, window, cx);
+    }
+
+    fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_with_granularity(false, window, cx);
+    }
+
     pub fn authorize_pending_tool_call(
         &mut self,
         kind: acp::PermissionOptionKind,
@@ -1246,9 +1258,29 @@ impl AcpThreadView {
         Some(())
     }
 
+    fn handle_authorize_tool_call(
+        &mut self,
+        action: &AuthorizeToolCall,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
+        let option_id = acp::PermissionOptionId::new(action.option_id.clone());
+        let option_kind = match action.option_kind.as_str() {
+            "AllowOnce" => acp::PermissionOptionKind::AllowOnce,
+            "AllowAlways" => acp::PermissionOptionKind::AllowAlways,
+            "RejectOnce" => acp::PermissionOptionKind::RejectOnce,
+            "RejectAlways" => acp::PermissionOptionKind::RejectAlways,
+            _ => acp::PermissionOptionKind::AllowOnce,
+        };
+
+        self.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
+    }
+
     pub fn handle_select_permission_granularity(
         &mut self,
         action: &SelectPermissionGranularity,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
@@ -1256,6 +1288,54 @@ impl AcpThreadView {
             .insert(tool_call_id, action.index);
 
         cx.notify();
+    }
+
+    fn authorize_pending_with_granularity(
+        &mut self,
+        is_allow: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let thread = self.thread.read(cx);
+        let tool_call = thread.first_tool_awaiting_confirmation()?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        let tool_call_id = tool_call.id.clone();
+
+        let PermissionOptions::Dropdown(choices) = options else {
+            let kind = if is_allow {
+                acp::PermissionOptionKind::AllowOnce
+            } else {
+                acp::PermissionOptionKind::RejectOnce
+            };
+            return self.authorize_pending_tool_call(kind, window, cx);
+        };
+
+        // Get selected index, defaulting to last option ("Only this time")
+        let selected_index = self
+            .selected_permission_granularity
+            .get(&tool_call_id)
+            .copied()
+            .unwrap_or_else(|| choices.len().saturating_sub(1));
+
+        let selected_choice = choices.get(selected_index).or(choices.last())?;
+
+        let selected_option = if is_allow {
+            &selected_choice.allow
+        } else {
+            &selected_choice.deny
+        };
+
+        self.authorize_tool_call(
+            tool_call_id,
+            selected_option.option_id.clone(),
+            selected_option.kind,
+            window,
+            cx,
+        );
+
+        Some(())
     }
 
     // edits
@@ -6692,6 +6772,27 @@ impl AcpThreadView {
                 .dismiss_action(self.dismiss_error_button(cx)),
         )
     }
+
+    fn open_permission_dropdown(
+        &mut self,
+        _: &crate::OpenPermissionDropdown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.permission_dropdown_handle.clone().toggle(window, cx);
+    }
+
+    fn open_add_context_menu(
+        &mut self,
+        _action: &OpenAddContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.add_context_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
+    }
 }
 
 impl Render for AcpThreadView {
@@ -6713,6 +6814,127 @@ impl Render for AcpThreadView {
         });
 
         v_flex()
+            .key_context("AcpThread")
+            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                this.cancel_generation(cx);
+            }))
+            .on_action(cx.listener(Self::keep_all))
+            .on_action(cx.listener(Self::reject_all))
+            .on_action(cx.listener(Self::allow_always))
+            .on_action(cx.listener(Self::allow_once))
+            .on_action(cx.listener(Self::reject_once))
+            .on_action(cx.listener(Self::handle_authorize_tool_call))
+            .on_action(cx.listener(Self::handle_select_permission_granularity))
+            .on_action(cx.listener(Self::open_permission_dropdown))
+            .on_action(cx.listener(Self::open_add_context_menu))
+            .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |thread, cx| {
+                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                    });
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
+                this.send_queued_message_at_index(0, true, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
+                this.remove_from_queue(0, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
+                if let Some(editor) = this.queued_message_editors.first() {
+                    window.focus(&editor.focus_handle(cx), cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
+                this.local_queued_messages.clear();
+                this.sync_queue_flag_to_native_thread(cx);
+                this.can_fast_track_queue = false;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.toggle_category_picker(
+                            acp::SessionConfigOptionCategory::Mode,
+                            window,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
+                if let Some(profile_selector) = this.profile_selector.clone() {
+                    profile_selector.read(cx).menu_handle().toggle(window, cx);
+                } else if let Some(mode_selector) = this.mode_selector.clone() {
+                    mode_selector.read(cx).menu_handle().toggle(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::Mode,
+                            false,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
+                if let Some(profile_selector) = this.profile_selector.clone() {
+                    profile_selector.update(cx, |profile_selector, cx| {
+                        profile_selector.cycle_profile(cx);
+                    });
+                } else if let Some(mode_selector) = this.mode_selector.clone() {
+                    mode_selector.update(cx, |mode_selector, cx| {
+                        mode_selector.cycle_mode(window, cx);
+                    });
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.toggle_category_picker(
+                            acp::SessionConfigOptionCategory::Model,
+                            window,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
+                if let Some(model_selector) = this.model_selector.clone() {
+                    model_selector
+                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(config_options_view) = this.config_options_view.clone() {
+                    let handled = config_options_view.update(cx, |view, cx| {
+                        view.cycle_category_option(
+                            acp::SessionConfigOptionCategory::Model,
+                            true,
+                            cx,
+                        )
+                    });
+                    if handled {
+                        return;
+                    }
+                }
+
+                if let Some(model_selector) = this.model_selector.clone() {
+                    model_selector.update(cx, |model_selector, cx| {
+                        model_selector.cycle_favorite_models(window, cx);
+                    });
+                }
+            }))
             .size_full()
             .child(conversation)
             .children(self.render_activity_bar(window, cx))
