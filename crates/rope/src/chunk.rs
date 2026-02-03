@@ -1,5 +1,5 @@
 use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped};
-use arrayvec::ArrayString;
+use heapless::String as ArrayString;
 use std::{cmp, ops::Range};
 use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
@@ -29,7 +29,7 @@ pub struct Chunk {
     newlines: Bitmap,
     /// If bit[i] is set, then the character at index i is an ascii tab.
     tabs: Bitmap,
-    pub text: ArrayString<MAX_BASE>,
+    pub text: ArrayString<MAX_BASE, u8>,
 }
 
 #[inline(always)]
@@ -47,7 +47,11 @@ impl Chunk {
 
     #[inline(always)]
     pub fn new(text: &str) -> Self {
-        let text = ArrayString::from(text).unwrap();
+        let text = {
+            let mut buf = ArrayString::new();
+            buf.push_str(text).unwrap();
+            buf
+        };
 
         const CHUNK_SIZE: usize = 8;
 
@@ -113,7 +117,7 @@ impl Chunk {
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
-        self.text.push_str(slice.text);
+        self.text.push_str(slice.text).unwrap();
     }
 
     #[inline(always)]
