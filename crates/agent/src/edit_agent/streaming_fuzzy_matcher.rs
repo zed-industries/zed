@@ -1,6 +1,10 @@
 use language::{Point, TextBufferSnapshot};
 use std::{cmp, ops::Range};
 
+// Cost weights for the fuzzy matching algorithm (edit distance variant).
+// - Low replacement cost: allows matching lines with minor differences (typos, small edits).
+// - Medium insertion cost: tolerates extra lines in the buffer between matched lines.
+// - High deletion cost: discourages skipping query lines, preferring to match what the user wrote.
 const REPLACEMENT_COST: u32 = 1;
 const INSERTION_COST: u32 = 3;
 const DELETION_COST: u32 = 10;
