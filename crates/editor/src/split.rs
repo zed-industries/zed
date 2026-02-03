@@ -178,8 +178,26 @@ fn patch_for_excerpt(
                 old: source_multibuffer_start..source_multibuffer_end,
                 new: target_multibuffer_start..target_multibuffer_end,
             }
-        })
-        .collect();
+        });
+
+    let edits = [text::Edit {
+        old: source_excerpt_start_in_multibuffer..source_excerpt_start_in_multibuffer,
+        new: target_excerpt_start_in_multibuffer..target_excerpt_start_in_multibuffer,
+    }]
+    .into_iter()
+    .chain(edits);
+
+    let mut merged_edits: Vec<text::Edit<Point>> = Vec::new();
+    for edit in edits {
+        if let Some(last) = merged_edits.last_mut() {
+            if edit.new.start <= last.new.end {
+                last.old.end = last.old.end.max(edit.old.end);
+                last.new.end = last.new.end.max(edit.new.end);
+                continue;
+            }
+        }
+        merged_edits.push(edit);
+    }
 
     let edited_range = source_excerpt_start_in_multibuffer
         + (source_edited_range.start - source_excerpt_start_in_buffer)
@@ -192,7 +210,7 @@ fn patch_for_excerpt(
         + (target_excerpt_end_in_buffer - target_excerpt_start_in_buffer);
 
     CompanionExcerptPatch {
-        patch: Patch::new(edits),
+        patch: Patch::new(merged_edits),
         edited_range,
         source_excerpt_range: source_excerpt_start_in_multibuffer..source_excerpt_end,
         target_excerpt_range: target_excerpt_start_in_multibuffer..target_excerpt_end,

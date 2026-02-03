@@ -1105,6 +1105,11 @@ impl BlockMap {
                     None
                 })
                 .peekable();
+            let last_source_point = if excerpt.edited_range.end.column > 0 {
+                excerpt.edited_range.end
+            } else {
+                MultiBufferPoint::new(excerpt.edited_range.end.row, 0)
+            };
 
             let Some(first_point) = source_points.peek().copied() else {
                 continue;
@@ -1171,12 +1176,8 @@ impl BlockMap {
                 }
             }
 
-            let mut last_seen_source_point = None;
-
             // Main loop: process one hunk/group at a time, possibly inserting spacers before and after.
             while let Some(source_point) = source_points.next() {
-                last_seen_source_point = Some(source_point);
-
                 let mut current_boundary = source_point;
                 let current_range = excerpt.patch.edit_for_old_position(current_boundary).new;
 
@@ -1246,10 +1247,9 @@ impl BlockMap {
                 }
             }
 
-            let last_boundary = last_seen_source_point.unwrap();
-            if last_boundary == excerpt.source_excerpt_range.end {
+            if last_source_point == excerpt.source_excerpt_range.end {
                 let (_new_delta, spacer) =
-                    determine_spacer(last_boundary, excerpt.target_excerpt_range.end, delta);
+                    determine_spacer(last_source_point, excerpt.target_excerpt_range.end, delta);
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),
