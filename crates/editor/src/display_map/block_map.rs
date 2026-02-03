@@ -57,10 +57,10 @@ pub struct BlockMapWriter<'a> {
     companion: Option<BlockMapWriterCompanion<'a>>,
 }
 
-struct BlockMapWriterCompanion<'a>(CompanionView<'a>);
+struct BlockMapWriterCompanion<'a>(CompanionViewWithBlockMap<'a>);
 
 impl<'a> Deref for BlockMapWriterCompanion<'a> {
-    type Target = CompanionView<'a>;
+    type Target = CompanionViewWithBlockMap<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -542,6 +542,26 @@ impl<'a> CompanionView<'a> {
     }
 }
 
+pub struct CompanionViewWithBlockMap<'a> {
+    view: CompanionView<'a>,
+    block_map: &'a mut BlockMap,
+}
+
+impl<'a> CompanionViewWithBlockMap<'a> {
+    pub(crate) fn new(
+        entity_id: EntityId,
+        wrap_snapshot: &'a WrapSnapshot,
+        wrap_edits: &'a WrapPatch,
+        companion: &'a Companion,
+        block_map: &'a mut BlockMap,
+    ) -> Self {
+        Self {
+            view: CompanionView::new(entity_id, wrap_snapshot, wrap_edits, companion),
+            block_map,
+        }
+    }
+}
+
 impl BlockMap {
     #[ztracing::instrument(skip_all)]
     pub fn new(
@@ -600,9 +620,13 @@ impl BlockMap {
         &'a mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
-        companion_view: Option<CompanionView<'a>>,
+        companion_view: Option<CompanionViewWithBlockMap<'a>>,
     ) -> BlockMapWriter<'a> {
-        self.sync(&wrap_snapshot, edits, companion_view);
+        self.sync(
+            &wrap_snapshot,
+            edits,
+            companion_view.as_ref().map(|c| c.view),
+        );
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter {
             block_map: self,
@@ -1583,16 +1607,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_deref()
+                .map(|&CompanionViewWithBlockMap { view, .. }| {
+                    CompanionView::new(
+                        view.entity_id,
+                        view.wrap_snapshot,
+                        &default_patch,
+                        view.companion,
+                    )
+                }),
         );
         ids
     }
@@ -1653,16 +1677,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_deref()
+                .map(|&CompanionViewWithBlockMap { view, .. }| {
+                    CompanionView::new(
+                        view.entity_id,
+                        view.wrap_snapshot,
+                        &default_patch,
+                        view.companion,
+                    )
+                }),
         );
     }
 
@@ -1713,16 +1737,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_deref()
+                .map(|&CompanionViewWithBlockMap { view, .. }| {
+                    CompanionView::new(
+                        view.entity_id,
+                        view.wrap_snapshot,
+                        &default_patch,
+                        view.companion,
+                    )
+                }),
         );
     }
 
@@ -1808,16 +1832,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             &wrap_snapshot,
             edits,
-            self.companion.as_deref().map(
-                |&CompanionView {
-                     entity_id,
-                     wrap_snapshot,
-                     companion,
-                     ..
-                 }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
-                },
-            ),
+            self.companion
+                .as_deref()
+                .map(|&CompanionViewWithBlockMap { view, .. }| {
+                    CompanionView::new(
+                        view.entity_id,
+                        view.wrap_snapshot,
+                        &default_patch,
+                        view.companion,
+                    )
+                }),
         );
     }
 
