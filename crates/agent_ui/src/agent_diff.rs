@@ -12,7 +12,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
+
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
@@ -1445,8 +1445,7 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !AgentSettings::get_global(cx).single_file_review || cx.has_flag::<AgentV2FeatureFlag>()
-        {
+        if !AgentSettings::get_global(cx).single_file_review {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
                     .update(cx, |editor, cx| {
@@ -1888,10 +1887,6 @@ mod tests {
         );
     }
 
-    // This test won't work with AgentV2FeatureFlag, and as it's not feasible
-    // to disable a feature flag for tests and this agent diff code is likely
-    // going away soon, let's ignore the test for now.
-    #[ignore]
     #[gpui::test]
     async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {

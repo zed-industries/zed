@@ -9,9 +9,10 @@ use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use dev_container::start_dev_container;
+use dev_container::{find_devcontainer_configs, start_dev_container_with_config};
 use remote::RemoteConnectionOptions;
-pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
+pub use remote_connection::{RemoteConnectionModal, connect};
+pub use remote_connections::open_remote_project;
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -236,24 +237,61 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let app_state = workspace.app_state().clone();
             let replace_window = window.window_handle().downcast::<Workspace>();
+            let is_local = workspace.project().read(cx).is_local();
 
-            cx.spawn_in(window, async move |_, mut cx| {
-                let (connection, starting_dir) =
-                    match start_dev_container(&mut cx, app_state.node_runtime.clone()).await {
-                        Ok((c, s)) => (Connection::DevContainer(c), s),
-                        Err(e) => {
-                            log::error!("Failed to start Dev Container: {:?}", e);
-                            cx.prompt(
-                                gpui::PromptLevel::Critical,
-                                "Failed to start Dev Container",
-                                Some(&format!("{:?}", e)),
-                                &["Ok"],
-                            )
-                            .await
-                            .ok();
-                            return;
-                        }
-                    };
+            cx.spawn_in(window, async move |_, cx| {
+                if !is_local {
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Cannot open Dev Container from remote  project",
+                        None,
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                    return;
+                }
+
+                let configs = find_devcontainer_configs(cx);
+
+                if configs.len() > 1 {
+                    // Multiple configs found - show modal for selection
+                    cx.update(|_, cx| {
+                        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+                            let fs = workspace.project().read(cx).fs().clone();
+                            let handle = cx.entity().downgrade();
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                RemoteServerProjects::new_dev_container(fs, window, handle, cx)
+                            });
+                        });
+                    })
+                    .log_err();
+                    return;
+                }
+
+                // Single or no config - proceed with opening directly
+                let config = configs.into_iter().next();
+                let (connection, starting_dir) = match start_dev_container_with_config(
+                    cx,
+                    app_state.node_runtime.clone(),
+                    config,
+                )
+                .await
+                {
+                    Ok((c, s)) => (Connection::DevContainer(c), s),
+                    Err(e) => {
+                        log::error!("Failed to start Dev Container: {:?}", e);
+                        cx.prompt(
+                            gpui::PromptLevel::Critical,
+                            "Failed to start Dev Container",
+                            Some(&format!("{:?}", e)),
+                            &["Ok"],
+                        )
+                        .await
+                        .ok();
+                        return;
+                    }
+                };
 
                 let result = open_remote_project(
                     connection.into(),
@@ -263,7 +301,7 @@ pub fn init(cx: &mut App) {
                         replace_window,
                         ..OpenOptions::default()
                     },
-                    &mut cx,
+                    cx,
                 )
                 .await;
 
@@ -280,12 +318,6 @@ pub fn init(cx: &mut App) {
                 }
             })
             .detach();
-
-            let fs = workspace.project().read(cx).fs().clone();
-            let handle = cx.entity().downgrade();
-            workspace.toggle_modal(window, cx, |window, cx| {
-                RemoteServerProjects::new_dev_container(fs, window, handle, cx)
-            });
         });
     });
 

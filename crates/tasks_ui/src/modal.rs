@@ -124,7 +124,7 @@ impl TasksModalDelegate {
 
 pub struct TasksModal {
     pub picker: Entity<Picker<TasksModalDelegate>>,
-    _subscription: [Subscription; 2],
+    _subscriptions: [Subscription; 2],
 }
 
 impl TasksModal {
@@ -139,13 +139,18 @@ impl TasksModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store.clone(),
+                    task_contexts,
+                    task_overrides,
+                    workspace.clone(),
+                ),
                 window,
                 cx,
             )
             .modal(is_modal)
         });
-        let _subscription = [
+        let mut _subscriptions = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
                 cx.emit(DismissEvent);
             }),
@@ -155,9 +160,10 @@ impl TasksModal {
                 });
             }),
         ];
+
         Self {
             picker,
-            _subscription,
+            _subscriptions,
         }
     }
 

@@ -30,11 +30,11 @@ use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
-use project::{Project, ProjectPath, WorktreeId};
+use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
+use settings::{EditPredictionProvider, Settings as _, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
@@ -71,7 +71,9 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
-use crate::capture_example::should_sample_edit_prediction_example_capture;
+use crate::capture_example::{
+    should_sample_edit_prediction_example_capture, should_send_testing_zeta2_request,
+};
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
@@ -147,7 +149,6 @@ pub struct EditPredictionStore {
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ProjectState>,
-    use_context: bool,
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
@@ -170,6 +171,7 @@ pub enum EditPredictionModel {
     Mercury,
 }
 
+#[derive(Clone)]
 pub struct EditPredictionModelInput {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
@@ -261,7 +263,7 @@ struct ProjectState {
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     user_actions: VecDeque<UserActionRecord>,
-    _subscription: gpui::Subscription,
+    _subscriptions: [gpui::Subscription; 2],
     copilot: Option<Entity<Copilot>>,
 }
 
@@ -607,11 +609,10 @@ impl EditPredictionStore {
         })
         .detach();
 
-        let mut this = Self {
+        let this = Self {
             projects: HashMap::default(),
             client,
             user_store,
-            use_context: false,
             llm_token,
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -642,19 +643,6 @@ impl EditPredictionStore {
             },
         };
 
-        this.configure_context_retrieval(cx);
-        let weak_this = cx.weak_entity();
-        cx.on_flags_ready(move |_, cx| {
-            weak_this
-                .update(cx, |this, cx| this.configure_context_retrieval(cx))
-                .ok();
-        })
-        .detach();
-        cx.observe_global::<SettingsStore>(|this, cx| {
-            this.configure_context_retrieval(cx);
-        })
-        .detach();
-
         this
     }
 
@@ -667,16 +655,35 @@ impl EditPredictionStore {
         self.edit_prediction_model = model;
     }
 
+    pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
+        use ui::IconName;
+        match self.edit_prediction_model {
+            EditPredictionModel::Sweep => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::SweepAi)
+                    .with_disabled(IconName::SweepAiDisabled)
+                    .with_up(IconName::SweepAiUp)
+                    .with_down(IconName::SweepAiDown)
+                    .with_error(IconName::SweepAiError)
+            }
+            EditPredictionModel::Mercury => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
+            }
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    .with_disabled(IconName::ZedPredictDisabled)
+                    .with_up(IconName::ZedPredictUp)
+                    .with_down(IconName::ZedPredictDown)
+                    .with_error(IconName::ZedPredictError)
+            }
+        }
+    }
+
     pub fn has_sweep_api_token(&self, cx: &App) -> bool {
         self.sweep_ai.api_token.read(cx).has_key()
     }
 
     pub fn has_mercury_api_token(&self, cx: &App) -> bool {
         self.mercury.api_token.read(cx).has_key()
-    }
-
-    pub fn set_use_context(&mut self, use_context: bool) {
-        self.use_context = use_context;
     }
 
     pub fn clear_history(&mut self) {
@@ -741,6 +748,9 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Copilot>> {
+        if DisableAiSettings::get(None, cx).disable_ai {
+            return None;
+        }
         let state = self.get_or_init_project(project, cx);
 
         if state.copilot.is_some() {
@@ -831,7 +841,13 @@ impl EditPredictionStore {
                 last_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
                 user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
-                _subscription: cx.subscribe(&project, Self::handle_project_event),
+                _subscriptions: [
+                    cx.subscribe(&project, Self::handle_project_event),
+                    cx.observe_release(&project, move |this, _, cx| {
+                        this.projects.remove(&entity_id);
+                        cx.notify();
+                    }),
+                ],
                 copilot: None,
             })
     }
@@ -1680,7 +1696,7 @@ impl EditPredictionStore {
 
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
-        let stored_events = project_state.events(cx);
+        let stored_events = project_state.events_split_by_pause(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.into_iter().map(|e| e.event).collect();
@@ -1715,11 +1731,7 @@ impl EditPredictionStore {
         let diagnostic_search_range =
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
-        let related_files = if self.use_context {
-            self.context_for_project(&project, cx)
-        } else {
-            Vec::new()
-        };
+        let related_files = self.context_for_project(&project, cx);
 
         let inputs = EditPredictionModelInput {
             project: project.clone(),
@@ -1763,7 +1775,20 @@ impl EditPredictionStore {
             }
         }
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
+            EditPredictionModel::Zeta1 => {
+                if should_send_testing_zeta2_request() {
+                    let mut zeta2_inputs = inputs.clone();
+                    zeta2_inputs.trigger = PredictEditsRequestTrigger::Testing;
+                    zeta2::request_prediction_with_zeta2(
+                        self,
+                        zeta2_inputs,
+                        Default::default(),
+                        cx,
+                    )
+                    .detach();
+                }
+                zeta1::request_prediction_with_zeta1(self, inputs, cx)
+            }
             EditPredictionModel::Zeta2 { version } => {
                 zeta2::request_prediction_with_zeta2(self, inputs, version, cx)
             }
@@ -2073,13 +2098,11 @@ impl EditPredictionStore {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
-        if self.use_context {
-            self.get_or_init_project(project, cx)
-                .context
-                .update(cx, |store, cx| {
-                    store.refresh(buffer.clone(), cursor_position, cx);
-                });
-        }
+        self.get_or_init_project(project, cx)
+            .context
+            .update(cx, |store, cx| {
+                store.refresh(buffer.clone(), cursor_position, cx);
+            });
     }
 
     #[cfg(feature = "cli-support")]
@@ -2221,14 +2244,6 @@ impl EditPredictionStore {
         self.client.telemetry().flush_events().detach();
         cx.notify();
     }
-
-    fn configure_context_retrieval(&mut self, cx: &mut Context<'_, EditPredictionStore>) {
-        if cfg!(feature = "cli-support") {
-            return;
-        }
-        self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
-            && all_language_settings(None, cx).edit_predictions.use_context;
-    }
 }
 
 pub(crate) fn filter_redundant_excerpts(
@@ -2341,9 +2356,9 @@ pub fn init(cx: &mut App) {
                 settings
                     .project
                     .all_languages
-                    .features
+                    .edit_predictions
                     .get_or_insert_default()
-                    .edit_prediction_provider = Some(EditPredictionProvider::None)
+                    .provider = Some(EditPredictionProvider::None)
             });
         });
         fn copilot_for_project(project: &Entity<Project>, cx: &mut App) -> Option<Entity<Copilot>> {

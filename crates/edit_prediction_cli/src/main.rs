@@ -7,18 +7,23 @@ mod git;
 mod headless;
 mod load_project;
 mod metrics;
+mod openai_client;
 mod parse_output;
 mod paths;
 mod predict;
 mod progress;
+mod prompt_assets;
 mod pull_examples;
 mod qa;
 mod reorder_patch;
+mod repair;
 mod retrieve_context;
+mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
 mod synthesize;
+mod truncate_expected_patch;
 mod word_diff;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::HashSet;
@@ -50,6 +55,7 @@ use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
+use crate::truncate_expected_patch::TruncatePatchArgs;
 
 #[derive(Parser, Debug)]
 #[command(name = "ep")]
@@ -58,6 +64,8 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    /// The limit for the number of examples to process
+    /// Default is unlimited for processing local datasets, 5000 when pulling from snowflake
     #[clap(long, global = true)]
     limit: Option<usize>,
     #[clap(long, global = true)]
@@ -82,6 +90,10 @@ struct EpArgs {
     /// Failed examples are always logged to the run's failed directory.
     #[arg(long, global = true, default_value = "keep")]
     failed: FailedHandling,
+    /// Output as markdown files instead of JSONL. When set, -o specifies a directory
+    /// where one .md file per example will be written (named after each example).
+    #[arg(long, short, global = true)]
+    markdown: bool,
 }
 
 /// Controls whether failed examples are included in the main output.
@@ -105,8 +117,24 @@ Inputs can be file paths or special specifiers:
 
   captured-after:{timestamp}
       Fetch captured examples from Snowflake after the given RFC3339 timestamp.
+      These are examples captured via the "Capture Edit Prediction Example" action.
 
-      You can specify this multiple times and mix it with file inputs.
+  rejected-after:{timestamp}
+      Fetch rejected edit predictions from Snowflake after the given RFC3339 timestamp.
+      These are predictions that were shown to users but rejected (useful for DPO training).
+
+  rated-after:{timestamp}
+      Fetch user-rated edit predictions from Snowflake after the given RFC3339 timestamp.
+      These are predictions that users explicitly rated as positive or negative via the
+      rate completions modal. Only zeta2 predictions are included.
+      - Positive ratings: output becomes expected_patches
+      - Negative ratings: output becomes rejected_patch
+
+  rated-positive-after:{timestamp}
+      Same as rated-after, but only fetches positively rated predictions.
+
+  rated-negative-after:{timestamp}
+      Same as rated-after, but only fetches negatively rated predictions.
 
       Required environment variables to connect to Snowflake:
           EP_SNOWFLAKE_API_KEY
@@ -117,20 +145,32 @@ Inputs can be file paths or special specifiers:
 
 Examples:
 
-  # Predict from a file
-  ep predict examples.jsonl
+  # Read examples from a file
+  ep read examples.jsonl -o output.jsonl
 
-  # Predict from captured examples after a timestamp
-  ep predict captured-after:2025-01-01T00:00:00Z
+  # Read captured examples after a timestamp
+  ep read captured-after:2025-01-01T00:00:00Z -o captured.jsonl
 
-  # Mix file inputs and captured-after in the same invocation
+  # Read rejected predictions for DPO training
+  ep read rejected-after:2025-01-01T00:00:00Z -o rejected.jsonl
+
+  # Read user-rated predictions
+  ep read rated-after:2025-01-01T00:00:00Z -o rated.jsonl
+
+  # Read only positively rated predictions
+  ep read rated-positive-after:2025-01-01T00:00:00Z -o positive.jsonl
+
+  # Read only negatively rated predictions
+  ep read rated-negative-after:2025-01-01T00:00:00Z -o negative.jsonl
+
+  # Mix multiple input sources
   ep predict examples.jsonl captured-after:2025-01-01T00:00:00Z
 "#;
 
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
-    /// Parse markdown examples and output a combined .jsonl file
-    ParseExample,
+    /// Read examples from files or fetch from Snowflake, output as .jsonl
+    Read,
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
@@ -155,6 +195,8 @@ enum Command {
     Clean,
     /// Generate an evaluation example by splitting a chronologically-ordered commit
     SplitCommit(SplitCommitArgs),
+    /// Truncate expected patch by the given criteria
+    TruncatePatch(TruncatePatchArgs),
     /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
     Split(SplitArgs),
     /// Filter a JSONL dataset by programming language (based on cursor_path extension)
@@ -163,12 +205,14 @@ enum Command {
     ImportBatch(ImportBatchArgs),
     /// Assess the quality of predictions using LLM-as-a-judge
     Qa(qa::QaArgs),
+    /// Repair predictions that received poor QA scores by generating improved predictions
+    Repair(repair::RepairArgs),
 }
 
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::ParseExample => write!(f, "parse-example"),
+            Command::Read => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context => write!(f, "context"),
             Command::FormatPrompt(args) => {
@@ -193,6 +237,7 @@ impl Display for Command {
             }
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
+            Command::TruncatePatch(_) => write!(f, "truncate-patch"),
             Command::Split(_) => write!(f, "split"),
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
             Command::ImportBatch(args) => {
@@ -200,6 +245,9 @@ impl Display for Command {
             }
             Command::Qa(_) => {
                 write!(f, "qa")
+            }
+            Command::Repair(_) => {
+                write!(f, "repair")
             }
         }
     }
@@ -217,6 +265,9 @@ struct PredictArgs {
     provider: Option<PredictionProvider>,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
+    /// Only use cached responses, don't queue new requests for batching
+    #[clap(long)]
+    cache_only: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -229,13 +280,51 @@ struct EvalArgs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TeacherBackend {
+    Sonnet45,
+    Gpt52,
+}
+
+impl std::fmt::Display for TeacherBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TeacherBackend::Sonnet45 => write!(f, "sonnet45"),
+            TeacherBackend::Gpt52 => write!(f, "gpt52"),
+        }
+    }
+}
+
+impl std::str::FromStr for TeacherBackend {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
+            "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
+            "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
+            _ => anyhow::bail!("unknown teacher backend `{s}`. Valid options: sonnet45, gpt52"),
+        }
+    }
+}
+
+impl TeacherBackend {
+    pub fn model_name(&self) -> &'static str {
+        match self {
+            TeacherBackend::Sonnet45 => "claude-sonnet-4-5",
+            TeacherBackend::Gpt52 => "gpt-5.2",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
     Sweep,
     Mercury,
     Zeta1,
     Zeta2(ZetaVersion),
-    Teacher(ZetaVersion),
-    TeacherNonBatching(ZetaVersion),
+    Teacher(TeacherBackend),
+    TeacherNonBatching(TeacherBackend),
+    Repair,
 }
 
 impl Default for PredictionProvider {
@@ -251,10 +340,11 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(version) => write!(f, "zeta2:{version}"),
-            PredictionProvider::Teacher(version) => write!(f, "teacher:{version}"),
-            PredictionProvider::TeacherNonBatching(version) => {
-                write!(f, "teacher-non-batching:{version}")
+            PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
+            PredictionProvider::TeacherNonBatching(backend) => {
+                write!(f, "teacher-non-batching:{backend}")
             }
+            PredictionProvider::Repair => write!(f, "repair"),
         }
     }
 }
@@ -262,27 +352,38 @@ impl std::fmt::Display for PredictionProvider {
 impl std::str::FromStr for PredictionProvider {
     type Err = anyhow::Error;
 
-    fn from_str(mut s: &str) -> Result<Self, Self::Err> {
-        let mut version = ZetaVersion::default();
-        if let Some((first, second)) = s.split_once(':') {
-            version = ZetaVersion::parse(second)?;
-            s = first;
-        }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (provider, arg) = s.split_once(':').map_or((s, None), |(p, a)| (p, Some(a)));
 
-        let s_lower = s.to_lowercase();
-        match s_lower.as_str() {
+        let provider_lower = provider.to_lowercase();
+        match provider_lower.as_str() {
             "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
-            "zeta2" => Ok(PredictionProvider::Zeta2(version)),
-            "teacher" => Ok(PredictionProvider::Teacher(version)),
-            "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
-                Ok(PredictionProvider::TeacherNonBatching(version))
+            "zeta2" => {
+                let version = arg.map(ZetaVersion::parse).transpose()?.unwrap_or_default();
+                Ok(PredictionProvider::Zeta2(version))
             }
+            "teacher" => {
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::Sonnet45);
+                Ok(PredictionProvider::Teacher(backend))
+            }
+            "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
+                let backend = arg
+                    .map(|a| a.parse())
+                    .transpose()?
+                    .unwrap_or(TeacherBackend::Sonnet45);
+                Ok(PredictionProvider::TeacherNonBatching(backend))
+            }
+            "repair" => Ok(PredictionProvider::Repair),
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{s}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher-non-batching\n\
+                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
+                 For teacher, you can specify a backend like `teacher:sonnet45` or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
                     ZetaVersion::options_as_string()
                 )
@@ -331,9 +432,18 @@ struct SynthesizeArgs {
 
 #[derive(Debug, Args, Clone)]
 struct ImportBatchArgs {
-    /// Anthropic batch IDs to import (e.g., msgbatch_xxx)
+    /// Batch IDs to import (e.g., msgbatch_xxx for Anthropic, batch_xxx for OpenAI)
     #[clap(long, required = true, num_args = 1..)]
     batch_ids: Vec<String>,
+    /// Which provider's batches to import (anthropic or openai)
+    #[clap(long, default_value = "anthropic")]
+    provider: BatchProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum BatchProvider {
+    Anthropic,
+    Openai,
 }
 
 impl EpArgs {
@@ -357,12 +467,28 @@ async fn load_examples(
     background_executor: BackgroundExecutor,
 ) -> anyhow::Result<Vec<Example>> {
     let mut captured_after_timestamps = Vec::new();
+    let mut rejected_after_timestamps = Vec::new();
+    let mut requested_after_timestamps = Vec::new();
+    let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
+        Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
         let input_string = input.to_string_lossy();
         if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
             captured_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) =
+            pull_examples::parse_rejected_after_input(input_string.as_ref())
+        {
+            rejected_after_timestamps.push(timestamp.to_string());
+        } else if let Some(timestamp) =
+            pull_examples::parse_requested_after_input(input_string.as_ref())
+        {
+            requested_after_timestamps.push(timestamp.to_string());
+        } else if let Some((timestamp, rating_filter)) =
+            pull_examples::parse_rated_after_input(input_string.as_ref())
+        {
+            rated_after_inputs.push((timestamp.to_string(), rating_filter));
         } else {
             file_inputs.push(input.clone());
         }
@@ -377,21 +503,62 @@ async fn load_examples(
 
     if let Some(0) = remaining_limit_for_snowflake {
         log::info!(
-            "skipping captured-after inputs because --limit is already satisfied by example files"
+            "skipping Snowflake inputs because --limit is already satisfied by example files"
         );
-    } else if !captured_after_timestamps.is_empty() {
-        captured_after_timestamps.sort();
-
+    } else {
         let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
 
-        let mut captured_examples = pull_examples::fetch_captured_examples_after(
-            http_client,
-            &captured_after_timestamps,
-            max_rows_per_timestamp,
-            background_executor,
-        )
-        .await?;
-        examples.append(&mut captured_examples);
+        if !captured_after_timestamps.is_empty() {
+            captured_after_timestamps.sort();
+
+            let mut captured_examples = pull_examples::fetch_captured_examples_after(
+                http_client.clone(),
+                &captured_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut captured_examples);
+        }
+
+        if !rejected_after_timestamps.is_empty() {
+            rejected_after_timestamps.sort();
+
+            let mut rejected_examples = pull_examples::fetch_rejected_examples_after(
+                http_client.clone(),
+                &rejected_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut rejected_examples);
+        }
+
+        if !requested_after_timestamps.is_empty() {
+            requested_after_timestamps.sort();
+
+            let mut requested_examples = pull_examples::fetch_requested_examples_after(
+                http_client.clone(),
+                &requested_after_timestamps,
+                max_rows_per_timestamp,
+                background_executor.clone(),
+            )
+            .await?;
+            examples.append(&mut requested_examples);
+        }
+
+        if !rated_after_inputs.is_empty() {
+            rated_after_inputs.sort();
+
+            let mut rated_examples = pull_examples::fetch_rated_examples_after(
+                http_client,
+                &rated_after_inputs,
+                max_rows_per_timestamp,
+                background_executor,
+            )
+            .await?;
+            examples.append(&mut rated_examples);
+        }
     }
 
     crate::example::sort_examples_by_repo_and_rev(&mut examples);
@@ -406,8 +573,10 @@ async fn load_examples(
     // Skip resume logic for --in-place since input and output are the same file,
     // which would incorrectly treat all input examples as already processed.
     if !args.in_place {
-        if let Some(path) = output_path {
-            resume_from_output(path, &mut examples);
+        if let Some(path) = output_path
+            && let Some(command) = &args.command
+        {
+            resume_from_output(path, &mut examples, command);
         }
     }
 
@@ -432,7 +601,7 @@ fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
     hasher.finish()
 }
 
-fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
+fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>, command: &Command) {
     let file = match File::open(path) {
         Ok(f) => f,
         Err(_) => return,
@@ -453,8 +622,22 @@ fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>) {
         if let Ok(output_example) = serde_json::from_str::<Example>(&line) {
             let hash = spec_hash(&output_example.spec);
             if input_hashes.contains(&hash) && !kept_hashes.contains(&hash) {
-                kept_hashes.insert(hash);
-                kept_lines.push(line);
+                let is_complete = match command {
+                    Command::Qa(_) => output_example
+                        .qa
+                        .first()
+                        .and_then(|q| q.as_ref())
+                        .and_then(|q| q.confidence)
+                        .is_some(),
+                    Command::Repair(_) => output_example.predictions.iter().any(|p| {
+                        p.provider == PredictionProvider::Repair && p.actual_patch.is_some()
+                    }),
+                    _ => true,
+                };
+                if is_complete {
+                    kept_hashes.insert(hash);
+                    kept_lines.push(line);
+                }
             }
         }
     }
@@ -490,6 +673,12 @@ fn main() {
     }
 
     let output = args.output_path();
+
+    if args.markdown && output.is_none() {
+        eprintln!("--markdown requires -o to specify the output directory");
+        std::process::exit(1);
+    }
+
     let command = match &args.command {
         Some(cmd) => cmd.clone(),
         None => {
@@ -501,11 +690,23 @@ fn main() {
     match &command {
         Command::ImportBatch(import_args) => {
             smol::block_on(async {
-                let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
-                    .expect("Failed to create Anthropic client");
-                if let Err(e) = client.import_batches(&import_args.batch_ids).await {
-                    eprintln!("Error importing batches: {:?}", e);
-                    std::process::exit(1);
+                match import_args.provider {
+                    BatchProvider::Anthropic => {
+                        let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
+                            .expect("Failed to create Anthropic client");
+                        if let Err(e) = client.import_batches(&import_args.batch_ids).await {
+                            eprintln!("Error importing Anthropic batches: {:?}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                    BatchProvider::Openai => {
+                        let client = openai_client::OpenAiClient::batch(&paths::LLM_CACHE_DB)
+                            .expect("Failed to create OpenAI client");
+                        if let Err(e) = client.import_batches(&import_args.batch_ids).await {
+                            eprintln!("Error importing OpenAI batches: {:?}", e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
                 println!(
                     "Successfully imported {} batch(es)",
@@ -549,6 +750,15 @@ fn main() {
             }
             return;
         }
+        Command::TruncatePatch(truncate_args) => {
+            if let Err(error) =
+                truncate_expected_patch::run_truncate_expected_patch(truncate_args, &args.inputs)
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         Command::Split(split_args) => {
             if let Err(error) = split_dataset::run_split(split_args, &args.inputs) {
                 eprintln!("{error:#}");
@@ -565,32 +775,7 @@ fn main() {
             }
             return;
         }
-        Command::Qa(qa_args) => {
-            // Read examples from input files
-            let mut examples = example::read_example_files(&args.inputs);
 
-            // Apply filters
-            if let Some(name_filter) = &args.name {
-                examples.retain(|e| e.spec.name.contains(name_filter));
-            }
-            if let Some(repo_filter) = &args.repo {
-                examples.retain(|e| e.spec.repository_url.contains(repo_filter));
-            }
-            if let Some(offset) = args.offset {
-                examples.splice(0..offset, []);
-            }
-            if let Some(limit) = args.limit {
-                examples.truncate(limit);
-            }
-
-            smol::block_on(async {
-                if let Err(e) = qa::run_qa(&mut examples, qa_args, output.as_ref()).await {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
         _ => {}
     }
 
@@ -618,56 +803,59 @@ fn main() {
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
+                    Command::Qa(args) => {
+                        qa::sync_batches(args).await?;
+                    }
+                    Command::Repair(args) => {
+                        repair::sync_batches(args).await?;
+                    }
                     _ => (),
                 }
 
                 let failfast_on_single_example = examples.len() == 1;
 
-                // For --in-place, write to a temp file and rename at the end to avoid data loss on interruption
-                let in_place_temp_path = if args.in_place {
-                    output.as_ref().map(|path| {
-                        let mut temp_path = path.clone();
-                        temp_path.set_extension("jsonl.tmp");
-                        temp_path
-                    })
-                } else {
-                    None
-                };
+                // For --markdown mode, create the output directory if it doesn't exist
+                if args.markdown {
+                    let dir = output.as_ref().expect("--markdown requires -o");
+                    if !dir.exists() {
+                        std::fs::create_dir_all(dir)
+                            .expect("Failed to create markdown output directory");
+                    }
+                }
 
-                let output_sender: Option<mpsc::UnboundedSender<String>> =
-                    if args.output.is_some() || !matches!(command, Command::Eval(_)) {
-                        let write_path = in_place_temp_path.as_ref().or(output.as_ref());
-                        write_path.map(|path| {
-                            let file = if args.in_place {
-                                // For --in-place, write to temp file (truncate if exists)
-                                OpenOptions::new()
-                                    .create(true)
-                                    .write(true)
-                                    .truncate(true)
-                                    .open(path)
-                                    .expect("Failed to open temp output file")
-                            } else {
-                                // For regular output, append to support resuming
-                                OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open(path)
-                                    .expect("Failed to open output file")
-                            };
-                            let mut writer = BufWriter::new(file);
-                            let (sender, mut receiver) = mpsc::unbounded::<String>();
-                            cx.background_spawn(async move {
-                                while let Some(line) = receiver.next().await {
-                                    writeln!(writer, "{}", line).expect("Failed to write example");
-                                    writer.flush().expect("Failed to flush output");
-                                }
-                            })
-                            .detach();
-                            sender
-                        })
+                // Set up JSONL output writer (not used in markdown mode)
+                let mut output_sender: Option<mpsc::UnboundedSender<String>> = None;
+                let mut in_place_temp_path: Option<PathBuf> = None;
+                if !args.markdown
+                    && let Some(output_path) = output.as_ref()
+                {
+                    let write_path = if args.in_place {
+                        let temp = output_path.with_extension("jsonl.tmp");
+                        in_place_temp_path = Some(temp.clone());
+                        temp
                     } else {
-                        None
+                        output_path.clone()
                     };
+
+                    let file = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(args.in_place)
+                        .append(!args.in_place)
+                        .open(&write_path)
+                        .expect("Failed to open output file");
+
+                    let mut writer = BufWriter::new(file);
+                    let (sender, mut receiver) = mpsc::unbounded::<String>();
+                    cx.background_spawn(async move {
+                        while let Some(line) = receiver.next().await {
+                            writeln!(writer, "{}", line).expect("Failed to write example");
+                            writer.flush().expect("Failed to flush output");
+                        }
+                    })
+                    .detach();
+                    output_sender = Some(sender);
+                }
 
                 let grouped_examples = Mutex::new(group_examples_by_repo(examples));
                 let finished_examples = Mutex::new(Vec::new());
@@ -687,7 +875,7 @@ fn main() {
 
                                 let result = async {
                                     match &command {
-                                        Command::ParseExample => {}
+                                        Command::Read => {}
                                         Command::LoadProject => {
                                             run_load_project(
                                                 example,
@@ -752,13 +940,20 @@ fn main() {
                                             )
                                             .await?;
                                         }
+                                        Command::Qa(args) => {
+                                            qa::run_qa(example, args, &example_progress).await?;
+                                        }
+                                        Command::Repair(args) => {
+                                            repair::run_repair(example, args, &example_progress)
+                                                .await?;
+                                        }
                                         Command::Clean
                                         | Command::Synthesize(_)
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
+                                        | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_)
-                                        | Command::Qa(_) => {
+                                        | Command::ImportBatch(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -783,7 +978,15 @@ fn main() {
 
                                 let should_write = !failed || args.failed == FailedHandling::Keep;
                                 if should_write {
-                                    if let Some(ref mut sender) = output_sender.clone() {
+                                    if args.markdown {
+                                        let markdown_dir =
+                                            output.as_ref().expect("--markdown requires -o");
+                                        let filename = format!("{}.md", example.spec.filename());
+                                        let path = markdown_dir.join(&filename);
+                                        let markdown = example.spec.to_markdown();
+                                        std::fs::write(&path, &markdown)
+                                            .expect("Failed to write markdown file");
+                                    } else if let Some(ref mut sender) = output_sender.clone() {
                                         let line = serde_json::to_string(&example).unwrap();
                                         sender
                                             .send(line)
@@ -848,6 +1051,12 @@ fn main() {
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
                     }
+                    Command::Qa(args) => {
+                        qa::sync_batches(args).await?;
+                    }
+                    Command::Repair(args) => {
+                        repair::sync_batches(args).await?;
+                    }
                     _ => (),
                 }
 
@@ -863,7 +1072,8 @@ fn main() {
                 };
 
                 // For --in-place, atomically rename temp file to original
-                if let (Some(temp_path), Some(final_path)) = (&in_place_temp_path, &output) {
+                if let Some(temp_path) = &in_place_temp_path {
+                    let final_path = output.as_ref().expect("in_place_temp_path requires output");
                     std::fs::rename(temp_path, final_path)
                         .expect("Failed to rename temp file to final output");
                 }
@@ -921,11 +1131,10 @@ async fn handle_error(
         writeln!(file, "{}", serde_json::to_string(example).unwrap())
             .expect("Failed to write to failed.jsonl");
 
-        let cursor_path = example
-            .repo_name()
-            .unwrap()
-            .worktree_path()
-            .join(&example.spec.cursor_path);
+        let cursor_path = match example.repo_name() {
+            Ok(repo_name) => repo_name.worktree_path().join(&example.spec.cursor_path),
+            Err(_) => example.spec.cursor_path.as_ref().to_path_buf(),
+        };
         msg = format!(
             indoc::indoc! {"
                 While processing \"{}\":

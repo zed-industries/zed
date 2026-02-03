@@ -246,20 +246,13 @@
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
   "default"
   "delete"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
-  "import"
   "in"
   "instanceof"
-  "let"
   "new"
   "of"
   "set"
@@ -267,10 +260,23 @@
   "target"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"

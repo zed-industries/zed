@@ -15,3 +15,6 @@ path = "src/zeta_prompt.rs"
 anyhow.workspace = true
 serde.workspace = true
 strum.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true

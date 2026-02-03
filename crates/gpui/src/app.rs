@@ -1467,29 +1467,33 @@ impl App {
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            cx.window_update_stack.pop();
+            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
 
-            if window.removed {
-                cx.window_handles.remove(&id);
-                cx.windows.remove(id);
+                if window.removed {
+                    cx.window_handles.remove(&id);
+                    cx.windows.remove(id);
 
-                cx.window_closed_observers.clone().retain(&(), |callback| {
-                    callback(cx);
-                    true
-                });
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx);
+                        true
+                    });
 
-                let quit_on_empty = match cx.quit_mode {
-                    QuitMode::Explicit => false,
-                    QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => cfg!(not(target_os = "macos")),
-                };
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
 
-                if quit_on_empty && cx.windows.is_empty() {
-                    cx.quit();
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(id)?.replace(window);
                 }
-            } else {
-                cx.windows.get_mut(id)?.replace(window);
+                Some(())
             }
+            trail(id, window, cx)?;
 
             Some(result)
         })
@@ -1534,7 +1538,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Spawns the future returned by the given function on the main thread with
@@ -1552,7 +1556,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn_with_priority(priority, async move { f(&mut cx).await })
+            .spawn_with_priority(priority, async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1881,6 +1885,18 @@ impl App {
         self.actions.action_schemas(generator)
     }
 
+    /// Get the schema for a specific action by name.
+    /// Returns `None` if the action is not found.
+    /// Returns `Some(None)` if the action exists but has no schema.
+    /// Returns `Some(Some(schema))` if the action exists and has a schema.
+    pub fn action_schema_by_name(
+        &self,
+        name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<Option<schemars::Schema>> {
+        self.actions.action_schema_by_name(name, generator)
+    }
+
     /// Get a map from a deprecated action name to the canonical name.
     pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
         self.actions.deprecated_aliases()
@@ -2003,7 +2019,7 @@ impl App {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.platform.update_jump_list(menus, entries)
     }
 
