@@ -4,10 +4,11 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Task, http_client};
+use gpui::{App, Entity, Task, http_client};
+use gpui_tokio::Tokio;
 use language::{
-    OffsetRangeExt as _, ToOffset, ToPoint as _, apply_reversed_diff_patch,
-    language_settings::all_language_settings,
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToOffset, ToPoint as _,
+    apply_reversed_diff_patch, language_settings::all_language_settings,
 };
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,16 @@ pub fn is_available(cx: &App) -> bool {
         .is_some_and(|provider| provider.is_authenticated(cx))
 }
 
+/// Output from the Ollama HTTP request, containing all data needed to create the prediction result.
+struct OllamaRequestOutput {
+    edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
+    snapshot: BufferSnapshot,
+    response_received_at: Instant,
+    inputs: ZetaPromptInput,
+    buffer: Entity<Buffer>,
+    buffer_snapshotted_at: Instant,
+}
+
 impl Ollama {
     pub fn new() -> Self {
         Ollama {
@@ -95,7 +106,10 @@ impl Ollama {
 
         let is_sweep_model = is_sweep_next_edit_model(&model);
 
-        let result = cx.background_spawn(async move {
+        // Use gpui_tokio::Tokio::spawn_result to run the HTTP request on Tokio's runtime.
+        // This ensures proper cancellation: when the returned GPUI Task is dropped,
+        // the underlying Tokio task is aborted via its AbortHandle.
+        let result = Tokio::spawn_result(cx, async move {
             let (editable_range, context_range) =
                 cursor_excerpt::editable_and_context_ranges_for_cursor_position(
                     cursor_point,
@@ -208,22 +222,28 @@ impl Ollama {
                 vec![(anchor..anchor, completion)]
             };
 
-            anyhow::Ok((edits, snapshot, response_received_at, inputs))
+            anyhow::Ok(OllamaRequestOutput {
+                edits,
+                snapshot,
+                response_received_at,
+                inputs,
+                buffer,
+                buffer_snapshotted_at,
+            })
         });
 
         cx.spawn(async move |cx: &mut gpui::AsyncApp| {
-            let (edits, old_snapshot, response_received_at, inputs) =
-                result.await.context("Ollama edit prediction failed")?;
+            let output = result.await.context("Ollama edit prediction failed")?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(String::new().into()),
-                    &buffer,
-                    &old_snapshot,
-                    edits.into(),
+                    &output.buffer,
+                    &output.snapshot,
+                    output.edits.into(),
                     None,
-                    buffer_snapshotted_at,
-                    response_received_at,
-                    inputs,
+                    output.buffer_snapshotted_at,
+                    output.response_received_at,
+                    output.inputs,
                     cx,
                 )
                 .await,
@@ -472,9 +492,7 @@ fn parse_sweep_next_edit_response(response: &str, inputs: &ZetaPromptInput) -> S
         return clean_sweep_response(content);
     }
 
-    if let Some(content) = response
-        .strip_prefix(FILE_SEPARATOR)
-    {
+    if let Some(content) = response.strip_prefix(FILE_SEPARATOR) {
         if let Some(newline_pos) = content.find('\n') {
             let after_header = &content[newline_pos + 1..];
             if let Some(end_pos) = after_header.find(FILE_SEPARATOR) {

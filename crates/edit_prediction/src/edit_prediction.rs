@@ -311,17 +311,25 @@ impl ProjectState {
     ) {
         self.cancelled_predictions.insert(pending_prediction.id);
 
-        cx.spawn(async move |this, cx| {
-            let Some(prediction_id) = pending_prediction.task.await else {
-                return;
-            };
+        if pending_prediction.drop_on_cancel {
+            drop(pending_prediction.task);
+        } else {
+            cx.spawn(async move |this, cx| {
+                let Some(prediction_id) = pending_prediction.task.await else {
+                    return;
+                };
 
-            this.update(cx, |this, _cx| {
-                this.reject_prediction(prediction_id, EditPredictionRejectReason::Canceled, false);
+                this.update(cx, |this, _cx| {
+                    this.reject_prediction(
+                        prediction_id,
+                        EditPredictionRejectReason::Canceled,
+                        false,
+                    );
+                })
+                .ok();
             })
-            .ok();
-        })
-        .detach()
+            .detach()
+        }
     }
 
     fn active_buffer(
@@ -403,6 +411,9 @@ impl PredictionRequestedBy {
 struct PendingPrediction {
     id: usize,
     task: Task<Option<EditPredictionId>>,
+    /// If true, the task is dropped immediately on cancel (cancelling the HTTP request).
+    /// If false, the task is awaited to completion so rejection can be reported.
+    drop_on_cancel: bool,
 }
 
 /// A prediction from the perspective of a buffer.
@@ -1546,6 +1557,9 @@ impl EditPredictionStore {
             -> Task<Result<Option<(EditPredictionResult, PredictionRequestedBy)>>>
         + 'static,
     ) {
+        let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
+        let drop_on_cancel = is_ollama;
+        let max_pending_predictions = if is_ollama { 1 } else { 2 };
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
@@ -1660,16 +1674,18 @@ impl EditPredictionStore {
             new_prediction_id
         });
 
-        if project_state.pending_predictions.len() <= 1 {
+        if project_state.pending_predictions.len() < max_pending_predictions {
             project_state.pending_predictions.push(PendingPrediction {
                 id: pending_prediction_id,
                 task,
+                drop_on_cancel,
             });
-        } else if project_state.pending_predictions.len() == 2 {
+        } else {
             let pending_prediction = project_state.pending_predictions.pop().unwrap();
             project_state.pending_predictions.push(PendingPrediction {
                 id: pending_prediction_id,
                 task,
+                drop_on_cancel,
             });
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }

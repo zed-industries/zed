@@ -5317,6 +5317,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -13965,6 +13966,7 @@ dependencies = [
  "regex",
  "serde",
  "tokio",
+ "util",
  "zed-reqwest",
 ]
 
