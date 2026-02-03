@@ -89,8 +89,8 @@ impl ProcessMemoryCache {
             .unwrap_or(true);
 
         if cache_expired {
-            let refresh_kind =
-                RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory());
+            let refresh_kind = RefreshKind::nothing()
+                .with_processes(ProcessRefreshKind::nothing().without_tasks().with_memory());
             self.system.refresh_specifics(refresh_kind);
             self.memory_usage.clear();
             self.last_refresh = Some(Instant::now());
