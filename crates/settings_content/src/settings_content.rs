@@ -316,6 +316,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Whether to automatically reveal the menus in the title bar on hover.
+    ///
+    /// Default: false
+    pub show_menus_on_hover: Option<bool>,
 }
 
 /// Configuration of audio in Zed.

@@ -177,6 +177,7 @@ impl ApplicationMenu {
         let menu_name = entry.menu.name.clone();
         let entry = entry.clone();
 
+        let any_menu_deployed = self.entries.iter().any(|e| e.handle.is_deployed());
         let all_handles: Vec<_> = self
             .entries
             .iter()
@@ -202,7 +203,10 @@ impl ApplicationMenu {
                     .with_handle(current_handle.clone()),
             )
             .on_hover(move |hover_enter, window, cx| {
-                if *hover_enter && !current_handle.is_deployed() {
+                if *hover_enter
+                    && !current_handle.is_deployed()
+                    && (show_menus_on_hover(cx) || any_menu_deployed)
+                {
                     all_handles.iter().for_each(|h| h.hide(cx));
 
                     // We need to defer this so that this menu handle can take focus from the previous menu
@@ -271,6 +275,10 @@ impl ApplicationMenu {
 pub(crate) fn show_menus(cx: &mut App) -> bool {
     TitleBarSettings::get_global(cx).show_menus
         && (cfg!(not(target_os = "macos")) || option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some())
+}
+
+pub(crate) fn show_menus_on_hover(cx: &mut App) -> bool {
+    TitleBarSettings::get_global(cx).show_menus_on_hover
 }
 
 impl Render for ApplicationMenu {
