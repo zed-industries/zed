@@ -1,7 +1,6 @@
 use editor::Editor;
 use gpui::{
-    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ScrollHandle, Task,
-    actions,
+    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
 use std::{
     collections::HashMap,

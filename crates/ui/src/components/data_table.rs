@@ -246,7 +246,7 @@ struct UniformListData {
 }
 
 struct VariableRowHeightListData {
-    /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own height
+    /// Unlike UniformList, this closure renders only single row, allowing each one to have its own height
     render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> UncheckedTableRow<AnyElement>>,
     list_state: ListState,
     row_count: usize,
