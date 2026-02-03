@@ -268,29 +268,32 @@ impl HighlightsTreeView {
                 }
             }
 
-            let lsp_store = project.read(cx).lsp_store().read(cx);
-            for (_, (tokens, interner)) in display_map.all_semantic_token_highlights() {
-                for token in tokens.iter() {
-                    let range = token.range.start.into()..token.range.end.into();
-                    let (range_display, sort_key) =
-                        format_anchor_range(&range, &multi_buffer_snapshot);
-                    let Some(stylizer) = lsp_store.semantic_token_stylizer(token.server_id) else {
-                        continue;
-                    };
-                    entries.push(HighlightEntry {
-                        range,
-                        range_display,
-                        style: interner[token.style],
-                        category: HighlightCategory::SemanticToken {
-                            token_type: stylizer.token_type_name(token.token_type).cloned(),
-                            token_modifiers: stylizer
-                                .token_modifiers(token.token_modifiers)
-                                .map(SharedString::from),
-                        },
-                        sort_key,
-                    });
+            project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                for (_, (tokens, interner)) in display_map.all_semantic_token_highlights() {
+                    for token in tokens.iter() {
+                        let range = token.range.start.into()..token.range.end.into();
+                        let (range_display, sort_key) =
+                            format_anchor_range(&range, &multi_buffer_snapshot);
+                        let Some(stylizer) =
+                            lsp_store.get_or_create_token_stylizer(token.server_id, cx)
+                        else {
+                            continue;
+                        };
+                        entries.push(HighlightEntry {
+                            range,
+                            range_display,
+                            style: interner[token.style],
+                            category: HighlightCategory::SemanticToken {
+                                token_type: stylizer.token_type_name(token.token_type).cloned(),
+                                token_modifiers: stylizer
+                                    .token_modifiers(token.token_modifiers)
+                                    .map(SharedString::from),
+                            },
+                            sort_key,
+                        });
+                    }
                 }
-            }
+            });
         });
 
         entries.sort_by(|a, b| {

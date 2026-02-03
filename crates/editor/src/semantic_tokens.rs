@@ -145,30 +145,31 @@ impl Editor {
                     }
 
                     editor.display_map.update(cx, |display_map, cx| {
-                        let lsp_store = project.read(cx).lsp_store().read(cx);
-                        let mut token_highlights = Vec::new();
-                        let mut interner = HighlightStyleInterner::default();
-                        for (server_id, server_tokens) in tokens {
-                            let Some(stylizer) = lsp_store.semantic_token_stylizer(server_id)
-                            else {
-                                continue;
-                            };
-                            token_highlights.extend(buffer_into_editor_highlights(
-                                &server_tokens,
-                                stylizer,
-                                &all_excerpts,
-                                &multi_buffer_snapshot,
-                                &mut interner,
-                                cx,
-                            ));
-                        }
+                        project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                            let mut token_highlights = Vec::new();
+                            let mut interner = HighlightStyleInterner::default();
+                            for (server_id, server_tokens) in tokens {
+                                let Some(stylizer) = lsp_store.get_or_create_token_stylizer(server_id, cx)
+                                else {
+                                    continue;
+                                };
+                                token_highlights.extend(buffer_into_editor_highlights(
+                                    &server_tokens,
+                                    stylizer,
+                                    &all_excerpts,
+                                    &multi_buffer_snapshot,
+                                    &mut interner,
+                                    cx,
+                                ));
+                            }
 
-                        token_highlights.sort_by(|a, b| {
-                            a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
+                            token_highlights.sort_by(|a, b| {
+                                a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
+                            });
+                            display_map
+                                .semantic_token_highlights
+                                .insert(buffer_id, (Arc::from(token_highlights), Arc::new(interner)));
                         });
-                        display_map
-                            .semantic_token_highlights
-                            .insert(buffer_id, (Arc::from(token_highlights), Arc::new(interner)));
                     });
                 }
 

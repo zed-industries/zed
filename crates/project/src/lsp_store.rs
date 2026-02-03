@@ -144,7 +144,6 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
-use settings::SemanticTokenRules;
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -3846,7 +3845,6 @@ pub struct LspStore {
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     semantic_token_stylizers: HashMap<LanguageServerId, SemanticTokenStylizer>,
-    semantic_token_rules: SemanticTokenRules,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
     global_semantic_tokens_mode: settings::SemanticTokens,
@@ -4189,10 +4187,6 @@ impl LspStore {
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             semantic_token_stylizers: HashMap::default(),
-            semantic_token_rules: ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
             lsp_data: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
@@ -4257,10 +4251,6 @@ impl LspStore {
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             semantic_token_stylizers: HashMap::default(),
-            semantic_token_rules: ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             active_entry: None,
@@ -5067,15 +5057,6 @@ impl LspStore {
         if new_global_semantic_tokens_mode != self.global_semantic_tokens_mode {
             self.global_semantic_tokens_mode = new_global_semantic_tokens_mode;
             self.restart_all_language_servers(cx);
-        }
-
-        let new_semantic_token_rules = ProjectSettings::get_global(cx)
-            .global_lsp_settings
-            .semantic_token_rules
-            .clone();
-        if new_semantic_token_rules != self.semantic_token_rules {
-            self.semantic_token_rules = new_semantic_token_rules;
-            self.recreate_semantic_token_stylizers(cx);
         }
 
         cx.notify();
@@ -11850,8 +11831,7 @@ impl LspStore {
                 .log_err();
         }
         self.lsp_server_capabilities
-            .insert(server_id, server_capabilities.clone());
-        self.create_semantic_token_stylizer(server_id, &server_capabilities, cx);
+            .insert(server_id, server_capabilities);
 
         // Tell the language server about every open buffer in the worktree that matches the language.
         // Also check for buffers in worktrees that reused this server

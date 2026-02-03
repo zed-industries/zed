@@ -318,40 +318,32 @@ impl LspStore {
             .clone()
     }
 
-    pub(super) fn create_semantic_token_stylizer(
+    pub fn get_or_create_token_stylizer(
         &mut self,
         server_id: LanguageServerId,
-        capabilities: &lsp::ServerCapabilities,
-        cx: &App,
-    ) {
-        let Some(legend) = capabilities
-            .semantic_tokens_provider
-            .as_ref()
-            .map(|provider| match provider {
-                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
-                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
-                    &opts.semantic_tokens_options.legend
-                }
-            })
-        else {
-            return;
-        };
-        let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
-        self.semantic_token_stylizers.insert(server_id, stylizer);
-    }
-
-    pub fn semantic_token_stylizer(
-        &self,
-        server_id: LanguageServerId,
+        cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
-        self.semantic_token_stylizers.get(&server_id)
-    }
-
-    pub(super) fn recreate_semantic_token_stylizers(&mut self, cx: &App) {
-        self.semantic_token_stylizers.clear();
-        for (server_id, capabilities) in self.lsp_server_capabilities.clone() {
-            self.create_semantic_token_stylizer(server_id, &capabilities, cx);
-        }
+        let stylizer = match self.semantic_token_stylizers.entry(server_id) {
+            hash_map::Entry::Occupied(o) => o.into_mut(),
+            hash_map::Entry::Vacant(v) => {
+                let tokens_provider = self
+                    .lsp_server_capabilities
+                    .get(&server_id)?
+                    .semantic_tokens_provider
+                    .as_ref()?;
+                let legend = match tokens_provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => {
+                        &opts.legend
+                    }
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                        opts,
+                    ) => &opts.semantic_tokens_options.legend,
+                };
+                let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
+                v.insert(stylizer)
+            }
+        };
+        Some(stylizer)
     }
 }
 
