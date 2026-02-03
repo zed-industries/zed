@@ -394,7 +394,9 @@ fn reject_edits_in_ranges(
     for (buffer, ranges) in ranges_by_buffer {
         action_log
             .update(cx, |action_log, cx| {
-                action_log.reject_edits_in_ranges(buffer, ranges, Some(telemetry.clone()), cx)
+                let (task, _) =
+                    action_log.reject_edits_in_ranges(buffer, ranges, Some(telemetry.clone()), cx);
+                task
             })
             .detach_and_log_err(cx);
     }
