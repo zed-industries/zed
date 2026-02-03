@@ -244,6 +244,54 @@ impl ManifestProvider for CargoManifestProvider {
     }
 }
 
+fn set_experimental_capabilities(params: &mut InitializeParams, enable_lsp_tasks: bool) {
+    let mut experimental = json!({
+        "commands": {
+            "commands": [
+                "rust-analyzer.showReferences",
+            ]
+        }
+    });
+
+    if enable_lsp_tasks {
+        merge_json_value_into(
+            json!({
+                "runnables": {
+                    "kinds": [ "cargo", "shell" ],
+                },
+            }),
+            &mut experimental,
+        );
+    }
+
+    if let Some(original_experimental) = &mut params.capabilities.experimental {
+        merge_json_value_into(experimental, original_experimental);
+    } else {
+        params.capabilities.experimental = Some(experimental);
+    }
+}
+
+fn set_initialization_options(params: &mut InitializeParams) {
+    let lens_config = json!({
+        "lens": {
+            "enable": true,
+            "implementations": { "enable": true },
+            "references": {
+                "adt": { "enable": true },
+                "enumVariant": { "enable": true },
+                "method": { "enable": true },
+                "trait": { "enable": true }
+            }
+        }
+    });
+
+    if let Some(init_options) = &mut params.initialization_options {
+        merge_json_value_into(lens_config, init_options);
+    } else {
+        params.initialization_options = Some(lens_config);
+    }
+}
+
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -610,49 +658,8 @@ impl LspAdapter for RustLspAdapter {
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
 
-        let mut experimental = json!({
-            "commands": {
-                "commands": [
-                    "rust-analyzer.showReferences",
-                ]
-            }
-        });
-
-        if enable_lsp_tasks {
-            merge_json_value_into(
-                json!({
-                    "runnables": {
-                        "kinds": [ "cargo", "shell" ],
-                    },
-                }),
-                &mut experimental,
-            );
-        }
-
-        if let Some(original_experimental) = &mut original.capabilities.experimental {
-            merge_json_value_into(experimental, original_experimental);
-        } else {
-            original.capabilities.experimental = Some(experimental);
-        }
-
-        let lens_config = json!({
-            "lens": {
-                "enable": true,
-                "implementations": { "enable": true },
-                "references": {
-                    "adt": { "enable": true },
-                    "enumVariant": { "enable": true },
-                    "method": { "enable": true },
-                    "trait": { "enable": true }
-                }
-            }
-        });
-
-        if let Some(init_options) = &mut original.initialization_options {
-            merge_json_value_into(lens_config, init_options);
-        } else {
-            original.initialization_options = Some(lens_config);
-        }
+        set_experimental_capabilities(&mut original, enable_lsp_tasks);
+        set_initialization_options(&mut original);
 
         Ok(original)
     }

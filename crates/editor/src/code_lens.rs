@@ -138,6 +138,10 @@ fn detect_lens_kind(title: &str) -> CodeLensKind {
     }
 }
 
+fn should_hide_lens(title: &str) -> bool {
+    title.starts_with("0 ") // 0 reference or 0 implementation
+}
+
 fn render_code_lens_line(
     lens: CodeLensData,
     editor: WeakEntity<Editor>,
@@ -174,7 +178,7 @@ fn render_code_lens_line(
                         move |_event, window, cx| {
                             let kind = detect_lens_kind(&text);
                             if let Some(editor) = editor_clone.upgrade() {
-                                editor.update(cx, |editor, cx| {
+                                _ = editor.update(cx, |editor, cx| {
                                     editor.change_selections(
                                         SelectionEffects::default(),
                                         window,
@@ -186,18 +190,22 @@ fn render_code_lens_line(
 
                                     match kind {
                                         CodeLensKind::References => {
-                                            let _ = editor.find_all_references(
+                                            if let Some(task) = editor.find_all_references(
                                                 &FindAllReferences::default(),
                                                 window,
                                                 cx,
-                                            );
+                                            ) {
+                                                task.detach_and_log_err(cx);
+                                            }
                                         }
                                         CodeLensKind::Implementations => {
-                                            let _ = editor.go_to_implementation(
-                                                &GoToImplementation,
-                                                window,
-                                                cx,
-                                            );
+                                            editor
+                                                .go_to_implementation(
+                                                    &GoToImplementation,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
                                         }
                                         CodeLensKind::Other => {
                                             if let Some(action) = &action {
@@ -209,15 +217,16 @@ fn render_code_lens_line(
                                                     if let Some(excerpt_buffer) =
                                                         buffer.read(cx).as_singleton()
                                                     {
-                                                        let _ =
-                                                            project.update(cx, |project, cx| {
+                                                        project
+                                                            .update(cx, |project, cx| {
                                                                 project.apply_code_action(
                                                                     excerpt_buffer.clone(),
                                                                     action,
                                                                     true,
                                                                     cx,
                                                                 )
-                                                            });
+                                                            })
+                                                            .detach_and_log_err(cx);
                                                     }
                                                 }
                                             }
@@ -295,14 +304,18 @@ impl Editor {
                                 _ => None,
                             };
 
-                            text.map(|text| {
-                                (
-                                    position,
-                                    CodeLensItem {
-                                        text: text.into(),
-                                        action: Some(action),
-                                    },
-                                )
+                            text.and_then(|text| {
+                                if should_hide_lens(&text) {
+                                    None
+                                } else {
+                                    Some((
+                                        position,
+                                        CodeLensItem {
+                                            text: text.into(),
+                                            action: Some(action),
+                                        },
+                                    ))
+                                }
                             })
                         })
                         .collect();
