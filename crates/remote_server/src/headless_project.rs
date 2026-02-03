@@ -751,7 +751,7 @@ impl HeadlessProject {
         })?;
 
         const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
-        let num_chunks = (content.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        let num_chunks = content.len().div_ceil(CHUNK_SIZE);
         log::debug!(
             "handle_download_file_by_path: sending {} chunks",
             num_chunks
