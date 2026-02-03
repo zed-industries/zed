@@ -22,7 +22,7 @@ use editor::{
 };
 use feature_flags::{
     AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingToggleFeatureFlag,
-    FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag,
+    FeatureFlagAppExt as _,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -57,9 +57,7 @@ use ui::{
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{
-    CollaboratorId, NewTerminal, OpenOptions, Toast, Workspace, notifications::NotificationId,
-};
+use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -73,9 +71,6 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
-use crate::user_slash_command::{
-    self, CommandLoadError, SlashCommandRegistry, SlashCommandRegistryEvent, UserSlashCommand,
-};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
     CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
@@ -164,166 +159,6 @@ impl ProfileProvider for Entity<agent::Thread> {
     }
 }
 
-#[derive(Default)]
-struct ThreadFeedbackState {
-    feedback: Option<ThreadFeedback>,
-    comments_editor: Option<Entity<Editor>>,
-}
-
-impl ThreadFeedbackState {
-    pub fn submit(
-        &mut self,
-        thread: Entity<AcpThread>,
-        feedback: ThreadFeedback,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
-            return;
-        };
-
-        if self.feedback == Some(feedback) {
-            return;
-        }
-
-        self.feedback = Some(feedback);
-        match feedback {
-            ThreadFeedback::Positive => {
-                self.comments_editor = None;
-            }
-            ThreadFeedback::Negative => {
-                self.comments_editor = Some(Self::build_feedback_comments_editor(window, cx));
-            }
-        }
-        let session_id = thread.read(cx).session_id().clone();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let task = telemetry.thread_data(&session_id, cx);
-        let rating = match feedback {
-            ThreadFeedback::Positive => "positive",
-            ThreadFeedback::Negative => "negative",
-        };
-        cx.background_spawn(async move {
-            let thread = task.await?;
-            telemetry::event!(
-                "Agent Thread Rated",
-                agent = agent_telemetry_id,
-                session_id = session_id,
-                rating = rating,
-                thread = thread
-            );
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn submit_comments(&mut self, thread: Entity<AcpThread>, cx: &mut App) {
-        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
-            return;
-        };
-
-        let Some(comments) = self
-            .comments_editor
-            .as_ref()
-            .map(|editor| editor.read(cx).text(cx))
-            .filter(|text| !text.trim().is_empty())
-        else {
-            return;
-        };
-
-        self.comments_editor.take();
-
-        let session_id = thread.read(cx).session_id().clone();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let task = telemetry.thread_data(&session_id, cx);
-        cx.background_spawn(async move {
-            let thread = task.await?;
-            telemetry::event!(
-                "Agent Thread Feedback Comments",
-                agent = agent_telemetry_id,
-                session_id = session_id,
-                comments = comments,
-                thread = thread
-            );
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::default()
-    }
-
-    pub fn dismiss_comments(&mut self) {
-        self.comments_editor.take();
-    }
-
-    fn build_feedback_comments_editor(window: &mut Window, cx: &mut App) -> Entity<Editor> {
-        let buffer = cx.new(|cx| {
-            let empty_string = String::new();
-            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
-        });
-
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
-                    min_lines: 1,
-                    max_lines: Some(4),
-                },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.set_placeholder_text(
-                "What went wrong? Share your feedback so we can improve.",
-                window,
-                cx,
-            );
-            editor
-        });
-
-        editor.read(cx).focus_handle(cx).focus(window, cx);
-        editor
-    }
-}
-
-#[derive(Default, Clone, Copy)]
-struct DiffStats {
-    lines_added: u32,
-    lines_removed: u32,
-}
-
-impl DiffStats {
-    fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
-        let mut stats = DiffStats::default();
-        let diff_snapshot = diff.snapshot(cx);
-        let buffer_snapshot = buffer.snapshot();
-        let base_text = diff_snapshot.base_text();
-
-        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
-            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-            stats.lines_added += added_rows;
-
-            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
-            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
-            let removed_rows = base_end.saturating_sub(base_start);
-            stats.lines_removed += removed_rows;
-        }
-
-        stats
-    }
-
-    fn all_files(changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>, cx: &App) -> Self {
-        let mut total = DiffStats::default();
-        for (buffer, diff) in changed_buffers {
-            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
-            total.lines_added += stats.lines_added;
-            total.lines_removed += stats.lines_removed;
-        }
-        total
-    }
-}
-
 pub struct AcpServerView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
@@ -340,7 +175,6 @@ pub struct AcpServerView {
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
-    slash_command_registry: Option<Entity<SlashCommandRegistry>>,
     auth_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     show_codex_windows_warning: bool,
@@ -426,8 +260,6 @@ impl AcpServerView {
     ) -> Self {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
-        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
-        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = vec![
@@ -455,45 +287,6 @@ impl AcpServerView {
             && project.read(cx).is_local()
             && agent.clone().downcast::<agent_servers::Codex>().is_some();
 
-        // Create SlashCommandRegistry to cache user-defined slash commands and watch for changes
-        let slash_command_registry = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            let fs = project.read(cx).fs().clone();
-            let worktree_roots: Vec<std::path::PathBuf> = project
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect();
-            let registry = cx.new(|cx| SlashCommandRegistry::new(fs, worktree_roots, cx));
-
-            // Subscribe to registry changes to update error display and cached commands
-            cx.subscribe(&registry, move |this, registry, event, cx| match event {
-                SlashCommandRegistryEvent::CommandsChanged => {
-                    this.refresh_cached_user_commands_from_registry(&registry, cx);
-                }
-            })
-            .detach();
-
-            // Initialize cached commands and errors from registry
-            let mut commands = registry.read(cx).commands().clone();
-            let mut errors = registry.read(cx).errors().to_vec();
-            let server_command_names = available_commands
-                .borrow()
-                .iter()
-                .map(|command: &acp::AvailableCommand| command.name.clone())
-                .collect::<HashSet<_>>();
-            user_slash_command::apply_server_command_conflicts_to_map(
-                &mut commands,
-                &mut errors,
-                &server_command_names,
-            );
-            *cached_user_commands.borrow_mut() = commands;
-            *cached_user_command_errors.borrow_mut() = errors;
-
-            Some(registry)
-        } else {
-            None
-        };
-
         let recent_history_entries = history.read(cx).get_recent_sessions(3);
         let history_subscription = cx.observe(&history, |this, history, cx| {
             this.update_recent_history_from_cache(&history, cx);
@@ -513,8 +306,6 @@ impl AcpServerView {
                 project.clone(),
                 prompt_capabilities,
                 available_commands,
-                cached_user_commands,
-                cached_user_command_errors,
                 initial_content,
                 window,
                 cx,
@@ -522,7 +313,6 @@ impl AcpServerView {
             login: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            slash_command_registry,
             auth_task: None,
             recent_history_entries,
             history,
@@ -537,8 +327,6 @@ impl AcpServerView {
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
-        let cached_user_commands = Rc::new(RefCell::new(collections::HashMap::default()));
-        let cached_user_command_errors = Rc::new(RefCell::new(Vec::new()));
 
         let resume_thread_metadata = self
             .as_active_thread()
@@ -551,31 +339,19 @@ impl AcpServerView {
             self.project.clone(),
             prompt_capabilities.clone(),
             available_commands.clone(),
-            cached_user_commands.clone(),
-            cached_user_command_errors.clone(),
             None,
             window,
             cx,
         );
 
-        match &mut self.server_state {
-            ServerState::Connected(state) => {
-                state.current.update(cx, |this, cx| {
-                    this.message_editor.update(cx, |editor, cx| {
-                        editor.set_command_state(
-                            prompt_capabilities,
-                            available_commands,
-                            cached_user_commands,
-                            cached_user_command_errors,
-                            cx,
-                        );
-                    });
+        if let Some(connected) = self.as_connected() {
+            connected.current.update(cx, |this, cx| {
+                this.message_editor.update(cx, |editor, cx| {
+                    editor.set_command_state(prompt_capabilities, available_commands, cx);
                 });
-            }
-            _ => {}
+            });
         }
 
-        self.refresh_cached_user_commands(cx);
         self.recent_history_entries.clear();
         cx.notify();
     }
@@ -587,8 +363,6 @@ impl AcpServerView {
         project: Entity<Project>,
         prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
-        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         initial_content: Option<ExternalAgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -725,8 +499,6 @@ impl AcpServerView {
                                 this.prompt_store.clone(),
                                 prompt_capabilities.clone(),
                                 available_commands.clone(),
-                                cached_user_commands.clone(),
-                                cached_user_command_errors.clone(),
                                 this.agent.name(),
                             )
                         });
@@ -877,8 +649,6 @@ impl AcpServerView {
                                 list_state,
                                 prompt_capabilities,
                                 available_commands,
-                                cached_user_commands,
-                                cached_user_command_errors,
                                 resumed_without_history,
                                 resume_thread.clone(),
                                 project.downgrade(),
@@ -1337,7 +1107,6 @@ impl AcpServerView {
                         active.available_commands.replace(available_commands);
                     });
                 }
-                self.refresh_cached_user_commands(cx);
 
                 let agent_display_name = self
                     .agent_server_store
@@ -2750,27 +2519,6 @@ impl AcpServerView {
             )
     }
 
-    fn refresh_cached_user_commands(&mut self, cx: &mut Context<Self>) {
-        let Some(registry) = self.slash_command_registry.clone() else {
-            return;
-        };
-        self.refresh_cached_user_commands_from_registry(&registry, cx);
-    }
-
-    fn refresh_cached_user_commands_from_registry(
-        &mut self,
-        registry: &Entity<SlashCommandRegistry>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(thread_state) = self.as_active_thread() else {
-            return;
-        };
-        thread_state.update(cx, |thread_state, cx| {
-            thread_state.refresh_cached_user_commands_from_registry(registry, cx);
-        });
-        cx.notify();
-    }
-
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
         v_flex().w_full().justify_end().child(
             h_flex()
@@ -3150,7 +2898,6 @@ impl Render for AcpServerView {
             .when_some(self.as_active_thread(), |this, thread_state| {
                 thread_state.update(cx, |state, cx| {
                     this.children(state.render_thread_retry_status_callout())
-                        .children(state.render_command_load_errors(cx))
                         .children(state.render_thread_error(window, cx))
                 })
             })

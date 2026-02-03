@@ -2,6 +2,166 @@ use gpui::List;
 
 use super::*;
 
+#[derive(Default)]
+struct ThreadFeedbackState {
+    feedback: Option<ThreadFeedback>,
+    comments_editor: Option<Entity<Editor>>,
+}
+
+impl ThreadFeedbackState {
+    pub fn submit(
+        &mut self,
+        thread: Entity<AcpThread>,
+        feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
+            return;
+        };
+
+        if self.feedback == Some(feedback) {
+            return;
+        }
+
+        self.feedback = Some(feedback);
+        match feedback {
+            ThreadFeedback::Positive => {
+                self.comments_editor = None;
+            }
+            ThreadFeedback::Negative => {
+                self.comments_editor = Some(Self::build_feedback_comments_editor(window, cx));
+            }
+        }
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
+        let task = telemetry.thread_data(&session_id, cx);
+        let rating = match feedback {
+            ThreadFeedback::Positive => "positive",
+            ThreadFeedback::Negative => "negative",
+        };
+        cx.background_spawn(async move {
+            let thread = task.await?;
+            telemetry::event!(
+                "Agent Thread Rated",
+                agent = agent_telemetry_id,
+                session_id = session_id,
+                rating = rating,
+                thread = thread
+            );
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn submit_comments(&mut self, thread: Entity<AcpThread>, cx: &mut App) {
+        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
+            return;
+        };
+
+        let Some(comments) = self
+            .comments_editor
+            .as_ref()
+            .map(|editor| editor.read(cx).text(cx))
+            .filter(|text| !text.trim().is_empty())
+        else {
+            return;
+        };
+
+        self.comments_editor.take();
+
+        let session_id = thread.read(cx).session_id().clone();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
+        let task = telemetry.thread_data(&session_id, cx);
+        cx.background_spawn(async move {
+            let thread = task.await?;
+            telemetry::event!(
+                "Agent Thread Feedback Comments",
+                agent = agent_telemetry_id,
+                session_id = session_id,
+                comments = comments,
+                thread = thread
+            );
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default()
+    }
+
+    pub fn dismiss_comments(&mut self) {
+        self.comments_editor.take();
+    }
+
+    fn build_feedback_comments_editor(window: &mut Window, cx: &mut App) -> Entity<Editor> {
+        let buffer = cx.new(|cx| {
+            let empty_string = String::new();
+            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
+        });
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                editor::EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(4),
+                },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            editor.set_placeholder_text(
+                "What went wrong? Share your feedback so we can improve.",
+                window,
+                cx,
+            );
+            editor
+        });
+
+        editor.read(cx).focus_handle(cx).focus(window, cx);
+        editor
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct DiffStats {
+    lines_added: u32,
+    lines_removed: u32,
+}
+
+impl DiffStats {
+    fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
+        let mut stats = DiffStats::default();
+        let diff_snapshot = diff.snapshot(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let base_text = diff_snapshot.base_text();
+
+        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
+            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+            stats.lines_added += added_rows;
+
+            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
+            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
+            let removed_rows = base_end.saturating_sub(base_start);
+            stats.lines_removed += removed_rows;
+        }
+
+        stats
+    }
+
+    fn all_files(changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>, cx: &App) -> Self {
+        let mut total = DiffStats::default();
+        for (buffer, diff) in changed_buffers {
+            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+            total.lines_added += stats.lines_added;
+            total.lines_removed += stats.lines_removed;
+        }
+        total
+    }
+}
+
 pub struct AcpThreadView {
     pub id: acp::SessionId,
     pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
@@ -20,12 +180,10 @@ pub struct AcpThreadView {
     pub(super) thread_error: Option<ThreadError>,
     pub thread_error_markdown: Option<Entity<Markdown>>,
     pub token_limit_callout_dismissed: bool,
-    pub(super) thread_feedback: ThreadFeedbackState,
+    thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
     pub prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     pub available_commands: Rc<RefCell<Vec<agent_client_protocol::AvailableCommand>>>,
-    pub cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
-    pub cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     /// Tracks which tool calls have their content/output expanded.
     /// Used for showing/hiding tool call results, terminal output, etc.
     pub expanded_tool_calls: HashSet<agent_client_protocol::ToolCallId>,
@@ -44,7 +202,6 @@ pub struct AcpThreadView {
     pub queued_message_editor_subscriptions: Vec<Subscription>,
     pub last_synced_queue_length: usize,
     pub turn_fields: TurnFields,
-    pub command_load_errors_dismissed: bool,
     pub discarded_partial_edits: HashSet<agent_client_protocol::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
@@ -98,8 +255,6 @@ impl AcpThreadView {
         list_state: ListState,
         prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<agent_client_protocol::AvailableCommand>>>,
-        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
-        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         resumed_without_history: bool,
         resume_thread_metadata: Option<AgentSessionInfo>,
         project: WeakEntity<Project>,
@@ -116,7 +271,7 @@ impl AcpThreadView {
         let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
         let message_editor = cx.new(|cx| {
-            let mut editor = MessageEditor::new_with_cache(
+            let mut editor = MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
                 thread_store,
@@ -124,8 +279,6 @@ impl AcpThreadView {
                 prompt_store,
                 prompt_capabilities.clone(),
                 available_commands.clone(),
-                cached_user_commands.clone(),
-                cached_user_command_errors.clone(),
                 agent_name.clone(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
@@ -180,11 +333,8 @@ impl AcpThreadView {
             list_state,
             prompt_capabilities,
             available_commands,
-            cached_user_commands,
-            cached_user_command_errors,
             resumed_without_history,
             resume_thread_metadata,
-            command_load_errors_dismissed: false,
             _subscriptions: subscriptions,
             permission_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
@@ -479,15 +629,8 @@ impl AcpThreadView {
                 .is_some_and(|profile| profile.tools.is_empty())
         });
 
-        let cached_commands = &self.cached_user_commands;
-        let cached_errors = &self.cached_user_command_errors;
         let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents_with_cache(
-                full_mention_content,
-                Some(cached_commands.borrow().clone()),
-                Some(cached_errors.borrow().clone()),
-                cx,
-            )
+            message_editor.contents(full_mention_content, cx)
         });
 
         self.thread_error.take();
@@ -830,15 +973,8 @@ impl AcpThreadView {
                 .is_some_and(|profile| profile.tools.is_empty())
         });
 
-        let cached_commands = self.cached_user_commands.borrow().clone();
-        let cached_errors = self.cached_user_command_errors.borrow().clone();
         let contents = message_editor.update(cx, |message_editor, cx| {
-            message_editor.contents_with_cache(
-                full_mention_content,
-                Some(cached_commands),
-                Some(cached_errors),
-                cx,
-            )
+            message_editor.contents(full_mention_content, cx)
         });
 
         cx.spawn_in(window, async move |this, cx| {
@@ -1322,109 +1458,6 @@ impl AcpThreadView {
     }
 
     // other
-
-    pub fn refresh_cached_user_commands_from_registry(
-        &mut self,
-        registry: &Entity<SlashCommandRegistry>,
-        cx: &App,
-    ) {
-        let (mut commands, mut errors) = registry.read_with(cx, |registry, _| {
-            (registry.commands().clone(), registry.errors().to_vec())
-        });
-        let server_command_names = self
-            .available_commands
-            .borrow()
-            .iter()
-            .map(|command| command.name.clone())
-            .collect::<HashSet<_>>();
-        user_slash_command::apply_server_command_conflicts_to_map(
-            &mut commands,
-            &mut errors,
-            &server_command_names,
-        );
-
-        self.command_load_errors_dismissed = false;
-        *self.cached_user_commands.borrow_mut() = commands;
-        *self.cached_user_command_errors.borrow_mut() = errors;
-    }
-
-    pub fn render_command_load_errors(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        let errors = self.cached_user_command_errors.borrow();
-
-        if self.command_load_errors_dismissed || errors.is_empty() {
-            return None;
-        }
-
-        let workspace = self.workspace.clone();
-
-        let error_count = errors.len();
-        let title = if error_count == 1 {
-            "Failed to load slash command"
-        } else {
-            "Failed to load slash commands"
-        };
-
-        Some(
-            Callout::new()
-                .icon(IconName::Warning)
-                .severity(Severity::Warning)
-                .title(title)
-                .actions_slot(
-                    IconButton::new("dismiss-command-errors", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Dismiss Error"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.clear_command_load_errors(cx);
-                        })),
-                )
-                .description_slot(v_flex().children(errors.iter().enumerate().map({
-                    move |(i, error)| {
-                        let path = error.path.clone();
-                        let workspace = workspace.clone();
-                        let file_name = error
-                            .path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| error.path.display().to_string());
-                        let id = ElementId::Name(format!("command-error-{i}").into());
-                        let label = format!("— {}: {}", file_name, error.message);
-
-                        Button::new(id, label)
-                            .label_size(LabelSize::Small)
-                            .truncate(true)
-                            .tooltip({
-                                let message: SharedString = error.message.clone().into();
-                                let path: SharedString = error.path.display().to_string().into();
-                                move |_, cx| {
-                                    Tooltip::with_meta(message.clone(), None, path.clone(), cx)
-                                }
-                            })
-                            .on_click({
-                                move |_, window, cx| {
-                                    if let Some(workspace) = workspace.upgrade() {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    path.clone(),
-                                                    OpenOptions::default(),
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                        });
-                                    }
-                                }
-                            })
-                    }
-                }))),
-        )
-    }
-
-    fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
-        self.command_load_errors_dismissed = true;
-        cx.notify();
-    }
 
     pub fn render_thread_retry_status_callout(&self) -> Option<Callout> {
         let state = self.thread_retry_status.as_ref()?;
