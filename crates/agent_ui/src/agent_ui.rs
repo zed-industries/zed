@@ -101,6 +101,10 @@ actions!(
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
         OpenAgentDiff,
+        /// Copies the current thread to the clipboard as JSON for debugging.
+        CopyThreadToClipboard,
+        /// Loads a thread from the clipboard JSON for debugging.
+        LoadThreadFromClipboard,
         /// Keeps the current suggestion or change.
         Keep,
         /// Rejects the current suggestion or change.
@@ -397,6 +401,8 @@ fn update_command_palette_filter(cx: &mut App) {
                 }
                 EditPredictionProvider::Zed
                 | EditPredictionProvider::Codestral
+                | EditPredictionProvider::Sweep
+                | EditPredictionProvider::Mercury
                 | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
@@ -599,9 +605,9 @@ mod tests {
                 store.update_user_settings(cx, |s| {
                     s.project
                         .all_languages
-                        .features
+                        .edit_predictions
                         .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::Copilot);
+                        .provider = Some(EditPredictionProvider::Copilot);
                 });
             });
             update_command_palette_filter(cx);
@@ -621,9 +627,9 @@ mod tests {
                 store.update_user_settings(cx, |s| {
                     s.project
                         .all_languages
-                        .features
+                        .edit_predictions
                         .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::None);
+                        .provider = Some(EditPredictionProvider::None);
                 });
             });
             update_command_palette_filter(cx);

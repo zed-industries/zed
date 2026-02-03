@@ -1269,6 +1269,7 @@ fn build_example_from_snowflake(
             cursor_offset,
             cursor_row,
             cursor_column,
+            excerpt_start_row: None,
             events,
             related_files,
         }),

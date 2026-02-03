@@ -26,11 +26,6 @@
   // 5. "SublimeText"
   // 6. "TextMate"
   "base_keymap": "VSCode",
-  // Features that can be globally enabled or disabled
-  "features": {
-    // Which edit prediction provider to use.
-    "edit_prediction_provider": "zed",
-  },
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.
@@ -1503,6 +1498,8 @@
   //      "load_direnv": "disabled"
   "load_direnv": "direct",
   "edit_predictions": {
+    // Which edit prediction provider to use.
+    "provider": "zed",
     // A list of globs representing files that edit predictions should be disabled for.
     // There's a sensible default list of globs already included.
     // Any addition to this list will be merged with the default list.
@@ -1544,6 +1541,13 @@
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+    },
+    "sweep": {
+      // When enabled, Sweep will not store edit prediction inputs or outputs.
+      // When disabled, Sweep may collect data including buffer contents,
+      // diagnostics, file paths, repository names, and generated predictions
+      // to improve the service.
+      "privacy_mode": false,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -1596,15 +1600,18 @@
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
     // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory. Fallback to the
+    // May take 5 values:
+    // 1. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "working_directory": "current_file_directory"
+    // 2. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
+    // 3. Use the first project in this workspace's directory
     //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
+    // 4. Always use this platform's home directory (if we can find it)
     //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
+    // 5. Always use a specific directory. This value will be shell expanded.
     //    If this path is not a valid directory the terminal will default to
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
@@ -2272,6 +2279,12 @@
     // Maximum number of lines to keep in REPL's scrollback buffer.
     // Clamped with [4, 256] range.
     "max_lines": 32,
+    // Maximum number of lines of output to display before scrolling.
+    // Set to 0 to disable output height limits.
+    "output_max_height_lines": 0,
+    // Maximum number of columns of output to display before scaling images.
+    // Set to 0 to disable output width limits.
+    "output_max_width_columns": 0,
   },
   // Vim settings
   "vim": {
@@ -2343,7 +2356,6 @@
   "line_indicator_format": "long",
   // Set a proxy to use. The proxy protocol is specified by the URI scheme.
   //
-  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from

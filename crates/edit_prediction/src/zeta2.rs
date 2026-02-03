@@ -1,5 +1,5 @@
 use crate::prediction::EditPredictionResult;
-use crate::zeta1::compute_edits;
+use crate::zeta1::compute_edits_and_cursor_position;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
@@ -22,7 +22,9 @@ pub const MAX_CONTEXT_TOKENS: usize = 350;
 pub fn max_editable_tokens(version: ZetaVersion) -> usize {
     match version {
         ZetaVersion::V0112MiddleAtEnd | ZetaVersion::V0113Ordered => 150,
-        ZetaVersion::V0114180EditableRegion | ZetaVersion::V0120GitMergeMarkers => 180,
+        ZetaVersion::V0114180EditableRegion => 180,
+        ZetaVersion::V0120GitMergeMarkers => 180,
+        ZetaVersion::V0131GitMergeMarkersPrefix => 180,
     }
 }
 
@@ -145,9 +147,10 @@ pub fn request_prediction_with_zeta2(
                     .ok();
             }
 
-            if output_text.contains(CURSOR_MARKER) {
-                log::trace!("Stripping out {CURSOR_MARKER} from response");
-                output_text = output_text.replace(CURSOR_MARKER, "");
+            let cursor_offset_in_output = output_text.find(CURSOR_MARKER);
+            if let Some(offset) = cursor_offset_in_output {
+                log::trace!("Stripping out {CURSOR_MARKER} from response at offset {offset}");
+                output_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
             }
 
             if zeta_version == ZetaVersion::V0120GitMergeMarkers {
@@ -169,10 +172,11 @@ pub fn request_prediction_with_zeta2(
                 old_text.push('\n');
             }
 
-            let edits = compute_edits(
+            let (edits, cursor_position) = compute_edits_and_cursor_position(
                 old_text,
                 &output_text,
                 editable_offset_range.start,
+                cursor_offset_in_output,
                 &snapshot,
             );
 
@@ -184,6 +188,7 @@ pub fn request_prediction_with_zeta2(
                         buffer,
                         snapshot.clone(),
                         edits,
+                        cursor_position,
                         received_response_at,
                     )),
                 )),
@@ -199,8 +204,14 @@ pub fn request_prediction_with_zeta2(
             return Ok(None);
         };
 
-        let Some((inputs, edited_buffer, edited_buffer_snapshot, edits, received_response_at)) =
-            prediction
+        let Some((
+            inputs,
+            edited_buffer,
+            edited_buffer_snapshot,
+            edits,
+            cursor_position,
+            received_response_at,
+        )) = prediction
         else {
             return Ok(Some(EditPredictionResult {
                 id,
@@ -214,6 +225,7 @@ pub fn request_prediction_with_zeta2(
                 &edited_buffer,
                 &edited_buffer_snapshot,
                 edits.into(),
+                cursor_position,
                 buffer_snapshotted_at,
                 received_response_at,
                 inputs,
@@ -249,6 +261,7 @@ pub fn zeta2_prompt_input(
     );
 
     let context_start_offset = context_range.start.to_offset(snapshot);
+    let context_start_row = context_range.start.row;
     let editable_offset_range = editable_range.to_offset(snapshot);
     let cursor_offset_in_excerpt = cursor_offset - context_start_offset;
     let editable_range_in_excerpt = (editable_offset_range.start - context_start_offset)
@@ -262,6 +275,7 @@ pub fn zeta2_prompt_input(
             .into(),
         editable_range_in_excerpt,
         cursor_offset_in_excerpt,
+        excerpt_start_row: Some(context_start_row),
         events,
         related_files,
     };

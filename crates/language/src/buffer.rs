@@ -918,6 +918,12 @@ impl EditPreview {
         })
     }
 
+    pub fn anchor_to_offset_in_result(&self, anchor: Anchor) -> usize {
+        anchor
+            .bias_right(&self.old_snapshot)
+            .to_offset(&self.applied_edits_snapshot)
+    }
+
     pub fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<Point>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;

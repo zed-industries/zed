@@ -971,6 +971,7 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
         let remote_shell = project
             .read(cx)
             .remote_client()
@@ -1088,7 +1089,7 @@ impl RunningState {
                     task.resolved.shell = Shell::Program(remote_shell);
                 }
 
-                let builder = ShellBuilder::new(&task.resolved.shell);
+                let builder = ShellBuilder::new(&task.resolved.shell, is_windows);
                 let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);

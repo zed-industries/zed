@@ -388,6 +388,8 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
+    /// Settings specific to Sweep.
+    pub sweep: SweepSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -435,6 +437,15 @@ pub struct CodestralSettings {
     pub max_tokens: Option<u32>,
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SweepSettings {
+    /// When enabled, Sweep will not store edit prediction inputs or outputs.
+    /// When disabled, Sweep may collect data including buffer contents,
+    /// diagnostics, file paths, repository names, and generated predictions
+    /// to improve the service.
+    pub privacy_mode: bool,
 }
 
 impl AllLanguageSettings {
@@ -634,9 +645,9 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         let edit_prediction_provider = all_languages
-            .features
+            .edit_predictions
             .as_ref()
-            .and_then(|f| f.edit_prediction_provider);
+            .and_then(|ep| ep.provider);
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
@@ -661,6 +672,11 @@ impl settings::Settings for AllLanguageSettings {
             model: codestral.model,
             max_tokens: codestral.max_tokens,
             api_url: codestral.api_url,
+        };
+
+        let sweep = edit_predictions.sweep.unwrap();
+        let sweep_settings = SweepSettings {
+            privacy_mode: sweep.privacy_mode.unwrap(),
         };
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
@@ -700,6 +716,7 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
+                sweep: sweep_settings,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
                 example_capture_rate: edit_predictions.example_capture_rate,

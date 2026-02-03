@@ -6,10 +6,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::{
-    ResultExt, maybe,
-    shell::{PosixShell, ShellKind},
-};
+use util::{ResultExt, maybe, shell::ShellKind};
 
 use crate::*;
 
@@ -70,10 +67,7 @@ impl JsDebugAdapter {
                     .get("type")
                     .filter(|value| value == &"node-terminal")?;
                 let command = configuration.get("command")?.as_str()?.to_owned();
-                // TODO: Consider using the user's actual shell instead of hardcoding "sh"
-                let mut args = ShellKind::Posix(PosixShell::Sh)
-                    .split(&command)?
-                    .into_iter();
+                let mut args = ShellKind::Posix.split(&command)?.into_iter();
                 let program = args.next()?;
                 configuration.insert("runtimeExecutable".to_owned(), program.into());
                 configuration.insert(
