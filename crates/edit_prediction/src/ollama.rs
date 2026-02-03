@@ -6,7 +6,8 @@ use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Task, http_client};
 use language::{
-    OffsetRangeExt as _, ToOffset, ToPoint as _, language_settings::all_language_settings,
+    OffsetRangeExt as _, ToOffset, ToPoint as _, apply_reversed_diff_patch,
+    language_settings::all_language_settings,
 };
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use serde::{Deserialize, Serialize};
@@ -287,6 +288,9 @@ fn format_sweep_next_edit_prompt(
 
     write!(prompt, "{FILE_SEPARATOR}updated/{file_path}\n").ok();
 
+    std::fs::write("/tmp/prompt.txt", &prompt).ok();
+
+    eprintln!("{}", prompt);
     prompt
 }
 
@@ -309,45 +313,7 @@ fn compute_original_content(inputs: &ZetaPromptInput) -> String {
 }
 
 fn extract_original_from_diff(diff: &str, current_content: &str) -> Option<String> {
-    let mut original = current_content.to_string();
-    let mut additions = Vec::new();
-    let mut deletions = Vec::new();
-
-    for line in diff.lines() {
-        if let Some(added) = line.strip_prefix('+') {
-            if !added.starts_with("++") {
-                additions.push(added);
-            }
-        } else if let Some(removed) = line.strip_prefix('-') {
-            if !removed.starts_with("--") {
-                deletions.push(removed);
-            }
-        }
-    }
-
-    for addition in &additions {
-        if let Some(pos) = original.find(addition) {
-            let line_start = original[..pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
-            let line_end = original[pos..]
-                .find('\n')
-                .map(|p| pos + p + 1)
-                .unwrap_or(original.len());
-            original.replace_range(line_start..line_end, "");
-        }
-    }
-
-    for deletion in &deletions {
-        if !original.contains(deletion) {
-            original.push_str(deletion);
-            original.push('\n');
-        }
-    }
-
-    if original != current_content {
-        Some(original)
-    } else {
-        None
-    }
+    apply_reversed_diff_patch(current_content, diff).ok()
 }
 
 fn parse_diff_to_original_updated(diff: &str) -> Option<(String, String)> {
