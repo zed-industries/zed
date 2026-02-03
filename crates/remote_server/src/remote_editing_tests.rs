@@ -6,6 +6,7 @@ use agent::{AgentTool, ReadFileTool, ReadFileToolInput, Templates, Thread, ToolC
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
+use git::repository::{InitialGraphCommitData, LogOrder, LogSource};
 use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
 use prompt_store::ProjectContext;
 
@@ -22,8 +23,10 @@ use node_runtime::NodeRuntime;
 use project::{
     ProgressToken, Project,
     agent_server_store::AgentServerCommand,
+    git_store::CommitDataState,
     search::{SearchQuery, SearchResult},
 };
+use rand::{Rng, rngs::StdRng};
 use remote::RemoteClient;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
@@ -31,6 +34,7 @@ use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use unindent::Unindent as _;
 use util::{path, paths::PathMatcher, rel_path::rel_path};
@@ -2007,6 +2011,109 @@ async fn test_remote_external_agent_server(
     );
     assert_eq!(&PathBuf::from(root), paths::home_dir());
     assert!(login.is_none());
+}
+
+#[gpui::test(iterations = 5)]
+async fn test_remote_git_graph_random_integration(
+    mut rng: StdRng,
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let adversarial = rng.random_bool(0.2);
+    let num_commits = if adversarial {
+        rng.random_range(10..100)
+    } else {
+        rng.random_range(5..50)
+    };
+
+    let commits =
+        git_graph::test_util::generate_random_commit_dag(&mut rng, num_commits, adversarial);
+
+    let commit_details = git_graph::test_util::generate_commit_datas(&mut rng, &commits);
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        Path::new("/project"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+
+    fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
+    fs.set_graph_commit_details(Path::new("/project/.git"), commit_details.clone());
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("should have a repository")
+    });
+
+    repository.update(cx, |repo, cx| {
+        repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
+    });
+
+    server_cx.executor().advance_clock(Duration::from_secs(3));
+    cx.executor().advance_clock(Duration::from_secs(3));
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    let graph_commits: Vec<Arc<InitialGraphCommitData>> = repository.update(cx, |repo, cx| {
+        repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx)
+            .0
+            .to_vec()
+    });
+
+    let mut graph_data = git_graph::GraphData::new(8);
+    graph_data.add_commits(&graph_commits);
+
+    if let Err(error) = git_graph::test_util::verify_all_invariants(&graph_data, &commits) {
+        panic!(
+            "Graph invariant violation (adversarial={}, num_commits={}):\n{:#}",
+            adversarial, num_commits, error
+        );
+    }
+
+    repository.update(cx, |repo, cx| {
+        for commit in commits.iter() {
+            repo.fetch_commit_data(commit.sha, cx);
+        }
+    });
+
+    server_cx.executor().advance_clock(Duration::from_secs(3));
+    cx.executor().advance_clock(Duration::from_secs(3));
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    let graph_commit_details = repository.update(cx, |repo, cx| {
+        let mut graph_commit_details = HashMap::default();
+        for commit in commits.iter() {
+            match repo.fetch_commit_data(commit.sha, cx) {
+                CommitDataState::Loaded(commit_detail) => {
+                    graph_commit_details.insert(commit.sha, (**commit_detail).clone());
+                }
+                CommitDataState::Loading => {
+                    assert!(false, "Commit {} is still loading", commit.sha);
+                }
+            }
+        }
+        graph_commit_details
+    });
+
+    assert_eq!(graph_commit_details.len(), commits.len());
+    assert_eq!(graph_commit_details, commit_details)
 }
 
 pub async fn init_test(

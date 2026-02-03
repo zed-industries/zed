@@ -1,5 +1,9 @@
 pub mod fs_watcher;
 
+#[cfg(feature = "test-support")]
+use git::Oid;
+#[cfg(feature = "test-support")]
+use git::repository::GraphCommitData;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -46,7 +50,7 @@ use text::LineEnding;
 #[cfg(feature = "test-support")]
 mod fake_git_repo;
 #[cfg(feature = "test-support")]
-use collections::{BTreeMap, btree_map};
+use collections::{BTreeMap, HashMap, btree_map};
 #[cfg(feature = "test-support")]
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(feature = "test-support")]
@@ -1973,6 +1977,17 @@ impl FakeFs {
     pub fn set_graph_commits(&self, dot_git: &Path, commits: Vec<Arc<InitialGraphCommitData>>) {
         self.with_git_state(dot_git, true, |state| {
             state.graph_commits = commits;
+        })
+        .unwrap();
+    }
+
+    pub fn set_graph_commit_details(
+        &self,
+        dot_git: &Path,
+        commit_details: HashMap<Oid, GraphCommitData>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.graph_commit_details = commit_details;
         })
         .unwrap();
     }
