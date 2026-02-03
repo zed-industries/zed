@@ -283,8 +283,8 @@ pub struct OllamaEditPredictionSettingsContent {
     /// Maximum tokens to generate for FIM models.
     /// This setting does not apply to sweep models.
     ///
-    /// Default: 64
-    pub max_tokens: Option<u32>,
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
     /// Api URL to use for completions.
     ///
     /// Default: "http://localhost:11434"

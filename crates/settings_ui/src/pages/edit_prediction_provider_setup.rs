@@ -429,7 +429,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Max Tokens",
+            title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
                 pick: |settings| {
@@ -440,7 +440,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .as_ref()?
                         .ollama
                         .as_ref()?
-                        .max_tokens
+                        .max_output_tokens
                         .as_ref()
                 },
                 write: |settings, value| {
@@ -451,7 +451,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .get_or_insert_default()
                         .ollama
                         .get_or_insert_default()
-                        .max_tokens = value;
+                        .max_output_tokens = value;
                 },
                 json_path: Some("edit_predictions.ollama.max_tokens"),
             }),
