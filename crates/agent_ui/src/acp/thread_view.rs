@@ -37,6 +37,7 @@ use gpui::{
 use language::Buffer;
 use language_model::LanguageModelRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{AgentServerStore, ExternalAgentServerName, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
@@ -82,6 +83,7 @@ use crate::{
     ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
     OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
     SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
+    UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -5731,16 +5733,15 @@ impl AcpThreadView {
                         let telemetry = telemetry.clone();
                         move |_, _, cx| {
                             action_log.update(cx, |action_log, cx| {
-                                action_log
-                                    .reject_edits_in_ranges(
-                                        buffer.clone(),
-                                        vec![Anchor::min_max_range_for_buffer(
-                                            buffer.read(cx).remote_id(),
-                                        )],
-                                        Some(telemetry.clone()),
-                                        cx,
-                                    )
-                                    .detach_and_log_err(cx);
+                                let (task, _) = action_log.reject_edits_in_ranges(
+                                    buffer.clone(),
+                                    vec![Anchor::min_max_range_for_buffer(
+                                        buffer.read(cx).remote_id(),
+                                    )],
+                                    Some(telemetry.clone()),
+                                    cx,
+                                );
+                                task.detach_and_log_err(cx);
                             })
                         }
                     }),
@@ -6683,9 +6684,20 @@ impl AcpThreadView {
         };
     }
 
-    fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
+    fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active) = self.as_active_thread_mut() {
-            active.reject_all(cx);
+            active.reject_all(window, cx);
+        };
+    }
+
+    fn undo_last_reject(
+        &mut self,
+        _: &UndoLastReject,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active) = self.as_active_thread_mut() {
+            active.undo_last_reject(cx);
         };
     }
 
@@ -8563,6 +8575,7 @@ impl Render for AcpThreadView {
             }))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
+            .on_action(cx.listener(Self::undo_last_reject))
             .on_action(cx.listener(Self::allow_always))
             .on_action(cx.listener(Self::allow_once))
             .on_action(cx.listener(Self::reject_once))
