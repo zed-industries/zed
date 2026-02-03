@@ -36,7 +36,7 @@ use crate::{
         ManifestTree,
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
-    project_settings::{LspSettings, ProjectSettings},
+    project_settings::{BinarySettings, LspSettings, ProjectSettings},
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
     trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -226,12 +226,22 @@ struct UnifiedLanguageServer {
     project_roots: HashSet<Arc<RelPath>>,
 }
 
+/// Settings that affect language server identity.
+///
+/// Dynamic settings (`LspSettings::settings`) are excluded because they can be
+/// updated via `workspace/didChangeConfiguration` without restarting the server.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct LanguageServerSeedSettings {
+    binary: Option<BinarySettings>,
+    initialization_options: Option<serde_json::Value>,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct LanguageServerSeed {
     worktree_id: WorktreeId,
     name: LanguageServerName,
     toolchain: Option<Toolchain>,
-    settings: Arc<LspSettings>,
+    settings: LanguageServerSeedSettings,
 }
 
 #[derive(Debug)]
@@ -332,7 +342,10 @@ impl LocalLspStore {
         let key = LanguageServerSeed {
             worktree_id: worktree_handle.read(cx).id(),
             name: disposition.server_name.clone(),
-            settings: disposition.settings.clone(),
+            settings: LanguageServerSeedSettings {
+                binary: disposition.settings.binary.clone(),
+                initialization_options: disposition.settings.initialization_options.clone(),
+            },
             toolchain: disposition.toolchain.clone(),
         };
         if let Some(state) = self.language_server_ids.get_mut(&key) {
@@ -3895,6 +3908,7 @@ pub struct LanguageServerStatus {
     pub binary: Option<LanguageServerBinary>,
     pub configuration: Option<Value>,
     pub workspace_folders: BTreeSet<Uri>,
+    pub process_id: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -5052,7 +5066,13 @@ impl LspStore {
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
-                                settings: disposition.settings.clone(),
+                                settings: LanguageServerSeedSettings {
+                                    binary: disposition.settings.binary.clone(),
+                                    initialization_options: disposition
+                                        .settings
+                                        .initialization_options
+                                        .clone(),
+                                },
                                 toolchain: local.toolchain_store.read(cx).active_toolchain(
                                     path.worktree_id,
                                     &path.path,
@@ -8468,6 +8488,7 @@ impl LspStore {
                         binary: None,
                         configuration: None,
                         workspace_folders: BTreeSet::new(),
+                        process_id: None,
                     },
                 )
             })
@@ -9535,6 +9556,7 @@ impl LspStore {
                     binary: None,
                     configuration: None,
                     workspace_folders: BTreeSet::new(),
+                    process_id: None,
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -11591,6 +11613,7 @@ impl LspStore {
                 binary: Some(language_server.binary().clone()),
                 configuration: Some(language_server.configuration().clone()),
                 workspace_folders: language_server.workspace_folders(),
+                process_id: language_server.process_id(),
             },
         );
 

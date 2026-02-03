@@ -25,6 +25,7 @@ use buffer_diff::{
     assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
+use encoding_rs;
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
@@ -214,6 +215,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "b.rs": "fn b() {\n    B\n}",
         },
         "c.js": "def c\n  C\nend",
+        "d": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 1
+            "#,
+            "d.rs": "fn d() {\n    D\n}",
+        },
         "README.json": "tabs are better\n",
     }));
 
@@ -251,6 +259,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         let settings_a = settings_for("a.rs");
         let settings_b = settings_for("b/b.rs");
         let settings_c = settings_for("c.js");
+        let settings_d = settings_for("d/d.rs");
         let settings_readme = settings_for("README.json");
 
         // .editorconfig overrides .zed/settings
@@ -260,8 +269,9 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
         assert_eq!(settings_a.preferred_line_length, 120);
 
-        // .editorconfig in b/ overrides .editorconfig in root
+        // .editorconfig in subdirectory overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+        assert_eq!(Some(settings_d.tab_size), NonZeroU32::new(1));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
@@ -336,6 +346,54 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
         // other.txt gets indent_size = 4 from grandparent's external .editorconfig
         assert_eq!(Some(settings_txt.tab_size), NonZeroU32::new(4));
+    });
+}
+
+#[gpui::test]
+async fn test_internal_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "src": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree
+            .entry_for_path(rel_path("src/file.rs"))
+            .unwrap()
+            .clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
     });
 }
 
@@ -11113,6 +11171,70 @@ async fn search(
         .collect())
 }
 
+#[gpui::test]
+async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+
+    // Create a file with ASCII content "Hi" - this will be detected as UTF-8
+    // When reinterpreted as UTF-16LE, the bytes 0x48 0x69 become a single character
+    let ascii_bytes: Vec<u8> = vec![0x48, 0x69];
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/test.txt"), ascii_bytes).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/test.txt"), cx))
+        .await
+        .unwrap();
+
+    let (initial_encoding, initial_text, initial_dirty) = buffer.read_with(cx, |buffer, _| {
+        (buffer.encoding(), buffer.text(), buffer.is_dirty())
+    });
+    assert_eq!(initial_encoding, encoding_rs::UTF_8);
+    assert_eq!(initial_text, "Hi");
+    assert!(!initial_dirty);
+
+    let reload_receiver = buffer.update(cx, |buffer, cx| {
+        buffer.reload_with_encoding(encoding_rs::UTF_16LE, cx)
+    });
+    cx.executor().run_until_parked();
+
+    // Wait for reload to complete
+    let _ = reload_receiver.await;
+
+    // Verify the encoding changed, text is different, and still not dirty (we reloaded from disk)
+    let (reloaded_encoding, reloaded_text, reloaded_dirty) = buffer.read_with(cx, |buffer, _| {
+        (buffer.encoding(), buffer.text(), buffer.is_dirty())
+    });
+    assert_eq!(reloaded_encoding, encoding_rs::UTF_16LE);
+    assert_eq!(reloaded_text, "楈");
+    assert!(!reloaded_dirty);
+
+    // Undo the reload
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.encoding(), encoding_rs::UTF_8);
+        assert_eq!(buffer.text(), "Hi");
+        assert!(!buffer.is_dirty());
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.redo(cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.encoding(), encoding_rs::UTF_16LE);
+        assert_ne!(buffer.text(), "Hi");
+        assert!(!buffer.is_dirty());
+    });
+}
+
 pub fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 
@@ -11169,7 +11291,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 let venv_path = worktree_root.join(ancestor.as_std_path()).join(".venv");
                 if self.0.is_dir(&venv_path).await {
                     toolchains.push(Toolchain {
-                        name: SharedString::new("Python Venv"),
+                        name: SharedString::new_static("Python Venv"),
                         path: venv_path.to_string_lossy().into_owned().into(),
                         language_name: LanguageName(SharedString::new_static("Python")),
                         as_json: serde_json::Value::Null,

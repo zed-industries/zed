@@ -167,6 +167,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_signature_help_impl(false, window, cx);
+    }
+
+    pub(super) fn show_signature_help_auto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_signature_help_impl(true, window, cx);
+    }
+
+    fn show_signature_help_impl(
+        &mut self,
+        use_delay: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_rename.is_some() || self.has_visible_completions_menu() {
             return;
         }
@@ -189,7 +202,11 @@ impl Editor {
         });
         let language = self.language_at(position, cx);
 
-        let signature_help_delay_ms = EditorSettings::get_global(cx).hover_popover_delay.0;
+        let signature_help_delay_ms = if use_delay {
+            EditorSettings::get_global(cx).hover_popover_delay.0
+        } else {
+            0
+        };
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
