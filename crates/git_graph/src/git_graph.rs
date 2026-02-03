@@ -975,7 +975,12 @@ impl GitGraph {
         let remote = repository.update(cx, |repo, cx| self.get_remote(repo, window, cx));
 
         let avatar = {
-            let avatar = CommitAvatar::new(&full_sha, remote.as_ref());
+            let author_email_for_avatar = if author_email.is_empty() {
+                None
+            } else {
+                Some(author_email.clone())
+            };
+            let avatar = CommitAvatar::new(&full_sha, author_email_for_avatar, remote.as_ref());
             v_flex()
                 .w(px(64.))
                 .h(px(64.))

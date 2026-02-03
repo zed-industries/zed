@@ -1313,7 +1313,7 @@ impl BufferSearchBar {
                 let search = self.update_matches(false, true, window, cx);
 
                 let width = editor.update(cx, |editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
+                    let text_layout_details = editor.text_layout_details(window, cx);
                     let snapshot = editor.snapshot(window, cx).display_snapshot;
 
                     snapshot.x_for_display_point(snapshot.max_point(), &text_layout_details)

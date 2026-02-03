@@ -32,6 +32,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 edit_prediction_types.workspace = true
+icons.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
