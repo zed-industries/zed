@@ -2931,9 +2931,9 @@ impl Project {
             file_id
         );
         downloading_files.lock().insert(
-            key.clone(),
+            key,
             DownloadingFile {
-                destination_path: destination_path.clone(),
+                destination_path: destination_path,
                 chunks: Vec::new(),
                 total_size: 0,
                 file_id: Some(file_id),
@@ -5453,7 +5453,7 @@ impl Project {
                 if let Some(ref file) = state.file {
                     let worktree_id = WorktreeId::from_proto(file.worktree_id);
                     let path = file.path.clone();
-                    let key = (worktree_id, path.clone());
+                    let key = (worktree_id, path);
                     log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
 
                     let mut files = downloading_files.lock();
