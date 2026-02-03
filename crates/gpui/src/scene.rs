@@ -151,7 +151,7 @@ impl Scene {
         ),
         allow(dead_code)
     )]
-    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch<'_>> {
+    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> + '_ {
         BatchIterator {
             shadows: &self.shadows,
             shadows_start: 0,
@@ -282,7 +282,7 @@ struct BatchIterator<'a> {
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
-    type Item = PrimitiveBatch<'a>;
+    type Item = PrimitiveBatch;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut orders_and_kinds = [
@@ -336,9 +336,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     shadows_end += 1;
                 }
                 self.shadows_start = shadows_end;
-                Some(PrimitiveBatch::Shadows(
-                    &self.shadows[shadows_start..shadows_end],
-                ))
+                Some(PrimitiveBatch::Shadows(shadows_start..shadows_end))
             }
             PrimitiveKind::Quad => {
                 let quads_start = self.quads_start;
@@ -352,7 +350,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     quads_end += 1;
                 }
                 self.quads_start = quads_end;
-                Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+                Some(PrimitiveBatch::Quads(quads_start..quads_end))
             }
             PrimitiveKind::Path => {
                 let paths_start = self.paths_start;
@@ -366,7 +364,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     paths_end += 1;
                 }
                 self.paths_start = paths_end;
-                Some(PrimitiveBatch::Paths(&self.paths[paths_start..paths_end]))
+                Some(PrimitiveBatch::Paths(paths_start..paths_end))
             }
             PrimitiveKind::Underline => {
                 let underlines_start = self.underlines_start;
@@ -380,9 +378,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     underlines_end += 1;
                 }
                 self.underlines_start = underlines_end;
-                Some(PrimitiveBatch::Underlines(
-                    &self.underlines[underlines_start..underlines_end],
-                ))
+                Some(PrimitiveBatch::Underlines(underlines_start..underlines_end))
             }
             PrimitiveKind::MonochromeSprite => {
                 let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
@@ -402,7 +398,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.monochrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::MonochromeSprites {
                     texture_id,
-                    sprites: &self.monochrome_sprites[sprites_start..sprites_end],
+                    range: sprites_start..sprites_end,
                 })
             }
             PrimitiveKind::SubpixelSprite => {
@@ -423,13 +419,13 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.subpixel_sprites_start = sprites_end;
                 Some(PrimitiveBatch::SubpixelSprites {
                     texture_id,
-                    sprites: &self.subpixel_sprites[sprites_start..sprites_end],
+                    range: sprites_start..sprites_end,
                 })
             }
             PrimitiveKind::PolychromeSprite => {
                 let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
                 let sprites_start = self.polychrome_sprites_start;
-                let mut sprites_end = self.polychrome_sprites_start + 1;
+                let mut sprites_end = sprites_start + 1;
                 self.polychrome_sprites_iter.next();
                 while self
                     .polychrome_sprites_iter
@@ -444,7 +440,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.polychrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::PolychromeSprites {
                     texture_id,
-                    sprites: &self.polychrome_sprites[sprites_start..sprites_end],
+                    range: sprites_start..sprites_end,
                 })
             }
             PrimitiveKind::Surface => {
@@ -459,9 +455,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     surfaces_end += 1;
                 }
                 self.surfaces_start = surfaces_end;
-                Some(PrimitiveBatch::Surfaces(
-                    &self.surfaces[surfaces_start..surfaces_end],
-                ))
+                Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
         }
     }
@@ -475,25 +469,25 @@ impl<'a> Iterator for BatchIterator<'a> {
     ),
     allow(dead_code)
 )]
-pub(crate) enum PrimitiveBatch<'a> {
-    Shadows(&'a [Shadow]),
-    Quads(&'a [Quad]),
-    Paths(&'a [Path<ScaledPixels>]),
-    Underlines(&'a [Underline]),
+pub(crate) enum PrimitiveBatch {
+    Shadows(Range<usize>),
+    Quads(Range<usize>),
+    Paths(Range<usize>),
+    Underlines(Range<usize>),
     MonochromeSprites {
         texture_id: AtlasTextureId,
-        sprites: &'a [MonochromeSprite],
+        range: Range<usize>,
     },
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     SubpixelSprites {
         texture_id: AtlasTextureId,
-        sprites: &'a [SubpixelSprite],
+        range: Range<usize>,
     },
     PolychromeSprites {
         texture_id: AtlasTextureId,
-        sprites: &'a [PolychromeSprite],
+        range: Range<usize>,
     },
-    Surfaces(&'a [PaintSurface]),
+    Surfaces(Range<usize>),
 }
 
 #[derive(Default, Debug, Clone)]
