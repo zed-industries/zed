@@ -1088,7 +1088,14 @@ impl AcpServerView {
 
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.server_state {
-            ServerState::Connected(_) => "New Thread".into(),
+            ServerState::Connected(connected) => {
+                let title = connected.current.thread.read(cx).title();
+                if title.is_empty() {
+                    "New Thread".into()
+                } else {
+                    title
+                }
+            }
             ServerState::Loading(loading_view) => loading_view.read(cx).title.clone(),
             ServerState::LoadError(error) => match error {
                 LoadError::Unsupported { .. } => format!("Upgrade {}", self.agent.name()).into(),
@@ -1708,6 +1715,7 @@ impl AcpServerView {
                     });
                 }
                 self.history.update(cx, |history, cx| history.refresh(cx));
+                cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.as_active_thread_mut() {

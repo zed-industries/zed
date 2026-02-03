@@ -300,6 +300,9 @@
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-a": "agent::OpenPermissionDropdown",
       "cmd-alt-z": "agent::RejectOnce",
+      "cmd-w": "agent::CloseActiveTab",
+      "ctrl-tab": "agent::ActivateNextTab",
+      "ctrl-shift-tab": "agent::ActivatePrevTab"
     },
   },
   {

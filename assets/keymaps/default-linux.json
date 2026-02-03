@@ -259,6 +259,9 @@
       "ctrl-y": "agent::AllowOnce",
       "ctrl-alt-a": "agent::OpenPermissionDropdown",
       "ctrl-alt-z": "agent::RejectOnce",
+      "ctrl-w": "agent::CloseActiveTab",
+      "ctrl-tab": "agent::ActivateNextTab",
+      "ctrl-shift-tab": "agent::ActivatePrevTab"
     },
   },
   {

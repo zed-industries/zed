@@ -1428,7 +1428,10 @@ impl ExternalAgentServer for LocalClaudeCode {
                 })?
                 .await
                 .unwrap_or_default();
-            env.insert("ANTHROPIC_API_KEY".into(), "".into());
+            // Only set ANTHROPIC_API_KEY to empty if not already set in environment
+            if !env.contains_key("ANTHROPIC_API_KEY") {
+                env.insert("ANTHROPIC_API_KEY".into(), "".into());
+            }
 
             env.extend(settings_env.unwrap_or_default());
 

@@ -143,6 +143,12 @@ actions!(
         OpenPermissionDropdown,
         /// Toggles thinking mode for models that support extended thinking.
         ToggleThinkingMode,
+        /// Closes the current tab in the agent panel.
+        CloseActiveTab,
+        /// Activates the next tab in the agent panel.
+        ActivateNextTab,
+        /// Activates the previous tab in the agent panel.
+        ActivatePrevTab,
     ]
 );
 

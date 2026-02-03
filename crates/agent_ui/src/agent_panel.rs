@@ -17,7 +17,8 @@ use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
-    AddContextServer, AgentDiffPane, CopyThreadToClipboard, Follow, InlineAssistant,
+    ActivateNextTab, ActivatePrevTab, AddContextServer, AgentDiffPane, CloseActiveTab,
+    CopyThreadToClipboard, Follow, InlineAssistant,
     LoadThreadFromClipboard, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
     OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu,
     ToggleOptionsMenu,
@@ -43,7 +44,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
 use client::UserStore;
 use cloud_api_types::Plan;
-use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
+use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer, actions as editor_actions};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
@@ -62,7 +63,7 @@ use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
     Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab,
-    Tooltip, prelude::*, utils::WithRemSize,
+    TabBar, TabCloseSide, TabPosition, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -239,6 +240,46 @@ pub fn init(cx: &mut App) {
 enum HistoryKind {
     AgentThreads,
     TextThreads,
+}
+
+/// Represents an open tab in the agent panel.
+/// Each tab contains a thread view (either Agent or Text thread).
+struct OpenTab {
+    id: usize,
+    view: TabView,
+}
+
+/// The view content of a tab.
+#[allow(dead_code)]
+enum TabView {
+    AgentThread {
+        thread_view: Entity<AcpServerView>,
+    },
+    TextThread {
+        text_thread_editor: Entity<TextThreadEditor>,
+        title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
+    },
+}
+
+impl OpenTab {
+    fn title(&self, cx: &App) -> SharedString {
+        match &self.view {
+            TabView::AgentThread { thread_view } => thread_view.read(cx).title(cx),
+            TabView::TextThread { text_thread_editor, .. } => {
+                text_thread_editor.read(cx).title(cx).into()
+            }
+        }
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match &self.view {
+            TabView::AgentThread { thread_view } => thread_view.read(cx).focus_handle(cx),
+            TabView::TextThread { text_thread_editor, .. } => {
+                text_thread_editor.read(cx).focus_handle(cx)
+            }
+        }
+    }
 }
 
 enum ActiveView {
@@ -440,6 +481,16 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
     show_trust_workspace_message: bool,
+    /// Open tabs in the agent panel
+    open_tabs: Vec<OpenTab>,
+    /// Index of the currently active tab
+    active_tab_index: Option<usize>,
+    /// Counter for generating unique tab IDs
+    next_tab_id: usize,
+    /// Index of the tab currently being renamed (if any)
+    renaming_tab_index: Option<usize>,
+    /// Editor for renaming tabs
+    tab_rename_editor: Entity<Editor>,
 }
 
 impl AgentPanel {
@@ -660,7 +711,27 @@ impl AgentPanel {
             thread_store,
             selected_agent: AgentType::default(),
             show_trust_workspace_message: false,
+            open_tabs: Vec::new(),
+            active_tab_index: None,
+            next_tab_id: 0,
+            renaming_tab_index: None,
+            tab_rename_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Tab name", window, cx);
+                editor
+            }),
         };
+
+        // Subscribe to tab rename editor events
+        cx.subscribe_in(&panel.tab_rename_editor, window, |this, _, event: &EditorEvent, window, cx| {
+            match event {
+                EditorEvent::Blurred => {
+                    this.confirm_tab_rename(window, cx);
+                }
+                _ => {}
+            }
+        })
+        .detach();
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
@@ -731,6 +802,276 @@ impl AgentPanel {
             .unwrap_or(true)
     }
 
+    // Tab management methods
+
+    /// Returns the number of open tabs
+    #[allow(dead_code)]
+    fn tab_count(&self) -> usize {
+        self.open_tabs.len()
+    }
+
+    /// Returns the currently active tab
+    #[allow(dead_code)]
+    fn active_tab(&self) -> Option<&OpenTab> {
+        self.active_tab_index.and_then(|idx| self.open_tabs.get(idx))
+    }
+
+    /// Adds a new tab with an agent thread view
+    fn add_agent_thread_tab(
+        &mut self,
+        thread_view: Entity<AcpServerView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        // Observe the thread_view to refresh tab bar when title changes
+        cx.observe_in(&thread_view, window, |this, _, _, cx| {
+            cx.notify();
+            this.serialize(cx);
+        })
+        .detach();
+
+        let tab = OpenTab {
+            id: tab_id,
+            view: TabView::AgentThread { thread_view: thread_view.clone() },
+        };
+
+        self.open_tabs.push(tab);
+        self.active_tab_index = Some(self.open_tabs.len() - 1);
+
+        // Also update the active_view for compatibility
+        self.set_active_view(
+            ActiveView::AgentThread { thread_view },
+            true,
+            window,
+            cx,
+        );
+
+        cx.notify();
+    }
+
+    /// Adds a new tab with a text thread view
+    fn add_text_thread_tab(
+        &mut self,
+        text_thread_editor: Entity<TextThreadEditor>,
+        title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
+        subscriptions: Vec<gpui::Subscription>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        // Observe the text_thread_editor to refresh tab bar when title changes
+        cx.observe_in(&text_thread_editor, window, |this, _, _, cx| {
+            cx.notify();
+            this.serialize(cx);
+        })
+        .detach();
+
+        let tab = OpenTab {
+            id: tab_id,
+            view: TabView::TextThread {
+                text_thread_editor: text_thread_editor.clone(),
+                title_editor: title_editor.clone(),
+                buffer_search_bar: buffer_search_bar.clone(),
+            },
+        };
+
+        self.open_tabs.push(tab);
+        self.active_tab_index = Some(self.open_tabs.len() - 1);
+
+        // Also update the active_view for compatibility
+        self.set_active_view(
+            ActiveView::TextThread {
+                text_thread_editor,
+                title_editor,
+                buffer_search_bar,
+                _subscriptions: subscriptions,
+            },
+            true,
+            window,
+            cx,
+        );
+
+        cx.notify();
+    }
+
+    /// Activates a tab by index
+    fn activate_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.open_tabs.len() {
+            return;
+        }
+
+        self.active_tab_index = Some(index);
+
+        // Update active_view based on the tab
+        if let Some(tab) = self.open_tabs.get(index) {
+            match &tab.view {
+                TabView::AgentThread { thread_view } => {
+                    self.active_view = ActiveView::AgentThread {
+                        thread_view: thread_view.clone(),
+                    };
+                }
+                TabView::TextThread {
+                    text_thread_editor,
+                    title_editor: _,
+                    buffer_search_bar: _,
+                } => {
+                    // For TextThread, we need to recreate the ActiveView with fresh subscriptions
+                    self.active_view = ActiveView::text_thread(
+                        text_thread_editor.clone(),
+                        self.language_registry.clone(),
+                        window,
+                        cx,
+                    );
+                }
+            }
+            tab.focus_handle(cx).focus(window, cx);
+        }
+
+        cx.notify();
+    }
+
+    /// Closes a tab by index
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.open_tabs.len() {
+            return;
+        }
+
+        self.open_tabs.remove(index);
+
+        // Update active_tab_index
+        if self.open_tabs.is_empty() {
+            self.active_tab_index = None;
+            self.active_view = ActiveView::Uninitialized;
+        } else if let Some(active_idx) = self.active_tab_index {
+            if active_idx >= self.open_tabs.len() {
+                // Activate the last tab
+                self.activate_tab(self.open_tabs.len() - 1, window, cx);
+            } else if active_idx > index {
+                // Adjust index if we removed a tab before the active one
+                self.active_tab_index = Some(active_idx - 1);
+            } else if active_idx == index {
+                // Re-activate the same index (now pointing to the next tab)
+                self.activate_tab(active_idx.min(self.open_tabs.len() - 1), window, cx);
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// Closes the currently active tab
+    fn close_active_tab(&mut self, _: &CloseActiveTab, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.active_tab_index {
+            self.close_tab(index, window, cx);
+        }
+    }
+
+    /// Activates the next tab
+    fn activate_next_tab(&mut self, _: &ActivateNextTab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open_tabs.is_empty() {
+            return;
+        }
+
+        let next_index = match self.active_tab_index {
+            Some(idx) => (idx + 1) % self.open_tabs.len(),
+            None => 0,
+        };
+
+        self.activate_tab(next_index, window, cx);
+    }
+
+    /// Activates the previous tab
+    fn activate_prev_tab(&mut self, _: &ActivatePrevTab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open_tabs.is_empty() {
+            return;
+        }
+
+        let prev_index = match self.active_tab_index {
+            Some(idx) => {
+                if idx == 0 {
+                    self.open_tabs.len() - 1
+                } else {
+                    idx - 1
+                }
+            }
+            None => self.open_tabs.len() - 1,
+        };
+
+        self.activate_tab(prev_index, window, cx);
+    }
+
+    /// Starts renaming a tab
+    fn start_tab_rename(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.open_tabs.len() {
+            return;
+        }
+
+        let title = self.open_tabs[index].title(cx);
+        self.tab_rename_editor.update(cx, |editor, cx| {
+            editor.set_text(title.to_string(), window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+        });
+
+        self.renaming_tab_index = Some(index);
+        self.tab_rename_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    /// Confirms the tab rename
+    fn confirm_tab_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.renaming_tab_index.take() else {
+            return;
+        };
+
+        if index >= self.open_tabs.len() {
+            cx.notify();
+            return;
+        }
+
+        let new_title: SharedString = self.tab_rename_editor.read(cx).text(cx).into();
+        if new_title.is_empty() {
+            cx.notify();
+            return;
+        }
+
+        // Update the title based on the tab type
+        if let Some(tab) = self.open_tabs.get(index) {
+            match &tab.view {
+                TabView::AgentThread { thread_view } => {
+                    thread_view.update(cx, |view, cx| {
+                        if let Some(active) = view.as_active_thread() {
+                            active.thread.update(cx, |thread, cx| {
+                                thread.set_title(new_title, cx).detach_and_log_err(cx);
+                            });
+                        }
+                    });
+                }
+                TabView::TextThread { text_thread_editor, .. } => {
+                    text_thread_editor.update(cx, |editor, cx| {
+                        editor.text_thread().update(cx, |thread, cx| {
+                            thread.set_custom_summary(new_title.to_string(), cx);
+                        });
+                    });
+                }
+            }
+        }
+
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Cancels the tab rename
+    fn cancel_tab_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming_tab_index = None;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
     pub(crate) fn active_thread_view(&self) -> Option<&Entity<AcpServerView>> {
         match &self.active_view {
             ActiveView::AgentThread { thread_view, .. } => Some(thread_view),
@@ -797,18 +1138,32 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
-        self.set_active_view(
-            ActiveView::text_thread(
-                text_thread_editor.clone(),
-                self.language_registry.clone(),
-                window,
-                cx,
-            ),
-            true,
+        // Create the text thread view components
+        let active_view = ActiveView::text_thread(
+            text_thread_editor.clone(),
+            self.language_registry.clone(),
             window,
             cx,
         );
-        text_thread_editor.focus_handle(cx).focus(window, cx);
+
+        // Extract components for tab
+        if let ActiveView::TextThread {
+            text_thread_editor,
+            title_editor,
+            buffer_search_bar,
+            _subscriptions,
+        } = active_view
+        {
+            self.add_text_thread_tab(
+                text_thread_editor.clone(),
+                title_editor,
+                buffer_search_bar,
+                _subscriptions,
+                window,
+                cx,
+            );
+            text_thread_editor.focus_handle(cx).focus(window, cx);
+        }
     }
 
     fn external_thread(
@@ -1716,7 +2071,8 @@ impl AgentPanel {
             )
         });
 
-        self.set_active_view(ActiveView::AgentThread { thread_view }, true, window, cx);
+        // Add as a new tab
+        self.add_agent_thread_tab(thread_view, window, cx);
     }
 }
 
@@ -2171,6 +2527,89 @@ impl AgentPanel {
                     Tooltip::for_action_in("Go Back", &workspace::GoBack, &focus_handle, cx)
                 }
             })
+    }
+
+    /// Renders the tab bar when there are multiple open tabs
+    fn render_tab_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        // Only show tab bar when there are multiple tabs
+        if self.open_tabs.len() <= 1 {
+            return None;
+        }
+
+        let active_index = self.active_tab_index.unwrap_or(0);
+        let tab_count = self.open_tabs.len();
+        let renaming_index = self.renaming_tab_index;
+
+        Some(
+            TabBar::new("agent-panel-tab-bar")
+                .children(self.open_tabs.iter().enumerate().map(|(index, tab)| {
+                    let is_active = index == active_index;
+                    let is_renaming = renaming_index == Some(index);
+                    let title = tab.title(cx);
+                    let tab_id = tab.id;
+
+                    let position = if index == 0 {
+                        TabPosition::First
+                    } else if index == tab_count - 1 {
+                        TabPosition::Last
+                    } else {
+                        use std::cmp::Ordering;
+                        TabPosition::Middle(if index < active_index {
+                            Ordering::Less
+                        } else if index > active_index {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        })
+                    };
+
+                    let tab_content: AnyElement = if is_renaming {
+                        div()
+                            .w(px(120.))
+                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                this.confirm_tab_rename(window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &editor_actions::Cancel, window, cx| {
+                                this.cancel_tab_rename(window, cx);
+                            }))
+                            .child(self.tab_rename_editor.clone())
+                            .into_any_element()
+                    } else {
+                        div()
+                            .max_w(px(150.))
+                            .overflow_x_hidden()
+                            .text_ellipsis()
+                            .child(Label::new(title).size(LabelSize::Small))
+                            .into_any_element()
+                    };
+
+                    Tab::new(("tab", tab_id))
+                        .toggle_state(is_active)
+                        .position(position)
+                        .close_side(TabCloseSide::End)
+                        .child(tab_content)
+                        .end_slot(
+                            IconButton::new(("close-tab", tab_id), IconName::Close)
+                                .icon_size(IconSize::XSmall)
+                                .on_click({
+                                    let index = index;
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.close_tab(index, window, cx);
+                                    })
+                                })
+                        )
+                        .on_click({
+                            let index = index;
+                            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                                if event.click_count() == 2 {
+                                    this.start_tab_rename(index, window, cx);
+                                } else {
+                                    this.activate_tab(index, window, cx);
+                                }
+                            })
+                        })
+                }))
+        )
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2976,7 +3415,11 @@ impl Render for AgentPanel {
                     thread_view.update(cx, |thread_view, cx| thread_view.reauthenticate(window, cx))
                 }
             }))
+            .on_action(cx.listener(Self::close_active_tab))
+            .on_action(cx.listener(Self::activate_next_tab))
+            .on_action(cx.listener(Self::activate_prev_tab))
             .child(self.render_toolbar(window, cx))
+            .children(self.render_tab_bar(window, cx))
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| match &self.active_view {
