@@ -533,18 +533,7 @@ fn render_rule_section(
 ) -> AnyElement {
     let section_id = format!("{}-{:?}-section", tool_id, rule_type);
 
-    let default_count = get_default_tool_rules(tool_id)
-        .map(|defaults| match rule_type {
-            RuleType::Allow => defaults.always_allow.len(),
-            RuleType::Deny => defaults.always_deny.len(),
-            RuleType::Confirm => defaults.always_confirm.len(),
-        })
-        .unwrap_or(0);
-
-    let (default_patterns, user_patterns): (Vec<_>, Vec<_>) = patterns
-        .iter()
-        .enumerate()
-        .partition(|(_, pattern)| is_default_pattern(tool_id, rule_type, pattern));
+    let user_patterns: Vec<_> = patterns.iter().enumerate().collect();
 
     v_flex()
         .id(section_id)
@@ -562,82 +551,22 @@ fn render_rule_section(
                 .when(patterns.is_empty(), |this| {
                     this.child(render_pattern_empty_state(cx))
                 })
-                .when(!default_patterns.is_empty(), |this| {
-                    this.child(
-                        v_flex()
-                            .gap_1p5()
-                            .child(render_section_header(
-                                "Default",
-                                Some(default_count),
-                                true,
-                                cx,
-                            ))
-                            .children(
-                                default_patterns
-                                    .iter()
-                                    .map(|(_, pattern)| render_default_pattern_row(pattern, cx)),
-                            ),
-                    )
-                })
                 .when(!user_patterns.is_empty(), |this| {
-                    this.child(
-                        v_flex()
-                            .gap_1p5()
-                            .child(render_section_header("Your Patterns", None, false, cx))
-                            .children(user_patterns.iter().map(|(index, pattern)| {
-                                render_user_pattern_row(
-                                    tool_id,
-                                    rule_type,
-                                    *index,
-                                    (*pattern).clone(),
-                                    cx,
-                                )
-                            })),
-                    )
+                    this.child(v_flex().gap_1p5().children(user_patterns.iter().map(
+                        |(index, pattern)| {
+                            render_user_pattern_row(
+                                tool_id,
+                                rule_type,
+                                *index,
+                                (*pattern).clone(),
+                                cx,
+                            )
+                        },
+                    )))
                 })
                 .child(render_add_pattern_input(tool_id, rule_type, cx)),
         )
         .into_any_element()
-}
-
-fn render_section_header(
-    title: impl Into<SharedString>,
-    count: Option<usize>,
-    is_default: bool,
-    cx: &mut Context<SettingsWindow>,
-) -> impl IntoElement {
-    let default_tooltip = "Sensible set of default patterns that can't be overriden.";
-
-    h_flex()
-        .gap_1()
-        .w_full()
-        .min_w_full()
-        .child(
-            Label::new(title)
-                .size(LabelSize::XSmall)
-                .color(Color::Muted)
-                .buffer_font(cx),
-        )
-        .when_some(count, |this, count| {
-            this.child(
-                Label::new(format!("({})", count))
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted)
-                    .buffer_font(cx),
-            )
-        })
-        .when(is_default, |this| {
-            this.child(
-                IconButton::new("tooltip_info", IconName::Info)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Hidden)
-                    .shape(crate::IconButtonShape::Square)
-                    .style(ButtonStyle::Transparent)
-                    .tooltip(Tooltip::text(default_tooltip))
-                    .on_click(|_, _, _| {}), // Intentional empty on click handler so that clicking on the info tooltip icon doesn't trigger the switch toggle
-            )
-        })
-        .child(Divider::horizontal_dashed().color(ui::DividerColor::BorderVariant))
 }
 
 fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
@@ -651,26 +580,6 @@ fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
             Label::new("No patterns configured")
                 .size(LabelSize::Small)
                 .color(Color::Disabled),
-        )
-        .into_any_element()
-}
-
-fn render_default_pattern_row(pattern: &str, cx: &mut Context<SettingsWindow>) -> AnyElement {
-    let theme_colors = cx.theme().colors();
-
-    h_flex()
-        .w_full()
-        .h_8()
-        .px_2()
-        .rounded_md()
-        .border_1()
-        .border_color(theme_colors.border.opacity(0.5))
-        .bg(theme_colors.editor_background.opacity(0.5))
-        .child(
-            Label::new(pattern.to_string())
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .buffer_font(cx),
         )
         .into_any_element()
 }
@@ -847,75 +756,6 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
             always_confirm: Vec::new(),
         },
     }
-}
-
-fn get_default_tool_rules(tool_name: &str) -> Option<ToolRulesView> {
-    let default_json = default_settings();
-    let parsed: serde_json::Value = serde_json_lenient::from_str(&default_json).ok()?;
-
-    let tool_permissions = parsed.get("agent")?.get("tool_permissions")?.get("tools")?;
-    let tool_rules = tool_permissions.get(tool_name)?;
-
-    let default_mode = tool_rules
-        .get("default_mode")
-        .and_then(|v| v.as_str())
-        .map(|s| match s {
-            "allow" => ToolPermissionMode::Allow,
-            "deny" => ToolPermissionMode::Deny,
-            _ => ToolPermissionMode::Confirm,
-        })
-        .unwrap_or(ToolPermissionMode::Confirm);
-
-    let always_allow: Vec<String> = tool_rules
-        .get("always_allow")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.get("pattern").and_then(|p| p.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let always_deny: Vec<String> = tool_rules
-        .get("always_deny")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.get("pattern").and_then(|p| p.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let always_confirm: Vec<String> = tool_rules
-        .get("always_confirm")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.get("pattern").and_then(|p| p.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Some(ToolRulesView {
-        default_mode,
-        always_allow,
-        always_deny,
-        always_confirm,
-    })
-}
-
-fn is_default_pattern(tool_name: &str, rule_type: RuleType, pattern: &str) -> bool {
-    let Some(defaults) = get_default_tool_rules(tool_name) else {
-        return false;
-    };
-
-    let patterns = match rule_type {
-        RuleType::Allow => &defaults.always_allow,
-        RuleType::Deny => &defaults.always_deny,
-        RuleType::Confirm => &defaults.always_confirm,
-    };
-
-    patterns.iter().any(|p| p == pattern)
 }
 
 fn save_pattern(tool_name: &str, rule_type: RuleType, pattern: String, cx: &mut App) {
