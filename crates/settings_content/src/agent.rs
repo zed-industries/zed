@@ -67,20 +67,6 @@ pub struct AgentSettingsContent {
     pub default_view: Option<DefaultAgentView>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
-    /// Whenever a tool action would normally wait for your confirmation
-    /// that you allow it, always choose to allow it.
-    ///
-    /// **Security note**: Even with this enabled, Zed's built-in security rules
-    /// still block some tool actions, such as the terminal tool running `rm -rf /`, `rm -rf ~`,
-    /// `rm -rf $HOME`, `rm -rf .`, or `rm -rf ..`, to prevent certain classes of failures
-    /// from happening.
-    ///
-    /// This setting has no effect on external agents that support permission modes, such as Claude Code.
-    ///
-    /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
-    ///
-    /// Default: false
-    pub always_allow_tool_actions: Option<bool>,
     /// Where to show a popup notification when the agent is waiting for user input.
     ///
     /// Default: "primary_screen"
@@ -177,10 +163,6 @@ impl AgentSettingsContent {
         });
     }
 
-    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
-        self.always_allow_tool_actions = Some(allow);
-    }
-
     pub fn set_play_sound_when_agent_done(&mut self, allow: bool) {
         self.play_sound_when_agent_done = Some(allow);
     }
@@ -213,7 +195,7 @@ impl AgentSettingsContent {
             .tools
             .entry(Arc::from(tool_id))
             .or_default();
-        tool_rules.default_mode = Some(mode);
+        tool_rules.default = Some(mode);
     }
 
     pub fn add_tool_allow_pattern(&mut self, tool_name: &str, pattern: String) {
@@ -564,6 +546,12 @@ pub enum CustomAgentServerSettings {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolPermissionsContent {
+    /// Global default mode when no tool-specific rules match.
+    /// Individual tools can override this with their own default.
+    /// Default: confirm
+    #[serde(alias = "default_mode")]
+    pub default: Option<ToolPermissionMode>,
+
     /// Per-tool permission rules.
     /// Keys: terminal, edit_file, delete_path, move_path, create_directory,
     ///       save_file, fetch, web_search
@@ -576,7 +564,8 @@ pub struct ToolPermissionsContent {
 pub struct ToolRulesContent {
     /// Default mode when no regex rules match.
     /// Default: confirm
-    pub default_mode: Option<ToolPermissionMode>,
+    #[serde(alias = "default_mode")]
+    pub default: Option<ToolPermissionMode>,
 
     /// Regexes for inputs to auto-approve.
     /// For terminal: matches command. For file tools: matches path. For fetch: matches URL.
@@ -633,7 +622,7 @@ mod tests {
 
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal_rules.default_mode, Some(ToolPermissionMode::Allow));
+        assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
     }
 
     #[test]
@@ -645,7 +634,7 @@ mod tests {
 
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal_rules.default_mode, Some(ToolPermissionMode::Allow));
+        assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
     }
 
     #[test]
@@ -659,7 +648,7 @@ mod tests {
             .tools
             .get("mcp:github:create_issue")
             .unwrap();
-        assert_eq!(mcp_rules.default_mode, Some(ToolPermissionMode::Allow));
+        assert_eq!(mcp_rules.default, Some(ToolPermissionMode::Allow));
     }
 
     #[test]

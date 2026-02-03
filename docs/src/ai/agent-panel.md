@@ -156,9 +156,15 @@ All custom profiles can be edited via the UI or by hand under the `agent.profile
 
 ### Tool Approval
 
-Zed's Agent Panel surfaces the `agent.always_allow_tool_actions` setting that, if turned to `false`, will require you to give permission to any editing attempt as well as tool calls coming from MCP servers.
+Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior:
 
-You can change that by setting this key to `true` in either your `settings.json` or via the Agent Panel's settings view.
+- `"confirm"` (default) - Prompts for approval before running any tool action
+- `"allow"` - Auto-approves tool actions without prompting
+- `"deny"` - Blocks all tool actions
+
+You can change this in either your `settings.json` or via the Agent Panel's settings view.
+
+Even with `default: "allow"`, you can configure per-tool rules using `always_deny` and `always_confirm` patterns to maintain safety guardrails for specific commands. For example, you can auto-approve most actions while still requiring confirmation for `sudo` commands.
 
 You can also give more granular permissions through the dropdown that appears in the UI whenever the agent requests authorization to run a tool call.
 

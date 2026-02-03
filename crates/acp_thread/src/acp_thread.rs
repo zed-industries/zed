@@ -1740,13 +1740,16 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
-        respect_always_allow_setting: bool,
+        respect_default_mode_setting: bool,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
-        if respect_always_allow_setting && AgentSettings::get_global(cx).always_allow_tool_actions {
-            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
+        let settings = AgentSettings::get_global(cx);
+        let global_default = settings.tool_permissions.default;
+
+        if respect_default_mode_setting && global_default == settings::ToolPermissionMode::Allow {
+            // Don't use AllowAlways, because then if you were to change default,
             // some tools would (incorrectly) continue to auto-accept.
             if let Some(allow_once_option) = options.allow_once_option_id() {
                 self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;

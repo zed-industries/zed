@@ -952,20 +952,19 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run tool actions without asking for your confirmation.
-    // This setting takes precedence over `always_confirm` patterns and `default_mode` settings,
-    // but `always_deny` patterns still block actions for security.
-    //
-    // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
-    //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
-    "always_allow_tool_actions": false,
     // Per-tool permission rules for granular control over tool actions.
     // This setting only applies to the native Zed agent.
+    // External agent servers have their own permission systems.
     "tool_permissions": {
-      // Here are some examples of tool-specific permissions.
+      // Global default mode when no tool-specific rules match.
+      // "allow" - Auto-approve without prompting
+      // "deny" - Auto-reject
+      // "confirm" - Always prompt (default)
+      "default": "confirm",
+      // Per-tool permission rules. Each tool can have its own default and patterns.
       "tools": {
         // "terminal": {
-        //   "default_mode": "confirm",
+        //   "default": "confirm",
         //   "always_confirm": [
         //     // Destructive git operations
         //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
@@ -973,7 +972,7 @@
         //   ],
         // },
         // "edit_file": {
-        //   "default_mode": "confirm",
+        //   "default": "confirm",
         //   "always_deny": [
         //     // Secrets and credentials
         //     { "pattern": "\\.env($|\\.)" },

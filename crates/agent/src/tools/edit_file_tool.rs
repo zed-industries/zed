@@ -1243,10 +1243,10 @@ mod tests {
             Some("test 4 (local settings)".into())
         );
 
-        // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
+        // Test 5: When global default is allow, no confirmation needed
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 

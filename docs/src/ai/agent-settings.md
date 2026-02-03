@@ -158,18 +158,25 @@ Use the `agent_font_size` setting to change the font size of rendered agent resp
 
 > Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
 
-### Auto-run Commands
+### Tool Permission Default Mode
 
-Control whether to allow the agent to run commands without asking you for permission.
-The default value is `false`.
+Control the default behavior for tool actions. The default value is `"confirm"`.
+
+- `"confirm"` - Prompts for approval before running any tool action (default)
+- `"allow"` - Auto-approves tool actions without prompting
+- `"deny"` - Blocks all tool actions
 
 ```json [settings]
 {
   "agent": {
-    "always_allow_tool_actions": true
+    "tool_permissions": {
+      "default": "allow"
+    }
   }
 }
 ```
+
+Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
 ### Single-file Review
 

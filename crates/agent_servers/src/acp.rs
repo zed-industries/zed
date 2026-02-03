@@ -1144,14 +1144,14 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
-        let respect_always_allow_setting;
+        let respect_default_mode_setting;
         let thread;
         {
             let sessions_ref = self.sessions.borrow();
             let session = sessions_ref
                 .get(&arguments.session_id)
                 .context("Failed to get session")?;
-            respect_always_allow_setting = session.session_modes.is_none();
+            respect_default_mode_setting = session.session_modes.is_none();
             thread = session.thread.clone();
         }
 
@@ -1161,7 +1161,7 @@ impl acp::Client for ClientDelegate {
             thread.request_tool_call_authorization(
                 arguments.tool_call,
                 acp_thread::PermissionOptions::Flat(arguments.options),
-                respect_always_allow_setting,
+                respect_default_mode_setting,
                 cx,
             )
         })??;

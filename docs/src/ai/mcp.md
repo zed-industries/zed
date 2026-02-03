@@ -130,9 +130,15 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
 
 ### Tool Approval
 
-Zed's Agent Panel includes the `agent.always_allow_tool_actions` setting that, if set to `false`, will require you to give permission for any editing attempt as well as tool calls coming from MCP servers.
+Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior:
 
-You can change this by setting this key to `true` in either your `settings.json` or through the Agent Panel's settings view.
+- `"confirm"` (default) - Prompts for approval before running any tool action, including MCP tool calls
+- `"allow"` - Auto-approves tool actions without prompting
+- `"deny"` - Blocks all tool actions
+
+You can change this in either your `settings.json` or through the Agent Panel's settings view.
+
+Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
 ### External Agents
 

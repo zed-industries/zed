@@ -6897,22 +6897,26 @@ fn ai_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Always Allow Tool Actions",
-                description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
+                title: "Tool Permission Default Mode",
+                description: "Controls the default behavior for tool actions. 'allow' auto-approves, 'confirm' (default) prompts for approval, and 'deny' blocks all actions. Per-tool rules and patterns can override this default.",
                 field: Box::new(SettingField {
-                    json_path: Some("agent.always_allow_tool_actions"),
+                    json_path: Some("agent.tool_permissions.default"),
                     pick: |settings_content| {
                         settings_content
                             .agent
                             .as_ref()?
-                            .always_allow_tool_actions
+                            .tool_permissions
+                            .as_ref()?
+                            .default
                             .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .agent
                             .get_or_insert_default()
-                            .always_allow_tool_actions = value;
+                            .tool_permissions
+                            .get_or_insert_default()
+                            .default = value;
                     },
                 }),
                 metadata: None,
