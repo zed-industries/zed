@@ -99,6 +99,10 @@ fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput)
                 "body",
                 indoc! {r#"
                     This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
+
+                    Release Notes:
+
+                    - N/A
                 "#},
             )
             .add("commit-message", title)

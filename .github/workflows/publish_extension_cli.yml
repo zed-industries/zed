@@ -68,6 +68,10 @@ jobs:
         title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         body: |
           This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
+
+          Release Notes:
+
+          - N/A
         commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         branch: update-extension-cli-sha
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
