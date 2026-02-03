@@ -45,6 +45,7 @@ members = [
     "crates/copilot_chat",
     "crates/crashes",
     "crates/credentials_provider",
+    "crates/csv_preview",
     "crates/dap",
     "crates/dap_adapters",
     "crates/db",
@@ -233,7 +234,7 @@ members = [
     #
 
     "tooling/perf",
-    "tooling/xtask", "crates/csv_preview",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
