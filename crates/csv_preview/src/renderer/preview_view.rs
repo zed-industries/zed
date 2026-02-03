@@ -1,11 +1,11 @@
 use std::time::Instant;
 
-use ui::{ScrollAxes, WithScrollbar, div, prelude::*};
+use ui::{div, prelude::*};
 
 use crate::{CsvPreviewView, settings::FontType};
 
 impl Render for CsvPreviewView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         let render_prep_start = Instant::now();
@@ -31,27 +31,7 @@ impl Render for CsvPreviewView {
                         .child("No CSV content to display")
                         .into_any_element()
                 } else {
-                    // Wrapping into div to enable horizontal scrolling.
-                    // This is super stinky solution, but unfortunatelly I don't know how to do better
-                    div()
-                        .id("table-div") // enables scrolling api
-                        .size_full()
-                        .overflow_x_scroll() // Allow the element to grow, so there's something to scroll
-                        .track_scroll(&self.scroll_handle) // draws scrollbars
-                        .custom_scrollbars(
-                            // draws scrollbars when track_scroll is provided. Is utterly broken :D
-                            ui::Scrollbars::new(ScrollAxes::Horizontal)
-                                .tracked_scroll_handle(&self.scroll_handle)
-                                .with_track_along(
-                                    ScrollAxes::Horizontal,
-                                    cx.theme().colors().panel_background,
-                                )
-                                .tracked_entity(cx.entity_id()),
-                            window,
-                            cx,
-                        )
-                        .child(self.create_table(&self.column_widths.widths, cx))
-                        .into_any_element()
+                    self.create_table(&self.column_widths.widths, cx)
                 }
             });
 

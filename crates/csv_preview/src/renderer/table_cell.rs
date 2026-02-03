@@ -25,6 +25,7 @@ impl CsvPreviewView {
             font_type,
             cx,
         )
+        // Mouse events handlers will be here
         .into_any_element()
     }
 }

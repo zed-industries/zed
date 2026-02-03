@@ -4,6 +4,7 @@ pub enum RowRenderMechanism {
     #[default]
     VariableList,
     /// More performance oriented, but all rows are same height
+    #[allow(dead_code)] // Will be used when settings ui is added
     UniformList,
 }
 

@@ -26,7 +26,7 @@ pub fn sort_data_rows(
         let row_a = &content_rows[*a];
         let row_b = &content_rows[*b];
 
-        // TODO: Hanle nulls
+        // TODO: Decide how to handle nulls (on top or on bottom)
         let val_a = row_a
             .get(sorting.col_idx)
             .and_then(|tc| tc.display_value())
@@ -38,14 +38,7 @@ pub fn sort_data_rows(
             .map(|tc| tc.as_str())
             .unwrap_or("");
 
-        // Try numeric comparison first, fall back to string comparison
-        let cmp = match (val_a.parse::<f64>(), val_b.parse::<f64>()) {
-            (Ok(num_a), Ok(num_b)) => num_a
-                .partial_cmp(&num_b)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            _ => val_a.cmp(val_b),
-        };
-
+        let cmp = val_a.cmp(val_b);
         match sorting.direction {
             SortDirection::Asc => cmp,
             SortDirection::Desc => cmp.reverse(),

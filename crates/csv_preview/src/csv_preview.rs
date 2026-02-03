@@ -26,8 +26,6 @@ pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,
 
     pub(crate) focus_handle: FocusHandle,
-    /// Horizontal table scroll handle. Stinks. Won't work normally unless table column resizing is rewritten
-    pub(crate) scroll_handle: ScrollHandle,
     active_editor_state: Option<EditorState>,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
@@ -126,7 +124,6 @@ impl CsvPreviewView {
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
-                scroll_handle: ScrollHandle::default(),
                 engine: TableDataEngine::default(),
             };
 

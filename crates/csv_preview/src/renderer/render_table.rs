@@ -130,7 +130,9 @@ impl CsvPreviewView {
             .into_any_element()
     }
 
-    /// Render a single row for variable_row_height_list (supports variable heights)
+    /// Render a single table row
+    ///
+    /// Used both by UniformList and VariableRowHeightList
     fn render_single_table_row(
         this: &CsvPreviewView,
         cols: usize,
