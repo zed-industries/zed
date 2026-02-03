@@ -255,14 +255,6 @@ fn format_sweep_next_edit_prompt(
         }
     }
 
-    write!(
-        prompt,
-        "{FILE_SEPARATOR}{}\n",
-        inputs.cursor_path.to_string_lossy()
-    )
-    .ok();
-    write!(prompt, "{}\n", inputs.cursor_excerpt).ok();
-
     for event in events {
         match event.as_ref() {
             Event::BufferChange {
@@ -300,10 +292,9 @@ fn format_sweep_next_edit_prompt(
 
     let (full_original, original_cursor_line) =
         compute_original_content_with_cursor(inputs, current_cursor_line);
-    let original_content = extract_lines_around(full_original.as_str(), original_cursor_line);
     write!(
         prompt,
-        "{FILE_SEPARATOR}original/{file_path}\n{original_content}\n"
+        "{FILE_SEPARATOR}original/{file_path}\n{full_original}\n"
     )
     .ok();
 
