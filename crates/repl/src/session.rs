@@ -95,9 +95,14 @@ impl EditorBlock {
                 });
             }
 
-            let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
+            // Re-read snapshot after potential buffer edit and create a fresh anchor for
+            // block placement. Using anchor_before (Bias::Left) ensures the anchor stays
+            // at the end of the code line regardless of whether we inserted a newline.
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let block_placement_anchor = buffer_snapshot.anchor_before(end_point);
+            let invalidation_anchor = buffer_snapshot.anchor_before(next_row_start);
             let block = BlockProperties {
-                placement: BlockPlacement::Below(code_range.end),
+                placement: BlockPlacement::Below(block_placement_anchor),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: Some(1),
                 style: BlockStyle::Sticky,
