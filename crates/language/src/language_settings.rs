@@ -690,7 +690,7 @@ impl settings::Settings for AllLanguageSettings {
         };
         let ollama = edit_predictions.ollama.unwrap();
         let ollama_settings = OllamaSettings {
-            model: ollama.model,
+            model: ollama.model.map(|m| m.0),
             api_url: ollama.api_url,
         };
 

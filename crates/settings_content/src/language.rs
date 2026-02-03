@@ -271,13 +271,37 @@ pub struct SweepSettingsContent {
     pub privacy_mode: Option<bool>,
 }
 
+/// Ollama model name for edit predictions.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct OllamaModelName(pub String);
+
+impl AsRef<str> for OllamaModelName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for OllamaModelName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<OllamaModelName> for String {
+    fn from(value: OllamaModelName) -> Self {
+        value.0
+    }
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct OllamaEditPredictionSettingsContent {
     /// Model to use for completions.
     ///
     /// Default: none
-    pub model: Option<String>,
+    pub model: Option<OllamaModelName>,
     /// Api URL to use for completions.
     ///
     /// Default: "http://localhost:11434"
