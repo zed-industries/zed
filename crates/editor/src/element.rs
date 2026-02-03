@@ -4006,7 +4006,7 @@ impl EditorElement {
                 .w_full()
                 .h((*height as f32) * line_height)
                 .bg(pattern_slash(
-                    cx.theme().colors().border.opacity(0.5),
+                    cx.theme().colors().panel_background,
                     8.0,
                     8.0,
                 ))
