@@ -1,6 +1,6 @@
 use crate::{
     EditPredictionId, EditPredictionModelInput, cursor_excerpt, prediction::EditPredictionResult,
-    zeta1::compute_edits,
+    udiff::DiffLine, zeta1::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
@@ -18,6 +18,7 @@ const MAX_REWRITE_TOKENS: usize = 150;
 const MAX_CONTEXT_TOKENS: usize = 350;
 
 const FILE_SEPARATOR: &str = "<|file_sep|>";
+const SWEEP_CONTEXT_LINES: usize = 10;
 
 pub struct Ollama {
     api_url: String,
@@ -272,14 +273,19 @@ fn format_sweep_next_edit_prompt(
 
     let file_path = path_to_unix_string(&inputs.cursor_path);
 
-    let original_content = compute_original_content(inputs);
+    let current_cursor_line =
+        get_cursor_line(&inputs.cursor_excerpt, inputs.cursor_offset_in_excerpt);
+
+    let (full_original, original_cursor_line) =
+        compute_original_content_with_cursor(inputs, current_cursor_line);
+    let original_content = extract_lines_around(full_original.as_str(), original_cursor_line);
     write!(
         prompt,
         "{FILE_SEPARATOR}original/{file_path}\n{original_content}\n"
     )
     .ok();
 
-    let current_content: &str = &inputs.cursor_excerpt;
+    let current_content = extract_lines_around(&inputs.cursor_excerpt, current_cursor_line);
     write!(
         prompt,
         "{FILE_SEPARATOR}current/{file_path}\n{current_content}\n"
@@ -294,7 +300,58 @@ fn format_sweep_next_edit_prompt(
     prompt
 }
 
-fn compute_original_content(inputs: &ZetaPromptInput) -> String {
+fn get_cursor_line(content: &str, cursor_offset: usize) -> usize {
+    content[..cursor_offset.min(content.len())]
+        .matches('\n')
+        .count()
+}
+
+fn extract_lines_around(content: &str, cursor_line: usize) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let start = cursor_line.saturating_sub(SWEEP_CONTEXT_LINES);
+    let end = (cursor_line + SWEEP_CONTEXT_LINES + 1).min(lines.len());
+    lines[start..end].join("\n")
+}
+
+fn compute_original_cursor_line(diff: &str, current_cursor_line: usize) -> usize {
+    let mut current_line: i64 = -1;
+    let mut original_line: i64 = -1;
+
+    for line in diff.lines() {
+        match DiffLine::parse(line) {
+            DiffLine::HunkHeader(Some(loc)) => {
+                original_line = loc.start_line_old as i64;
+                current_line = loc.start_line_new as i64;
+            }
+            DiffLine::Context(_) => {
+                current_line += 1;
+                original_line += 1;
+                if current_line as usize == current_cursor_line {
+                    return original_line as usize;
+                }
+            }
+            DiffLine::Addition(_) => {
+                current_line += 1;
+                if current_line as usize == current_cursor_line {
+                    return original_line.max(0) as usize;
+                }
+            }
+            DiffLine::Deletion(_) => {
+                original_line += 1;
+            }
+            _ => {}
+        }
+    }
+
+    // Cursor is outside all hunks - apply accumulated offset
+    let offset = current_line - original_line;
+    (current_cursor_line as i64 - offset).max(0) as usize
+}
+
+fn compute_original_content_with_cursor(
+    inputs: &ZetaPromptInput,
+    current_cursor_line: usize,
+) -> (String, usize) {
     let current_content: &str = &inputs.cursor_excerpt;
 
     for event in inputs.events.iter().rev() {
@@ -302,14 +359,16 @@ fn compute_original_content(inputs: &ZetaPromptInput) -> String {
             Event::BufferChange { path, diff, .. } => {
                 if path.as_ref() == inputs.cursor_path.as_ref() && !diff.is_empty() {
                     if let Some(original) = extract_original_from_diff(diff, current_content) {
-                        return original;
+                        let original_cursor_line =
+                            compute_original_cursor_line(diff, current_cursor_line);
+                        return (original, original_cursor_line);
                     }
                 }
             }
         }
     }
 
-    current_content.to_string()
+    (current_content.to_string(), current_cursor_line)
 }
 
 fn extract_original_from_diff(diff: &str, current_content: &str) -> Option<String> {
