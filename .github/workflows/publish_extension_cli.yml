@@ -65,10 +65,10 @@ jobs:
     - name: publish_extension_cli::create_pull_request_zed
       uses: peter-evans/create-pull-request@v7
       with:
-        title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
+        title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         body: |
           This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
-        commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
+        commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         branch: update-extension-cli-sha
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main

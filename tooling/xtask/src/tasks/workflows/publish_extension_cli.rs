@@ -87,7 +87,10 @@ fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
 }
 
 fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput) -> Step<Use> {
-    let title = format!("Bump extension CLI version to `{}`", short_sha);
+    let title = format!(
+        "extension_ci: Bump extension CLI version to `{}`",
+        short_sha
+    );
 
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
