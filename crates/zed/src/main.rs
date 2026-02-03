@@ -1097,18 +1097,58 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if let Some(connection_options) = request.remote_connection {
-        cx.spawn(async move |cx| {
-            let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
-            open_remote_project(
-                connection_options,
-                paths,
-                app_state,
-                workspace::OpenOptions::default(),
-                cx,
-            )
-            .await
-        })
-        .detach_and_log_err(cx);
+        let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
+
+        let existing_window = cx.windows().into_iter().find_map(|window| {
+            let handle = window.downcast::<Workspace>()?;
+            handle
+                .read(cx)
+                .ok()?
+                .project()
+                .read(cx)
+                .remote_connection_options(cx)?
+                .same_host(&connection_options)
+                .then_some(handle)
+        });
+
+        if let Some(window) = existing_window {
+            cx.spawn(async move |cx| {
+                window
+                    .update(cx, |workspace, window, cx| {
+                        window.activate_window();
+                        workspace.open_paths(
+                            paths,
+                            workspace::OpenOptions {
+                                visible: Some(workspace::OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .for_each(|result| {
+                        result.log_err();
+                    });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        } else {
+            cx.spawn(async move |cx| {
+                open_remote_project(
+                    connection_options,
+                    paths,
+                    app_state,
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+                .await
+            })
+            .detach_and_log_err(cx);
+        }
         return;
     }
 

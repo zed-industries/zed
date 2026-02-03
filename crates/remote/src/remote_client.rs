@@ -1275,6 +1275,21 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
     }
+
+    pub fn same_host(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RemoteConnectionOptions::Ssh(a), RemoteConnectionOptions::Ssh(b)) => {
+                a.host == b.host && a.username == b.username && a.port == b.port
+            }
+            (RemoteConnectionOptions::Wsl(a), RemoteConnectionOptions::Wsl(b)) => a == b,
+            (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
+                a.container_id == b.container_id
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => a.id == b.id,
+            _ => false,
+        }
+    }
 }
 
 impl From<SshConnectionOptions> for RemoteConnectionOptions {
