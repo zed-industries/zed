@@ -241,10 +241,10 @@ impl Element for AnyView {
 }
 
 impl<V: 'static + Render> IntoElement for Entity<V> {
-    type Element = AnyElement;
+    type Element = AnyView;
 
     fn into_element(self) -> Self::Element {
-        self.into_any_element()
+        self.into()
     }
 }
 
