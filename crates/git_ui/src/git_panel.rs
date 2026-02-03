@@ -7123,7 +7123,7 @@ mod tests {
             &[("new.txt", FileStatus::Untracked)],
         );
 
-        cx.update(|_window, cx| {
+        cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.git_panel.get_or_insert_default().untracked_changes =
@@ -7177,7 +7177,7 @@ mod tests {
             &[("new.txt", FileStatus::Untracked)],
         );
 
-        cx.update(|_window, cx| {
+        cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.git_panel.get_or_insert_default().untracked_changes =
@@ -7224,7 +7224,7 @@ mod tests {
             &[("new.txt", FileStatus::Untracked)],
         );
 
-        cx.update(|_window, cx| {
+        cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.git_panel.get_or_insert_default().untracked_changes =
@@ -7270,7 +7270,7 @@ mod tests {
             &[("new.txt", FileStatus::Untracked)],
         );
 
-        cx.update(|_window, cx| {
+        cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.git_panel.get_or_insert_default().untracked_changes =
