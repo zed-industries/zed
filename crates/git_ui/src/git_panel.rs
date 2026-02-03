@@ -4223,18 +4223,24 @@ impl GitPanel {
 
         let (staged_count, total_count) = self.stage_scope_counts();
         let is_fully_staged = total_count > 0 && staged_count == total_count;
-        let stage_tooltip = if matches!(
+        let stage_all_includes_untracked = matches!(
             self.untracked_changes,
             GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
-        ) {
-            "git add --all"
+        );
+        let (stage_label, stage_tooltip) = if stage_all_includes_untracked {
+            ("Stage All", "git add --all")
         } else {
-            "git add -u"
+            ("Stage Tracked", "git add -u")
         };
         let (text, action, stage, tooltip) = if is_fully_staged {
             ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
         } else {
-            ("Stage All", StageAll.boxed_clone(), true, stage_tooltip)
+            (
+                stage_label,
+                StageAll.boxed_clone(),
+                true,
+                stage_tooltip,
+            )
         };
 
         let change_string = match self.changes_count {
