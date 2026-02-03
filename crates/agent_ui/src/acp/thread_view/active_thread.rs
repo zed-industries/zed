@@ -4,6 +4,7 @@ use super::*;
 
 pub struct AcpThreadView {
     pub id: acp::SessionId,
+    pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
     pub server_view: WeakEntity<AcpServerView>,
     pub agent_name: SharedString,
@@ -83,6 +84,7 @@ pub struct TurnFields {
 impl AcpThreadView {
     pub fn new(
         thread: Entity<AcpThread>,
+        login: Option<task::SpawnInTerminal>,
         server_view: WeakEntity<AcpServerView>,
         agent_name: SharedString,
         agent_display_name: SharedString,
@@ -116,7 +118,7 @@ impl AcpThreadView {
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new_with_cache(
                 workspace.clone(),
-                project,
+                project.clone(),
                 thread_store,
                 history,
                 prompt_store,
@@ -151,8 +153,8 @@ impl AcpThreadView {
         });
 
         subscriptions.push(cx.subscribe_in(
-            window,
             &entry_view_state,
+            window,
             Self::handle_entry_view_event,
         ));
 
@@ -165,6 +167,7 @@ impl AcpThreadView {
         Self {
             id,
             thread,
+            login,
             server_view,
             agent_name,
             workspace,
@@ -429,7 +432,7 @@ impl AcpThreadView {
         let text = text.trim();
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty() || login.is_some();
+            let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
@@ -440,14 +443,18 @@ impl AcpThreadView {
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
 
-                window.defer(cx, |window, cx| {
-                    AcpServerView::handle_auth_required(
-                        self.server_view.clone(),
-                        AuthRequired::new(),
-                        self.agent_name,
-                        window,
-                        cx,
-                    );
+                window.defer(cx, {
+                    let agent_name = self.agent_name.clone();
+                    let server_view = self.server_view.clone();
+                    move |window, cx| {
+                        AcpServerView::handle_auth_required(
+                            server_view.clone(),
+                            AuthRequired::new(),
+                            agent_name,
+                            window,
+                            cx,
+                        );
+                    }
                 });
                 cx.notify();
                 return;
@@ -495,7 +502,7 @@ impl AcpThreadView {
                 .ok();
         }
 
-        let contents_task = cx.spawn_in(window, async move |this, cx| {
+        let contents_task = cx.spawn_in(window, async move |_this, cx| {
             let (contents, tracked_buffers) = contents.await?;
 
             if contents.is_empty() {
@@ -605,7 +612,7 @@ impl AcpThreadView {
         cx.spawn(async move |this, cx| {
             if let Err(err) = task.await {
                 this.update(cx, |this, cx| {
-                    this.handle_thread_error(err, cx);
+                    this.handle_any_thread_error(err, cx);
                 })
                 .ok();
             } else {
@@ -667,8 +674,12 @@ impl AcpThreadView {
         .detach();
     }
 
-    fn handle_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+    pub(crate) fn handle_any_thread_error(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
         let error = ThreadError::from_err(error, &self.agent_name);
+        self.handle_thread_error(error, cx);
+    }
+
+    pub(crate) fn handle_thread_error(&mut self, error: ThreadError, cx: &mut Context<Self>) {
         self.emit_thread_error_telemetry(&error, cx);
         self.thread_error = Some(error);
         cx.notify();
@@ -736,7 +747,7 @@ impl AcpThreadView {
 
             this.update(cx, |this, cx| {
                 if let Err(err) = result {
-                    this.handle_thread_error(err, cx);
+                    this.handle_any_thread_error(err, cx);
                 }
             })
         })
@@ -1093,7 +1104,7 @@ impl AcpThreadView {
 
     // edits
 
-    pub fn keep_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
@@ -1408,6 +1419,11 @@ impl AcpThreadView {
                     }
                 }))),
         )
+    }
+
+    fn clear_command_load_errors(&mut self, cx: &mut Context<Self>) {
+        self.command_load_errors_dismissed = true;
+        cx.notify();
     }
 
     pub fn render_thread_retry_status_callout(&self) -> Option<Callout> {
@@ -1798,7 +1814,7 @@ impl AcpThreadView {
     fn render_message_queue_summary(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> impl IntoElement {
         let queue_count = self.local_queued_messages.len();
         let title: SharedString = if queue_count == 1 {
@@ -2142,7 +2158,11 @@ impl AcpThreadView {
             )
     }
 
-    fn render_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_message_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
@@ -2216,18 +2236,15 @@ impl AcpThreadView {
                         h_flex()
                             .gap_1()
                             .children(self.render_token_usage(cx))
-                            .when_some(self.as_active_thread(), |this, active| {
-                                let active_read = active.read(cx);
-                                this.children(active_read.profile_selector.clone())
-                                    .map(|this| {
-                                        // Either config_options_view OR (mode_selector + model_selector)
-                                        match active_read.config_options_view.clone() {
-                                            Some(config_view) => this.child(config_view),
-                                            None => this
-                                                .children(active_read.mode_selector.clone())
-                                                .children(active_read.model_selector.clone()),
-                                        }
-                                    })
+                            .children(self.profile_selector.clone())
+                            .map(|this| {
+                                // Either config_options_view OR (mode_selector + model_selector)
+                                match self.config_options_view.clone() {
+                                    Some(config_view) => this.child(config_view),
+                                    None => this
+                                        .children(self.mode_selector.clone())
+                                        .children(self.model_selector.clone()),
+                                }
                             })
                             .child(self.render_send_button(cx)),
                     ),
@@ -6390,7 +6407,7 @@ impl AcpThreadView {
     }
 }
 
-fn open_link(
+pub(crate) fn open_link(
     url: SharedString,
     workspace: &WeakEntity<Workspace>,
     window: &mut Window,

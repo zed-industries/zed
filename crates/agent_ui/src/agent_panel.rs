@@ -925,8 +925,7 @@ impl AgentPanel {
         };
 
         active_thread.update(cx, |active_thread, cx| {
-            let message_editor = active_thread.message_editor.clone();
-            active_thread.expand_message_editor(message_editor, cx);
+            active_thread.expand_message_editor(&ExpandMessageEditor, window, cx);
             active_thread.focus_handle(cx).focus(window, cx);
         })
     }
@@ -1197,7 +1196,9 @@ impl AgentPanel {
             && let Some(active_thread) = thread_view.read(cx).as_active_thread()
         {
             active_thread.update(cx, |thread, cx| {
-                thread.open_thread_as_markdown(workspace, window, cx);
+                thread
+                    .open_thread_as_markdown(workspace, window, cx)
+                    .detach_and_log_err(cx);
             });
         }
     }
