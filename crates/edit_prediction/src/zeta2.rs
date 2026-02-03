@@ -1,5 +1,5 @@
 use crate::prediction::EditPredictionResult;
-use crate::zeta1::compute_edits;
+use crate::zeta1::compute_edits_and_cursor_position;
 use crate::{
     CurrentEditPrediction, DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
@@ -8,9 +8,8 @@ use crate::{
 use anyhow::{Result, anyhow};
 use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
-use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, Task, prelude::*};
-use language::{OffsetRangeExt as _, ToOffset as _, ToPoint, text_diff};
+use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
 use release_channel::AppVersion;
 
 use std::env;
@@ -173,22 +172,13 @@ pub fn request_prediction_with_zeta2(
                 old_text.push('\n');
             }
 
-            let edits = compute_edits(
-                old_text.clone(),
+            let (edits, cursor_position) = compute_edits_and_cursor_position(
+                old_text,
                 &output_text,
                 editable_offset_range.start,
+                cursor_offset_in_output,
                 &snapshot,
             );
-
-            let cursor_position = cursor_offset_in_output.map(|cursor_offset| {
-                compute_predicted_cursor_position(
-                    &old_text,
-                    &output_text,
-                    cursor_offset,
-                    editable_offset_range.start,
-                    &snapshot,
-                )
-            });
 
             anyhow::Ok((
                 Some((
@@ -244,65 +234,6 @@ pub fn request_prediction_with_zeta2(
             .await,
         ))
     })
-}
-
-/// Computes a `PredictedCursorPosition` from a cursor offset in the output text.
-///
-/// The cursor offset is relative to `new_text`. We need to determine if the cursor
-/// falls inside an edit's inserted text or in unchanged text:
-/// - If inside an edit: anchor = start of edit range, offset = position within insertion
-/// - If in unchanged text: anchor = corresponding position in old buffer, offset = 0
-fn compute_predicted_cursor_position(
-    old_text: &str,
-    new_text: &str,
-    cursor_offset_in_new: usize,
-    editable_region_start: usize,
-    snapshot: &language::BufferSnapshot,
-) -> PredictedCursorPosition {
-    let diffs = text_diff(old_text, new_text);
-
-    // Track position in both old and new text as we walk through diffs
-    let mut old_pos = 0usize;
-    let mut new_pos = 0usize;
-
-    for (old_range, new_text_chunk) in &diffs {
-        // Text before this diff is unchanged
-        let unchanged_len = old_range.start - old_pos;
-        let unchanged_end_in_new = new_pos + unchanged_len;
-
-        if cursor_offset_in_new < unchanged_end_in_new {
-            // Cursor is in unchanged text before this diff
-            let offset_in_unchanged = cursor_offset_in_new - new_pos;
-            let buffer_offset = editable_region_start + old_pos + offset_in_unchanged;
-            return PredictedCursorPosition::at_anchor(snapshot.anchor_after(buffer_offset));
-        }
-
-        // Move past the unchanged portion in new_text coordinates
-        new_pos = unchanged_end_in_new;
-
-        // Check if cursor is within this edit's new text
-        let edit_new_text_end = new_pos + new_text_chunk.len();
-        if cursor_offset_in_new < edit_new_text_end {
-            // Cursor is inside this edit's inserted text.
-            // Use anchor_before (left bias) so the anchor stays at the insertion point
-            // rather than moving past the inserted text.
-            let offset_within_insertion = cursor_offset_in_new - new_pos;
-            let buffer_offset = editable_region_start + old_range.start;
-            return PredictedCursorPosition::new(
-                snapshot.anchor_before(buffer_offset),
-                offset_within_insertion,
-            );
-        }
-
-        // Move past this edit
-        old_pos = old_range.end;
-        new_pos = edit_new_text_end;
-    }
-
-    // Cursor is in unchanged text after all diffs
-    let offset_in_unchanged = cursor_offset_in_new - new_pos;
-    let buffer_offset = (editable_region_start + old_pos + offset_in_unchanged).min(snapshot.len());
-    PredictedCursorPosition::at_anchor(snapshot.anchor_after(buffer_offset))
 }
 
 pub fn zeta2_prompt_input(

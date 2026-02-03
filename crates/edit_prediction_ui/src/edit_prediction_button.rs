@@ -25,10 +25,7 @@ use language::{
 use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
-    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
-    update_settings_file,
+    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
 };
 use std::{
     sync::{Arc, LazyLock},
@@ -306,7 +303,10 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            provider @ (EditPredictionProvider::Experimental(_)
+            | EditPredictionProvider::Zed
+            | EditPredictionProvider::Sweep
+            | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let icons = self
                     .edit_prediction_provider
@@ -321,9 +321,7 @@ impl Render for EditPredictionButton {
                 let mut missing_token = false;
 
                 match provider {
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
+                    EditPredictionProvider::Sweep => {
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                         ep_icon = if enabled { icons.base } else { icons.disabled };
@@ -333,9 +331,7 @@ impl Render for EditPredictionButton {
                             "Powered by Sweep"
                         };
                     }
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
+                    EditPredictionProvider::Mercury => {
                         ep_icon = if enabled { icons.base } else { icons.disabled };
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
@@ -1286,9 +1282,9 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert_default()
-            .edit_prediction_provider = Some(provider);
+            .provider = Some(provider);
     });
 }
 
@@ -1304,10 +1300,8 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     }
 
     if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::get_or_init(app_state, cx)
-            .0
-            .read(cx)
-            .is_authenticated()
+        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
     {
         providers.push(EditPredictionProvider::Copilot);
     };
@@ -1329,9 +1323,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
             .read(cx)
             .has_key()
     {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
+        providers.push(EditPredictionProvider::Sweep);
     }
 
     if cx.has_flag::<MercuryFeatureFlag>()
@@ -1339,9 +1331,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
             .read(cx)
             .has_key()
     {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
+        providers.push(EditPredictionProvider::Mercury);
     }
 
     providers
@@ -1371,9 +1361,9 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert(Default::default())
-            .edit_prediction_provider = Some(EditPredictionProvider::None);
+            .provider = Some(EditPredictionProvider::None);
     });
 }
 
