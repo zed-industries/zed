@@ -67,9 +67,20 @@ pub(crate) fn build_nix(
         job = job.needs(deps.iter().map(|d| d.name.clone()).collect::<Vec<String>>());
     }
 
+    // On Linux, cache Nix before installing it (uses bind-mounts).
+    // On macOS, we need to install Nix first, then cache specific paths afterward,
+    // because /nix is on a read-only file system and must be set up by the Nix installer.
+    job = match platform {
+        Platform::Linux => job
+            .add_step(steps::cache_nix_dependencies_namespace())
+            .add_step(install_nix()),
+        Platform::Mac => job
+            .add_step(install_nix())
+            .add_step(steps::cache_nix_dependencies_namespace_macos()),
+        Platform::Windows => unimplemented!(),
+    };
+
     job = job
-        .add_step(steps::cache_nix_dependencies_namespace())
-        .add_step(install_nix())
         .add_step(cachix_action(cachix_filter))
         .add_step(build(&flake_output));
 

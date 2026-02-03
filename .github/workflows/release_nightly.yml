@@ -421,14 +421,17 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_nix_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: nix
     - name: nix_build::build_nix::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
         github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: steps::cache_nix_dependencies_namespace_macos
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        path: |-
+          /nix/store
+          /nix/var
+          ~/.cache/nix
     - name: nix_build::build_nix::cachix_action
       uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
       with:
