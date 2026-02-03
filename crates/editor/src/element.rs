@@ -6979,6 +6979,14 @@ impl EditorElement {
         };
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
         
+        // get active scope for active scope marker painting
+        let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+        let active_scope = if scrollbar_settings.active_scope_markers {
+            self.editor.update(cx, |editor, cx| editor.current_scope_boundary(window, cx))
+        } else {
+            None
+        };
+        
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
             if scrollbars_layout.visible {
@@ -7019,6 +7027,66 @@ impl EditorElement {
                             let mut marker = marker.clone();
                             marker.bounds.origin += hitbox.origin;
                             window.paint_quad(marker);
+                        }
+                    
+                        // active scope marker/indicator painting logic
+                        if let Some((start_row, end_row)) = active_scope {
+                            let snapshot = &layout.position_map.snapshot;
+                            let display_snapshot = &snapshot.display_snapshot;
+                            
+                            let start_display_row = snapshot
+                                .buffer_snapshot()
+                                .anchor_before(Point::new(start_row, 0))
+                                .to_display_point(display_snapshot)
+                                .row();
+                            let end_display_row = snapshot
+                                .buffer_snapshot()
+                                .anchor_before(Point::new(end_row, 0))
+                                .to_display_point(display_snapshot)
+                                .row();
+                            
+                            let color = cx.theme().colors().scrollbar_active_scope_marker;
+                            
+                            // Create colored ranges for start and end rows
+                            let active_scope_ranges = vec![
+                                ColoredRange {
+                                    start: start_display_row,
+                                    end: start_display_row,
+                                    color,
+                                },
+                                ColoredRange {
+                                    start: end_display_row,
+                                    end: end_display_row,
+                                    color,
+                                },
+                            ];
+                            
+                            // Use marker_quads_for_ranges to get correctly positioned Y coordinates
+                            let active_scope_markers = scrollbar_layout.marker_quads_for_ranges(
+                                active_scope_ranges.into_iter(),
+                                None
+                            );
+                            
+                            for marker in active_scope_markers {
+                                // get the center of the marker
+                                let global_y_origin = marker.bounds.origin.y + hitbox.origin.y;
+                                let center_y = global_y_origin + (marker.bounds.size.height / 2.0);
+                            
+                                // define marker size(square) and padding
+                                let marker_size = px(4.0);
+                                let right_padding = px(2.0);
+                                
+                                //move marker to right
+                                let marker_x = hitbox.bounds.right() - marker_size - right_padding;
+                            
+                                window.paint_quad(gpui::fill(
+                                    Bounds::new(
+                                        point(marker_x, center_y - (marker_size / 2.0)),
+                                        size(marker_size, marker_size),
+                                    ),
+                                    color,
+                                ));
+                            }
                         }
                     }
 
@@ -7239,13 +7307,6 @@ impl EditorElement {
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-            
-            // Get active scope for active scope marker painting
-            let active_scope = if scrollbar_settings.active_scope_markers {
-                editor.current_scope_boundary(window, cx)
-            } else {
-                None
-            };
     
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
@@ -7393,49 +7454,6 @@ impl EditorElement {
                                         .marker_quads_for_ranges(marker_row_ranges, Some(2)),
                                 );
                             }
-    
-                            // active scope marker/indicator painting logic
-                            if let Some((start_row, end_row)) = active_scope {
-                                let display_snapshot = &snapshot.display_snapshot;
-                                
-                                let start_display_row = snapshot
-                                    .buffer_snapshot()
-                                    .anchor_before(Point::new(start_row, 0))
-                                    .to_display_point(display_snapshot)
-                                    .row();
-                                let end_display_row = snapshot
-                                    .buffer_snapshot()
-                                    .anchor_before(Point::new(end_row, 0))
-                                    .to_display_point(display_snapshot)
-                                    .row();
-                                
-                                // use text_unit_size to map rows to pixels
-                                let text_unit_size = scrollbar_layout.text_unit_size;
-                                
-                                let start_y = start_display_row.as_f64() as f32 * text_unit_size;
-                                let end_y = end_display_row.as_f64() as f32 * text_unit_size;
-                                
-                                let track_bounds = scrollbar_layout.hitbox.bounds;
-                                // size
-                                let marker_w = px(4.0);
-                                let marker_h = px(4.0);
-                                // position
-                                let marker_x = track_bounds.right() - marker_w - px(2.0);
-                                //color 
-                                let color = gpui::white().opacity(0.6);
-                            
-                                for y in [start_y, end_y] {
-                                    let marker_y = track_bounds.top() + y;
-                                    marker_quads.push(gpui::fill(
-                                        Bounds::new(
-                                            point(marker_x, (marker_y - marker_h / 2.0).round()),
-                                            size(marker_w, marker_h),
-                                        ),
-                                        color,
-                                    ));
-                                }
-                            }
-    
                             Arc::from(marker_quads)
                         })
                         .await;

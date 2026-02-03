@@ -526,6 +526,8 @@
       // When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
       "vertical": true,
     },
+    // Whether to show active scope markers in the scrollbar.
+    "active_scope_markers": true,
   },
   // Minimap related settings
   "minimap": {

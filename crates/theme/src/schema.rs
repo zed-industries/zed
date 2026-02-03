@@ -504,6 +504,10 @@ pub fn theme_colors_refinement(
             .scrollbar_track_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        scrollbar_active_scope_marker: this
+            .scrollbar_active_scope_marker
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         minimap_thumb_background: this
             .minimap_thumb_background
             .as_ref()

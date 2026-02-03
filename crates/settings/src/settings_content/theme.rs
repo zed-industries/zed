@@ -679,6 +679,10 @@ pub struct ThemeColorsContent {
     /// The border color of the scrollbar track.
     #[serde(rename = "scrollbar.track.border")]
     pub scrollbar_track_border: Option<String>,
+    
+    /// The color of the active scope indicator.
+    #[serde(rename = "scrollbar.active_scope_marker")]
+    pub scrollbar_active_scope_marker: Option<String>,
 
     /// The color of the minimap thumb.
     #[serde(rename = "minimap.thumb.background")]
