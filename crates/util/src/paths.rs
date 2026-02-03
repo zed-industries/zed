@@ -362,7 +362,7 @@ impl PathStyle {
     }
 
     pub fn is_absolute(&self, path_like: &str) -> bool {
-        path_like.starts_with('/')
+        path_like.starts_with('/') || path_like.starts_with('~')
             || *self == PathStyle::Windows
                 && (path_like.starts_with('\\')
                     || path_like
@@ -474,7 +474,7 @@ impl Display for RemotePathBuf {
 }
 
 pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    path_like.starts_with('/')
+    path_like.starts_with('/') || path_like.starts_with('~')
         || path_style == PathStyle::Windows
             && (path_like.starts_with('\\')
                 || path_like

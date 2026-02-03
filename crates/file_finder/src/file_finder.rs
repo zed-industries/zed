@@ -39,7 +39,7 @@ use ui::{
 };
 use util::{
     ResultExt, maybe,
-    paths::{PathStyle, PathWithPosition},
+    paths::{PathStyle, PathWithPosition, is_absolute},
     post_inc,
     rel_path::RelPath,
 };
@@ -1424,9 +1424,11 @@ impl PickerDelegate for FileFinderDelegate {
                 path_position,
             };
 
+            let path_style = self.project.read(cx).path_style(cx);
+
             cx.spawn_in(window, async move |this, cx| {
                 let _ = maybe!(async move {
-                    let is_absolute_path = path.is_absolute();
+                    let is_absolute_path = is_absolute(path_str.unwrap_or(""), path_style);
                     let did_resolve_abs_path = is_absolute_path
                         && this
                             .update_in(cx, |this, window, cx| {
