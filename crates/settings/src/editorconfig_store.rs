@@ -345,9 +345,11 @@ impl EditorconfigStore {
         }
 
         for (directory_with_config, _, parsed_editorconfig) in self.internal_configs(for_worktree) {
+            if directory_with_config > for_path {
+                break;
+            }
             if !for_path.starts_with(directory_with_config) {
-                properties.use_fallbacks();
-                return Some(properties);
+                continue;
             }
             let parsed_editorconfig = parsed_editorconfig?;
             if parsed_editorconfig.is_root {
