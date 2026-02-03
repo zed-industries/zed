@@ -310,50 +310,50 @@ impl Editor {
                     group_lenses_by_row(individual_lenses, &snapshot)
                 });
 
-                if let Err(_) = editor
-                    .update(cx, |editor, cx| {
-                        if let Some(old_block_ids) =
-                            editor.code_lens_cache.get_block_ids(&buffer_id)
-                        {
-                            editor.remove_blocks(old_block_ids.iter().copied().collect(), None, cx);
-                        }
+                if let Err(_) = editor.update(cx, |editor, cx| {
+                    if let Some(old_block_ids) = editor.code_lens_cache.get_block_ids(&buffer_id) {
+                        editor.remove_blocks(old_block_ids.iter().copied().collect(), None, cx);
+                    }
 
-                        editor
-                            .code_lens_cache
-                            .set_lenses_for_buffer(buffer_id, lenses.clone());
+                    editor
+                        .code_lens_cache
+                        .set_lenses_for_buffer(buffer_id, lenses.clone());
 
-                        let editor_handle = cx.entity().downgrade();
+                    let editor_handle = cx.entity().downgrade();
 
-                        let blocks = lenses
-                            .into_iter()
-                            .map(|lens| {
-                                let position = lens.position;
-                                let render_fn = render_code_lens_line(lens, editor_handle.clone());
-                                BlockProperties {
-                                    placement: BlockPlacement::Above(position),
-                                    height: Some(1),
-                                    style: BlockStyle::Sticky,
-                                    render: std::sync::Arc::new(render_fn),
-                                    priority: 0,
-                                }
-                            })
-                            .collect::<Vec<_>>();
+                    let blocks = lenses
+                        .into_iter()
+                        .map(|lens| {
+                            let position = lens.position;
+                            let render_fn = render_code_lens_line(lens, editor_handle.clone());
+                            BlockProperties {
+                                placement: BlockPlacement::Above(position),
+                                height: Some(1),
+                                style: BlockStyle::Sticky,
+                                render: std::sync::Arc::new(render_fn),
+                                priority: 0,
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
-                        let block_ids = editor.insert_blocks(blocks, None, cx);
-                        editor.code_lens_cache.set_block_ids(buffer_id, block_ids);
-                        cx.notify();
-                    })
-                {
-                    editor.update(cx, |editor, _cx| {
-                        editor.code_lens_cache.remove_refresh_task(&buffer_id);
-                    }).ok();
+                    let block_ids = editor.insert_blocks(blocks, None, cx);
+                    editor.code_lens_cache.set_block_ids(buffer_id, block_ids);
+                    cx.notify();
+                }) {
+                    editor
+                        .update(cx, |editor, _cx| {
+                            editor.code_lens_cache.remove_refresh_task(&buffer_id);
+                        })
+                        .ok();
                     return;
                 }
             }
 
-            editor.update(cx, |editor, _cx| {
-                editor.code_lens_cache.remove_refresh_task(&buffer_id);
-            }).ok();
+            editor
+                .update(cx, |editor, _cx| {
+                    editor.code_lens_cache.remove_refresh_task(&buffer_id);
+                })
+                .ok();
         });
 
         self.code_lens_cache.set_refresh_task(buffer_id, task);

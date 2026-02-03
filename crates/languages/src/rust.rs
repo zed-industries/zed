@@ -613,11 +613,7 @@ impl LspAdapter for RustLspAdapter {
         let mut experimental = json!({
             "commands": {
                 "commands": [
-                    "rust-analyzer.runSingle",
-                    "rust-analyzer.debugSingle",
                     "rust-analyzer.showReferences",
-                    "rust-analyzer.gotoLocation",
-                    "rust-analyzer.triggerParameterHints"
                 ]
             }
         });
@@ -642,9 +638,6 @@ impl LspAdapter for RustLspAdapter {
         let lens_config = json!({
             "lens": {
                 "enable": true,
-                "forceCustomCommands": false,
-                "run": { "enable": true },
-                "debug": { "enable": true },
                 "implementations": { "enable": true },
                 "references": {
                     "adt": { "enable": true },

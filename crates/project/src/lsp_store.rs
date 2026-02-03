@@ -863,7 +863,7 @@ impl LocalLspStore {
                             new_scope_uri.insert(workspace_config);
                         }
 
-                        let result: Vec<_> = params
+                        Ok(params
                             .items
                             .into_iter()
                             .filter_map(|item| {
@@ -880,8 +880,7 @@ impl LocalLspStore {
                                     Some(workspace_config.clone())
                                 }
                             })
-                            .collect();
-                        Ok(result)
+                            .collect())
                     }
                 }
             })
