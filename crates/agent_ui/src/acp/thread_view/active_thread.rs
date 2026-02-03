@@ -924,7 +924,7 @@ impl AcpThreadView {
 
         workspace.update(cx, |workspace, cx| {
             let action_log_weak = action_log.downgrade();
-            let status_toast = StatusToast::new("Agent changes rejected", cx, move |this, _cx| {
+            let status_toast = StatusToast::new("Agent Changes Rejected", cx, move |this, _cx| {
                 this.icon(ToastIcon::new(IconName::Undo).color(Color::Muted))
                     .action("Undo", move |_window, cx| {
                         if let Some(action_log) = action_log_weak.upgrade() {

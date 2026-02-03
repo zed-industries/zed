@@ -1,6 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
-use action_log::ActionLogTelemetry;
+use action_log::{ActionLog, ActionLogTelemetry};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -12,6 +12,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use notifications::status_toast::{StatusToast, ToastIcon};
 
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
@@ -278,17 +279,41 @@ impl AgentDiffPane {
         });
     }
 
-    fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            reject_edits_in_ranges(
-                editor,
-                &snapshot,
-                &self.thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
-                window,
-                cx,
-            );
+    fn reject_all(&mut self, _: &RejectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let thread = &self.thread;
+        let telemetry = ActionLogTelemetry::from(thread.read(cx));
+        let action_log = thread.read(cx).action_log().clone();
+        let has_changes = action_log.read(cx).changed_buffers(cx).len() > 0;
+
+        action_log
+            .update(cx, |action_log, cx| {
+                action_log.reject_all_edits(Some(telemetry), cx)
+            })
+            .detach();
+
+        if has_changes {
+            self.show_undo_reject_toast(action_log, cx);
+        }
+    }
+
+    fn show_undo_reject_toast(&self, action_log: Entity<ActionLog>, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let action_log_weak = action_log.downgrade();
+            let status_toast = StatusToast::new("Agent Changes Rejected", cx, move |this, _cx| {
+                this.icon(ToastIcon::new(IconName::Undo).color(Color::Muted))
+                    .action("Undo", move |_window, cx| {
+                        if let Some(action_log) = action_log_weak.upgrade() {
+                            action_log
+                                .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
+                                .detach_and_log_err(cx);
+                        }
+                    })
+            });
+            workspace.toggle_status_toast(status_toast, cx);
         });
     }
 
@@ -1605,23 +1630,26 @@ impl AgentDiff {
     }
 
     fn reject_all(
-        editor: &Entity<Editor>,
+        _editor: &Entity<Editor>,
         thread: &Entity<AcpThread>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
-        editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            reject_edits_in_ranges(
-                editor,
-                &snapshot,
-                thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
-                window,
-                cx,
-            );
-        });
-        PostReviewState::AllReviewed
+        let telemetry = ActionLogTelemetry::from(thread.read(cx));
+        let action_log = thread.read(cx).action_log().clone();
+        let has_changes = action_log.read(cx).changed_buffers(cx).len() > 0;
+
+        action_log
+            .update(cx, |action_log, cx| {
+                action_log.reject_all_edits(Some(telemetry), cx)
+            })
+            .detach();
+
+        if has_changes {
+            PostReviewState::AllReviewedWithUndo(action_log)
+        } else {
+            PostReviewState::AllReviewed
+        }
     }
 
     fn keep(
@@ -1681,8 +1709,27 @@ impl AgentDiff {
 
         let thread = thread.upgrade()?;
 
-        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx)
-            && let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+        let review_result = review(&editor, &thread, window, cx);
+
+        if let PostReviewState::AllReviewedWithUndo(action_log) = &review_result {
+            let action_log_weak = action_log.downgrade();
+            let status_toast = StatusToast::new("Agent Changes Rejected", cx, move |this, _cx| {
+                this.icon(ToastIcon::new(IconName::Undo).color(Color::Muted))
+                    .action("Undo", move |_window, cx| {
+                        if let Some(action_log) = action_log_weak.upgrade() {
+                            action_log
+                                .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
+                                .detach_and_log_err(cx);
+                        }
+                    })
+            });
+            workspace.toggle_status_toast(status_toast, cx);
+        }
+
+        if matches!(
+            review_result,
+            PostReviewState::AllReviewed | PostReviewState::AllReviewedWithUndo(_)
+        ) && let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton()
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
@@ -1706,6 +1753,8 @@ impl AgentDiff {
 
 enum PostReviewState {
     AllReviewed,
+    /// All changes were reviewed/rejected, and undo is available
+    AllReviewedWithUndo(Entity<ActionLog>),
     Pending,
 }
 
