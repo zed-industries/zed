@@ -123,7 +123,9 @@ fn create_highlight_endpoints(
             return highlight_endpoints.into_iter().peekable();
         };
         for buffer_id in buffer.buffer_ids_for_range(range.clone()) {
-            let Some(semantic_token_highlights) = semantic_token_highlights.get(&buffer_id) else {
+            let Some((semantic_token_highlights, interner)) =
+                semantic_token_highlights.get(&buffer_id)
+            else {
                 continue;
             };
             let start_ix = semantic_token_highlights
@@ -148,7 +150,7 @@ fn create_highlight_endpoints(
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: start,
                     tag: HighlightKey::SemanticToken,
-                    style: Some(token.style),
+                    style: Some(interner[token.style]),
                 });
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: end,

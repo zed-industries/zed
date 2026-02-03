@@ -92,7 +92,7 @@ pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
@@ -118,7 +118,7 @@ use std::{
     fmt::Debug,
     iter,
     num::NonZeroU32,
-    ops::{Add, Bound, Range, Sub},
+    ops::{self, Add, Bound, Range, Sub},
     sync::Arc,
 };
 
@@ -175,7 +175,8 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type SemanticTokensHighlights = TreeMap<BufferId, Arc<[SemanticTokenHighlight]>>;
+type SemanticTokensHighlights =
+    TreeMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>;
 type InlayHighlights = TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
@@ -331,11 +332,33 @@ impl Companion {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct HighlightStyleInterner {
+    styles: IndexSet<HighlightStyle>,
+}
+
+impl HighlightStyleInterner {
+    pub(crate) fn intern(&mut self, style: HighlightStyle) -> HighlightStyleId {
+        HighlightStyleId(self.styles.insert_full(style).0 as u32)
+    }
+}
+
+impl ops::Index<HighlightStyleId> for HighlightStyleInterner {
+    type Output = HighlightStyle;
+
+    fn index(&self, index: HighlightStyleId) -> &Self::Output {
+        &self.styles[index.0 as usize]
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct HighlightStyleId(u32);
+
 /// A `SemanticToken`, but positioned to an offset in a buffer, and stylized.
 #[derive(Debug, Clone)]
 pub struct SemanticTokenHighlight {
     pub range: Range<DiffbaselessAnchor>,
-    pub style: HighlightStyle,
+    pub style: HighlightStyleId,
     pub token_type: u32,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
@@ -1298,7 +1321,12 @@ impl DisplayMap {
 
     pub fn all_semantic_token_highlights(
         &self,
-    ) -> impl Iterator<Item = (&BufferId, &Arc<[SemanticTokenHighlight]>)> {
+    ) -> impl Iterator<
+        Item = (
+            &BufferId,
+            &(Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>),
+        ),
+    > {
         self.semantic_token_highlights.iter()
     }
 

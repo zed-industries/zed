@@ -1,7 +1,7 @@
 use collections::FxHashMap;
 use editor::{
-    Anchor,  Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects,
-    ToPoint, scroll::Autoscroll, semantic_tokens::SemanticTokenStylizer,
+    Anchor, Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
+    scroll::Autoscroll, semantic_tokens::SemanticTokenStylizer,
 };
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
@@ -273,7 +273,7 @@ impl HighlightsTreeView {
             let server_caps = &lsp_store
                 .lsp_server_capabilities;
             let mut cache = FxHashMap::default();
-            for (_, tokens) in display_map.all_semantic_token_highlights() {
+            for (_, (tokens, interner)) in display_map.all_semantic_token_highlights() {
                 for token in tokens.iter() {
                     let range = token.range.start.into()..token.range.end.into();
                     let (range_display, sort_key) =
@@ -298,7 +298,7 @@ impl HighlightsTreeView {
                     HighlightEntry {
                         range,
                         range_display,
-                        style: token.style,
+                        style: interner[token.style],
                         category: HighlightCategory::SemanticToken {
                             token_type: stylizer.token_type(token.token_type).map(|s| SharedString::new(s)),
                             token_modifiers: stylizer.token_modifiers(token.token_modifiers).map(|s| SharedString::new(s)),

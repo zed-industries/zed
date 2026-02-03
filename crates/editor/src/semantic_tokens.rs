@@ -20,7 +20,10 @@ use text::BufferId;
 use theme::SyntaxTheme;
 use ui::ActiveTheme as _;
 
-use crate::{Editor, display_map::SemanticTokenHighlight};
+use crate::{
+    Editor,
+    display_map::{HighlightStyleInterner, SemanticTokenHighlight},
+};
 
 impl Editor {
     pub(crate) fn update_semantic_tokens(
@@ -149,6 +152,7 @@ impl Editor {
                     editor.display_map.update(cx, |display_map, cx| {
                         let lsp_store = project.read(cx).lsp_store().read(cx);
                         let mut token_highlights = Vec::new();
+                        let mut interner = HighlightStyleInterner::default();
                         for (server_id, server_tokens) in tokens {
                             let Some(legend) = lsp_store
                                 .lsp_server_capabilities
@@ -171,6 +175,7 @@ impl Editor {
                                 &stylizer,
                                 &all_excerpts,
                                 &multi_buffer_snapshot,
+                                &mut interner,
                                 cx,
                             ));
                         }
@@ -180,7 +185,7 @@ impl Editor {
                         });
                         display_map
                             .semantic_token_highlights
-                            .insert(buffer_id, Arc::from(token_highlights));
+                            .insert(buffer_id, (Arc::from(token_highlights), Arc::new(interner)));
                     });
                 }
 
@@ -190,13 +195,14 @@ impl Editor {
     }
 }
 
-fn buffer_into_editor_highlights<'a>(
+fn buffer_into_editor_highlights<'a, 'b>(
     buffer_tokens: &'a [BufferSemanticToken],
     stylizer: &'a SemanticTokenStylizer<'a>,
     all_excerpts: &'a [multi_buffer::ExcerptId],
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
+    interner: &'b mut HighlightStyleInterner,
     cx: &'a gpui::App,
-) -> impl Iterator<Item = SemanticTokenHighlight> + 'a {
+) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
     buffer_tokens.iter().filter_map(|token| {
         let multi_buffer_start = all_excerpts
             .iter()
@@ -211,13 +217,12 @@ fn buffer_into_editor_highlights<'a>(
             })
             .and_then(|anchor| anchor.try_into().ok())?;
 
+        let style =
+            stylizer.convert(cx.theme().syntax(), token.token_type, token.token_modifiers)?;
+        let style = interner.intern(style);
         Some(SemanticTokenHighlight {
             range: multi_buffer_start..multi_buffer_end,
-            style: stylizer.convert(
-                cx.theme().syntax(),
-                token.token_type,
-                token.token_modifiers,
-            )?,
+            style,
             token_type: token.token_type,
             token_modifiers: token.token_modifiers,
             server_id: stylizer.server_id,
@@ -1393,7 +1398,7 @@ mod tests {
                 .read(cx)
                 .semantic_token_highlights
                 .iter()
-                .flat_map(|(_, v)| v.iter())
+                .flat_map(|(_, (v, _))| v.iter())
                 .map(|highlights| highlights.range.to_offset(&multi_buffer_snapshot))
                 .collect()
         })
@@ -1570,8 +1575,9 @@ mod tests {
                 .read(cx)
                 .semantic_token_highlights
                 .iter()
-                .flat_map(|(_, v)| v.iter())
-                .map(|highlights| highlights.style)
+                .flat_map(|(_, (v, interner))| {
+                    v.iter().map(|highlights| interner[highlights.style])
+                })
                 .collect()
         })
     }
