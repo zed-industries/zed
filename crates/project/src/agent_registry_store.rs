@@ -117,13 +117,14 @@ impl AgentRegistryStore {
     /// are registry agents configured in settings, it will trigger a network fetch.
     /// Otherwise, call `refresh()` explicitly when you need fresh data
     /// (e.g., when opening the Agent Registry page).
-    pub fn init_global(cx: &mut App) -> Entity<Self> {
+    pub fn init_global(
+        cx: &mut App,
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Entity<Self> {
         if let Some(store) = Self::try_global(cx) {
             return store;
         }
-
-        let fs = <dyn Fs>::global(cx);
-        let http_client: Arc<dyn HttpClient> = cx.http_client();
 
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
@@ -133,13 +134,13 @@ impl AgentRegistryStore {
             .values()
             .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
 
-        if has_registry_agents_in_settings {
-            store.update(cx, |store, cx| {
-                if store.agents.is_empty() {
-                    store.refresh(cx);
-                }
-            });
-        }
+        // if has_registry_agents_in_settings {
+        store.update(cx, |store, cx| {
+            if store.agents.is_empty() {
+                store.refresh(cx);
+            }
+        });
+        // }
 
         store
     }
@@ -191,7 +192,10 @@ impl AgentRegistryStore {
                     build_registry_agents(fs.clone(), http_client, data.index, data.raw_body, true)
                         .await
                 }
-                Err(error) => Err(error),
+                Err(error) => {
+                    log::error!("fetching index {error:?}");
+                    Err(error)
+                }
             };
 
             this.update(cx, |this, cx| {
@@ -253,6 +257,7 @@ impl AgentRegistryStore {
         cx.spawn(async move |this, cx| -> Result<()> {
             let cache_path = registry_cache_path();
             if !fs.is_file(&cache_path).await {
+                log::error!("registry cache not found {cache_path:?}");
                 return Ok(());
             }
 
@@ -266,6 +271,7 @@ impl AgentRegistryStore {
             let agents = build_registry_agents(fs, http_client, index, bytes, false).await?;
 
             this.update(cx, |this, cx| {
+                log::error!("NEW AGENTS LOADED: {:?}", &agents);
                 this.agents = agents;
                 cx.notify();
             })?;
@@ -333,6 +339,8 @@ async fn build_registry_agents(
 
     let mut agents = Vec::new();
     for entry in index.agents {
+        log::error!("entry: {:?}", entry.name);
+
         let icon_path = resolve_icon_path(
             &entry,
             &icons_dir,

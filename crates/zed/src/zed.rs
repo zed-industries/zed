@@ -5030,7 +5030,11 @@ mod tests {
             git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            project::AgentRegistryStore::init_global(cx);
+            project::AgentRegistryStore::init_global(
+                cx,
+                app_state.fs.clone(),
+                app_state.http_client.clone(),
+            );
             agent_ui::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
