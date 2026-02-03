@@ -150,34 +150,16 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
                 let project = self.project.clone();
                 let file = self.file.clone();
-                let is_via_ssh = self
-                    .project
-                    .upgrade()
-                    .map(|p| p.read(cx).is_via_remote_server())
-                    .unwrap_or(false);
+                let language = self.language.clone();
                 div().child(
                     PopoverMenu::new("copilot")
                         .on_open({
                             let file = file.clone();
+                            let language = language.clone();
+                            let project = project.clone();
                             Rc::new(move |_window, cx| {
-                                let copilot_enabled_for_language =
-                                    language_settings::language_settings(None, file.as_ref(), cx)
-                                        .show_edit_predictions;
-                                let file_extension = file
-                                    .as_ref()
-                                    .and_then(|f| {
-                                        std::path::Path::new(f.file_name(cx))
-                                            .extension()
-                                            .and_then(|e| e.to_str())
-                                    })
-                                    .map(|s| s.to_string());
-                                telemetry::event!(
-                                    "Toolbar Menu Opened",
-                                    name = "Edit Predictions",
-                                    provider = "copilot",
-                                    file_extension,
-                                    copilot_enabled_for_language,
-                                    is_via_ssh,
+                                emit_edit_prediction_menu_opened(
+                                    "copilot", &file, &language, &project, cx,
                                 );
                             })
                         })
@@ -240,35 +222,22 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
                 let fs = self.fs.clone();
                 let file = self.file.clone();
-                let is_via_ssh = self
-                    .project
-                    .upgrade()
-                    .map(|p| p.read(cx).is_via_remote_server())
-                    .unwrap_or(false);
+                let language = self.language.clone();
+                let project = self.project.clone();
 
                 div().child(
                     PopoverMenu::new("supermaven")
                         .on_open({
                             let file = file.clone();
+                            let language = language.clone();
+                            let project = project.clone();
                             Rc::new(move |_window, cx| {
-                                let copilot_enabled_for_language =
-                                    language_settings::language_settings(None, file.as_ref(), cx)
-                                        .show_edit_predictions;
-                                let file_extension = file
-                                    .as_ref()
-                                    .and_then(|f| {
-                                        std::path::Path::new(f.file_name(cx))
-                                            .extension()
-                                            .and_then(|e| e.to_str())
-                                    })
-                                    .map(|s| s.to_string());
-                                telemetry::event!(
-                                    "Toolbar Menu Opened",
-                                    name = "Edit Predictions",
-                                    provider = "supermaven",
-                                    file_extension,
-                                    copilot_enabled_for_language,
-                                    is_via_ssh,
+                                emit_edit_prediction_menu_opened(
+                                    "supermaven",
+                                    &file,
+                                    &language,
+                                    &project,
+                                    cx,
                                 );
                             })
                         })
@@ -321,11 +290,8 @@ impl Render for EditPredictionButton {
                 let has_api_key = CodestralEditPredictionDelegate::has_api_key(cx);
                 let this = cx.weak_entity();
                 let file = self.file.clone();
-                let is_via_ssh = self
-                    .project
-                    .upgrade()
-                    .map(|p| p.read(cx).is_via_remote_server())
-                    .unwrap_or(false);
+                let language = self.language.clone();
+                let project = self.project.clone();
 
                 let tooltip_meta = if has_api_key {
                     "Powered by Codestral"
@@ -337,25 +303,15 @@ impl Render for EditPredictionButton {
                     PopoverMenu::new("codestral")
                         .on_open({
                             let file = file.clone();
+                            let language = language.clone();
+                            let project = project.clone();
                             Rc::new(move |_window, cx| {
-                                let copilot_enabled_for_language =
-                                    language_settings::language_settings(None, file.as_ref(), cx)
-                                        .show_edit_predictions;
-                                let file_extension = file
-                                    .as_ref()
-                                    .and_then(|f| {
-                                        std::path::Path::new(f.file_name(cx))
-                                            .extension()
-                                            .and_then(|e| e.to_str())
-                                    })
-                                    .map(|s| s.to_string());
-                                telemetry::event!(
-                                    "Toolbar Menu Opened",
-                                    name = "Edit Predictions",
-                                    provider = "codestral",
-                                    file_extension,
-                                    copilot_enabled_for_language,
-                                    is_via_ssh,
+                                emit_edit_prediction_menu_opened(
+                                    "codestral",
+                                    &file,
+                                    &language,
+                                    &project,
+                                    cx,
                                 );
                             })
                         })
@@ -453,15 +409,12 @@ impl Render for EditPredictionButton {
             | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
-                let is_via_ssh = self
-                    .project
-                    .upgrade()
-                    .map(|p| p.read(cx).is_via_remote_server())
-                    .unwrap_or(false);
-                let provider_name = match provider {
-                    EditPredictionProvider::Experimental(name) => name.to_string(),
-                    EditPredictionProvider::Zed => "zed".to_string(),
-                    _ => "unknown".to_string(),
+                let language = self.language.clone();
+                let project = self.project.clone();
+                let provider_name: &'static str = match provider {
+                    EditPredictionProvider::Experimental(name) => name,
+                    EditPredictionProvider::Zed => "zed",
+                    _ => "unknown",
                 };
                 let icons = self
                     .edit_prediction_provider
@@ -591,25 +544,15 @@ impl Render for EditPredictionButton {
                 let mut popover_menu = PopoverMenu::new("edit-prediction")
                     .on_open({
                         let file = file.clone();
+                        let language = language.clone();
+                        let project = project.clone();
                         Rc::new(move |_window, cx| {
-                            let copilot_enabled_for_language =
-                                language_settings::language_settings(None, file.as_ref(), cx)
-                                    .show_edit_predictions;
-                            let file_extension = file
-                                .as_ref()
-                                .and_then(|f| {
-                                    std::path::Path::new(f.file_name(cx))
-                                        .extension()
-                                        .and_then(|e| e.to_str())
-                                })
-                                .map(|s| s.to_string());
-                            telemetry::event!(
-                                "Toolbar Menu Opened",
-                                name = "Edit Predictions",
-                                provider = provider_name,
-                                file_extension,
-                                copilot_enabled_for_language,
-                                is_via_ssh,
+                            emit_edit_prediction_menu_opened(
+                                provider_name,
+                                &file,
+                                &language,
+                                &project,
+                                cx,
                             );
                         })
                     })
@@ -1623,6 +1566,39 @@ fn render_zeta_tab_animation(cx: &App) -> impl IntoElement {
         .child(tab_sequence(true))
         .child(Icon::new(IconName::ZedPredict))
         .child(tab_sequence(false))
+}
+
+fn emit_edit_prediction_menu_opened(
+    provider: &str,
+    file: &Option<Arc<dyn File>>,
+    language: &Option<Arc<Language>>,
+    project: &WeakEntity<Project>,
+    cx: &App,
+) {
+    let language_name = language.as_ref().map(|l| l.name());
+    let edit_predictions_enabled_for_language =
+        language_settings::language_settings(language_name, file.as_ref(), cx)
+            .show_edit_predictions;
+    let file_extension = file
+        .as_ref()
+        .and_then(|f| {
+            std::path::Path::new(f.file_name(cx))
+                .extension()
+                .and_then(|e| e.to_str())
+        })
+        .map(|s| s.to_string());
+    let is_via_ssh = project
+        .upgrade()
+        .map(|p| p.read(cx).is_via_remote_server())
+        .unwrap_or(false);
+    telemetry::event!(
+        "Toolbar Menu Opened",
+        name = "Edit Predictions",
+        provider,
+        file_extension,
+        edit_predictions_enabled_for_language,
+        is_via_ssh,
+    );
 }
 
 fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
