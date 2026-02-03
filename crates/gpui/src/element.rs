@@ -202,7 +202,7 @@ fn prepaint_component(
     window: &mut Window,
     cx: &mut App,
 ) {
-    window.with_id(ElementId::Name(SharedString::new_static(*name)), |window| {
+    window.with_id(ElementId::Name(SharedString::new_static(name)), |window| {
         element.prepaint(window, cx);
     })
 }
@@ -212,7 +212,7 @@ fn paint_component(
     window: &mut Window,
     cx: &mut App,
 ) {
-    window.with_id(ElementId::Name(SharedString::new_static(*name)), |window| {
+    window.with_id(ElementId::Name(SharedString::new_static(name)), |window| {
         element.paint(window, cx);
     })
 }
@@ -248,7 +248,7 @@ impl<C: RenderOnce> Element for Component<C> {
                 .into_any_element();
 
             let layout_id = element.request_layout(window, cx);
-            (layout_id, (element, type_name::<C>().into()))
+            (layout_id, (element, type_name::<C>()))
         })
     }
 
