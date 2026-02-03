@@ -2,7 +2,49 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
+use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditPredictionIconSet {
+    pub base: IconName,
+    pub disabled: IconName,
+    pub up: IconName,
+    pub down: IconName,
+    pub error: IconName,
+}
+
+impl EditPredictionIconSet {
+    pub fn new(base: IconName) -> Self {
+        Self {
+            base,
+            disabled: IconName::ZedPredictDisabled,
+            up: IconName::ZedPredictUp,
+            down: IconName::ZedPredictDown,
+            error: IconName::ZedPredictError,
+        }
+    }
+
+    pub fn with_disabled(mut self, disabled: IconName) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn with_up(mut self, up: IconName) -> Self {
+        self.up = up;
+        self
+    }
+
+    pub fn with_down(mut self, down: IconName) -> Self {
+        self.down = down;
+        self
+    }
+
+    pub fn with_error(mut self, error: IconName) -> Self {
+        self.error = error;
+        self
+    }
+}
 
 /// Represents a predicted cursor position after an edit is applied.
 ///
@@ -10,7 +52,7 @@ use language::{Anchor, Buffer, OffsetRangeExt};
 /// exist in the original buffer, we store an anchor (which points to a position
 /// in the original buffer, typically the start of an edit) plus an offset into
 /// the inserted text.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct PredictedCursorPosition {
     /// An anchor in the original buffer. If the cursor is inside an edit,
     /// this points to the start of that edit's range.
@@ -110,6 +152,8 @@ pub trait EditPredictionDelegate: 'static + Sized {
         true
     }
 
+    fn icons(&self, cx: &App) -> EditPredictionIconSet;
+
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
     }
@@ -156,6 +200,7 @@ pub trait EditPredictionDelegateHandle {
     fn show_predictions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
     fn supports_jump_to_edit(&self) -> bool;
+    fn icons(&self, cx: &App) -> EditPredictionIconSet;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
@@ -200,6 +245,10 @@ where
 
     fn supports_jump_to_edit(&self) -> bool {
         T::supports_jump_to_edit()
+    }
+
+    fn icons(&self, cx: &App) -> EditPredictionIconSet {
+        self.read(cx).icons(cx)
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {

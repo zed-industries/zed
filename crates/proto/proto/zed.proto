@@ -8,6 +8,7 @@ import "call.proto";
 import "channel.proto";
 import "core.proto";
 import "debugger.proto";
+import "download.proto";
 import "git.proto";
 import "image.proto";
 import "lsp.proto";
@@ -458,7 +459,11 @@ message Envelope {
         ContextServerCommand context_server_command = 412;
         
         AllocateWorktreeId allocate_worktree_id = 413;
-        AllocateWorktreeIdResponse allocate_worktree_id_response = 414; // current max
+        AllocateWorktreeIdResponse allocate_worktree_id_response = 414;
+
+        DownloadFileByPath download_file_by_path = 415;
+        DownloadFileResponse download_file_response = 416;
+        CreateFileForPeer create_file_for_peer = 417; // current max
     }
 
     reserved 87 to 88;

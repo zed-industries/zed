@@ -1,9 +1,12 @@
-use edit_prediction_types::{EditPredictionDelegate, PredictedCursorPosition};
+use edit_prediction_types::{
+    EditPredictionDelegate, EditPredictionIconSet, PredictedCursorPosition,
+};
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{ops::Range, sync::Arc};
 use text::{Point, ToOffset};
+use ui::prelude::*;
 
 use crate::{
     AcceptEditPrediction, EditPrediction, MenuEditPredictionsPolicy, editor_tests::init_test,
@@ -34,10 +37,13 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_edit_prediction_cursor_position_inside_insertion(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |_| {
+        eprintln!("");
+    });
 
     let mut cx = EditorTestContext::new(cx).await;
     let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+
     assign_editor_completion_provider(provider.clone(), &mut cx);
     // Buffer: "fn foo() {}" - we'll insert text and position cursor inside the insertion
     cx.set_state("fn foo() ˇ{}");
@@ -589,6 +595,10 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         true
     }
 
+    fn icons(&self, _cx: &gpui::App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::ZedPredict)
+    }
+
     fn is_enabled(
         &self,
         _buffer: &gpui::Entity<language::Buffer>,
@@ -654,6 +664,10 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
 
     fn supports_jump_to_edit() -> bool {
         false
+    }
+
+    fn icons(&self, _cx: &gpui::App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::ZedPredict)
     }
 
     fn is_enabled(

@@ -25,10 +25,7 @@ use language::{
 use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
-    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
-    update_settings_file,
+    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
 };
 use std::{
     sync::{Arc, LazyLock},
@@ -306,30 +303,36 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            provider @ (EditPredictionProvider::Experimental(_)
+            | EditPredictionProvider::Zed
+            | EditPredictionProvider::Sweep
+            | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
+                let icons = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .map(|p| p.icons(cx))
+                    .unwrap_or_else(|| {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    });
 
                 let ep_icon;
                 let tooltip_meta;
                 let mut missing_token = false;
 
                 match provider {
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
-                        ep_icon = IconName::SweepAi;
+                    EditPredictionProvider::Sweep => {
+                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         tooltip_meta = if missing_token {
                             "Missing API key for Sweep"
                         } else {
                             "Powered by Sweep"
                         };
-                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                     }
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
-                        ep_icon = IconName::Inception;
+                    EditPredictionProvider::Mercury => {
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
                         tooltip_meta = if missing_token {
@@ -339,11 +342,7 @@ impl Render for EditPredictionButton {
                         };
                     }
                     _ => {
-                        ep_icon = if enabled {
-                            IconName::ZedPredict
-                        } else {
-                            IconName::ZedPredictDisabled
-                        };
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         tooltip_meta = "Powered by Zeta"
                     }
                 };
@@ -849,10 +848,17 @@ impl EditPredictionButton {
         );
 
         if !self.editor_enabled.unwrap_or(true) {
+            let icons = self
+                .edit_prediction_provider
+                .as_ref()
+                .map(|p| p.icons(cx))
+                .unwrap_or_else(|| {
+                    edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                });
             menu = menu.item(
                 ContextMenuEntry::new("This file is excluded.")
                     .disabled(true)
-                    .icon(IconName::ZedPredictDisabled)
+                    .icon(icons.disabled)
                     .icon_size(IconSize::Small),
             );
         }
@@ -1276,9 +1282,9 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert_default()
-            .edit_prediction_provider = Some(provider);
+            .provider = Some(provider);
     });
 }
 
@@ -1294,10 +1300,8 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
     }
 
     if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::get_or_init(app_state, cx)
-            .0
-            .read(cx)
-            .is_authenticated()
+        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
     {
         providers.push(EditPredictionProvider::Copilot);
     };
@@ -1319,9 +1323,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
             .read(cx)
             .has_key()
     {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
+        providers.push(EditPredictionProvider::Sweep);
     }
 
     if cx.has_flag::<MercuryFeatureFlag>()
@@ -1329,9 +1331,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
             .read(cx)
             .has_key()
     {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
+        providers.push(EditPredictionProvider::Mercury);
     }
 
     providers
@@ -1361,9 +1361,9 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert(Default::default())
-            .edit_prediction_provider = Some(EditPredictionProvider::None);
+            .provider = Some(EditPredictionProvider::None);
     });
 }
 

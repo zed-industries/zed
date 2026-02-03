@@ -15,11 +15,11 @@ use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
-use editor::RewrapOptions;
 use editor::{
     Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
     actions::ExpandAllDiffHunks,
 };
+use editor::{EditorStyle, RewrapOptions};
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -31,14 +31,14 @@ use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
-    StageUntracked, StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
+    ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StageUntracked,
+    StashAll, StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
-    PromptLevel, ScrollStrategy, Subscription, Task, UniformListScrollHandle, WeakEntity, actions,
-    anchored, deferred, point, size, uniform_list,
+    PromptLevel, ScrollStrategy, Subscription, Task, TextStyle, UniformListScrollHandle,
+    WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -48,10 +48,7 @@ use language_model::{
 use menu;
 use multi_buffer::ExcerptInfo;
 use notifications::status_toast::{StatusToast, ToastIcon};
-use panel::{
-    PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
-    panel_icon_button,
-};
+use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -60,11 +57,13 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{GitPanelUntrackedChanges, Settings, SettingsStore, StatusStyle};
+use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
+use theme::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
     ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
@@ -160,11 +159,7 @@ fn git_panel_context_menu(
     ContextMenu::build(window, cx, move |context_menu, _, _| {
         context_menu
             .context(focus_handle)
-            .action_disabled_when(
-                !state.can_stage_all,
-                stage_label,
-                StageAll.boxed_clone(),
-            )
+            .action_disabled_when(!state.can_stage_all, stage_label, StageAll.boxed_clone())
             .when(state.show_stage_untracked, |this| {
                 this.action_disabled_when(
                     !state.can_stage_untracked,
@@ -305,6 +300,15 @@ impl GitListEntry {
         match self {
             GitListEntry::Directory(entry) => Some(entry),
             _ => None,
+        }
+    }
+
+    /// Returns the tree indentation depth for this entry.
+    fn depth(&self) -> usize {
+        match self {
+            GitListEntry::Directory(dir) => dir.depth,
+            GitListEntry::TreeStatus(status) => status.depth,
+            _ => 0,
         }
     }
 }
@@ -3920,6 +3924,24 @@ impl GitPanel {
         staged_count > 0
     }
 
+    /// Computes tree indentation depths for visible entries in the given range.
+    /// Used by indent guides to render vertical connector lines in tree view.
+    fn compute_visible_depths(&self, range: Range<usize>) -> SmallVec<[usize; 64]> {
+        let GitPanelViewMode::Tree(state) = &self.view_mode else {
+            return SmallVec::new();
+        };
+
+        range
+            .map(|ix| {
+                state
+                    .logical_indices
+                    .get(ix)
+                    .and_then(|&entry_ix| self.entries.get(entry_ix))
+                    .map_or(0, |entry| entry.depth())
+            })
+            .collect()
+    }
+
     fn status_width_estimate(
         tree_view: bool,
         entry: &GitStatusEntry,
@@ -4246,10 +4268,20 @@ impl GitPanel {
             if stage_all_includes_untracked {
                 ("Stage All", "git add --all", "Unstage All", "git reset")
             } else {
-                ("Stage Tracked", "git add -u", "Unstage Tracked", "git reset --")
+                (
+                    "Stage Tracked",
+                    "git add -u",
+                    "Unstage Tracked",
+                    "git reset --",
+                )
             };
         let (text, action, stage, tooltip) = if is_fully_staged {
-            (unstage_label, UnstageAll.boxed_clone(), false, unstage_tooltip)
+            (
+                unstage_label,
+                UnstageAll.boxed_clone(),
+                false,
+                unstage_tooltip,
+            )
         } else {
             (stage_label, StageAll.boxed_clone(), true, stage_tooltip)
         };
@@ -4820,15 +4852,7 @@ impl GitPanel {
                                     .with_compute_indents_fn(
                                         cx.entity(),
                                         |this, range, _window, _cx| {
-                                            range
-                                                .map(|ix| match this.entries.get(ix) {
-                                                    Some(GitListEntry::Directory(dir)) => dir.depth,
-                                                    Some(GitListEntry::TreeStatus(status)) => {
-                                                        status.depth
-                                                    }
-                                                    _ => 0,
-                                                })
-                                                .collect()
+                                            this.compute_visible_depths(range)
                                         },
                                     )
                                     .with_render_fn(cx.entity(), |_, params, _, _| {
@@ -4990,10 +5014,8 @@ impl GitPanel {
                 ),
                 can_stage_all: self.can_stage_all(),
                 can_unstage_all: self.can_unstage_all(),
-                show_stage_untracked: self.untracked_changes
-                    == GitPanelUntrackedChanges::Separate,
-                can_stage_untracked: self.untracked_changes
-                    == GitPanelUntrackedChanges::Separate
+                show_stage_untracked: self.untracked_changes == GitPanelUntrackedChanges::Separate,
+                can_stage_untracked: self.untracked_changes == GitPanelUntrackedChanges::Separate
                     && self.can_stage_untracked(),
                 has_tracked_changes: self.has_tracked_changes(),
                 has_new_changes: self.new_count > 0,
@@ -5743,6 +5765,55 @@ impl Panel for GitPanel {
 }
 
 impl PanelHeader for GitPanel {}
+
+pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
+    v_flex()
+        .size_full()
+        .gap(px(8.))
+        .p_2()
+        .bg(cx.theme().colors().editor_background)
+}
+
+pub(crate) fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
+    let settings = ThemeSettings::get_global(cx);
+
+    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+
+    let (font_family, font_fallbacks, font_features, font_weight, line_height) = if monospace {
+        (
+            settings.buffer_font.family.clone(),
+            settings.buffer_font.fallbacks.clone(),
+            settings.buffer_font.features.clone(),
+            settings.buffer_font.weight,
+            font_size * settings.buffer_line_height.value(),
+        )
+    } else {
+        (
+            settings.ui_font.family.clone(),
+            settings.ui_font.fallbacks.clone(),
+            settings.ui_font.features.clone(),
+            settings.ui_font.weight,
+            window.line_height(),
+        )
+    };
+
+    EditorStyle {
+        background: cx.theme().colors().editor_background,
+        local_player: cx.theme().players().local(),
+        text: TextStyle {
+            color: cx.theme().colors().text,
+            font_family,
+            font_fallbacks,
+            font_features,
+            font_size: TextSize::Small.rems(cx).into(),
+            font_weight,
+            line_height: line_height.into(),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        ..Default::default()
+    }
+}
 
 struct GitPanelMessageTooltip {
     commit_tooltip: Option<Entity<CommitTooltip>>,
