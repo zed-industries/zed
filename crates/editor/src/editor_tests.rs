@@ -30563,7 +30563,7 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
     cx.draw(
         gpui::point(px(0.), px(-10000.)),
         gpui::size(px(500.), px(3000.)),
-        |_, _| editor.clone(),
+        |_, _| editor.clone().into_any_element(),
     );
 
     // If we get here without hanging, the test passes
