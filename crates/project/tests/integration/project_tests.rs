@@ -25,6 +25,7 @@ use buffer_diff::{
     assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
+use encoding_rs;
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
@@ -68,10 +69,12 @@ use settings::SettingsStore;
 #[cfg(not(windows))]
 use std::os;
 use std::{
+    cell::RefCell,
     env, mem,
     num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::{Arc, OnceLock},
     task::Poll,
@@ -1109,6 +1112,64 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 ))),
             ),
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_invalid_local_tasks_shows_toast_with_doc_link(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    TaskStore::init(None);
+
+    // We need to start with a valid `.zed/tasks.json` file as otherwise the
+    // event is emitted before we havd a chance to setup the event subscription.
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "tasks.json": r#"[{ "label": "valid task", "command": "echo" }]"#,
+            },
+            "file.rs": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let saw_toast = Rc::new(RefCell::new(false));
+
+    // Update the `.zed/tasks.json` file with an invalid variable, so we can
+    // later assert that the `Event::Toast` even is emitted.
+    fs.save(
+        path!("/dir/.zed/tasks.json").as_ref(),
+        &r#"[{ "label": "test $ZED_FOO", "command": "echo" }]"#.into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    project.update(cx, |_, cx| {
+        let saw_toast = saw_toast.clone();
+
+        cx.subscribe(&project, move |_, _, event: &Event, _| match event {
+            Event::Toast {
+                notification_id,
+                message,
+                link: Some(ToastLink { url, .. }),
+            } => {
+                assert!(notification_id.starts_with("local-tasks-"));
+                assert!(message.contains("ZED_FOO"));
+                assert_eq!(*url, "https://zed.dev/docs/tasks");
+                *saw_toast.borrow_mut() = true;
+            }
+            _ => {}
+        })
+        .detach();
+    });
+
+    cx.run_until_parked();
+    assert!(
+        *saw_toast.borrow(),
+        "Expected `Event::Toast` was never emitted"
     );
 }
 
@@ -11053,6 +11114,70 @@ async fn search(
         .collect())
 }
 
+#[gpui::test]
+async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+
+    // Create a file with ASCII content "Hi" - this will be detected as UTF-8
+    // When reinterpreted as UTF-16LE, the bytes 0x48 0x69 become a single character
+    let ascii_bytes: Vec<u8> = vec![0x48, 0x69];
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/test.txt"), ascii_bytes).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/test.txt"), cx))
+        .await
+        .unwrap();
+
+    let (initial_encoding, initial_text, initial_dirty) = buffer.read_with(cx, |buffer, _| {
+        (buffer.encoding(), buffer.text(), buffer.is_dirty())
+    });
+    assert_eq!(initial_encoding, encoding_rs::UTF_8);
+    assert_eq!(initial_text, "Hi");
+    assert!(!initial_dirty);
+
+    let reload_receiver = buffer.update(cx, |buffer, cx| {
+        buffer.reload_with_encoding(encoding_rs::UTF_16LE, cx)
+    });
+    cx.executor().run_until_parked();
+
+    // Wait for reload to complete
+    let _ = reload_receiver.await;
+
+    // Verify the encoding changed, text is different, and still not dirty (we reloaded from disk)
+    let (reloaded_encoding, reloaded_text, reloaded_dirty) = buffer.read_with(cx, |buffer, _| {
+        (buffer.encoding(), buffer.text(), buffer.is_dirty())
+    });
+    assert_eq!(reloaded_encoding, encoding_rs::UTF_16LE);
+    assert_eq!(reloaded_text, "楈");
+    assert!(!reloaded_dirty);
+
+    // Undo the reload
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.encoding(), encoding_rs::UTF_8);
+        assert_eq!(buffer.text(), "Hi");
+        assert!(!buffer.is_dirty());
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.redo(cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.encoding(), encoding_rs::UTF_16LE);
+        assert_ne!(buffer.text(), "Hi");
+        assert!(!buffer.is_dirty());
+    });
+}
+
 pub fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 
@@ -11109,7 +11234,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 let venv_path = worktree_root.join(ancestor.as_std_path()).join(".venv");
                 if self.0.is_dir(&venv_path).await {
                     toolchains.push(Toolchain {
-                        name: SharedString::new("Python Venv"),
+                        name: SharedString::new_static("Python Venv"),
                         path: venv_path.to_string_lossy().into_owned().into(),
                         language_name: LanguageName(SharedString::new_static("Python")),
                         as_json: serde_json::Value::Null,

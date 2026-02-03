@@ -84,8 +84,6 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
-    /// Enables the experimental edit prediction context retrieval system.
-    pub experimental_edit_prediction_context_retrieval: Option<bool>,
 }
 
 /// The provider that supplies edit predictions.
@@ -169,6 +167,25 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Experimental(_) => false,
         }
     }
+
+    pub fn display_name(&self) -> Option<&'static str> {
+        match self {
+            EditPredictionProvider::Zed => Some("Zed AI"),
+            EditPredictionProvider::Copilot => Some("GitHub Copilot"),
+            EditPredictionProvider::Supermaven => Some("Supermaven"),
+            EditPredictionProvider::Codestral => Some("Codestral"),
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => Some("Sweep"),
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => Some("Mercury"),
+            EditPredictionProvider::Experimental(
+                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
+            ) => Some("Zeta2"),
+            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+        }
+    }
 }
 
 /// The contents of the edit prediction settings.
@@ -186,6 +203,8 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
+    /// Settings specific to Sweep.
+    pub sweep: Option<SweepSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -231,6 +250,18 @@ pub struct CodestralSettingsContent {
     ///
     /// Default: "https://codestral.mistral.ai"
     pub api_url: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct SweepSettingsContent {
+    /// When enabled, Sweep will not store edit prediction inputs or outputs.
+    /// When disabled, Sweep may collect data including buffer contents,
+    /// diagnostics, file paths, repository names, and generated predictions
+    /// to improve the service.
+    ///
+    /// Default: false
+    pub privacy_mode: Option<bool>,
 }
 
 /// The mode in which edit predictions should be displayed.

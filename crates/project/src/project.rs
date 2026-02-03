@@ -40,6 +40,7 @@ use crate::{
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{
@@ -305,6 +306,13 @@ enum ProjectClientState {
     },
 }
 
+/// A link to display in a toast notification, useful to point to documentation.
+#[derive(PartialEq, Debug, Clone)]
+pub struct ToastLink {
+    pub label: &'static str,
+    pub url: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
@@ -326,6 +334,8 @@ pub enum Event {
     Toast {
         notification_id: SharedString,
         message: String,
+        /// Optional link to display as a button in the toast.
+        link: Option<ToastLink>,
     },
     HideToast {
         notification_id: SharedString,
@@ -1109,7 +1119,8 @@ impl Project {
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
-            let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
             if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
@@ -1316,12 +1327,13 @@ impl Project {
                         remote.connection_options(),
                     )
                 });
-            let worktree_store = cx.new(|_| {
+            let worktree_store = cx.new(|cx| {
                 WorktreeStore::remote(
                     false,
                     remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
                     path_style,
+                    WorktreeIdCounter::get(cx),
                 )
             });
 
@@ -1544,6 +1556,7 @@ impl Project {
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
             BufferStore::init(&remote_proto);
+            WorktreeStore::init_remote(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
             TaskStore::init(Some(&remote_proto));
@@ -1623,12 +1636,13 @@ impl Project {
             PathStyle::Posix
         };
 
-        let worktree_store = cx.new(|_| {
+        let worktree_store = cx.new(|cx| {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
                 response.payload.project_id,
                 path_style,
+                WorktreeIdCounter::get(cx),
             )
         });
         let buffer_store = cx.new(|cx| {
@@ -3215,6 +3229,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: "dap".into(),
                 message: message.clone(),
+                link: None,
             });
         }
     }
@@ -3345,6 +3360,7 @@ impl Project {
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
                 notification_id: "lsp".into(),
                 message: message.clone(),
+                link: None,
             }),
             LspStoreEvent::SnippetEdit {
                 buffer_id,
@@ -3395,6 +3411,7 @@ impl Project {
                     let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-settings-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -3408,6 +3425,10 @@ impl Project {
                     let message = format!("Failed to set local tasks in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-tasks-{path:?}").into(),
+                        link: Some(ToastLink {
+                            label: "Open Tasks Documentation",
+                            url: "https://zed.dev/docs/tasks",
+                        }),
                         message,
                     });
                 }
@@ -3422,6 +3443,7 @@ impl Project {
                         format!("Failed to set local debug scenarios in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-debug-scenarios-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -4888,6 +4910,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: envelope.payload.notification_id.into(),
                 message: envelope.payload.message,
+                link: None,
             });
             Ok(())
         })

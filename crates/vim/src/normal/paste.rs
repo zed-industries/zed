@@ -36,7 +36,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
 
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -283,7 +283,7 @@ impl Vim {
         self.stop_recording(cx);
         let selected_register = self.selected_register.take();
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

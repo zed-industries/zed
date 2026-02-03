@@ -36,8 +36,12 @@ You can click on the card that contains your message and re-submit it with an ad
 
 ### Queueing Messages
 
-If you want to queue a message while the agent is going through a generation, you can do so through the `cmd/ctrl-shift-enter` keybinding.
-A queued up message gets sent as soon as the current generation wraps up.
+Messages sent while the agent is in the generating state get, by default, queued.
+
+For the Zed agent, queued messages get sent at the next turn boundary, which is usually between a tool call and a response, whereas for external agents, the message gets sent at the end of the generation.
+
+You can edit or remove (an individual or all) queued messages.
+You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.
 
 ### Checkpoints {#checkpoints}
 
@@ -155,6 +159,8 @@ All custom profiles can be edited via the UI or by hand under the `agent.profile
 Zed's Agent Panel surfaces the `agent.always_allow_tool_actions` setting that, if turned to `false`, will require you to give permission to any editing attempt as well as tool calls coming from MCP servers.
 
 You can change that by setting this key to `true` in either your `settings.json` or via the Agent Panel's settings view.
+
+You can also give more granular permissions through the dropdown that appears in the UI whenever the agent requests authorization to run a tool call.
 
 ### Model Support {#model-support}
 

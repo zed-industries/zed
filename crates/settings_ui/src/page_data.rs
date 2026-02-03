@@ -2410,7 +2410,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 11] {
+    fn vim_settings_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2479,6 +2479,19 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .use_smartcase_find = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Global Substitution Default",
+                description: "When enabled, the :substitute command replaces all matches in a line by default. The 'g' flag then toggles this behavior.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.gdefault"),
+                    pick: |settings_content| settings_content.vim.as_ref()?.gdefault.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.vim.get_or_insert_default().gdefault = value;
                     },
                 }),
                 metadata: None,
@@ -4217,7 +4230,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 20] {
+    fn project_panel_section() -> [SettingsPageItem; 21] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4440,6 +4453,28 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .auto_fold_dirs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Bold Folder Labels",
+                description: "Whether to show folder names with bold text in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.bold_folder_labels"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .bold_folder_labels
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .bold_folder_labels = value;
                     },
                 }),
                 metadata: None,
@@ -5727,6 +5762,9 @@ fn terminal_page() -> SettingsPage {
                                     .working_directory
                                     .get_or_insert_with(|| settings::WorkingDirectory::CurrentProjectDirectory);
                                 *settings_value = match value {
+                                    settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => {
+                                        settings::WorkingDirectory::CurrentFileDirectory
+                                    },
                                     settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
                                         settings::WorkingDirectory::CurrentProjectDirectory
                                     }
@@ -5762,6 +5800,7 @@ fn terminal_page() -> SettingsPage {
                     fields: dynamic_variants::<settings::WorkingDirectory>()
                         .into_iter()
                         .map(|variant| match variant {
+                            settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],

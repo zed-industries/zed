@@ -94,6 +94,7 @@ impl Deploy {
 
 pub enum Event {
     UpdateLocation,
+    Dismissed,
 }
 
 pub fn init(cx: &mut App) {
@@ -826,6 +827,7 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
+        cx.emit(Event::Dismissed);
         self.query_error = None;
         self.sync_select_next_case_sensitivity(cx);
 
@@ -1311,7 +1313,7 @@ impl BufferSearchBar {
                 let search = self.update_matches(false, true, window, cx);
 
                 let width = editor.update(cx, |editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
+                    let text_layout_details = editor.text_layout_details(window, cx);
                     let snapshot = editor.snapshot(window, cx).display_snapshot;
 
                     snapshot.x_for_display_point(snapshot.max_point(), &text_layout_details)

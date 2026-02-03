@@ -126,6 +126,7 @@
   // over symbols in the editor.
   "hover_popover_enabled": true,
   // Time to wait in milliseconds before showing the informational hover box.
+  // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
@@ -731,6 +732,8 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
+    // Whether to show folder names with bold text in the project panel.
+    "bold_folder_labels": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the project panel.
@@ -1373,6 +1376,8 @@
     // Whether to show the project diagnostics button in the status bar.
     "button": true,
     // Whether to show warnings or not by default.
+    //
+    // Default: true
     "include_warnings": true,
     // Settings for using LSP pull diagnostics mechanism in Zed.
     "lsp_pull_diagnostics": {
@@ -1540,6 +1545,13 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
+    "sweep": {
+      // When enabled, Sweep will not store edit prediction inputs or outputs.
+      // When disabled, Sweep may collect data including buffer contents,
+      // diagnostics, file paths, repository names, and generated predictions
+      // to improve the service.
+      "privacy_mode": false,
+    },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true,
@@ -1591,15 +1603,18 @@
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
     // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory. Fallback to the
+    // May take 5 values:
+    // 1. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "working_directory": "current_file_directory"
+    // 2. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
+    // 3. Use the first project in this workspace's directory
     //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
+    // 4. Always use this platform's home directory (if we can find it)
     //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
+    // 5. Always use a specific directory. This value will be shell expanded.
     //    If this path is not a valid directory the terminal will default to
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
@@ -2274,6 +2289,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
     // Cursor shape for each mode.
@@ -2337,7 +2353,6 @@
   "line_indicator_format": "long",
   // Set a proxy to use. The proxy protocol is specified by the URI scheme.
   //
-  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from
