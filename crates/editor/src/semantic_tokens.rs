@@ -3,11 +3,11 @@ use std::{collections::hash_map, sync::Arc, time::Duration};
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
 use gpui::{
-    App, Context, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, Task,
-    UnderlineStyle,
+    App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
+use lsp::LanguageServerId;
 use project::{
     lsp_store::{BufferSemanticToken, BufferSemanticTokens, RefreshForServer},
     project_settings::ProjectSettings,
@@ -165,7 +165,7 @@ impl Editor {
                             else {
                                 continue;
                             };
-                            let stylizer = SemanticTokenStylizer::new(legend, cx);
+                            let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
                             token_highlights.extend(buffer_into_editor_highlights(
                                 &server_tokens,
                                 &stylizer,
@@ -212,22 +212,26 @@ fn buffer_into_editor_highlights<'a>(
                 token.token_type,
                 token.token_modifiers,
             )?,
-            token_type: stylizer.token_type(token.token_type).map(SharedString::new),
-            token_modifiers: stylizer
-                .token_modifiers(token.token_modifiers)
-                .map(SharedString::from),
+            token_type: token.token_type,
+            token_modifiers: token.token_modifiers,
+            server_id: stylizer.server_id,
         })
     })
 }
 
-struct SemanticTokenStylizer<'a> {
+pub struct SemanticTokenStylizer<'a> {
+    server_id: LanguageServerId,
     rules: &'a SemanticTokenRules,
     token_types: Vec<&'a str>,
     modifier_mask: HashMap<&'a str, u32>,
 }
 
 impl<'a> SemanticTokenStylizer<'a> {
-    pub fn new(legend: &'a lsp::SemanticTokensLegend, cx: &'a App) -> Self {
+    pub fn new(
+        server_id: LanguageServerId,
+        legend: &'a lsp::SemanticTokensLegend,
+        cx: &'a App,
+    ) -> Self {
         let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
         let modifier_mask = legend
             .token_modifiers
@@ -236,6 +240,7 @@ impl<'a> SemanticTokenStylizer<'a> {
             .map(|(i, modifier)| (modifier.as_str(), 1 << i))
             .collect();
         SemanticTokenStylizer {
+            server_id,
             rules: &ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .semantic_token_rules,

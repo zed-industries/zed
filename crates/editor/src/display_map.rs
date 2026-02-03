@@ -335,8 +335,9 @@ impl Companion {
 pub struct SemanticTokenHighlight {
     pub range: Range<Anchor>,
     pub style: HighlightStyle,
-    pub token_type: Option<SharedString>,
-    pub token_modifiers: Option<SharedString>,
+    pub token_type: u32,
+    pub token_modifiers: u32,
+    pub server_id: lsp::LanguageServerId,
 }
 
 impl DisplayMap {

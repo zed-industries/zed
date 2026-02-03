@@ -1,6 +1,7 @@
+use collections::FxHashMap;
 use editor::{
     Anchor, Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
-    scroll::Autoscroll,
+    scroll::Autoscroll, semantic_tokens::SemanticTokenStylizer,
 };
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
@@ -235,17 +236,25 @@ impl HighlightsTreeView {
             return;
         };
 
-        let (display_map, multi_buffer, cursor_position) = {
+        let (display_map, project, multi_buffer, cursor_position) = {
             let editor = editor_state.editor.read(cx);
             let cursor = editor.selections.newest_anchor().head();
-            (editor.display_map.clone(), editor.buffer().clone(), cursor)
+            (
+                editor.display_map.clone(),
+                editor.project().cloned(),
+                editor.buffer().clone(),
+                cursor,
+            )
+        };
+        let Some(project) = project else {
+            return;
         };
 
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
 
         let mut entries = Vec::new();
 
-        display_map.update(cx, |display_map, _cx| {
+        display_map.update(cx, |display_map, cx| {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
                     let (range_display, sort_key) =
@@ -260,20 +269,41 @@ impl HighlightsTreeView {
                 }
             }
 
+            let lsp_store = project.read(cx).lsp_store().read(cx);
+            let server_caps = &lsp_store
+                .lsp_server_capabilities;
+            let mut cache = FxHashMap::default();
             for (_, tokens) in display_map.all_semantic_token_highlights() {
                 for token in tokens.iter() {
                     let (range_display, sort_key) =
                         format_anchor_range(&token.range, &multi_buffer_snapshot);
-                    entries.push(HighlightEntry {
+                    let stylizer = cache.entry(token.server_id)
+                        .or_insert_with(|| {
+                            server_caps
+                                .get(&token.server_id)
+                                .and_then(|caps| caps.semantic_tokens_provider.as_ref())
+                                .map(|provider| match provider {
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                                        opts,
+                                    ) => &opts.legend,
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
+                                        &opts.semantic_tokens_options.legend
+                                    }
+                                }).map(|legend| SemanticTokenStylizer::new(token.server_id, legend, cx))
+                        });
+                    let Some(stylizer) = stylizer else {
+                        continue;
+                    };
+                    HighlightEntry {
                         range: token.range.clone(),
                         range_display,
                         style: token.style,
                         category: HighlightCategory::SemanticToken {
-                            token_type: token.token_type.clone(),
-                            token_modifiers: token.token_modifiers.clone(),
+                            token_type: stylizer.token_type(token.token_type).map(|s| SharedString::new(s)),
+                            token_modifiers: stylizer.token_modifiers(token.token_modifiers).map(|s| SharedString::new(s)),
                         },
                         sort_key,
-                    });
+                    };
                 }
             }
         });
