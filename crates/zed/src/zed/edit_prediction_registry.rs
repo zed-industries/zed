@@ -10,11 +10,7 @@ use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::MistralLanguageModelProvider;
-use settings::{
-    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore,
-};
+use settings::{EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
 use ui::Window;
@@ -195,7 +191,10 @@ fn assign_edit_prediction_provider(
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
-        value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+        value @ (EditPredictionProvider::Experimental(_)
+        | EditPredictionProvider::Zed
+        | EditPredictionProvider::Sweep
+        | EditPredictionProvider::Mercury) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
             if let Some(project) = editor.project()
@@ -203,28 +202,27 @@ fn assign_edit_prediction_provider(
                 && buffer.read(cx).file().is_some()
             {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
-                    let model = if let EditPredictionProvider::Experimental(name) = value {
-                        if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<SweepFeatureFlag>()
-                        {
+                    let model = match value {
+                        EditPredictionProvider::Sweep if cx.has_flag::<SweepFeatureFlag>() => {
                             edit_prediction::EditPredictionModel::Sweep
-                        } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<Zeta2FeatureFlag>()
+                        }
+                        EditPredictionProvider::Mercury if cx.has_flag::<MercuryFeatureFlag>() => {
+                            edit_prediction::EditPredictionModel::Mercury
+                        }
+                        EditPredictionProvider::Experimental(name)
+                            if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
+                                && cx.has_flag::<Zeta2FeatureFlag>() =>
                         {
                             edit_prediction::EditPredictionModel::Zeta2 {
                                 version: Default::default(),
                             }
-                        } else if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME
-                            && cx.has_flag::<MercuryFeatureFlag>()
-                        {
-                            edit_prediction::EditPredictionModel::Mercury
-                        } else {
-                            return false;
                         }
-                    } else if user_store.read(cx).current_user().is_some() {
-                        edit_prediction::EditPredictionModel::Zeta1
-                    } else {
-                        return false;
+                        EditPredictionProvider::Zed
+                            if user_store.read(cx).current_user().is_some() =>
+                        {
+                            edit_prediction::EditPredictionModel::Zeta1
+                        }
+                        _ => return false,
                     };
 
                     ep_store.set_edit_prediction_model(model);

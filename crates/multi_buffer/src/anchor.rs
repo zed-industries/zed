@@ -401,7 +401,7 @@ impl DiffbaselessAnchor {
     {
         snapshot.summary_for_anchor(&Anchor {
             excerpt_id: self.excerpt_id,
-            text_anchor: self.text_anchor.clone(),
+            text_anchor: self.text_anchor,
             diff_base_anchor: None,
         })
     }

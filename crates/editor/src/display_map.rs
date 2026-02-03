@@ -81,8 +81,8 @@ mod wrap_map;
 pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
-    StickyHeaderExcerpt,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionView, CustomBlockId,
+    EditorMargins, RenderBlock, StickyHeaderExcerpt,
 };
 pub use crease_map::*;
 pub use fold_map::{
@@ -422,7 +422,7 @@ impl DisplayMap {
                 old: WrapRow(0)..snapshot.max_point().row(),
                 new: WrapRow(0)..snapshot.max_point().row(),
             }]);
-            self.block_map.read(snapshot, edits, None, None);
+            self.block_map.read(snapshot, edits, None);
             return;
         };
 
@@ -446,11 +446,14 @@ impl DisplayMap {
         let companion_wrap_data = companion_display_map
             .update(cx, |dm, cx| dm.sync_through_wrap(cx))
             .ok();
-
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view =
+            companion_wrap_data
+                .as_ref()
+                .zip(companion)
+                .map(|((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                });
 
         let edits = Patch::new(
             [text::Edit {
@@ -460,12 +463,8 @@ impl DisplayMap {
             .into_iter()
             .collect(),
         );
-        self.block_map.read(
-            snapshot.clone(),
-            edits.clone(),
-            companion_wrap_edits,
-            companion.map(|c| (c, self.entity_id)),
-        );
+        self.block_map
+            .read(snapshot.clone(), edits.clone(), companion_view);
 
         if let Some((companion_dm, _)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, _cx| {
@@ -474,8 +473,8 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&snapshot, &edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref
+                            .map(|c| CompanionView::new(dm.entity_id, &snapshot, &edits, c)),
                     );
                 }
             });
@@ -518,19 +517,19 @@ impl DisplayMap {
                 .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
-
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let block_snapshot = self
             .block_map
             .read(
                 self_wrap_snapshot.clone(),
                 self_wrap_edits.clone(),
-                companion_wrap_edits,
-                companion_ref.map(|c| (c, self.entity_id)),
+                companion_view,
             )
             .snapshot;
 
@@ -541,8 +540,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -574,7 +579,7 @@ impl DisplayMap {
 
         let block_snapshot = self
             .block_map
-            .read(wrap_snapshot, wrap_edits, None, None)
+            .read(wrap_snapshot, wrap_edits, None)
             .snapshot;
 
         DisplaySnapshot {
@@ -625,10 +630,6 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -636,13 +637,15 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
 
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-        self.block_map.read(
-            snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map.read(snapshot, edits, companion_view);
+        }
 
         let inline = creases.iter().filter_map(|crease| {
             if let Crease::Inline {
@@ -664,17 +667,16 @@ impl DisplayMap {
         let (self_wrap_snapshot, self_wrap_edits) =
             (self_new_wrap_snapshot.clone(), self_new_wrap_edits.clone());
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-
-        let mut block_map = self.block_map.write(
-            self_new_wrap_snapshot,
-            self_new_wrap_edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        let mut block_map = {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map
+                .write(self_new_wrap_snapshot, self_new_wrap_edits, companion_view)
+        };
         let blocks = creases.into_iter().filter_map(|crease| {
             if let Crease::Block {
                 range,
@@ -719,8 +721,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -745,10 +753,6 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -756,13 +760,15 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
 
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-        self.block_map.read(
-            snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map.read(snapshot, edits, companion_view);
+        }
 
         let (snapshot, edits) = fold_map.remove_folds(ranges, type_id);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -773,17 +779,16 @@ impl DisplayMap {
         let (self_wrap_snapshot, self_wrap_edits) =
             (self_new_wrap_snapshot.clone(), self_new_wrap_edits.clone());
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-
-        self.block_map.write(
-            self_new_wrap_snapshot,
-            self_new_wrap_edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map
+                .write(self_new_wrap_snapshot, self_new_wrap_edits, companion_view);
+        }
 
         if let Some((companion_dm, _)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, cx| {
@@ -792,8 +797,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -822,10 +833,6 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -833,13 +840,15 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
 
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-        self.block_map.read(
-            snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map.read(snapshot, edits, companion_view);
+        }
 
         let (snapshot, edits) =
             fold_map.unfold_intersecting(offset_ranges.iter().cloned(), inclusive);
@@ -851,17 +860,19 @@ impl DisplayMap {
         let (self_wrap_snapshot, self_wrap_edits) =
             (self_new_wrap_snapshot.clone(), self_new_wrap_edits.clone());
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-
-        let mut block_map = self.block_map.write(
-            self_new_wrap_snapshot.clone(),
-            self_new_wrap_edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        let mut block_map = {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map.write(
+                self_new_wrap_snapshot.clone(),
+                self_new_wrap_edits,
+                companion_view,
+            )
+        };
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
 
         if let Some((companion_dm, _)) = &self.companion {
@@ -871,8 +882,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -891,16 +908,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let mut block_map = self.block_map.write(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         block_map.disable_header_for_buffer(buffer_id);
 
@@ -911,8 +929,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -950,16 +974,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let mut block_map = self.block_map.write(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         block_map.fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
@@ -978,8 +1003,14 @@ impl DisplayMap {
                     let mut block_map = dm.block_map.write(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                     if !their_buffer_ids.is_empty() {
                         block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
@@ -1021,16 +1052,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let mut block_map = self.block_map.write(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         block_map.unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
 
@@ -1049,8 +1081,14 @@ impl DisplayMap {
                     let mut block_map = dm.block_map.write(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                     if !their_buffer_ids.is_empty() {
                         block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
@@ -1104,16 +1142,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let mut block_map = self.block_map.write(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         let result = block_map.insert(blocks);
 
@@ -1124,8 +1163,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -1144,16 +1189,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let mut block_map = self.block_map.write(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         block_map.resize(heights);
 
@@ -1164,8 +1210,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -1187,16 +1239,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let mut block_map = self.block_map.write(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         block_map.remove(ids);
 
@@ -1207,8 +1260,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -1229,16 +1288,17 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+        let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+            |((snapshot, edits), companion)| {
+                CompanionView::new(self.entity_id, snapshot, edits, companion)
+            },
+        );
 
         let block_map = self.block_map.read(
             self_wrap_snapshot.clone(),
             self_wrap_edits.clone(),
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
+            companion_view,
         );
         let block_row = block_map.row_for_block(block_id)?;
 
@@ -1249,8 +1309,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -1377,10 +1443,6 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -1388,13 +1450,15 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
 
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-        self.block_map.read(
-            snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map.read(snapshot, edits, companion_view);
+        }
 
         let (snapshot, edits) = fold_map.update_fold_widths(widths);
         let widths_changed = !edits.is_empty();
@@ -1406,17 +1470,16 @@ impl DisplayMap {
         let (self_wrap_snapshot, self_wrap_edits) =
             (self_new_wrap_snapshot.clone(), self_new_wrap_edits.clone());
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-
-        self.block_map.read(
-            self_new_wrap_snapshot,
-            self_new_wrap_edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map
+                .read(self_new_wrap_snapshot, self_new_wrap_edits, companion_view);
+        }
 
         if let Some((companion_dm, _)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, cx| {
@@ -1425,8 +1488,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });
@@ -1459,10 +1528,6 @@ impl DisplayMap {
                 .ok()
         });
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -1470,13 +1535,15 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
 
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-        self.block_map.read(
-            snapshot,
-            edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map.read(snapshot, edits, companion_view);
+        }
 
         let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
@@ -1488,17 +1555,16 @@ impl DisplayMap {
         let (self_wrap_snapshot, self_wrap_edits) =
             (self_new_wrap_snapshot.clone(), self_new_wrap_edits.clone());
 
-        let companion_wrap_edits = companion_wrap_data
-            .as_ref()
-            .map(|(snapshot, edits)| (snapshot, edits));
-        let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
-
-        self.block_map.read(
-            self_new_wrap_snapshot,
-            self_new_wrap_edits,
-            companion_wrap_edits,
-            companion_ref.map(|c| (c, self.entity_id)),
-        );
+        {
+            let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
+            let companion_view = companion_wrap_data.as_ref().zip(companion_ref).map(
+                |((snapshot, edits), companion)| {
+                    CompanionView::new(self.entity_id, snapshot, edits, companion)
+                },
+            );
+            self.block_map
+                .read(self_new_wrap_snapshot, self_new_wrap_edits, companion_view);
+        }
 
         if let Some((companion_dm, _)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, cx| {
@@ -1507,8 +1573,14 @@ impl DisplayMap {
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        Some((&self_wrap_snapshot, &self_wrap_edits)),
-                        their_companion_ref.map(|c| (c, dm.entity_id)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(
+                                dm.entity_id,
+                                &self_wrap_snapshot,
+                                &self_wrap_edits,
+                                c,
+                            )
+                        }),
                     );
                 }
             });

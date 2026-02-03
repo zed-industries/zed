@@ -295,7 +295,7 @@ impl HighlightsTreeView {
                     let Some(stylizer) = stylizer else {
                         continue;
                     };
-                    HighlightEntry {
+                    entries.push(HighlightEntry {
                         range,
                         range_display,
                         style: interner[token.style],
@@ -304,7 +304,7 @@ impl HighlightsTreeView {
                             token_modifiers: stylizer.token_modifiers(token.token_modifiers).map(|s| SharedString::new(s)),
                         },
                         sort_key,
-                    };
+                    });
                 }
             }
         });

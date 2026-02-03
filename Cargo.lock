@@ -9208,6 +9208,7 @@ dependencies = [
  "semver",
  "serde_json",
  "settings",
+ "sysinfo 0.37.2",
  "theme",
  "tree-sitter",
  "ui",
