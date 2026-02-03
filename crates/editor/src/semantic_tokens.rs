@@ -13,8 +13,8 @@ use project::{
     project_settings::ProjectSettings,
 };
 use settings::{
-    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
-    SemanticTokenRules, Settings as _,
+    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRule,
+    Settings as _,
 };
 use text::BufferId;
 use theme::SyntaxTheme;
@@ -232,7 +232,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
 
 pub struct SemanticTokenStylizer<'a> {
     server_id: LanguageServerId,
-    rules: &'a SemanticTokenRules,
+    rules_by_token_type: HashMap<u32, Vec<&'a SemanticTokenRule>>,
     token_types: Vec<&'a str>,
     modifier_mask: HashMap<&'a str, u32>,
 }
@@ -243,18 +243,43 @@ impl<'a> SemanticTokenStylizer<'a> {
         legend: &'a lsp::SemanticTokensLegend,
         cx: &'a App,
     ) -> Self {
-        let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
+        let token_types = legend
+            .token_types
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>();
         let modifier_mask = legend
             .token_modifiers
             .iter()
             .enumerate()
             .map(|(i, modifier)| (modifier.as_str(), 1 << i))
             .collect();
+
+        let rules = &ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .semantic_token_rules;
+
+        let rules_by_token_type = token_types
+            .iter()
+            .enumerate()
+            .map(|(index, token_type_name)| {
+                let matching_rules = rules
+                    .rules
+                    .iter()
+                    .rev()
+                    .filter(|rule| {
+                        rule.token_type
+                            .as_ref()
+                            .is_none_or(|t| t == *token_type_name)
+                    })
+                    .collect();
+                (index as u32, matching_rules)
+            })
+            .collect();
+
         SemanticTokenStylizer {
             server_id,
-            rules: &ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules,
+            rules_by_token_type,
             token_types,
             modifier_mask,
         }
@@ -291,15 +316,15 @@ impl<'a> SemanticTokenStylizer<'a> {
         token_type: u32,
         modifiers: u32,
     ) -> Option<HighlightStyle> {
-        let name = self.token_type(token_type)?;
-
-        let matching = self.rules.rules.iter().rev().filter(|rule| {
-            rule.token_type.as_ref().is_none_or(|t| t == name)
-                && rule
-                    .token_modifiers
+        let matching = self
+            .rules_by_token_type
+            .get(&token_type)?
+            .iter()
+            .filter(|rule| {
+                rule.token_modifiers
                     .iter()
                     .all(|m| self.has_modifier(modifiers, m))
-        });
+            });
 
         let mut highlight = HighlightStyle::default();
         let mut empty = true;
@@ -405,7 +430,7 @@ mod tests {
     use project::Project;
     use rope::Point;
     use serde_json::json;
-    use settings::{LanguageSettingsContent, SemanticTokens, SettingsStore};
+    use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
     use workspace::{Workspace, WorkspaceHandle as _};
 
     use crate::{
