@@ -4,7 +4,7 @@ mod system_window_tabs;
 use gpui::{
     Action, AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
-    WindowControlArea, div, px,
+    WindowButtonLayout, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
@@ -25,7 +25,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
-    button_layout: Option<gpui::WindowButtonLayout>,
+    button_layout: Option<WindowButtonLayout>,
 }
 
 impl PlatformTitleBar {
@@ -73,7 +73,7 @@ impl PlatformTitleBar {
         self.children = children.into_iter().collect();
     }
 
-    pub fn set_button_layout(&mut self, button_layout: Option<gpui::WindowButtonLayout>) {
+    pub fn set_button_layout(&mut self, button_layout: Option<WindowButtonLayout>) {
         self.button_layout = button_layout;
     }
 
@@ -96,7 +96,7 @@ impl Render for PlatformTitleBar {
         {
             self.button_layout.unwrap_or_else(|| cx.button_layout())
         } else {
-            gpui::WindowButtonLayout::default()
+            WindowButtonLayout::default()
         };
 
         let title_bar = h_flex()

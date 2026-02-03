@@ -1,3 +1,4 @@
+use gpui::WindowButtonLayout;
 use settings::{RegisterSetting, Settings, SettingsContent};
 
 #[derive(Copy, Clone, Debug, RegisterSetting)]
@@ -10,7 +11,7 @@ pub struct TitleBarSettings {
     pub show_sign_in: bool,
     pub show_user_menu: bool,
     pub show_menus: bool,
-    pub button_layout: Option<gpui::WindowButtonLayout>,
+    pub button_layout: Option<WindowButtonLayout>,
 }
 
 impl Settings for TitleBarSettings {
@@ -28,7 +29,7 @@ impl Settings for TitleBarSettings {
             button_layout: content
                 .button_layout
                 .filter(|layout| layout != "auto")
-                .map(|layout| gpui::WindowButtonLayout::parse(&layout)),
+                .map(|layout| WindowButtonLayout::parse(&layout)),
         }
     }
 }

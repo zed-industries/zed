@@ -48,13 +48,12 @@ impl RenderOnce for LinuxWindowControls {
 }
 
 fn create_window_button(
-    button: gpui::WindowButton,
+    button: WindowButton,
     id: &'static str,
     is_maximized: bool,
     close_action: &dyn Action,
     cx: &mut App,
 ) -> AnyElement {
-    use gpui::WindowButton;
     match button {
         WindowButton::Minimize => {
             WindowControl::new(id, WindowControlType::Minimize, cx).into_any_element()
