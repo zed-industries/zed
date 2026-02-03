@@ -221,6 +221,11 @@ pub struct AcpThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
+    pub recent_history_entries: Vec<AgentSessionInfo>,
+    pub hovered_recent_history_item: Option<usize>,
+    pub show_codex_windows_warning: bool,
+    pub history: Entity<AcpThreadHistory>,
+    pub _history_subscription: Subscription,
 }
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -259,7 +264,7 @@ impl AcpThreadView {
         resume_thread_metadata: Option<AgentSessionInfo>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: Entity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<ExternalAgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
@@ -270,12 +275,16 @@ impl AcpThreadView {
 
         let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
+        let history_subscription = cx.observe(&history, |this, history, cx| {
+            this.update_recent_history_from_cache(&history, cx);
+        });
+
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                history,
+                history.downgrade(),
                 prompt_store,
                 prompt_capabilities.clone(),
                 available_commands.clone(),
@@ -305,6 +314,10 @@ impl AcpThreadView {
             editor
         });
 
+        let show_codex_windows_warning = cfg!(windows)
+            && project.upgrade().is_some_and(|p| p.read(cx).is_local())
+            && agent_name == "Codex";
+
         subscriptions.push(cx.subscribe_in(
             &entry_view_state,
             window,
@@ -316,6 +329,8 @@ impl AcpThreadView {
             window,
             Self::handle_message_editor_event,
         ));
+
+        let recent_history_entries = history.read(cx).get_recent_sessions(3);
 
         Self {
             id,
@@ -371,6 +386,11 @@ impl AcpThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             project,
+            recent_history_entries,
+            hovered_recent_history_item: None,
+            history,
+            _history_subscription: history_subscription,
+            show_codex_windows_warning,
         }
     }
 
@@ -6437,6 +6457,279 @@ impl AcpThreadView {
                     cx.notify();
                 }
             }))
+    }
+
+    fn render_resume_notice(_cx: &Context<Self>) -> AnyElement {
+        let description = "This agent does not support viewing previous messages. However, your session will still continue from where you last left off.";
+
+        div()
+            .px_2()
+            .pt_2()
+            .pb_3()
+            .w_full()
+            .child(
+                Callout::new()
+                    .severity(Severity::Info)
+                    .icon(IconName::Info)
+                    .title("Resumed Session")
+                    .description(description),
+            )
+            .into_any_element()
+    }
+
+    fn update_recent_history_from_cache(
+        &mut self,
+        history: &Entity<AcpThreadHistory>,
+        cx: &mut Context<Self>,
+    ) {
+        self.recent_history_entries = history.read(cx).get_recent_sessions(3);
+        self.hovered_recent_history_item = None;
+        cx.notify();
+    }
+
+    fn render_empty_state_section_header(
+        &self,
+        label: impl Into<SharedString>,
+        action_slot: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div().pl_1().pr_1p5().child(
+            h_flex()
+                .mt_2()
+                .pl_1p5()
+                .pb_1()
+                .w_full()
+                .justify_between()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Label::new(label.into())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .children(action_slot),
+        )
+    }
+
+    fn render_recent_history(&self, cx: &mut Context<Self>) -> AnyElement {
+        let render_history = !self.recent_history_entries.is_empty();
+
+        v_flex()
+            .size_full()
+            .when(render_history, |this| {
+                let recent_history = self.recent_history_entries.clone();
+                this.justify_end().child(
+                    v_flex()
+                        .child(
+                            self.render_empty_state_section_header(
+                                "Recent",
+                                Some(
+                                    Button::new("view-history", "View All")
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenHistory,
+                                                &self.focus_handle(cx),
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(move |_event, window, cx| {
+                                            window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                        })
+                                        .into_any_element(),
+                                ),
+                                cx,
+                            ),
+                        )
+                        .child(v_flex().p_1().pr_1p5().gap_1().children({
+                            let supports_delete = self.history.read(cx).supports_delete();
+                            recent_history
+                                .into_iter()
+                                .enumerate()
+                                .map(move |(index, entry)| {
+                                    // TODO: Add keyboard navigation.
+                                    let is_hovered =
+                                        self.hovered_recent_history_item == Some(index);
+                                    crate::acp::thread_history::AcpHistoryEntryElement::new(
+                                        entry,
+                                        self.server_view.clone(),
+                                    )
+                                    .hovered(is_hovered)
+                                    .supports_delete(supports_delete)
+                                    .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                                        if *is_hovered {
+                                            this.hovered_recent_history_item = Some(index);
+                                        } else if this.hovered_recent_history_item == Some(index) {
+                                            this.hovered_recent_history_item = None;
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .into_any_element()
+                                })
+                        })),
+                )
+            })
+            .into_any()
+    }
+
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
+        Callout::new()
+            .icon(IconName::Warning)
+            .severity(Severity::Warning)
+            .title("Codex on Windows")
+            .description("For best performance, run Codex in Windows Subsystem for Linux (WSL2)")
+            .actions_slot(
+                Button::new("open-wsl-modal", "Open in WSL")
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener({
+                        move |_, _, _window, cx| {
+                            #[cfg(windows)]
+                            _window.dispatch_action(
+                                zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                                cx,
+                            );
+                            cx.notify();
+                        }
+                    })),
+            )
+            .dismiss_action(
+                IconButton::new("dismiss", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Dismiss Warning"))
+                    .on_click(cx.listener({
+                        move |this, _, _, cx| {
+                            this.show_codex_windows_warning = false;
+                            cx.notify();
+                        }
+                    })),
+            )
+    }
+
+    fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
+        v_flex().w_full().justify_end().child(
+            h_flex()
+                .p_2()
+                .pr_3()
+                .w_full()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().element_background)
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(IconName::Download)
+                                .color(Color::Accent)
+                                .size(IconSize::Small),
+                        )
+                        .child(Label::new("New version available").size(LabelSize::Small)),
+                )
+                .child(
+                    Button::new("update-button", format!("Update to v{}", version))
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.server_view
+                                .update(cx, |view, cx| view.reset(window, cx))
+                                .ok();
+                        })),
+                ),
+        )
+    }
+
+    fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.token_limit_callout_dismissed {
+            return None;
+        }
+
+        let token_usage = self.thread.read(cx).token_usage()?;
+        let ratio = token_usage.ratio();
+
+        let (severity, icon, title) = match ratio {
+            acp_thread::TokenUsageRatio::Normal => return None,
+            acp_thread::TokenUsageRatio::Warning => (
+                Severity::Warning,
+                IconName::Warning,
+                "Thread reaching the token limit soon",
+            ),
+            acp_thread::TokenUsageRatio::Exceeded => (
+                Severity::Error,
+                IconName::XCircle,
+                "Thread reached the token limit",
+            ),
+        };
+
+        let description = "To continue, start a new thread from a summary.";
+
+        Some(
+            Callout::new()
+                .severity(severity)
+                .icon(icon)
+                .title(title)
+                .description(description)
+                .actions_slot(
+                    h_flex().gap_0p5().child(
+                        Button::new("start-new-thread", "Start New Thread")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let session_id = this.thread.read(cx).session_id().clone();
+                                window.dispatch_action(
+                                    crate::NewNativeAgentThreadFromSummary {
+                                        from_session_id: session_id,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            })),
+                    ),
+                )
+                .dismiss_action(self.dismiss_error_button(cx)),
+        )
+    }
+}
+
+impl Render for AcpThreadView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_messages = self.list_state.item_count() > 0;
+
+        let conversation = v_flex().flex_1().map(|this| {
+            let this = this.when(self.resumed_without_history, |this| {
+                this.child(Self::render_resume_notice(cx))
+            });
+            if has_messages {
+                let list_state = self.list_state.clone();
+                this.child(self.render_entries(cx))
+                    .vertical_scrollbar_for(&list_state, window, cx)
+                    .into_any()
+            } else {
+                this.child(self.render_recent_history(cx)).into_any()
+            }
+        });
+
+        v_flex()
+            .size_full()
+            .child(conversation)
+            .children(self.render_activity_bar(window, cx))
+            .when(self.show_codex_windows_warning, |this| {
+                this.child(self.render_codex_windows_warning(cx))
+            })
+            .children(self.render_thread_retry_status_callout())
+            .children(self.render_thread_error(window, cx))
+            .when_some(
+                match has_messages {
+                    true => None,
+                    false => self.new_server_version_available.clone(),
+                },
+                |this, version| this.child(self.render_new_version_callout(&version, cx)),
+            )
+            .children(self.render_token_limit_callout(cx))
+            .child(self.render_message_editor(window, cx))
     }
 }
 

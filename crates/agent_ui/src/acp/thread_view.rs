@@ -168,16 +168,12 @@ pub struct AcpServerView {
     prompt_store: Option<Entity<PromptStore>>,
     server_state: ServerState,
     login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
-    recent_history_entries: Vec<AgentSessionInfo>,
     history: Entity<AcpThreadHistory>,
-    _history_subscription: Subscription,
-    hovered_recent_history_item: Option<usize>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
-    show_codex_windows_warning: bool,
 }
 
 impl AcpServerView {
@@ -283,15 +279,6 @@ impl AcpServerView {
         })
         .detach();
 
-        let show_codex_windows_warning = cfg!(windows)
-            && project.read(cx).is_local()
-            && agent.clone().downcast::<agent_servers::Codex>().is_some();
-
-        let recent_history_entries = history.read(cx).get_recent_sessions(3);
-        let history_subscription = cx.observe(&history, |this, history, cx| {
-            this.update_recent_history_from_cache(&history, cx);
-        });
-
         Self {
             agent: agent.clone(),
             agent_server_store,
@@ -314,13 +301,9 @@ impl AcpServerView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
-            recent_history_entries,
             history,
-            _history_subscription: history_subscription,
-            hovered_recent_history_item: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
-            show_codex_windows_warning,
         }
     }
 
@@ -351,8 +334,6 @@ impl AcpServerView {
                 });
             });
         }
-
-        self.recent_history_entries.clear();
         cx.notify();
     }
 
@@ -653,7 +634,7 @@ impl AcpServerView {
                                 resume_thread.clone(),
                                 project.downgrade(),
                                 this.thread_store.clone(),
-                                this.history.downgrade(),
+                                this.history.clone(),
                                 this.prompt_store.clone(),
                                 initial_content,
                                 subscriptions,
@@ -842,9 +823,8 @@ impl AcpServerView {
 
         if should_retry {
             if let Some(active) = self.as_active_thread() {
-                active.update(cx, |active, _cx| {
-                    active.thread_error = None;
-                    active.thread_error_markdown = None;
+                active.update(cx, |active, cx| {
+                    active.clear_thread_error(cx);
                 });
             }
             self.reset(window, cx);
@@ -1535,121 +1515,6 @@ impl AcpServerView {
                 active.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
             });
         };
-    }
-
-    fn render_empty_state_section_header(
-        &self,
-        label: impl Into<SharedString>,
-        action_slot: Option<AnyElement>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div().pl_1().pr_1p5().child(
-            h_flex()
-                .mt_2()
-                .pl_1p5()
-                .pb_1()
-                .w_full()
-                .justify_between()
-                .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Label::new(label.into())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .children(action_slot),
-        )
-    }
-
-    fn render_resume_notice(&self, _cx: &Context<Self>) -> AnyElement {
-        let description = "This agent does not support viewing previous messages. However, your session will still continue from where you last left off.";
-
-        div()
-            .px_2()
-            .pt_2()
-            .pb_3()
-            .w_full()
-            .child(
-                Callout::new()
-                    .severity(Severity::Info)
-                    .icon(IconName::Info)
-                    .title("Resumed Session")
-                    .description(description),
-            )
-            .into_any_element()
-    }
-
-    fn update_recent_history_from_cache(
-        &mut self,
-        history: &Entity<AcpThreadHistory>,
-        cx: &mut Context<Self>,
-    ) {
-        self.recent_history_entries = history.read(cx).get_recent_sessions(3);
-        self.hovered_recent_history_item = None;
-        cx.notify();
-    }
-
-    fn render_recent_history(&self, cx: &mut Context<Self>) -> AnyElement {
-        let render_history = !self.recent_history_entries.is_empty();
-
-        v_flex()
-            .size_full()
-            .when(render_history, |this| {
-                let recent_history = self.recent_history_entries.clone();
-                this.justify_end().child(
-                    v_flex()
-                        .child(
-                            self.render_empty_state_section_header(
-                                "Recent",
-                                Some(
-                                    Button::new("view-history", "View All")
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(
-                                            KeyBinding::for_action_in(
-                                                &OpenHistory,
-                                                &self.focus_handle(cx),
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        )
-                                        .on_click(move |_event, window, cx| {
-                                            window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                        })
-                                        .into_any_element(),
-                                ),
-                                cx,
-                            ),
-                        )
-                        .child(v_flex().p_1().pr_1p5().gap_1().children({
-                            let supports_delete = self.history.read(cx).supports_delete();
-                            recent_history
-                                .into_iter()
-                                .enumerate()
-                                .map(move |(index, entry)| {
-                                    // TODO: Add keyboard navigation.
-                                    let is_hovered =
-                                        self.hovered_recent_history_item == Some(index);
-                                    crate::acp::thread_history::AcpHistoryEntryElement::new(
-                                        entry,
-                                        cx.entity().downgrade(),
-                                    )
-                                    .hovered(is_hovered)
-                                    .supports_delete(supports_delete)
-                                    .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                                        if *is_hovered {
-                                            this.hovered_recent_history_item = Some(index);
-                                        } else if this.hovered_recent_history_item == Some(index) {
-                                            this.hovered_recent_history_item = None;
-                                        }
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                                })
-                        })),
-                )
-            })
-            .into_any()
     }
 
     fn render_auth_required_state(
@@ -2370,65 +2235,6 @@ impl AcpServerView {
         }
     }
 
-    fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        let Some(active) = self.as_active_thread() else {
-            return None;
-        };
-
-        let active_read = active.read(cx);
-        if active_read.token_limit_callout_dismissed {
-            return None;
-        }
-
-        let token_usage = active_read.thread.read(cx).token_usage()?;
-        let ratio = token_usage.ratio();
-
-        let (severity, icon, title) = match ratio {
-            acp_thread::TokenUsageRatio::Normal => return None,
-            acp_thread::TokenUsageRatio::Warning => (
-                Severity::Warning,
-                IconName::Warning,
-                "Thread reaching the token limit soon",
-            ),
-            acp_thread::TokenUsageRatio::Exceeded => (
-                Severity::Error,
-                IconName::XCircle,
-                "Thread reached the token limit",
-            ),
-        };
-
-        let description = "To continue, start a new thread from a summary.";
-
-        Some(
-            Callout::new()
-                .severity(severity)
-                .icon(icon)
-                .title(title)
-                .description(description)
-                .actions_slot(
-                    h_flex().gap_0p5().child(
-                        Button::new("start-new-thread", "Start New Thread")
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let Some(active) = this.as_active_thread() else {
-                                    return;
-                                };
-                                let session_id =
-                                    active.read(cx).thread.read(cx).session_id().clone();
-                                window.dispatch_action(
-                                    crate::NewNativeAgentThreadFromSummary {
-                                        from_session_id: session_id,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                );
-                            })),
-                    ),
-                )
-                .dismiss_action(self.dismiss_error_button(cx)),
-        )
-    }
-
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_view_state) = self
             .as_active_thread()
@@ -2484,73 +2290,6 @@ impl AcpServerView {
         }
     }
 
-    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
-        Callout::new()
-            .icon(IconName::Warning)
-            .severity(Severity::Warning)
-            .title("Codex on Windows")
-            .description("For best performance, run Codex in Windows Subsystem for Linux (WSL2)")
-            .actions_slot(
-                Button::new("open-wsl-modal", "Open in WSL")
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener({
-                        move |_, _, _window, cx| {
-                            #[cfg(windows)]
-                            _window.dispatch_action(
-                                zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
-                                cx,
-                            );
-                            cx.notify();
-                        }
-                    })),
-            )
-            .dismiss_action(
-                IconButton::new("dismiss", IconName::Close)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text("Dismiss Warning"))
-                    .on_click(cx.listener({
-                        move |this, _, _, cx| {
-                            this.show_codex_windows_warning = false;
-                            cx.notify();
-                        }
-                    })),
-            )
-    }
-
-    fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
-        v_flex().w_full().justify_end().child(
-            h_flex()
-                .p_2()
-                .pr_3()
-                .w_full()
-                .gap_1p5()
-                .border_t_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().element_background)
-                .child(
-                    h_flex()
-                        .flex_1()
-                        .gap_1p5()
-                        .child(
-                            Icon::new(IconName::Download)
-                                .color(Color::Accent)
-                                .size(IconSize::Small),
-                        )
-                        .child(Label::new("New version available").size(LabelSize::Small)),
-                )
-                .child(
-                    Button::new("update-button", format!("Update to v{}", version))
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.reset(window, cx);
-                        })),
-                ),
-        )
-    }
-
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
@@ -2571,20 +2310,6 @@ impl AcpServerView {
         let message = message.into();
 
         CopyButton::new("copy-error-message", message).tooltip_label("Copy Error Message")
-    }
-
-    fn dismiss_error_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        IconButton::new("dismiss", IconName::Close)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Dismiss"))
-            .on_click(cx.listener({
-                move |this, _, _, cx| {
-                    if let Some(active) = this.as_active_thread() {
-                        active.update(cx, |active, cx| active.clear_thread_error(cx));
-                    }
-                    cx.notify();
-                }
-            }))
     }
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2664,10 +2389,6 @@ impl AcpServerView {
 impl Render for AcpServerView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
-
-        let has_messages = self
-            .as_active_thread()
-            .is_some_and(|active| active.read(cx).list_state.item_count() > 0);
 
         v_flex()
             .size_full()
@@ -2833,7 +2554,7 @@ impl Render for AcpServerView {
             .child(match &self.server_state {
                 ServerState::Loading { .. } => v_flex()
                     .flex_1()
-                    .child(self.render_recent_history(cx))
+                    // .child(self.render_recent_history(cx))
                     .into_any(),
                 ServerState::LoadError(e) => v_flex()
                     .flex_1()
@@ -2865,56 +2586,7 @@ impl Render for AcpServerView {
                         cx,
                     ))
                     .into_any_element(),
-                ServerState::Connected(connected) => v_flex().flex_1().map(|this| {
-                    let this = this
-                        .when(connected.current.read(cx).resumed_without_history, |this| {
-                            this.child(self.render_resume_notice(cx))
-                        });
-                    if has_messages {
-                        if let Some(thread) = self.as_active_thread() {
-                            let list_state = thread.read(cx).list_state.clone();
-                            this.child(thread.update(cx, |thread, cx| thread.render_entries(cx)))
-                                .vertical_scrollbar_for(&list_state, window, cx)
-                                .into_any()
-                        } else {
-                            this.into_any()
-                        }
-                    } else {
-                        this.child(self.render_recent_history(cx)).into_any()
-                    }
-                }),
-            })
-            // The activity bar is intentionally rendered outside of the ThreadState::Active match
-            // above so that the scrollbar doesn't render behind it. The current setup allows
-            // the scrollbar to stop exactly at the activity bar start.
-            .when(has_messages, |this| match self.as_active_thread() {
-                Some(thread) => this
-                    .children(thread.update(cx, |state, cx| state.render_activity_bar(window, cx))),
-                _ => this,
-            })
-            .when(self.show_codex_windows_warning, |this| {
-                this.child(self.render_codex_windows_warning(cx))
-            })
-            .when_some(self.as_active_thread(), |this, thread_state| {
-                thread_state.update(cx, |state, cx| {
-                    this.children(state.render_thread_retry_status_callout())
-                        .children(state.render_thread_error(window, cx))
-                })
-            })
-            .when_some(
-                match has_messages {
-                    true => None,
-                    false => self
-                        .as_active_thread()
-                        .and_then(|active| active.read(cx).new_server_version_available.clone()),
-                },
-                |this, version| this.child(self.render_new_version_callout(&version, cx)),
-            )
-            .children(self.render_token_limit_callout(cx))
-            .when_some(self.as_active_thread(), |this, thread_state| {
-                this.child(
-                    thread_state.update(cx, |state, cx| state.render_message_editor(window, cx)),
-                )
+                ServerState::Connected(connected) => connected.current.clone().into_any_element(),
             })
     }
 }
