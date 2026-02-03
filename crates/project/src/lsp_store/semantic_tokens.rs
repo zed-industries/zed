@@ -126,7 +126,6 @@ impl LspStore {
                             }
                         })
                         .map_err(Arc::new)
-                        .map_err(Into::into)
                 } else {
                     lsp_store.update(cx, |lsp_store, cx| {
                         if let Some(current_lsp_data) =
