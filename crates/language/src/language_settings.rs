@@ -457,7 +457,7 @@ pub struct OllamaSettings {
     /// Maximum tokens to generate.
     pub max_output_tokens: u32,
     /// Custom API URL to use for Ollama.
-    pub api_url: Option<String>,
+    pub api_url: Arc<str>,
 }
 
 impl AllLanguageSettings {
@@ -694,7 +694,7 @@ impl settings::Settings for AllLanguageSettings {
         let ollama_settings = OllamaSettings {
             model: ollama.model.map(|m| m.0),
             max_output_tokens: ollama.max_output_tokens.unwrap(),
-            api_url: ollama.api_url,
+            api_url: ollama.api_url.unwrap(),
         };
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();

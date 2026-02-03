@@ -487,7 +487,7 @@ pub mod v0131_git_merge_markers_prefix {
 pub mod zeta1 {
     pub const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
     pub const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
-    pub const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>\n";
+    pub const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
     pub const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 
     const INSTRUCTION_HEADER: &str = concat!(

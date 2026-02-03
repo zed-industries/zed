@@ -453,7 +453,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .get_or_insert_default()
                         .max_output_tokens = value;
                 },
-                json_path: Some("edit_predictions.ollama.max_tokens"),
+                json_path: Some("edit_predictions.ollama.max_output_tokens"),
             }),
             metadata: None,
             files: USER,

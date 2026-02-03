@@ -2,7 +2,7 @@ use crate::{
     EditPredictionId, EditPredictionModelInput, cursor_excerpt,
     prediction::EditPredictionResult,
     zeta1::{
-        self, EDITABLE_REGION_END_MARKER, MAX_CONTEXT_TOKENS as ZETA_MAX_CONTEXT_TOKENS,
+        self, MAX_CONTEXT_TOKENS as ZETA_MAX_CONTEXT_TOKENS,
         MAX_EVENT_TOKENS as ZETA_MAX_EVENT_TOKENS,
     },
 };
@@ -16,11 +16,12 @@ use language::{
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{ZetaPromptInput, zeta1::format_zeta1_prompt};
+use zeta_prompt::{
+    ZetaPromptInput,
+    zeta1::{EDITABLE_REGION_END_MARKER, format_zeta1_prompt},
+};
 
-pub struct Ollama {
-    api_url: String,
-}
+pub struct Ollama;
 
 #[derive(Debug, Serialize)]
 struct OllamaGenerateRequest {
@@ -66,9 +67,7 @@ struct OllamaRequestOutput {
 
 impl Ollama {
     pub fn new() -> Self {
-        Ollama {
-            api_url: "http://localhost:11434".to_string(),
-        }
+        Self
     }
 
     pub fn request_prediction(
@@ -88,6 +87,7 @@ impl Ollama {
             return Task::ready(Ok(None));
         };
         let max_output_tokens = settings.max_output_tokens;
+        let api_url = settings.api_url.clone();
 
         log::debug!("Ollama: Requesting completion (model: {})", model);
 
@@ -100,7 +100,6 @@ impl Ollama {
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
         let buffer_snapshotted_at = Instant::now();
-        let api_url = self.api_url.clone();
 
         let is_zeta = is_zeta_model(&model);
 

@@ -5317,7 +5317,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "gpui_tokio",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -5482,7 +5481,6 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
  "paths",
  "pretty_assertions",
  "project",
@@ -11073,20 +11071,12 @@ name = "ollama"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "edit_prediction_context",
- "edit_prediction_types",
  "futures 0.3.31",
- "gpui",
  "http_client",
- "icons",
- "language",
- "language_model",
- "log",
  "schemars",
  "serde",
  "serde_json",
  "settings",
- "text",
 ]
 
 [[package]]
@@ -21081,7 +21071,6 @@ dependencies = [
  "nc",
  "node_runtime",
  "notifications",
- "ollama",
  "onboarding",
  "outline",
  "outline_panel",

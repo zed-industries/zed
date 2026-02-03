@@ -19,12 +19,13 @@ use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use text::Bias;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
-use zeta_prompt::{Event, ZetaPromptInput};
-
-const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>\n";
-pub(crate) const EDITABLE_REGION_END_MARKER: &str = "\n<|editable_region_end|>";
+use zeta_prompt::{
+    Event, ZetaPromptInput,
+    zeta1::{
+        CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
+        START_OF_FILE_MARKER,
+    },
+};
 
 pub(crate) const MAX_CONTEXT_TOKENS: usize = 150;
 pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
@@ -322,11 +323,11 @@ pub(crate) fn parse_edits(
 
     let content_start = start_markers
         .first()
-        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len())
+        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len() + 1) // +1 to skip \n after marker
         .unwrap_or(0);
     let content_end = end_markers
         .first()
-        .map(|e| e.0)
+        .map(|e| e.0.saturating_sub(1)) // -1 to exclude \n before marker
         .unwrap_or(content.strip_suffix("\n").unwrap_or(&content).len());
 
     let new_text = &content[content_start..content_end];
@@ -363,12 +364,6 @@ pub fn compute_edits_and_cursor_position(
     Option<PredictedCursorPosition>,
 ) {
     let diffs = text_diff(&old_text, new_text);
-
-    eprintln!("=============== OLD TEXT: ```\n{}\n```\n", old_text);
-    eprintln!("=============== NEW TEXT: ```\n{}\n```\n", new_text);
-
-    eprintln!("=============== DIFFS: {:?}", diffs);
-    std::fs::write("/tmp/diffs.txt", format!("{:?}", diffs).as_bytes()).ok();
 
     // Delta represents the cumulative change in byte count from all preceding edits.
     // new_offset = old_offset + delta, so old_offset = new_offset - delta
@@ -630,7 +625,7 @@ fn push_editable_range(
     editable_range: Range<Point>,
     prompt: &mut String,
 ) {
-    write!(prompt, "{EDITABLE_REGION_START_MARKER}").unwrap();
+    writeln!(prompt, "{EDITABLE_REGION_START_MARKER}").unwrap();
     for chunk in snapshot.chunks(editable_range.start..cursor_position, false) {
         prompt.push_str(chunk.text);
     }
@@ -638,7 +633,7 @@ fn push_editable_range(
     for chunk in snapshot.chunks(cursor_position..editable_range.end, false) {
         prompt.push_str(chunk.text);
     }
-    write!(prompt, "{EDITABLE_REGION_END_MARKER}").unwrap();
+    write!(prompt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
 }
 
 #[cfg(test)]
