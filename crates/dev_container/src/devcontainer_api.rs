@@ -10,16 +10,35 @@ use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::{DevContainerConnection, Settings as _};
 use smol::{fs, process::Command};
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::{DevContainerFeature, DevContainerSettings, DevContainerTemplate};
+
+/// Represents a discovered devcontainer configuration
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevContainerConfig {
+    /// Display name for the configuration (subfolder name or "default")
+    pub name: String,
+    /// Relative path to the devcontainer.json file from the project root
+    pub config_path: PathBuf,
+}
+
+impl DevContainerConfig {
+    pub fn default_config() -> Self {
+        Self {
+            name: "default".to_string(),
+            config_path: PathBuf::from(".devcontainer/devcontainer.json"),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DevContainerUp {
     _outcome: String,
     container_id: String,
-    _remote_user: String,
+    remote_user: String,
     remote_workspace_folder: String,
 }
 
@@ -95,6 +114,7 @@ pub(crate) async fn read_devcontainer_configuration_for_project(
         found_in_path,
         node_runtime,
         &directory,
+        None,
         use_podman(cx),
     )
     .await
@@ -131,9 +151,123 @@ fn use_podman(cx: &mut AsyncWindowContext) -> bool {
         .unwrap_or(false)
 }
 
+/// Finds all available devcontainer configurations in the project.
+///
+/// This function scans for:
+/// 1. `.devcontainer/devcontainer.json` (the default location)
+/// 2. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
+///
+/// Returns a list of found configurations, or an empty list if none are found.
+pub fn find_devcontainer_configs(cx: &mut AsyncWindowContext) -> Vec<DevContainerConfig> {
+    let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+        log::debug!("find_devcontainer_configs: No workspace found");
+        return Vec::new();
+    };
+
+    let Ok(configs) = workspace.update(cx, |workspace, _, cx| {
+        let project = workspace.project().read(cx);
+
+        let worktree = project
+            .visible_worktrees(cx)
+            .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+
+        let Some(worktree) = worktree else {
+            log::debug!("find_devcontainer_configs: No worktree found");
+            return Vec::new();
+        };
+
+        let worktree = worktree.read(cx);
+        let mut configs = Vec::new();
+
+        let devcontainer_path = RelPath::unix(".devcontainer").expect("valid path");
+
+        let Some(devcontainer_entry) = worktree.entry_for_path(devcontainer_path) else {
+            log::debug!("find_devcontainer_configs: .devcontainer directory not found in worktree");
+            return Vec::new();
+        };
+
+        if !devcontainer_entry.is_dir() {
+            log::debug!("find_devcontainer_configs: .devcontainer is not a directory");
+            return Vec::new();
+        }
+
+        log::debug!("find_devcontainer_configs: Scanning .devcontainer directory");
+        let devcontainer_json_path =
+            RelPath::unix(".devcontainer/devcontainer.json").expect("valid path");
+        for entry in worktree.child_entries(devcontainer_path) {
+            log::debug!(
+                "find_devcontainer_configs: Found entry: {:?}, is_file: {}, is_dir: {}",
+                entry.path.as_unix_str(),
+                entry.is_file(),
+                entry.is_dir()
+            );
+
+            if entry.is_file() && entry.path.as_ref() == devcontainer_json_path {
+                log::debug!("find_devcontainer_configs: Found default devcontainer.json");
+                configs.push(DevContainerConfig::default_config());
+            } else if entry.is_dir() {
+                let subfolder_name = entry
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+
+                let config_json_path = format!("{}/devcontainer.json", entry.path.as_unix_str());
+                if let Ok(rel_config_path) = RelPath::unix(&config_json_path) {
+                    if worktree.entry_for_path(rel_config_path).is_some() {
+                        log::debug!(
+                            "find_devcontainer_configs: Found config in subfolder: {}",
+                            subfolder_name
+                        );
+                        configs.push(DevContainerConfig {
+                            name: subfolder_name,
+                            config_path: PathBuf::from(&config_json_path),
+                        });
+                    } else {
+                        log::debug!(
+                            "find_devcontainer_configs: Subfolder {} has no devcontainer.json",
+                            subfolder_name
+                        );
+                    }
+                }
+            }
+        }
+
+        log::info!(
+            "find_devcontainer_configs: Found {} configurations",
+            configs.len()
+        );
+
+        configs.sort_by(|a, b| {
+            if a.name == "default" {
+                std::cmp::Ordering::Less
+            } else if b.name == "default" {
+                std::cmp::Ordering::Greater
+            } else {
+                a.name.cmp(&b.name)
+            }
+        });
+
+        configs
+    }) else {
+        log::debug!("find_devcontainer_configs: Failed to update workspace");
+        return Vec::new();
+    };
+
+    configs
+}
+
 pub async fn start_dev_container(
     cx: &mut AsyncWindowContext,
     node_runtime: NodeRuntime,
+) -> Result<(DevContainerConnection, String), DevContainerError> {
+    start_dev_container_with_config(cx, node_runtime, None).await
+}
+
+pub async fn start_dev_container_with_config(
+    cx: &mut AsyncWindowContext,
+    node_runtime: NodeRuntime,
+    config: Option<DevContainerConfig>,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     let use_podman = use_podman(cx);
     check_for_docker(use_podman).await?;
@@ -144,11 +278,14 @@ pub async fn start_dev_container(
         return Err(DevContainerError::NotInValidProject);
     };
 
+    let config_path = config.map(|c| directory.join(&c.config_path));
+
     match devcontainer_up(
         &path_to_devcontainer_cli,
         found_in_path,
         &node_runtime,
         directory.clone(),
+        config_path.clone(),
         use_podman,
     )
     .await
@@ -156,6 +293,7 @@ pub async fn start_dev_container(
         Ok(DevContainerUp {
             container_id,
             remote_workspace_folder,
+            remote_user,
             ..
         }) => {
             let project_name = match devcontainer_read_configuration(
@@ -163,6 +301,7 @@ pub async fn start_dev_container(
                 found_in_path,
                 &node_runtime,
                 &directory,
+                config_path.as_ref(),
                 use_podman,
             )
             .await
@@ -180,6 +319,7 @@ pub async fn start_dev_container(
                 name: project_name,
                 container_id: container_id,
                 use_podman,
+                remote_user,
             };
 
             Ok((connection, remote_workspace_folder))
@@ -311,6 +451,7 @@ async fn devcontainer_up(
     found_in_path: bool,
     node_runtime: &NodeRuntime,
     path: Arc<Path>,
+    config_path: Option<PathBuf>,
     use_podman: bool,
 ) -> Result<DevContainerUp, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
@@ -323,6 +464,11 @@ async fn devcontainer_up(
     command.arg("up");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
+
+    if let Some(config) = config_path {
+        command.arg("--config");
+        command.arg(config.display().to_string());
+    }
 
     log::info!("Running full devcontainer up command: {:?}", command);
 
@@ -355,6 +501,7 @@ async fn devcontainer_read_configuration(
     found_in_path: bool,
     node_runtime: &NodeRuntime,
     path: &Arc<Path>,
+    config_path: Option<&PathBuf>,
     use_podman: bool,
 ) -> Result<DevContainerConfigurationOutput, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
@@ -367,6 +514,11 @@ async fn devcontainer_read_configuration(
     command.arg("read-configuration");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
+
+    if let Some(config) = config_path {
+        command.arg("--config");
+        command.arg(config.display().to_string());
+    }
 
     match command.output().await {
         Ok(output) => {
@@ -563,7 +715,7 @@ mod tests {
             up.container_id,
             "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
         );
-        assert_eq!(up._remote_user, "vscode");
+        assert_eq!(up.remote_user, "vscode");
         assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
 
         let json_in_plaintext = r#"[2026-01-22T16:19:08.802Z] @devcontainers/cli 0.80.1. Node.js v22.21.1. darwin 24.6.0 arm64.
@@ -574,7 +726,7 @@ mod tests {
             up.container_id,
             "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
         );
-        assert_eq!(up._remote_user, "vscode");
+        assert_eq!(up.remote_user, "vscode");
         assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
     }
 }
