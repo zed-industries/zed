@@ -239,7 +239,7 @@ pub fn init(cx: &mut App) {
             let replace_window = window.window_handle().downcast::<Workspace>();
             let is_local = workspace.project().read(cx).is_local();
 
-            cx.spawn_in(window, async move |_, mut cx| {
+            cx.spawn_in(window, async move |_, cx| {
                 if !is_local {
                     cx.prompt(
                         gpui::PromptLevel::Critical,
@@ -252,7 +252,7 @@ pub fn init(cx: &mut App) {
                     return;
                 }
 
-                let configs = find_devcontainer_configs(&mut cx);
+                let configs = find_devcontainer_configs(cx);
 
                 if configs.len() > 1 {
                     // Multiple configs found - show modal for selection
@@ -272,7 +272,7 @@ pub fn init(cx: &mut App) {
                 // Single or no config - proceed with opening directly
                 let config = configs.into_iter().next();
                 let (connection, starting_dir) = match start_dev_container_with_config(
-                    &mut cx,
+                    cx,
                     app_state.node_runtime.clone(),
                     config,
                 )
@@ -301,7 +301,7 @@ pub fn init(cx: &mut App) {
                         replace_window,
                         ..OpenOptions::default()
                     },
-                    &mut cx,
+                    cx,
                 )
                 .await;
 

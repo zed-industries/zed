@@ -99,14 +99,17 @@ enum DevContainerCreationProgress {
 
 #[derive(Clone)]
 struct CreateRemoteDevContainer {
-    entries: Vec<NavigableEntry>,
+    back_entry: NavigableEntry,
     progress: DevContainerCreationProgress,
 }
 
 impl CreateRemoteDevContainer {
     fn new(progress: DevContainerCreationProgress, cx: &mut Context<RemoteServerProjects>) -> Self {
-        let entries: Vec<NavigableEntry> = vec![NavigableEntry::focusable(cx)];
-        Self { entries, progress }
+        let back_entry = NavigableEntry::focusable(cx);
+        Self {
+            back_entry,
+            progress,
+        }
     }
 }
 
@@ -1916,7 +1919,7 @@ impl RemoteServerProjects {
                             .child(
                                 div()
                                     .id("devcontainer-go-back")
-                                    .track_focus(&state.entries[0].focus_handle)
+                                    .track_focus(&state.back_entry.focus_handle)
                                     .on_action(cx.listener(
                                         |this, _: &menu::Confirm, window, cx| {
                                             this.mode =
@@ -1928,7 +1931,8 @@ impl RemoteServerProjects {
                                     .child(
                                         ListItem::new("li-devcontainer-go-back")
                                             .toggle_state(
-                                                state.entries[0]
+                                                state
+                                                    .back_entry
                                                     .focus_handle
                                                     .contains_focused(window, cx),
                                             )
