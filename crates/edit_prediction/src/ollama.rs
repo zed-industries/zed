@@ -255,6 +255,14 @@ fn format_sweep_next_edit_prompt(
         }
     }
 
+    write!(
+        prompt,
+        "{FILE_SEPARATOR}{}\n",
+        inputs.cursor_path.to_string_lossy()
+    )
+    .ok();
+    write!(prompt, "{}\n", inputs.cursor_excerpt).ok();
+
     for event in events {
         match event.as_ref() {
             Event::BufferChange {
@@ -453,6 +461,9 @@ fn parse_diff_to_original_updated(diff: &str) -> Option<(String, String)> {
 }
 
 fn parse_sweep_next_edit_response(response: &str, inputs: &ZetaPromptInput) -> String {
+    eprintln!("=============== RESPONSE: \n{}", response);
+    std::fs::write("/tmp/response.txt", response).ok();
+
     let file_path = path_to_unix_string(&inputs.cursor_path);
     let updated_marker = format!("updated/{}", file_path);
 
