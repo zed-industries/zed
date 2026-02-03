@@ -58,9 +58,13 @@ impl LspStore {
             }
 
             if invalidate_cache {
-                let old_data = std::mem::take(semantic_tokens_data);
-                semantic_tokens_data.latest_invalidation_requests =
-                    old_data.latest_invalidation_requests;
+                let SemanticTokensData {
+                    raw_tokens,
+                    latest_invalidation_requests: _,
+                    update,
+                } = semantic_tokens_data;
+                *update = None;
+                raw_tokens.servers.clear();
             }
         }
 
@@ -83,7 +87,7 @@ impl LspStore {
                 let buffer = task_buffer;
                 let version_queried_for = task_version_queried_for;
                 if let Some(new_tokens) = new_tokens.await {
-                    let raw_tokens = lsp_store
+                    lsp_store
                         .update(cx, |lsp_store, cx| {
                             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                             let semantic_tokens_data =
@@ -111,15 +115,18 @@ impl LspStore {
                                     }
                                 }
                             }
-                            semantic_tokens_data.raw_tokens.clone()
+                            let buffer_snapshot =
+                                buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                            let tokens = raw_to_buffer_semantic_tokens(
+                                &semantic_tokens_data.raw_tokens,
+                                &buffer_snapshot,
+                            );
+                            BufferSemanticTokens {
+                                tokens: Some(tokens),
+                            }
                         })
-                        .map_err(Arc::new)?;
-
-                    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                    let tokens = raw_to_buffer_semantic_tokens(&raw_tokens, &buffer_snapshot);
-                    Ok(BufferSemanticTokens {
-                        tokens: Some(tokens),
-                    })
+                        .map_err(Arc::new)
+                        .map_err(Into::into)
                 } else {
                     lsp_store.update(cx, |lsp_store, cx| {
                         if let Some(current_lsp_data) =
@@ -314,7 +321,7 @@ impl LspStore {
 pub type SemanticTokensTask =
     Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct BufferSemanticTokens {
     pub tokens: Option<HashMap<LanguageServerId, Arc<[BufferSemanticToken]>>>,
 }
@@ -377,13 +384,13 @@ pub struct SemanticTokensData {
 ///
 /// This aggregates semantic tokens from multiple language servers in a specific order.
 /// Semantic tokens later in the list will override earlier ones in case of overlap.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug)]
 pub(super) struct RawSemanticTokens {
     pub servers: HashMap<lsp::LanguageServerId, ServerSemanticTokens>,
 }
 
 /// All the semantic tokens for a buffer, from a single language server.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ServerSemanticTokens {
     /// Each value is:
     /// data[5*i] - deltaLine: token line number, relative to the start of the previous token
