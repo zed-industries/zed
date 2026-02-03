@@ -3532,9 +3532,10 @@ impl GitPanel {
         for entry in repo.cached_status() {
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
+            let is_untracked = entry.status.is_untracked();
             let staging = entry.status.staging();
 
-            if matches!(untracked_changes, GitPanelUntrackedChanges::Hidden) && is_new {
+            if matches!(untracked_changes, GitPanelUntrackedChanges::Hidden) && is_untracked {
                 continue;
             }
 
