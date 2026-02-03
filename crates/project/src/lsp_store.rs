@@ -144,6 +144,7 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
+use settings::SemanticTokenRules;
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -3845,6 +3846,7 @@ pub struct LspStore {
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     semantic_token_stylizers: HashMap<LanguageServerId, SemanticTokenStylizer>,
+    semantic_token_rules: SemanticTokenRules,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
     global_semantic_tokens_mode: settings::SemanticTokens,
@@ -4187,6 +4189,10 @@ impl LspStore {
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             semantic_token_stylizers: HashMap::default(),
+            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone(),
             lsp_data: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
@@ -4251,6 +4257,10 @@ impl LspStore {
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             semantic_token_stylizers: HashMap::default(),
+            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone(),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             active_entry: None,
@@ -5050,6 +5060,15 @@ impl LspStore {
             prettier_store.update(cx, |prettier_store, cx| {
                 prettier_store.on_settings_changed(language_formatters_to_check, cx)
             })
+        }
+
+        let new_semantic_token_rules = crate::project_settings::ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .semantic_token_rules
+            .clone();
+        if new_semantic_token_rules != self.semantic_token_rules {
+            self.semantic_token_rules = new_semantic_token_rules;
+            self.semantic_token_stylizers.clear();
         }
 
         let new_global_semantic_tokens_mode =
