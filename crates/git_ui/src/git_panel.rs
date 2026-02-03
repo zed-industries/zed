@@ -134,6 +134,7 @@ enum TrashCancel {
 }
 
 struct GitMenuState {
+    stage_all_includes_untracked: bool,
     can_stage_all: bool,
     can_unstage_all: bool,
     show_stage_untracked: bool,
@@ -151,12 +152,17 @@ fn git_panel_context_menu(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
+    let (stage_label, unstage_label) = if state.stage_all_includes_untracked {
+        ("Stage All", "Unstage All")
+    } else {
+        ("Stage Tracked", "Unstage Tracked")
+    };
     ContextMenu::build(window, cx, move |context_menu, _, _| {
         context_menu
             .context(focus_handle)
             .action_disabled_when(
                 !state.can_stage_all,
-                "Stage All",
+                stage_label,
                 StageAll.boxed_clone(),
             )
             .when(state.show_stage_untracked, |this| {
@@ -168,7 +174,7 @@ fn git_panel_context_menu(
             })
             .action_disabled_when(
                 !state.can_unstage_all,
-                "Unstage All",
+                unstage_label,
                 UnstageAll.boxed_clone(),
             )
             .separator()
@@ -1696,25 +1702,27 @@ impl GitPanel {
             untracked_changes,
             GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
         );
-        let tracked_repo_paths = if stage && !stage_all_includes_untracked {
-            Some(self.tracked_repo_paths())
+        let tracked_repo_paths = if stage_all_includes_untracked {
+            Vec::new()
         } else {
-            None
+            self.tracked_repo_paths()
         };
         cx.spawn({
             async move |this, cx| {
                 let result = this
                     .update(cx, |this, cx| {
-                        let tracked_repo_paths = tracked_repo_paths.unwrap_or_default();
                         let task = active_repository.update(cx, |repo, cx| {
+                            let tracked_repo_paths = tracked_repo_paths.clone();
                             if stage {
                                 if stage_all_includes_untracked {
                                     repo.stage_all(cx)
                                 } else {
                                     repo.stage_entries(tracked_repo_paths, cx)
                                 }
-                            } else {
+                            } else if stage_all_includes_untracked {
                                 repo.unstage_all(cx)
+                            } else {
+                                repo.unstage_entries(tracked_repo_paths, cx)
                             }
                         });
                         this.update_counts(active_repository.read(cx));
@@ -3907,7 +3915,8 @@ impl GitPanel {
     }
 
     pub fn can_unstage_all(&self) -> bool {
-        self.has_staged_changes()
+        let (staged_count, _) = self.stage_scope_counts();
+        staged_count > 0
     }
 
     fn status_width_estimate(
@@ -3958,6 +3967,10 @@ impl GitPanel {
         let focus_handle = self.focus_handle.clone();
         let can_stage_all = self.can_stage_all();
         let can_unstage_all = self.can_unstage_all();
+        let stage_all_includes_untracked = matches!(
+            self.untracked_changes,
+            GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+        );
         let show_stage_untracked = self.untracked_changes == GitPanelUntrackedChanges::Separate;
         let can_stage_untracked = show_stage_untracked && self.can_stage_untracked();
         let has_tracked_changes = self.has_tracked_changes();
@@ -3974,6 +3987,7 @@ impl GitPanel {
                 Some(git_panel_context_menu(
                     focus_handle.clone(),
                     GitMenuState {
+                        stage_all_includes_untracked,
                         can_stage_all,
                         can_unstage_all,
                         show_stage_untracked,
@@ -4227,20 +4241,16 @@ impl GitPanel {
             self.untracked_changes,
             GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
         );
-        let (stage_label, stage_tooltip) = if stage_all_includes_untracked {
-            ("Stage All", "git add --all")
-        } else {
-            ("Stage Tracked", "git add -u")
-        };
+        let (stage_label, stage_tooltip, unstage_label, unstage_tooltip) =
+            if stage_all_includes_untracked {
+                ("Stage All", "git add --all", "Unstage All", "git reset")
+            } else {
+                ("Stage Tracked", "git add -u", "Unstage Tracked", "git reset --")
+            };
         let (text, action, stage, tooltip) = if is_fully_staged {
-            ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
+            (unstage_label, UnstageAll.boxed_clone(), false, unstage_tooltip)
         } else {
-            (
-                stage_label,
-                StageAll.boxed_clone(),
-                true,
-                stage_tooltip,
-            )
+            (stage_label, StageAll.boxed_clone(), true, stage_tooltip)
         };
 
         let change_string = match self.changes_count {
@@ -4973,11 +4983,17 @@ impl GitPanel {
         let context_menu = git_panel_context_menu(
             self.focus_handle.clone(),
             GitMenuState {
+                stage_all_includes_untracked: matches!(
+                    self.untracked_changes,
+                    GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Mixed
+                ),
                 can_stage_all: self.can_stage_all(),
                 can_unstage_all: self.can_unstage_all(),
                 show_stage_untracked: self.untracked_changes
                     == GitPanelUntrackedChanges::Separate,
-                can_stage_untracked: self.can_stage_untracked(),
+                can_stage_untracked: self.untracked_changes
+                    == GitPanelUntrackedChanges::Separate
+                    && self.can_stage_untracked(),
                 has_tracked_changes: self.has_tracked_changes(),
                 has_new_changes: self.new_count > 0,
                 sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
