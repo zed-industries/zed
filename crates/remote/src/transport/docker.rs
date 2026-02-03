@@ -428,7 +428,7 @@ impl DockerExecConnection {
             "{}:{}",
             connection_options.remote_user, connection_options.remote_user,
         ));
-        chown_command.arg(format!("{}", &dst_path));
+        chown_command.arg(&dst_path);
 
         let output = chown_command.output().await?;
 
@@ -710,7 +710,7 @@ impl RemoteConnection for DockerExecConnection {
             dest_path_str,
         );
 
-        cx.background_spawn(async move { upload_task.await })
+        cx.background_spawn(upload_task)
     }
 
     async fn kill(&self) -> Result<()> {
