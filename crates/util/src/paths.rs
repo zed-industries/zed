@@ -374,13 +374,6 @@ impl PathStyle {
                             .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
     }
 
-    /// Checks if a path looks like it should be resolved as an absolute path.
-    /// This includes filesystem absolute paths and home directory paths (~).
-    /// Used for UI contexts like file pickers where users may type shell-style paths.
-    pub fn looks_like_absolute(&self, path_like: &str) -> bool {
-        self.is_absolute(path_like) || path_like.starts_with('~')
-    }
-
     pub fn is_windows(&self) -> bool {
         *self == PathStyle::Windows
     }
