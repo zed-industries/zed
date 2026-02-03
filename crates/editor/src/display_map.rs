@@ -230,7 +230,7 @@ pub struct DisplayMap {
 // test change
 
 pub(crate) struct Companion {
-    rhs_display_map_id: EntityId,
+    pub(crate) rhs_display_map_id: EntityId,
     rhs_folded_buffers: HashSet<BufferId>,
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
     lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
@@ -238,6 +238,8 @@ pub(crate) struct Companion {
     lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
     lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
+    rhs_custom_blocks_to_lhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
+    lhs_custom_blocks_to_rhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
 }
 
 impl Companion {
@@ -256,7 +258,40 @@ impl Companion {
             lhs_excerpt_to_rhs_excerpt: Default::default(),
             rhs_rows_to_lhs_rows,
             lhs_rows_to_rhs_rows,
+            rhs_custom_blocks_to_lhs_custom_blocks: Default::default(),
+            lhs_custom_blocks_to_rhs_custom_blocks: Default::default(),
         }
+    }
+
+    pub(crate) fn companion_custom_block_to_custom_block(
+        &self,
+        display_map_id: EntityId,
+    ) -> &HashMap<CustomBlockId, CustomBlockId> {
+        if display_map_id == self.rhs_display_map_id {
+            &self.lhs_custom_blocks_to_rhs_custom_blocks
+        } else {
+            &self.rhs_custom_blocks_to_lhs_custom_blocks
+        }
+    }
+
+    pub(crate) fn add_custom_block_mapping(
+        &mut self,
+        lhs_id: CustomBlockId,
+        rhs_id: CustomBlockId,
+    ) {
+        self.lhs_custom_blocks_to_rhs_custom_blocks
+            .insert(lhs_id, rhs_id);
+        self.rhs_custom_blocks_to_lhs_custom_blocks
+            .insert(rhs_id, lhs_id);
+    }
+
+    pub(crate) fn remove_custom_block_mapping(
+        &mut self,
+        lhs_id: &CustomBlockId,
+        rhs_id: &CustomBlockId,
+    ) {
+        self.lhs_custom_blocks_to_rhs_custom_blocks.remove(lhs_id);
+        self.rhs_custom_blocks_to_lhs_custom_blocks.remove(rhs_id);
     }
 
     pub(crate) fn convert_rows_to_companion(
@@ -495,64 +530,90 @@ impl DisplayMap {
         if let Some((companion_dm, companion)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
-                    let companion_ref = companion.read(cx);
-                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(cx));
+                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c);
 
-                    if self.entity_id != companion_ref.rhs_display_map_id {
-                        use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
-                        // Sync existing custom blocks to the companion
+                    // Sync existing custom blocks to the companion
+                    if self.entity_id != companion.read(cx).rhs_display_map_id {
+                        use gpui::{
+                            Element, InteractiveElement, Styled, div, pattern_slash, white,
+                        };
                         let buffer_snapshot = snapshot.buffer_snapshot();
-                        let new_custom_blocks = dm.block_map.read(companion_snapshot.clone(), Patch::default(), None)
+                        let their_custom_blocks: Vec<_> = dm
+                            .block_map
+                            .read(companion_snapshot.clone(), Patch::default(), None)
                             .blocks
                             .iter()
-                            .map(|block| {
-                                let their_anchor = block.placement.start();
-                                let their_point =
-                                    their_anchor.to_point(companion_snapshot.buffer_snapshot());
-                                let my_point = companion_ref
-                                    .convert_rows_from_companion(
-                                        self.entity_id,
-                                        buffer_snapshot,
-                                        companion_snapshot.buffer_snapshot(),
-                                        (
-                                            Bound::Included(their_point),
-                                            Bound::Included(their_point),
-                                        ),
-                                    )
-                                    .first()
-                                    .unwrap()
-                                    .boundaries
-                                    .first()
-                                    .unwrap()
-                                    .1
-                                    .start;
-                                let anchor = buffer_snapshot.anchor_before(my_point);
-                                let height = block.height.unwrap_or(1);
-                                let new_block = BlockProperties {
-                                    placement: BlockPlacement::Above(anchor),
-                                    height: Some(height),
-                                    style: BlockStyle::Sticky,
-                                    render: Arc::new(move |cx| {
-                                        div()
-                                            .id(cx.block_id)
-                                            .size_full()
-                                            .h(Pixels::from(cx.line_height * height as f32))
-                                            .bg(pattern_slash(white(), 8.0, 8.0))
-                                            .into_any()
-                                    }),
-                                    priority: 0,
-                                };
-                                log::debug!("Creating a matching companion block: {block:#?} => {new_block:#?}");
-                                new_block
+                            .cloned()
+                            .collect();
+                        let my_custom_blocks = their_custom_blocks.iter().map(|block| {
+                            let their_anchor = block.placement.start();
+                            let their_point =
+                                their_anchor.to_point(companion_snapshot.buffer_snapshot());
+                            let my_point = companion
+                                .read(cx)
+                                .convert_rows_from_companion(
+                                    self.entity_id,
+                                    buffer_snapshot,
+                                    companion_snapshot.buffer_snapshot(),
+                                    (Bound::Included(their_point), Bound::Included(their_point)),
+                                )
+                                .first()
+                                .unwrap()
+                                .boundaries
+                                .first()
+                                .unwrap()
+                                .1
+                                .start;
+                            let anchor = buffer_snapshot.anchor_before(my_point);
+                            let height = block.height.unwrap_or(1);
+                            let new_block = BlockProperties {
+                                placement: BlockPlacement::Above(anchor),
+                                height: Some(height),
+                                style: BlockStyle::Sticky,
+                                render: Arc::new(move |cx| {
+                                    div()
+                                        .id(cx.block_id)
+                                        .size_full()
+                                        .h(Pixels::from(cx.line_height * height as f32))
+                                        .bg(pattern_slash(white(), 8.0, 8.0))
+                                        .into_any()
+                                }),
+                                priority: 0,
+                            };
+                            log::debug!(
+                                "Creating a matching companion block: {block:#?} => {new_block:#?}"
+                            );
+                            new_block
+                        });
+                        let my_custom_blocks = self
+                            .block_map
+                            .write(snapshot.clone(), Patch::default(), None)
+                            .insert(my_custom_blocks);
+
+                        for (my_custom_block, their_custom_block) in my_custom_blocks
+                            .into_iter()
+                            .zip(their_custom_blocks.into_iter())
+                        {
+                            companion.update(cx, |companion, _| {
+                                log::debug!(
+                                    "self.entity_id != companion.rhs_display_map_id : {:?} != {:?}",
+                                    self.entity_id,
+                                    companion.rhs_display_map_id
+                                );
+                                companion.add_custom_block_mapping(
+                                    their_custom_block.id,
+                                    my_custom_block,
+                                );
                             });
-                        self.block_map.write(snapshot.clone(), Patch::default(), None).insert(new_custom_blocks);
+                        }
                     }
 
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,
-                        their_companion_ref
-                            .map(|c| CompanionView::new(dm.entity_id, &snapshot, &edits, c)),
+                        their_companion_ref.map(|c| {
+                            CompanionView::new(dm.entity_id, &snapshot, &edits, c.read(cx))
+                        }),
                     );
                 }
             });

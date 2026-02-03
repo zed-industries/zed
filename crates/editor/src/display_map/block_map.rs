@@ -1678,9 +1678,17 @@ impl BlockMapWriter<'_> {
                 log::debug!(
                     "Inserting matching companion custom block: {new_block:#?} => {their_new_block:#?}"
                 );
-                their_block_map
+                let their_new_block_id = their_block_map
                     .write(their_snapshot.clone(), Patch::default(), None)
-                    .insert([their_new_block]);
+                    .insert([their_new_block])[0];
+                log::debug!(
+                    "their_entity_id != companion.rhs_display_map_id : {their_entity_id:?} != {:?}",
+                    companion.rhs_display_map_id
+                );
+                let (lhs_id, rhs_id) = (*their_entity_id == companion.rhs_display_map_id)
+                    .then_some((id, their_new_block_id))
+                    .unwrap_or((their_new_block_id, id));
+                companion.add_custom_block_mapping(lhs_id, rhs_id);
             }
 
             edits = edits.compose([Edit {
@@ -1819,6 +1827,36 @@ impl BlockMapWriter<'_> {
         self.block_map
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
+
+        if let Some(CompanionViewMut {
+            entity_id: their_entity_id,
+            wrap_snapshot: their_snapshot,
+            companion,
+            block_map: their_block_map,
+            ..
+        }) = self.companion.as_deref_mut()
+        {
+            let their_block_ids: HashSet<_> = block_ids
+                .iter()
+                .filter_map(|my_block_id| {
+                    let their_block_id = companion
+                        .companion_custom_block_to_custom_block(*their_entity_id)
+                        .get(my_block_id)?;
+                    log::debug!("{their_entity_id:?}: Remove theirs {their_block_id:?} for mine {my_block_id:?}");
+                    Some(*their_block_id)
+                })
+                .collect();
+            for (lhs_id, rhs_id) in their_block_ids.iter().zip(block_ids.iter()) {
+                let (lhs_id, rhs_id) = (*their_entity_id == companion.rhs_display_map_id)
+                    .then_some((lhs_id, rhs_id))
+                    .unwrap_or((rhs_id, lhs_id));
+                companion.remove_custom_block_mapping(lhs_id, rhs_id);
+            }
+            their_block_map
+                .write(their_snapshot.clone(), Patch::default(), None)
+                .remove(their_block_ids);
+        }
+
         let default_patch = Patch::default();
         self.block_map.sync(
             wrap_snapshot,
