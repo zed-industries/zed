@@ -5486,14 +5486,15 @@ impl Project {
                     chunk.file_id,
                     chunk.data.len()
                 );
-                let mut files = downloading_files.lock();
 
-                // Find the entry by file_id
-                let key_to_remove: Option<(WorktreeId, String)> = {
+                // Extract data while holding the lock, then release it before await
+                let (key_to_remove, write_info): (
+                    Option<(WorktreeId, String)>,
+                    Option<(PathBuf, Vec<u8>)>,
+                ) = {
+                    let mut files = downloading_files.lock();
                     let mut found_key: Option<(WorktreeId, String)> = None;
-                    let mut should_write = false;
-                    let mut destination = PathBuf::new();
-                    let mut content = Vec::new();
+                    let mut write_data: Option<(PathBuf, Vec<u8>)> = None;
 
                     for (key, file_entry) in files.iter_mut() {
                         if file_entry.file_id == Some(chunk.file_id) {
@@ -5507,35 +5508,35 @@ impl Project {
                             if file_entry.chunks.len() as u64 >= file_entry.total_size
                                 && file_entry.total_size > 0
                             {
-                                destination = file_entry.destination_path.clone();
-                                content = std::mem::take(&mut file_entry.chunks);
+                                let destination = file_entry.destination_path.clone();
+                                let content = std::mem::take(&mut file_entry.chunks);
                                 found_key = Some(key.clone());
-                                should_write = true;
+                                write_data = Some((destination, content));
                             }
                             break;
                         }
                     }
+                    (found_key, write_data)
+                }; // MutexGuard is dropped here
 
-                    if should_write {
-                        drop(files);
-                        log::debug!(
-                            "handle_create_file_for_peer: writing {} bytes to {:?}",
-                            content.len(),
+                // Perform the async write outside the lock
+                if let Some((destination, content)) = write_info {
+                    log::debug!(
+                        "handle_create_file_for_peer: writing {} bytes to {:?}",
+                        content.len(),
+                        destination
+                    );
+                    match smol::fs::write(&destination, &content).await {
+                        Ok(_) => log::info!(
+                            "handle_create_file_for_peer: successfully wrote file to {:?}",
                             destination
-                        );
-                        match smol::fs::write(&destination, &content).await {
-                            Ok(_) => log::info!(
-                                "handle_create_file_for_peer: successfully wrote file to {:?}",
-                                destination
-                            ),
-                            Err(e) => log::error!(
-                                "handle_create_file_for_peer: failed to write file: {:?}",
-                                e
-                            ),
-                        }
+                        ),
+                        Err(e) => log::error!(
+                            "handle_create_file_for_peer: failed to write file: {:?}",
+                            e
+                        ),
                     }
-                    found_key
-                };
+                }
 
                 // Remove the completed entry
                 if let Some(key) = key_to_remove {
