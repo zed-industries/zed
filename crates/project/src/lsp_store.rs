@@ -141,7 +141,10 @@ pub use language::Location;
 pub use lsp_store::inlay_hint_cache::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-pub use semantic_tokens::{BufferSemanticToken, BufferSemanticTokens, RefreshForServer, TokenType};
+pub use semantic_tokens::{
+    BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
+};
+use settings::SemanticTokenRules;
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -3842,6 +3845,8 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    semantic_token_stylizers: HashMap<LanguageServerId, SemanticTokenStylizer>,
+    semantic_token_rules: SemanticTokenRules,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
     global_semantic_tokens_mode: settings::SemanticTokens,
@@ -4183,6 +4188,11 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
+            semantic_token_stylizers: HashMap::default(),
+            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone(),
             lsp_data: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
@@ -4246,6 +4256,11 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
+            semantic_token_stylizers: HashMap::default(),
+            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone(),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             active_entry: None,
@@ -5052,6 +5067,15 @@ impl LspStore {
         if new_global_semantic_tokens_mode != self.global_semantic_tokens_mode {
             self.global_semantic_tokens_mode = new_global_semantic_tokens_mode;
             self.restart_all_language_servers(cx);
+        }
+
+        let new_semantic_token_rules = crate::project_settings::ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .semantic_token_rules
+            .clone();
+        if new_semantic_token_rules != self.semantic_token_rules {
+            self.semantic_token_rules = new_semantic_token_rules;
+            self.recreate_semantic_token_stylizers(cx);
         }
 
         cx.notify();
@@ -11826,7 +11850,8 @@ impl LspStore {
                 .log_err();
         }
         self.lsp_server_capabilities
-            .insert(server_id, server_capabilities);
+            .insert(server_id, server_capabilities.clone());
+        self.create_semantic_token_stylizer(server_id, &server_capabilities, cx);
 
         // Tell the language server about every open buffer in the worktree that matches the language.
         // Also check for buffers in worktrees that reused this server
@@ -12426,6 +12451,7 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
+        self.semantic_token_stylizers.remove(&for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
         }
@@ -12437,6 +12463,42 @@ impl LspStore {
             for buffer_servers in local.buffers_opened_in_servers.values_mut() {
                 buffer_servers.remove(&for_server);
             }
+        }
+    }
+
+    fn create_semantic_token_stylizer(
+        &mut self,
+        server_id: LanguageServerId,
+        capabilities: &lsp::ServerCapabilities,
+        cx: &App,
+    ) {
+        let Some(legend) = capabilities
+            .semantic_tokens_provider
+            .as_ref()
+            .map(|provider| match provider {
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
+                    &opts.semantic_tokens_options.legend
+                }
+            })
+        else {
+            return;
+        };
+        let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
+        self.semantic_token_stylizers.insert(server_id, stylizer);
+    }
+
+    pub fn semantic_token_stylizer(
+        &self,
+        server_id: LanguageServerId,
+    ) -> Option<&SemanticTokenStylizer> {
+        self.semantic_token_stylizers.get(&server_id)
+    }
+
+    fn recreate_semantic_token_stylizers(&mut self, cx: &App) {
+        self.semantic_token_stylizers.clear();
+        for (server_id, capabilities) in self.lsp_server_capabilities.clone() {
+            self.create_semantic_token_stylizer(server_id, &capabilities, cx);
         }
     }
 

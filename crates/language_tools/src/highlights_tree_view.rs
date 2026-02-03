@@ -1,7 +1,6 @@
-use collections::FxHashMap;
 use editor::{
     Anchor, Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
-    scroll::Autoscroll, semantic_tokens::SemanticTokenStylizer,
+    scroll::Autoscroll,
 };
 use gpui::{
     Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
@@ -270,30 +269,12 @@ impl HighlightsTreeView {
             }
 
             let lsp_store = project.read(cx).lsp_store().read(cx);
-            let server_caps = &lsp_store
-                .lsp_server_capabilities;
-            // TODO kb need to deduplicate & cache this in the editor/lsp_store/etc.
-            let mut cache = FxHashMap::default();
             for (_, (tokens, interner)) in display_map.all_semantic_token_highlights() {
                 for token in tokens.iter() {
                     let range = token.range.start.into()..token.range.end.into();
                     let (range_display, sort_key) =
                         format_anchor_range(&range, &multi_buffer_snapshot);
-                    let stylizer = cache.entry(token.server_id)
-                        .or_insert_with(|| {
-                            server_caps
-                                .get(&token.server_id)
-                                .and_then(|caps| caps.semantic_tokens_provider.as_ref())
-                                .map(|provider| match provider {
-                                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                                        opts,
-                                    ) => &opts.legend,
-                                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
-                                        &opts.semantic_tokens_options.legend
-                                    }
-                                }).map(|legend| SemanticTokenStylizer::new(token.server_id, legend, cx))
-                        });
-                    let Some(stylizer) = stylizer else {
+                    let Some(stylizer) = lsp_store.semantic_token_stylizer(token.server_id) else {
                         continue;
                     };
                     entries.push(HighlightEntry {
@@ -301,8 +282,12 @@ impl HighlightsTreeView {
                         range_display,
                         style: interner[token.style],
                         category: HighlightCategory::SemanticToken {
-                            token_type: stylizer.token_type_name(token.token_type).map(SharedString::new),
-                            token_modifiers: stylizer.token_modifiers(token.token_modifiers).map(SharedString::new),
+                            token_type: stylizer
+                                .token_type_name(token.token_type)
+                                .map(|s| SharedString::from(s.to_string())),
+                            token_modifiers: stylizer
+                                .token_modifiers(token.token_modifiers)
+                                .map(SharedString::from),
                         },
                         sort_key,
                     });

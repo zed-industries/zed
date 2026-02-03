@@ -1,21 +1,16 @@
 use std::{collections::hash_map, sync::Arc, time::Duration};
 
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use futures::future::join_all;
 use gpui::{
-    App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
+    Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
-use lsp::LanguageServerId;
-use project::{
-    lsp_store::{BufferSemanticToken, BufferSemanticTokens, RefreshForServer, TokenType},
-    project_settings::ProjectSettings,
+use project::lsp_store::{
+    BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
-use settings::{
-    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRule,
-    Settings as _,
-};
+use settings::{SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight};
 use text::BufferId;
 use theme::SyntaxTheme;
 use ui::ActiveTheme as _;
@@ -154,25 +149,13 @@ impl Editor {
                         let mut token_highlights = Vec::new();
                         let mut interner = HighlightStyleInterner::default();
                         for (server_id, server_tokens) in tokens {
-                            let Some(legend) = lsp_store
-                                .lsp_server_capabilities
-                                .get(&server_id)
-                                .and_then(|caps| caps.semantic_tokens_provider.as_ref())
-                                .map(|provider| match provider {
-                                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                                        opts,
-                                    ) => &opts.legend,
-                                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
-                                        &opts.semantic_tokens_options.legend
-                                    }
-                                })
+                            let Some(stylizer) = lsp_store.semantic_token_stylizer(server_id)
                             else {
                                 continue;
                             };
-                            let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
                             token_highlights.extend(buffer_into_editor_highlights(
                                 &server_tokens,
-                                &stylizer,
+                                stylizer,
                                 &all_excerpts,
                                 &multi_buffer_snapshot,
                                 &mut interner,
@@ -197,7 +180,7 @@ impl Editor {
 
 fn buffer_into_editor_highlights<'a, 'b>(
     buffer_tokens: &'a [BufferSemanticToken],
-    stylizer: &'a SemanticTokenStylizer<'a>,
+    stylizer: &'a SemanticTokenStylizer,
     all_excerpts: &'a [multi_buffer::ExcerptId],
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
@@ -217,199 +200,114 @@ fn buffer_into_editor_highlights<'a, 'b>(
             })
             .and_then(|anchor| anchor.try_into().ok())?;
 
-        let style =
-            stylizer.convert(cx.theme().syntax(), token.token_type, token.token_modifiers)?;
+        let style = convert_token(
+            stylizer,
+            cx.theme().syntax(),
+            token.token_type,
+            token.token_modifiers,
+        )?;
         let style = interner.intern(style);
         Some(SemanticTokenHighlight {
             range: multi_buffer_start..multi_buffer_end,
             style,
             token_type: token.token_type,
             token_modifiers: token.token_modifiers,
-            server_id: stylizer.server_id,
+            server_id: stylizer.server_id(),
         })
     })
 }
 
-pub struct SemanticTokenStylizer<'a> {
-    server_id: LanguageServerId,
-    rules_by_token_type: HashMap<TokenType, Vec<&'a SemanticTokenRule>>,
-    token_type_names: HashMap<TokenType, &'a str>,
-    modifier_mask: HashMap<&'a str, u32>,
-}
-
-impl<'a> SemanticTokenStylizer<'a> {
-    pub fn new(
-        server_id: LanguageServerId,
-        legend: &'a lsp::SemanticTokensLegend,
-        cx: &'a App,
-    ) -> Self {
-        let token_types = legend
-            .token_types
+fn convert_token(
+    stylizer: &SemanticTokenStylizer,
+    theme: &SyntaxTheme,
+    token_type: TokenType,
+    modifiers: u32,
+) -> Option<HighlightStyle> {
+    let matching = stylizer.rules_for_token(token_type)?.iter().filter(|rule| {
+        rule.token_modifiers
             .iter()
-            .enumerate()
-            .map(|(i, token_type)| (TokenType(i as u32), token_type.as_str()))
-            .collect::<HashMap<_, _>>();
-        let modifier_mask = legend
-            .token_modifiers
-            .iter()
-            .enumerate()
-            .map(|(i, modifier)| (modifier.as_str(), 1 << i))
-            .collect();
+            .all(|m| stylizer.has_modifier(modifiers, m))
+    });
 
-        let rules = &ProjectSettings::get_global(cx)
-            .global_lsp_settings
-            .semantic_token_rules;
+    let mut highlight = HighlightStyle::default();
+    let mut empty = true;
 
-        let rules_by_token_type = token_types
-            .iter()
-            .map(|(index, token_type_name)| {
-                let matching_rules = rules
-                    .rules
-                    .iter()
-                    .rev()
-                    .filter(|rule| {
-                        rule.token_type
-                            .as_ref()
-                            .is_none_or(|rule_token_type| rule_token_type == token_type_name)
-                    })
-                    .collect();
-                (*index, matching_rules)
-            })
-            .collect();
+    for rule in matching {
+        empty = false;
 
-        SemanticTokenStylizer {
-            server_id,
-            rules_by_token_type,
-            token_type_names: token_types,
-            modifier_mask,
+        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+
+        macro_rules! overwrite {
+            (
+                highlight.$highlight_field:ident,
+                SemanticTokenRule::$rule_field:ident,
+                $transform:expr $(,)?
+            ) => {
+                highlight.$highlight_field = rule
+                    .$rule_field
+                    .map($transform)
+                    .or_else(|| style.and_then(|s| s.$highlight_field))
+                    .or(highlight.$highlight_field)
+            };
         }
-    }
 
-    pub fn token_type_name(&self, token_type: TokenType) -> Option<&'a str> {
-        self.token_type_names.get(&token_type).copied()
-    }
+        overwrite!(
+            highlight.color,
+            SemanticTokenRule::foreground_color,
+            Into::into,
+        );
 
-    pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {
-        let Some(mask) = self.modifier_mask.get(modifier) else {
-            return false;
-        };
-        (token_modifiers & mask) != 0
-    }
+        overwrite!(
+            highlight.background_color,
+            SemanticTokenRule::background_color,
+            Into::into,
+        );
 
-    pub fn token_modifiers(&self, token_modifiers: u32) -> Option<String> {
-        let modifiers: Vec<&str> = self
-            .modifier_mask
-            .iter()
-            .filter(|(_, mask)| (token_modifiers & *mask) != 0)
-            .map(|(name, _)| *name)
-            .collect();
-        if modifiers.is_empty() {
-            None
-        } else {
-            Some(modifiers.join(", "))
-        }
-    }
+        overwrite!(
+            highlight.font_weight,
+            SemanticTokenRule::font_weight,
+            |w| match w {
+                SemanticTokenFontWeight::Normal => FontWeight::NORMAL,
+                SemanticTokenFontWeight::Bold => FontWeight::BOLD,
+            },
+        );
 
-    pub fn convert(
-        &self,
-        theme: &'a SyntaxTheme,
-        token_type: TokenType,
-        modifiers: u32,
-    ) -> Option<HighlightStyle> {
-        let matching = self
-            .rules_by_token_type
-            .get(&token_type)?
-            .iter()
-            .filter(|rule| {
-                rule.token_modifiers
-                    .iter()
-                    .all(|m| self.has_modifier(modifiers, m))
-            });
+        overwrite!(
+            highlight.font_style,
+            SemanticTokenRule::font_style,
+            |s| match s {
+                SemanticTokenFontStyle::Normal => FontStyle::Normal,
+                SemanticTokenFontStyle::Italic => FontStyle::Italic,
+            },
+        );
 
-        let mut highlight = HighlightStyle::default();
-        let mut empty = true;
-
-        for rule in matching {
-            empty = false;
-
-            let style = rule.style.iter().find_map(|style| theme.get_opt(style));
-
-            // Overwriting rules:
-            // - Explicit fields have top priority.
-            // - Then, styles from the theme (if found).
-            // - Lastly, rules further down in the list are applied.
-            macro_rules! overwrite {
-                (
-                    highlight.$highlight_field:ident,
-                    SemanticTokenRule::$rule_field:ident,
-                    $transform:expr $(,)?
-                ) => {
-                    highlight.$highlight_field = rule
-                        .$rule_field
-                        .map($transform)
-                        .or_else(|| style.and_then(|s| s.$highlight_field))
-                        .or(highlight.$highlight_field)
-                };
+        overwrite!(highlight.underline, SemanticTokenRule::underline, |u| {
+            UnderlineStyle {
+                thickness: 1.0.into(),
+                color: match u {
+                    SemanticTokenColorOverride::InheritForeground(true) => highlight.color,
+                    SemanticTokenColorOverride::InheritForeground(false) => None,
+                    SemanticTokenColorOverride::Replace(c) => Some(c.into()),
+                },
+                ..Default::default()
             }
+        });
 
-            overwrite!(
-                highlight.color,
-                SemanticTokenRule::foreground_color,
-                Into::into,
-            );
-
-            overwrite!(
-                highlight.background_color,
-                SemanticTokenRule::background_color,
-                Into::into,
-            );
-
-            overwrite!(
-                highlight.font_weight,
-                SemanticTokenRule::font_weight,
-                |w| match w {
-                    SemanticTokenFontWeight::Normal => FontWeight::NORMAL,
-                    SemanticTokenFontWeight::Bold => FontWeight::BOLD,
+        overwrite!(
+            highlight.strikethrough,
+            SemanticTokenRule::strikethrough,
+            |s| StrikethroughStyle {
+                thickness: 1.0.into(),
+                color: match s {
+                    SemanticTokenColorOverride::InheritForeground(true) => highlight.color,
+                    SemanticTokenColorOverride::InheritForeground(false) => None,
+                    SemanticTokenColorOverride::Replace(c) => Some(c.into()),
                 },
-            );
-
-            overwrite!(
-                highlight.font_style,
-                SemanticTokenRule::font_style,
-                |s| match s {
-                    SemanticTokenFontStyle::Normal => FontStyle::Normal,
-                    SemanticTokenFontStyle::Italic => FontStyle::Italic,
-                },
-            );
-
-            overwrite!(highlight.underline, SemanticTokenRule::underline, |u| {
-                UnderlineStyle {
-                    thickness: 1.0.into(),
-                    color: match u {
-                        SemanticTokenColorOverride::InheritForeground(true) => highlight.color,
-                        SemanticTokenColorOverride::InheritForeground(false) => None,
-                        SemanticTokenColorOverride::Replace(c) => Some(c.into()),
-                    },
-                    ..Default::default()
-                }
-            });
-
-            overwrite!(
-                highlight.strikethrough,
-                SemanticTokenRule::strikethrough,
-                |s| StrikethroughStyle {
-                    thickness: 1.0.into(),
-                    color: match s {
-                        SemanticTokenColorOverride::InheritForeground(true) => highlight.color,
-                        SemanticTokenColorOverride::InheritForeground(false) => None,
-                        SemanticTokenColorOverride::Replace(c) => Some(c.into()),
-                    },
-                },
-            );
-        }
-
-        if empty { None } else { Some(highlight) }
+            },
+        );
     }
+
+    if empty { None } else { Some(highlight) }
 }
 
 #[cfg(test)]
@@ -420,7 +318,9 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{AppContext as _, Entity, Focusable as _, TestAppContext, VisualTestContext};
+    use gpui::{
+        AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, VisualTestContext,
+    };
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
     use multi_buffer::{
