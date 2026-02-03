@@ -1,7 +1,7 @@
 use gpui::{Action, App, Context, Entity, EventEmitter, Pixels, Render, Subscription, Window, px};
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{ListItem, Tooltip, prelude::*};
+use ui::{ThreadItem, Tooltip, prelude::*};
 use workspace::{
     MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
     ToggleWorkspaceSidebar, Workspace,
@@ -36,9 +36,10 @@ impl Sidebar {
         workspace: &Entity<Workspace>,
         is_active: bool,
         cx: &App,
-    ) -> ListItem {
-        let worktree_names: Vec<String> = workspace
-            .read(cx)
+    ) -> ThreadItem {
+        let workspace_ref = workspace.read(cx);
+
+        let worktree_names: Vec<String> = workspace_ref
             .worktrees(cx)
             .filter_map(|worktree| {
                 worktree
@@ -49,16 +50,16 @@ impl Sidebar {
             })
             .collect();
 
-        let label: SharedString = if worktree_names.is_empty() {
+        let project_label: SharedString = if worktree_names.is_empty() {
             format!("Workspace {}", index + 1).into()
         } else {
             worktree_names.join(", ").into()
         };
 
-        ListItem::new(("workspace-item", index))
-            .inset(true)
-            .toggle_state(is_active)
-            .child(Label::new(label))
+        ThreadItem::new(("workspace-item", index), "The Last Thread Title Here")
+            .timestamp("12:10 AM")
+            .worktree(project_label)
+            .selected(is_active)
     }
 }
 
@@ -94,7 +95,6 @@ impl Render for Sidebar {
                         multi_workspace.update(cx, |mw, cx| {
                             mw.activate_index(index, cx);
                         });
-                        cx.emit(SidebarEvent::Close);
                     }))
             })
             .collect();
@@ -145,7 +145,6 @@ impl Render for Sidebar {
                     .id("workspace-sidebar-content")
                     .flex_1()
                     .overflow_y_scroll()
-                    .p_1()
                     .children(items),
             )
     }

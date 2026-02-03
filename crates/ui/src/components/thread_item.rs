@@ -1,5 +1,5 @@
 use crate::{
-    Chip, DecoratedIcon, DiffStat, IconDecoration, IconDecorationKind, SpinnerLabel, prelude::*,
+    DecoratedIcon, DiffStat, IconDecoration, IconDecorationKind, SpinnerLabel, prelude::*,
 };
 use gpui::{ClickEvent, SharedString};
 
@@ -137,7 +137,7 @@ impl RenderOnce for ThreadItem {
                     .gap_1p5()
                     .child(icon_container()) // Icon Spacing
                     .when_some(self.worktree, |this, name| {
-                        this.child(Chip::new(name).label_size(LabelSize::XSmall))
+                        this.child(Label::new(name).size(LabelSize::Small).color(Color::Muted))
                     })
                     .child(
                         Label::new(self.timestamp)
