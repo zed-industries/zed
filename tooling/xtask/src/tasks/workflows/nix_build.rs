@@ -68,6 +68,7 @@ pub(crate) fn build_nix(
     }
 
     job = job
+        .add_step(steps::cache_nix_dependencies_namespace())
         .add_step(install_nix())
         .add_step(cachix_action(cachix_filter))
         .add_step(build(&flake_output));
