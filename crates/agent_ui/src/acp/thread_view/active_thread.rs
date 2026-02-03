@@ -887,7 +887,7 @@ impl AcpThreadView {
         });
     }
 
-    pub fn reject_all(&mut self, window: &mut Window, cx: &mut Context<AcpThreadView>) {
+    pub fn reject_all(&mut self, window: &mut Window, cx: &mut Context<AcpServerView>) {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
@@ -904,7 +904,7 @@ impl AcpThreadView {
         }
     }
 
-    pub fn undo_last_reject(&mut self, cx: &mut Context<AcpThreadView>) {
+    pub fn undo_last_reject(&mut self, cx: &mut Context<AcpServerView>) {
         let thread = &self.thread;
         let action_log = thread.read(cx).action_log().clone();
         action_log
@@ -916,7 +916,7 @@ impl AcpThreadView {
         &self,
         action_log: Entity<ActionLog>,
         _window: &mut Window,
-        cx: &mut Context<AcpThreadView>,
+        cx: &mut Context<AcpServerView>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
