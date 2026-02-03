@@ -73,7 +73,7 @@ where
     let mut result = Vec::new();
     let mut patches = HashMap::default();
 
-    for (source_buffer, _buffer_offset_range, source_excerpt_id) in
+    for (source_buffer, buffer_offset_range, source_excerpt_id) in
         source_snapshot.range_to_buffer_ranges(source_bounds)
     {
         let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied().unwrap();
@@ -92,10 +92,11 @@ where
             // TODO(split-diff) pass only the union of the ranges for the affected excerpts
             translate_fn(diff, Point::zero()..=source_buffer.max_point(), rhs_buffer)
         });
+        let buffer_point_range = buffer_offset_range.to_point(source_buffer);
 
-        // TODO(split-diff) narrow the patch to only the edited part of the specific excerpt
+        // TODO(split-diff) maybe narrow the patch to only the edited part of the excerpt
         // (less useful for project diff, but important if we want to do singleton side-by-side diff)
-        if let Some(translation) = patch_for_excerpt(
+        result.push(patch_for_excerpt(
             source_snapshot,
             target_snapshot,
             source_excerpt_id,
@@ -103,9 +104,8 @@ where
             source_buffer,
             target_buffer,
             patch,
-        ) {
-            result.push(translation);
-        }
+            buffer_point_range,
+        ));
     }
 
     result
@@ -119,15 +119,24 @@ fn patch_for_excerpt(
     source_buffer: &text::BufferSnapshot,
     target_buffer: &text::BufferSnapshot,
     patch: &Patch<Point>,
-) -> Option<CompanionExcerptPatch> {
-    let source_multibuffer_range = source_snapshot.range_for_excerpt(source_excerpt_id)?;
+    source_edited_range: Range<Point>,
+) -> CompanionExcerptPatch {
+    let source_multibuffer_range = source_snapshot
+        .range_for_excerpt(source_excerpt_id)
+        .unwrap();
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
-    let source_context_range = source_snapshot.context_range_for_excerpt(source_excerpt_id)?;
+    let source_context_range = source_snapshot
+        .context_range_for_excerpt(source_excerpt_id)
+        .unwrap();
     let source_excerpt_start_in_buffer = source_context_range.start.to_point(&source_buffer);
     let source_excerpt_end_in_buffer = source_context_range.end.to_point(&source_buffer);
-    let target_multibuffer_range = target_snapshot.range_for_excerpt(target_excerpt_id)?;
+    let target_multibuffer_range = target_snapshot
+        .range_for_excerpt(target_excerpt_id)
+        .unwrap();
     let target_excerpt_start_in_multibuffer = target_multibuffer_range.start;
-    let target_context_range = target_snapshot.context_range_for_excerpt(target_excerpt_id)?;
+    let target_context_range = target_snapshot
+        .context_range_for_excerpt(target_excerpt_id)
+        .unwrap();
     let target_excerpt_start_in_buffer = target_context_range.start.to_point(&target_buffer);
     let target_excerpt_end_in_buffer = target_context_range.end.to_point(&target_buffer);
 
@@ -172,13 +181,22 @@ fn patch_for_excerpt(
         })
         .collect();
 
-    Some(CompanionExcerptPatch {
+    let edited_range = source_excerpt_start_in_multibuffer
+        + (source_edited_range.start - source_excerpt_start_in_buffer)
+        ..source_excerpt_start_in_multibuffer
+            + (source_edited_range.end - source_excerpt_start_in_buffer);
+
+    let source_excerpt_end = source_excerpt_start_in_multibuffer
+        + (source_excerpt_end_in_buffer - source_excerpt_start_in_buffer);
+    let target_excerpt_end = target_excerpt_start_in_multibuffer
+        + (target_excerpt_end_in_buffer - target_excerpt_start_in_buffer);
+
+    CompanionExcerptPatch {
         patch: Patch::new(edits),
-        source_excerpt_end: source_excerpt_start_in_multibuffer
-            + (source_excerpt_end_in_buffer - source_excerpt_start_in_buffer),
-        target_excerpt_end: target_excerpt_start_in_multibuffer
-            + (target_excerpt_end_in_buffer - target_excerpt_start_in_buffer),
-    })
+        edited_range,
+        source_excerpt_range: source_excerpt_start_in_multibuffer..source_excerpt_end,
+        target_excerpt_range: target_excerpt_start_in_multibuffer..target_excerpt_end,
+    }
 }
 
 pub struct SplitDiffFeatureFlag;

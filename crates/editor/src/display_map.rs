@@ -152,8 +152,9 @@ type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHi
 #[derive(Debug)]
 pub struct CompanionExcerptPatch {
     pub patch: Patch<MultiBufferPoint>,
-    pub source_excerpt_end: MultiBufferPoint,
-    pub target_excerpt_end: MultiBufferPoint,
+    pub edited_range: Range<MultiBufferPoint>,
+    pub source_excerpt_range: Range<MultiBufferPoint>,
+    pub target_excerpt_range: Range<MultiBufferPoint>,
 }
 
 pub type ConvertMultiBufferRows = fn(
@@ -252,17 +253,21 @@ impl Companion {
         } else {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         };
-        let patch = convert_fn(
+
+        let excerpt = convert_fn(
             excerpt_map,
-            companion_snapshot,
+            // FIXME
             our_snapshot,
+            companion_snapshot,
             (Bound::Included(point), Bound::Included(point)),
         )
         .into_iter()
-        .next()
-        .unwrap()
-        .patch;
-        patch.edit_for_old_position(point).new
+        .next();
+
+        let Some(excerpt) = excerpt else {
+            return Point::zero()..our_snapshot.max_point();
+        };
+        excerpt.patch.edit_for_old_position(point).new
     }
 
     pub(crate) fn companion_excerpt_to_excerpt(
