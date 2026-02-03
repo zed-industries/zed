@@ -6,7 +6,9 @@ mod transaction;
 
 use self::transaction::History;
 
-pub use anchor::{Anchor, AnchorRangeExt};
+pub use anchor::{
+    Anchor, AnchorHasDiffbaseError, AnchorRangeExt, DiffbaselessAnchor, DiffbaselessAnchorRangeExt,
+};
 
 use anyhow::{Result, anyhow};
 use buffer_diff::{
@@ -7283,6 +7285,23 @@ impl Excerpt {
     }
 
     fn contains(&self, anchor: &Anchor) -> bool {
+        (anchor.text_anchor.buffer_id == None
+            || anchor.text_anchor.buffer_id == Some(self.buffer_id))
+            && self
+                .range
+                .context
+                .start
+                .cmp(&anchor.text_anchor, &self.buffer)
+                .is_le()
+            && self
+                .range
+                .context
+                .end
+                .cmp(&anchor.text_anchor, &self.buffer)
+                .is_ge()
+    }
+
+    fn contains_diffbaseless(&self, anchor: &DiffbaselessAnchor) -> bool {
         (anchor.text_anchor.buffer_id == None
             || anchor.text_anchor.buffer_id == Some(self.buffer_id))
             && self

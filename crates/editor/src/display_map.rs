@@ -99,8 +99,9 @@ use gpui::{
 };
 use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
-    MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, DiffbaselessAnchor, ExcerptId, MultiBuffer, MultiBufferOffset,
+    MultiBufferOffsetUtf16, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo,
+    ToOffset, ToPoint,
 };
 use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
@@ -333,7 +334,7 @@ impl Companion {
 /// A `SemanticToken`, but positioned to an offset in a buffer, and stylized.
 #[derive(Debug, Clone)]
 pub struct SemanticTokenHighlight {
-    pub range: Range<Anchor>,
+    pub range: Range<DiffbaselessAnchor>,
     pub style: HighlightStyle,
     pub token_type: u32,
     pub token_modifiers: u32,

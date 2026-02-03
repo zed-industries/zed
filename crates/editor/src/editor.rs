@@ -72,9 +72,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, BufferOffset, ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer,
-    MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
-    ToPoint,
+    Anchor, AnchorRangeExt, BufferOffset, DiffbaselessAnchor, DiffbaselessAnchorRangeExt,
+    ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
+    MultiBufferSnapshot, PathKey, RowInfo, ToOffset, ToPoint,
 };
 pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;

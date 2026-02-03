@@ -3,8 +3,8 @@ use call::ActiveCall;
 use collab::rpc::RECONNECT_TIMEOUT;
 use collections::{HashMap, HashSet};
 use editor::{
-    AnchorRangeExt, DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT,
-    MultiBufferOffset, RowInfo, SelectionEffects,
+    DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
+    SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, CopyFileLocation,
         CopyFileName, CopyFileNameWithoutExtension, ExpandMacroRecursively, MoveToEnd, Redo,
@@ -24,6 +24,7 @@ use gpui::{
 use indoc::indoc;
 use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
 use lsp::LSP_REQUEST_TIMEOUT;
+use multi_buffer::DiffbaselessAnchorRangeExt as _;
 use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,

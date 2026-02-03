@@ -116,8 +116,12 @@ fn create_highlight_endpoints(
         }
     }
     if let Some(semantic_token_highlights) = semantic_token_highlights {
-        let start = buffer.anchor_after(range.start);
-        let end = buffer.anchor_after(range.end);
+        let Ok(start) = buffer.anchor_after(range.start).try_into() else {
+            return highlight_endpoints.into_iter().peekable();
+        };
+        let Ok(end) = buffer.anchor_after(range.end).try_into() else {
+            return highlight_endpoints.into_iter().peekable();
+        };
         for buffer_id in buffer.buffer_ids_for_range(range.clone()) {
             let Some(semantic_token_highlights) = semantic_token_highlights.get(&buffer_id) else {
                 continue;
