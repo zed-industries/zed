@@ -12836,6 +12836,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rayon",
+ "remote_connection",
  "schemars",
  "search",
  "serde",
