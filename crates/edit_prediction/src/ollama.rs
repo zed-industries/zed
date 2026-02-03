@@ -1,21 +1,24 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, prediction::EditPredictionResult,
+    EditPredictionId, EditPredictionModelInput, cursor_excerpt, prediction::EditPredictionResult,
     zeta1::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Task, http_client};
-use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language::{
+    OffsetRangeExt as _, ToOffset, ToPoint as _, language_settings::all_language_settings,
+};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::ZetaPromptInput;
+use std::{fmt::Write, path::Path, sync::Arc, time::Instant};
+use zeta_prompt::{Event, ZetaPromptInput};
 
 const MAX_REWRITE_TOKENS: usize = 150;
 const MAX_CONTEXT_TOKENS: usize = 350;
 
+const FILE_SEPARATOR: &str = "<|file_sep|>";
+
 pub struct Ollama {
-    model_name: Option<String>,
     api_url: String,
 }
 
@@ -54,7 +57,6 @@ pub fn is_available(cx: &App) -> bool {
 impl Ollama {
     pub fn new() -> Self {
         Ollama {
-            model_name: None,
             api_url: "http://localhost:11434".to_string(),
         }
     }
@@ -71,11 +73,10 @@ impl Ollama {
         }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let model = self
-            .model_name
-            .as_deref()
-            .unwrap_or("qwen2.5-coder:3b-base")
-            .to_string();
+        let settings = &all_language_settings(None, cx).edit_predictions.ollama;
+        let Some(model) = settings.model.clone() else {
+            return Task::ready(Ok(None));
+        };
 
         log::debug!("Ollama: Requesting completion (model: {})", model);
 
@@ -90,9 +91,11 @@ impl Ollama {
         let buffer_snapshotted_at = Instant::now();
         let api_url = self.api_url.clone();
 
+        let is_sweep_model = is_sweep_next_edit_model(&model);
+
         let result = cx.background_spawn(async move {
             let (editable_range, context_range) =
-                crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
+                cursor_excerpt::editable_and_context_ranges_for_cursor_position(
                     cursor_point,
                     &snapshot,
                     MAX_CONTEXT_TOKENS,
@@ -110,8 +113,8 @@ impl Ollama {
             let editable_offset_range = editable_range.to_offset(&snapshot);
 
             let inputs = ZetaPromptInput {
-                events,
-                related_files,
+                events: events.clone(),
+                related_files: related_files.clone(),
                 cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
                     - context_offset_range.start,
                 cursor_path: full_path.clone(),
@@ -125,24 +128,29 @@ impl Ollama {
                 excerpt_start_row: Some(context_start_row),
             };
 
-            let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
-            let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
-
-            let fim_prompt = format_fim_prompt(&model, &prefix, &suffix);
+            let (prompt, stop_tokens, num_predict) = if is_sweep_model {
+                let prompt = format_sweep_next_edit_prompt(&inputs, &events, &related_files);
+                let stop_tokens = get_sweep_stop_tokens();
+                (prompt, stop_tokens, 512u32)
+            } else {
+                let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
+                let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
+                let prompt = format_fim_prompt(&model, &prefix, &suffix);
+                let stop_tokens = get_fim_stop_tokens();
+                (prompt, stop_tokens, 64u32)
+            };
 
             let request = OllamaGenerateRequest {
-                model,
-                prompt: fim_prompt,
+                model: model.clone(),
+                prompt,
                 raw: true,
                 stream: false,
                 options: Some(OllamaGenerateOptions {
-                    num_predict: Some(64),
+                    num_predict: Some(num_predict),
                     temperature: Some(0.2),
-                    stop: Some(get_stop_tokens()),
+                    stop: Some(stop_tokens),
                 }),
             };
-
-            log::debug!("Ollama: Sending FIM request");
 
             let request_body = serde_json::to_string(&request)?;
             let http_request = http_client::Request::builder()
@@ -175,17 +183,18 @@ impl Ollama {
                 (response_received_at - buffer_snapshotted_at).as_secs_f64()
             );
 
-            let completion = clean_completion(&ollama_response.response);
-
-            let old_text = snapshot
-                .text_for_range(editable_offset_range.clone())
-                .collect::<String>();
-            let edits = compute_edits(
-                old_text,
-                &completion,
-                editable_offset_range.start,
-                &snapshot,
-            );
+            let edits = if is_sweep_model {
+                let old_text = snapshot
+                    .text_for_range(editable_offset_range.clone())
+                    .collect::<String>();
+                let new_text = parse_sweep_next_edit_response(&ollama_response.response, &inputs);
+                compute_edits(old_text, &new_text, editable_offset_range.start, &snapshot)
+            } else {
+                let completion: Arc<str> = clean_fim_completion(&ollama_response.response).into();
+                let cursor_offset = cursor_point.to_offset(&snapshot);
+                let anchor = snapshot.anchor_after(cursor_offset);
+                vec![(anchor..anchor, completion)]
+            };
 
             anyhow::Ok((edits, snapshot, response_received_at, inputs))
         });
@@ -209,6 +218,243 @@ impl Ollama {
             ))
         })
     }
+}
+
+fn is_sweep_next_edit_model(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+    model_lower.contains("sweep") || model_lower.contains("sweepai")
+}
+
+fn format_sweep_next_edit_prompt(
+    inputs: &ZetaPromptInput,
+    events: &[Arc<Event>],
+    related_files: &[zeta_prompt::RelatedFile],
+) -> String {
+    let mut prompt = String::new();
+
+    for related_file in related_files {
+        let path_str = path_to_unix_string(&related_file.path);
+        for excerpt in &related_file.excerpts {
+            write!(prompt, "{FILE_SEPARATOR}{path_str}\n{}\n", excerpt.text).ok();
+        }
+    }
+
+    for event in events {
+        match event.as_ref() {
+            Event::BufferChange {
+                path,
+                old_path,
+                diff,
+                ..
+            } => {
+                if !diff.is_empty() {
+                    let path_str = path_to_unix_string(path);
+                    let old_path_str = path_to_unix_string(old_path);
+
+                    if let Some((original, updated)) = parse_diff_to_original_updated(diff) {
+                        let diff_path = if path_str == old_path_str {
+                            format!("{}.diff", path_str)
+                        } else {
+                            format!("{}.diff", old_path_str)
+                        };
+
+                        write!(
+                            prompt,
+                            "{FILE_SEPARATOR}{diff_path}\noriginal:\n{original}\nupdated:\n{updated}\n"
+                        )
+                        .ok();
+                    }
+                }
+            }
+        }
+    }
+
+    let file_path = path_to_unix_string(&inputs.cursor_path);
+
+    let original_content = compute_original_content(inputs);
+    write!(
+        prompt,
+        "{FILE_SEPARATOR}original/{file_path}\n{original_content}\n"
+    )
+    .ok();
+
+    let current_content: &str = &inputs.cursor_excerpt;
+    write!(
+        prompt,
+        "{FILE_SEPARATOR}current/{file_path}\n{current_content}\n"
+    )
+    .ok();
+
+    write!(prompt, "{FILE_SEPARATOR}updated/{file_path}\n").ok();
+
+    prompt
+}
+
+fn compute_original_content(inputs: &ZetaPromptInput) -> String {
+    let current_content: &str = &inputs.cursor_excerpt;
+
+    for event in inputs.events.iter().rev() {
+        match event.as_ref() {
+            Event::BufferChange { path, diff, .. } => {
+                if path.as_ref() == inputs.cursor_path.as_ref() && !diff.is_empty() {
+                    if let Some(original) = extract_original_from_diff(diff, current_content) {
+                        return original;
+                    }
+                }
+            }
+        }
+    }
+
+    current_content.to_string()
+}
+
+fn extract_original_from_diff(diff: &str, current_content: &str) -> Option<String> {
+    let mut original = current_content.to_string();
+    let mut additions = Vec::new();
+    let mut deletions = Vec::new();
+
+    for line in diff.lines() {
+        if let Some(added) = line.strip_prefix('+') {
+            if !added.starts_with("++") {
+                additions.push(added);
+            }
+        } else if let Some(removed) = line.strip_prefix('-') {
+            if !removed.starts_with("--") {
+                deletions.push(removed);
+            }
+        }
+    }
+
+    for addition in &additions {
+        if let Some(pos) = original.find(addition) {
+            let line_start = original[..pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+            let line_end = original[pos..]
+                .find('\n')
+                .map(|p| pos + p + 1)
+                .unwrap_or(original.len());
+            original.replace_range(line_start..line_end, "");
+        }
+    }
+
+    for deletion in &deletions {
+        if !original.contains(deletion) {
+            original.push_str(deletion);
+            original.push('\n');
+        }
+    }
+
+    if original != current_content {
+        Some(original)
+    } else {
+        None
+    }
+}
+
+fn parse_diff_to_original_updated(diff: &str) -> Option<(String, String)> {
+    let mut original = String::new();
+    let mut updated = String::new();
+
+    for line in diff.lines() {
+        if let Some(content) = line.strip_prefix('+') {
+            if !content.starts_with("++") {
+                updated.push_str(content);
+                updated.push('\n');
+            }
+        } else if let Some(content) = line.strip_prefix('-') {
+            if !content.starts_with("--") {
+                original.push_str(content);
+                original.push('\n');
+            }
+        } else if let Some(content) = line.strip_prefix(' ') {
+            original.push_str(content);
+            original.push('\n');
+            updated.push_str(content);
+            updated.push('\n');
+        } else if !line.starts_with("@@") && !line.starts_with("diff ") {
+            original.push_str(line);
+            original.push('\n');
+            updated.push_str(line);
+            updated.push('\n');
+        }
+    }
+
+    if original.is_empty() && updated.is_empty() {
+        None
+    } else {
+        Some((original, updated))
+    }
+}
+
+fn parse_sweep_next_edit_response(response: &str, inputs: &ZetaPromptInput) -> String {
+    let file_path = path_to_unix_string(&inputs.cursor_path);
+    let updated_marker = format!("updated/{}", file_path);
+
+    if let Some(pos) = response.find(&updated_marker) {
+        let content_start = pos + updated_marker.len();
+        let content = &response[content_start..];
+
+        let content = content.strip_prefix('\n').unwrap_or(content);
+
+        if let Some(end_pos) = content.find(FILE_SEPARATOR) {
+            return content[..end_pos].trim_end().to_string();
+        }
+
+        return clean_sweep_response(content);
+    }
+
+    if let Some(content) = response
+        .strip_prefix(FILE_SEPARATOR)
+        .or_else(|| Some(response))
+    {
+        if let Some(newline_pos) = content.find('\n') {
+            let after_header = &content[newline_pos + 1..];
+            if let Some(end_pos) = after_header.find(FILE_SEPARATOR) {
+                return after_header[..end_pos].trim_end().to_string();
+            }
+            return clean_sweep_response(after_header);
+        }
+    }
+
+    clean_sweep_response(response)
+}
+
+fn clean_sweep_response(response: &str) -> String {
+    let mut result = response.to_string();
+
+    let end_tokens = [
+        FILE_SEPARATOR,
+        "<|endoftext|>",
+        "<|file_separator|>",
+        "<|end|>",
+    ];
+
+    for token in &end_tokens {
+        if let Some(pos) = result.find(token) {
+            result.truncate(pos);
+        }
+    }
+
+    result.trim_end().to_string()
+}
+
+fn path_to_unix_string(path: &Path) -> String {
+    let mut result = String::new();
+    for (i, component) in path.components().enumerate() {
+        if i > 0 {
+            result.push('/');
+        }
+        write!(result, "{}", component.as_os_str().to_string_lossy()).ok();
+    }
+    result
+}
+
+fn get_sweep_stop_tokens() -> Vec<String> {
+    vec![
+        FILE_SEPARATOR.to_string(),
+        "<|endoftext|>".to_string(),
+        "<|file_separator|>".to_string(),
+        "<|end|>".to_string(),
+    ]
 }
 
 fn format_fim_prompt(model: &str, prefix: &str, suffix: &str) -> String {
@@ -242,7 +488,7 @@ fn format_fim_prompt(model: &str, prefix: &str, suffix: &str) -> String {
     }
 }
 
-fn get_stop_tokens() -> Vec<String> {
+fn get_fim_stop_tokens() -> Vec<String> {
     vec![
         "<|endoftext|>".to_string(),
         "<|file_separator|>".to_string(),
@@ -261,7 +507,7 @@ fn get_stop_tokens() -> Vec<String> {
     ]
 }
 
-fn clean_completion(response: &str) -> String {
+fn clean_fim_completion(response: &str) -> String {
     let mut result = response.to_string();
 
     let end_tokens = [
