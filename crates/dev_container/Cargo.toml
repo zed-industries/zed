@@ -23,7 +23,12 @@ util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

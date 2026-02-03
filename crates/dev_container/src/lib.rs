@@ -49,7 +49,10 @@ use devcontainer_api::read_devcontainer_configuration;
 use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
 
-pub use devcontainer_api::start_dev_container;
+pub use devcontainer_api::{
+    DevContainerConfig, find_devcontainer_configs, start_dev_container,
+    start_dev_container_with_config,
+};
 
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
@@ -1477,7 +1480,7 @@ fn dispatch_apply_templates(
 
         {
             if check_for_existing
-                && read_devcontainer_configuration(&context, &cli)
+                && read_devcontainer_configuration(&context, &cli, None)
                     .await
                     .is_ok()
             {

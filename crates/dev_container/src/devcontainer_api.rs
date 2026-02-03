@@ -8,8 +8,28 @@ use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
 use smol::{fs, process::Command};
+use util::rel_path::RelPath;
+use workspace::Workspace;
 
 use crate::{DevContainerContext, DevContainerFeature, DevContainerTemplate};
+
+/// Represents a discovered devcontainer configuration
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevContainerConfig {
+    /// Display name for the configuration (subfolder name or "default")
+    pub name: String,
+    /// Relative path to the devcontainer.json file from the project root
+    pub config_path: PathBuf,
+}
+
+impl DevContainerConfig {
+    pub fn default_config() -> Self {
+        Self {
+            name: "default".to_string(),
+            config_path: PathBuf::from(".devcontainer/devcontainer.json"),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,32 +102,136 @@ impl Display for DevContainerError {
     }
 }
 
+/// Finds all available devcontainer configurations in the project.
+///
+/// This function scans for:
+/// 1. `.devcontainer/devcontainer.json` (the default location)
+/// 2. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
+///
+/// Returns a list of found configurations, or an empty list if none are found.
+pub fn find_devcontainer_configs(workspace: &Workspace, cx: &gpui::App) -> Vec<DevContainerConfig> {
+    let project = workspace.project().read(cx);
+
+    let worktree = project
+        .visible_worktrees(cx)
+        .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+
+    let Some(worktree) = worktree else {
+        log::debug!("find_devcontainer_configs: No worktree found");
+        return Vec::new();
+    };
+
+    let worktree = worktree.read(cx);
+    let mut configs = Vec::new();
+
+    let devcontainer_path = RelPath::unix(".devcontainer").expect("valid path");
+
+    let Some(devcontainer_entry) = worktree.entry_for_path(devcontainer_path) else {
+        log::debug!("find_devcontainer_configs: .devcontainer directory not found in worktree");
+        return Vec::new();
+    };
+
+    if !devcontainer_entry.is_dir() {
+        log::debug!("find_devcontainer_configs: .devcontainer is not a directory");
+        return Vec::new();
+    }
+
+    log::debug!("find_devcontainer_configs: Scanning .devcontainer directory");
+    let devcontainer_json_path =
+        RelPath::unix(".devcontainer/devcontainer.json").expect("valid path");
+    for entry in worktree.child_entries(devcontainer_path) {
+        log::debug!(
+            "find_devcontainer_configs: Found entry: {:?}, is_file: {}, is_dir: {}",
+            entry.path.as_unix_str(),
+            entry.is_file(),
+            entry.is_dir()
+        );
+
+        if entry.is_file() && entry.path.as_ref() == devcontainer_json_path {
+            log::debug!("find_devcontainer_configs: Found default devcontainer.json");
+            configs.push(DevContainerConfig::default_config());
+        } else if entry.is_dir() {
+            let subfolder_name = entry
+                .path
+                .file_name()
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+
+            let config_json_path = format!("{}/devcontainer.json", entry.path.as_unix_str());
+            if let Ok(rel_config_path) = RelPath::unix(&config_json_path) {
+                if worktree.entry_for_path(rel_config_path).is_some() {
+                    log::debug!(
+                        "find_devcontainer_configs: Found config in subfolder: {}",
+                        subfolder_name
+                    );
+                    configs.push(DevContainerConfig {
+                        name: subfolder_name,
+                        config_path: PathBuf::from(&config_json_path),
+                    });
+                } else {
+                    log::debug!(
+                        "find_devcontainer_configs: Subfolder {} has no devcontainer.json",
+                        subfolder_name
+                    );
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "find_devcontainer_configs: Found {} configurations",
+        configs.len()
+    );
+
+    configs.sort_by(|a, b| {
+        if a.name == "default" {
+            std::cmp::Ordering::Less
+        } else if b.name == "default" {
+            std::cmp::Ordering::Greater
+        } else {
+            a.name.cmp(&b.name)
+        }
+    });
+
+    configs
+}
+
 pub async fn start_dev_container(
     context: DevContainerContext,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
+    start_dev_container_with_config(context, None).await
+}
+
+pub async fn start_dev_container_with_config(
+    context: DevContainerContext,
+    config: Option<DevContainerConfig>,
+) -> Result<(DevContainerConnection, String), DevContainerError> {
     check_for_docker(context.use_podman).await?;
     let cli = ensure_devcontainer_cli(&context.node_runtime).await?;
+    let config_path = config.map(|c| context.project_directory.join(&c.config_path));
 
-    match devcontainer_up(&context, &cli).await {
+    match devcontainer_up(&context, &cli, config_path.as_deref()).await {
         Ok(DevContainerUp {
             container_id,
             remote_workspace_folder,
             remote_user,
             ..
         }) => {
-            let project_name = match read_devcontainer_configuration(&context, &cli).await {
-                Ok(DevContainerConfigurationOutput {
-                    configuration:
-                        DevContainerConfiguration {
-                            name: Some(project_name),
-                        },
-                }) => project_name,
-                _ => get_backup_project_name(&remote_workspace_folder, &container_id),
-            };
+            let project_name =
+                match read_devcontainer_configuration(&context, &cli, config_path.as_deref()).await
+                {
+                    Ok(DevContainerConfigurationOutput {
+                        configuration:
+                            DevContainerConfiguration {
+                                name: Some(project_name),
+                            },
+                    }) => project_name,
+                    _ => get_backup_project_name(&remote_workspace_folder, &container_id),
+                };
 
             let connection = DevContainerConnection {
                 name: project_name,
-                container_id: container_id,
+                container_id,
                 use_podman: context.use_podman,
                 remote_user,
             };
@@ -248,6 +372,7 @@ pub(crate) async fn ensure_devcontainer_cli(
 async fn devcontainer_up(
     context: &DevContainerContext,
     cli: &DevContainerCli,
+    config_path: Option<&Path>,
 ) -> Result<DevContainerUp, DevContainerError> {
     let node_runtime_path = context.node_runtime.binary_path().await.map_err(|_| {
         log::error!("Unable to find node runtime path");
@@ -258,6 +383,11 @@ async fn devcontainer_up(
     command.arg("up");
     command.arg("--workspace-folder");
     command.arg(context.project_directory.display().to_string());
+
+    if let Some(config) = config_path {
+        command.arg("--config");
+        command.arg(config.display().to_string());
+    }
 
     log::info!("Running full devcontainer up command: {:?}", command);
 
@@ -284,9 +414,11 @@ async fn devcontainer_up(
         }
     }
 }
+
 pub(crate) async fn read_devcontainer_configuration(
     context: &DevContainerContext,
     cli: &DevContainerCli,
+    config_path: Option<&Path>,
 ) -> Result<DevContainerConfigurationOutput, DevContainerError> {
     let node_runtime_path = context.node_runtime.binary_path().await.map_err(|_| {
         log::error!("Unable to find node runtime path");
@@ -297,6 +429,11 @@ pub(crate) async fn read_devcontainer_configuration(
     command.arg("read-configuration");
     command.arg("--workspace-folder");
     command.arg(context.project_directory.display().to_string());
+
+    if let Some(config) = config_path {
+        command.arg("--config");
+        command.arg(config.display().to_string());
+    }
 
     match command.output().await {
         Ok(output) => {
@@ -461,7 +598,160 @@ fn template_features_to_json(features_selected: &HashSet<DevContainerFeature>) -
 
 #[cfg(test)]
 mod tests {
-    use crate::devcontainer_api::{DevContainerUp, parse_json_from_cli};
+    use crate::devcontainer_api::{DevContainerUp, find_devcontainer_configs, parse_json_from_cli};
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use workspace::Workspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_find_devcontainer_configs_no_devcontainer_dir(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/project".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
+        assert!(
+            configs.is_empty(),
+            "Expected no configs when .devcontainer dir is absent, got: {configs:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_find_devcontainer_configs_single_default(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".devcontainer": {
+                    "devcontainer.json": r#"{"image": "ubuntu"}"#
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/project".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
+        assert_eq!(
+            configs.len(),
+            1,
+            "Expected exactly one config, got: {configs:?}"
+        );
+        assert_eq!(configs[0].name, "default");
+        assert_eq!(
+            configs[0].config_path.to_str().unwrap(),
+            ".devcontainer/devcontainer.json"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_find_devcontainer_configs_multiple_subfolders(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".devcontainer": {
+                    "python": { "devcontainer.json": r#"{}"# },
+                    "node": { "devcontainer.json": r#"{}"# }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/project".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
+        assert_eq!(configs.len(), 2, "Expected two configs, got: {configs:?}");
+        assert_eq!(configs[0].name, "node");
+        assert_eq!(configs[1].name, "python");
+    }
+
+    #[gpui::test]
+    async fn test_find_devcontainer_configs_default_plus_subfolders(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".devcontainer": {
+                    "devcontainer.json": r#"{}"#,
+                    "python": { "devcontainer.json": r#"{}"# },
+                    "node": { "devcontainer.json": r#"{}"# }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/project".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
+        assert_eq!(configs.len(), 3, "Expected three configs, got: {configs:?}");
+        assert_eq!(
+            configs[0].name, "default",
+            "Default config should be sorted first"
+        );
+        assert_eq!(configs[1].name, "node");
+        assert_eq!(configs[2].name, "python");
+    }
+
+    #[gpui::test]
+    async fn test_find_devcontainer_configs_subfolder_without_json(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".devcontainer": {
+                    "devcontainer.json": r#"{}"#,
+                    "has_config": { "devcontainer.json": r#"{}"# },
+                    "no_config": { "README.md": "not a devcontainer" }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/project".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
+        assert_eq!(
+            configs.len(),
+            2,
+            "Subfolder without devcontainer.json should be skipped, got: {configs:?}"
+        );
+        assert_eq!(configs[0].name, "default");
+        assert_eq!(configs[1].name, "has_config");
+    }
 
     #[test]
     fn should_parse_from_devcontainer_json() {

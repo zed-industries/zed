@@ -9,7 +9,6 @@ use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use dev_container::{DevContainerContext, start_dev_container};
 use remote::RemoteConnectionOptions;
 pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::open_remote_project;
@@ -37,8 +36,6 @@ use workspace::{
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
-
-use crate::remote_connections::Connection;
 
 #[derive(Clone, Debug)]
 pub struct RecentProjectEntry {
@@ -235,17 +232,8 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &OpenDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let app_state = workspace.app_state().clone();
-            let replace_window = window.window_handle().downcast::<MultiWorkspace>();
-            let is_local = workspace.project().read(cx).is_local();
-
-            let Some(context) = DevContainerContext::from_workspace(workspace, cx) else {
-                log::error!("No active project directory for Dev Container");
-                return;
-            };
-
-            cx.spawn_in(window, async move |_, mut cx| {
-                if !is_local {
+            if !workspace.project().read(cx).is_local() {
+                cx.spawn_in(window, async move |_, cx| {
                     cx.prompt(
                         gpui::PromptLevel::Critical,
                         "Cannot open Dev Container from remote project",
@@ -254,49 +242,10 @@ pub fn init(cx: &mut App) {
                     )
                     .await
                     .ok();
-                    return;
-                }
-                let (connection, starting_dir) = match start_dev_container(context).await {
-                    Ok((c, s)) => (Connection::DevContainer(c), s),
-                    Err(e) => {
-                        log::error!("Failed to start Dev Container: {:?}", e);
-                        cx.prompt(
-                            gpui::PromptLevel::Critical,
-                            "Failed to start Dev Container",
-                            Some(&format!("{:?}", e)),
-                            &["Ok"],
-                        )
-                        .await
-                        .ok();
-                        return;
-                    }
-                };
-
-                let result = open_remote_project(
-                    connection.into(),
-                    vec![starting_dir].into_iter().map(PathBuf::from).collect(),
-                    app_state,
-                    OpenOptions {
-                        replace_window,
-                        ..OpenOptions::default()
-                    },
-                    &mut cx,
-                )
-                .await;
-
-                if let Err(e) = result {
-                    log::error!("Failed to connect: {e:#}");
-                    cx.prompt(
-                        gpui::PromptLevel::Critical,
-                        "Failed to connect",
-                        Some(&e.to_string()),
-                        &["Ok"],
-                    )
-                    .await
-                    .ok();
-                }
-            })
-            .detach();
+                })
+                .detach();
+                return;
+            }
 
             let fs = workspace.project().read(cx).fs().clone();
             let handle = cx.entity().downgrade();
