@@ -84,12 +84,12 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    Sweep,
+    Mercury,
     Experimental(&'static str),
 }
 
-pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
 pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
-pub const EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME: &str = "mercury";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -104,6 +104,8 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Supermaven,
             Zed,
             Codestral,
+            Sweep,
+            Mercury,
             Experimental(String),
         }
 
@@ -113,20 +115,8 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
-            Content::Experimental(name)
-                if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
-            {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                )
-            }
-            Content::Experimental(name)
-                if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME =>
-            {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                )
-            }
+            Content::Sweep => EditPredictionProvider::Sweep,
+            Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
             {
@@ -152,6 +142,8 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Sweep
+            | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
         }
     }
@@ -162,12 +154,8 @@ impl EditPredictionProvider {
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Supermaven => Some("Supermaven"),
             EditPredictionProvider::Codestral => Some("Codestral"),
-            EditPredictionProvider::Experimental(
-                EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-            ) => Some("Sweep"),
-            EditPredictionProvider::Experimental(
-                EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-            ) => Some("Mercury"),
+            EditPredictionProvider::Sweep => Some("Sweep"),
+            EditPredictionProvider::Mercury => Some("Mercury"),
             EditPredictionProvider::Experimental(
                 EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
             ) => Some("Zeta2"),
