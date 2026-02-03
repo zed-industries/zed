@@ -3497,6 +3497,10 @@ impl GitPanel {
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_status = is_tree_view || !sort_by_path;
         let untracked_changes = self.untracked_changes;
+        let split_untracked_section = matches!(
+            untracked_changes,
+            GitPanelUntrackedChanges::Classic | GitPanelUntrackedChanges::Separate
+        );
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -3550,7 +3554,7 @@ impl GitPanel {
 
             if group_by_status && is_conflict {
                 conflict_entries.push(entry);
-            } else if group_by_status && is_new {
+            } else if group_by_status && is_new && split_untracked_section {
                 new_entries.push(entry);
             } else {
                 changed_entries.push(entry);
@@ -7118,6 +7122,14 @@ mod tests {
         handle.await;
 
         panel.read_with(cx, |panel, _| {
+            assert!(!panel.entries.iter().any(|entry| {
+                matches!(
+                    entry,
+                    GitListEntry::Header(GitHeaderEntry {
+                        header: Section::New
+                    })
+                )
+            }));
             assert!(panel.can_commit());
             assert_eq!(panel.commit_button_title(), "Commit");
         });
