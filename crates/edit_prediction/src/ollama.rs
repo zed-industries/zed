@@ -199,6 +199,7 @@ impl Ollama {
                     .text_for_range(buffer_editable_start..buffer_editable_end)
                     .collect::<String>();
                 let new_text = parse_sweep_next_edit_response(&ollama_response.response, &inputs);
+                std::fs::write("/tmp/new_text.txt", new_text.as_bytes()).ok();
                 compute_edits(old_text, &new_text, buffer_editable_start, &snapshot)
             } else {
                 let completion: Arc<str> = clean_fim_completion(&ollama_response.response).into();
@@ -473,7 +474,6 @@ fn parse_sweep_next_edit_response(response: &str, inputs: &ZetaPromptInput) -> S
 
     if let Some(content) = response
         .strip_prefix(FILE_SEPARATOR)
-        .or_else(|| Some(response))
     {
         if let Some(newline_pos) = content.find('\n') {
             let after_header = &content[newline_pos + 1..];

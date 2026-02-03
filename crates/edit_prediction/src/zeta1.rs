@@ -364,6 +364,12 @@ pub fn compute_edits_and_cursor_position(
 ) {
     let diffs = text_diff(&old_text, new_text);
 
+    eprintln!("=============== OLD TEXT: ```\n{}\n```\n", old_text);
+    eprintln!("=============== NEW TEXT: ```\n{}\n```\n", new_text);
+
+    eprintln!("=============== DIFFS: {:?}", diffs);
+    std::fs::write("/tmp/diffs.txt", format!("{:?}", diffs).as_bytes()).ok();
+
     // Delta represents the cumulative change in byte count from all preceding edits.
     // new_offset = old_offset + delta, so old_offset = new_offset - delta
     let mut delta: isize = 0;
