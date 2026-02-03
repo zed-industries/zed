@@ -362,7 +362,7 @@ impl PathStyle {
     }
 
     pub fn is_absolute(&self, path_like: &str) -> bool {
-        path_like.starts_with('/') || path_like.starts_with('~')
+        path_like.starts_with('/')
             || *self == PathStyle::Windows
                 && (path_like.starts_with('\\')
                     || path_like
@@ -372,6 +372,13 @@ impl PathStyle {
                         && path_like[1..]
                             .strip_prefix(':')
                             .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
+    }
+
+    /// Checks if a path looks like it should be resolved as an absolute path.
+    /// This includes filesystem absolute paths and home directory paths (~).
+    /// Used for UI contexts like file pickers where users may type shell-style paths.
+    pub fn looks_like_absolute(&self, path_like: &str) -> bool {
+        self.is_absolute(path_like) || path_like.starts_with('~')
     }
 
     pub fn is_windows(&self) -> bool {
@@ -474,7 +481,7 @@ impl Display for RemotePathBuf {
 }
 
 pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    path_like.starts_with('/') || path_like.starts_with('~')
+    path_like.starts_with('/')
         || path_style == PathStyle::Windows
             && (path_like.starts_with('\\')
                 || path_like
@@ -484,6 +491,13 @@ pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
                     && path_like[1..]
                         .strip_prefix(':')
                         .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
+}
+
+/// Checks if a path looks like it should be resolved as an absolute path.
+/// This includes filesystem absolute paths and home directory paths (~).
+/// Used for UI contexts like file pickers where users may type shell-style paths.
+pub fn looks_like_absolute(path_like: &str, path_style: PathStyle) -> bool {
+    is_absolute(path_like, path_style) || path_like.starts_with('~')
 }
 
 #[derive(Debug, PartialEq)]
