@@ -1634,7 +1634,7 @@ pub enum ClipboardEntry {
     URL {
         /// The full path string of the URL
         path: ClipboardString,
-        /// The name of the URL, this is typically just the last path component
+        /// The plain text of the URL, this is typically just the last path component
         string: ClipboardString,
     },
 }
