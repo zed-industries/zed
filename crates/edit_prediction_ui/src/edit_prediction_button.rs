@@ -25,10 +25,7 @@ use language::{
 use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
-    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
-    update_settings_file,
+    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
 };
 use std::{
     sync::{Arc, LazyLock},
@@ -306,7 +303,10 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            provider @ (EditPredictionProvider::Experimental(_)
+            | EditPredictionProvider::Zed
+            | EditPredictionProvider::Sweep
+            | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let ep_icon;
@@ -314,9 +314,9 @@ impl Render for EditPredictionButton {
                 let mut missing_token = false;
 
                 match provider {
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
+                    EditPredictionProvider::Sweep => {
+                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                         ep_icon = IconName::SweepAi;
                         tooltip_meta = if missing_token {
                             "Missing API key for Sweep"
@@ -326,9 +326,7 @@ impl Render for EditPredictionButton {
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                     }
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
+                    EditPredictionProvider::Mercury => {
                         ep_icon = IconName::Inception;
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
@@ -1317,9 +1315,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
             .read(cx)
             .has_key()
     {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
+        providers.push(EditPredictionProvider::Sweep);
     }
 
     if cx.has_flag::<MercuryFeatureFlag>()
@@ -1327,9 +1323,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
             .read(cx)
             .has_key()
     {
-        providers.push(EditPredictionProvider::Experimental(
-            EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-        ));
+        providers.push(EditPredictionProvider::Mercury);
     }
 
     providers
