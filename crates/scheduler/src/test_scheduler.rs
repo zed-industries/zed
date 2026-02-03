@@ -177,6 +177,12 @@ impl TestScheduler {
         }
     }
 
+    pub fn run_with_clock_advancement(&self) {
+        while self.step() || self.advance_clock_to_next_timer() {
+            // Continue until no work remains
+        }
+    }
+
     /// Execute one tick of the scheduler, processing expired timers and running
     /// at most one task. Returns true if any work was done.
     ///

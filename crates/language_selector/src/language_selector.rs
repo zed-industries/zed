@@ -3,14 +3,13 @@ mod active_buffer_language;
 pub use active_buffer_language::ActiveBufferLanguage;
 use anyhow::Context as _;
 use editor::Editor;
-use file_finder::file_finder_settings::FileFinderSettings;
-use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, Styled, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
+use open_path_prompt::file_finder_settings::FileFinderSettings;
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
@@ -176,7 +175,7 @@ impl LanguageSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
+            .find_map(|extension| file_icons::FileIcons::get_icon(Path::new(extension), cx))
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
     }

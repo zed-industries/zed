@@ -1112,7 +1112,10 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
     /// ```
     pub fn intersect(&self, other: &Self) -> Self {
         let upper_left = self.origin.max(&other.origin);
-        let bottom_right = self.bottom_right().min(&other.bottom_right());
+        let bottom_right = self
+            .bottom_right()
+            .min(&other.bottom_right())
+            .max(&upper_left);
         Self::from_corners(upper_left, bottom_right)
     }
 
