@@ -465,6 +465,14 @@ impl LineLayoutCache {
         curr_frame.used_wrapped_lines.clear();
     }
 
+    pub fn discard_frame(&self) {
+        let mut curr_frame = self.current_frame.write();
+        curr_frame.lines.clear();
+        curr_frame.wrapped_lines.clear();
+        curr_frame.used_lines.clear();
+        curr_frame.used_wrapped_lines.clear();
+    }
+
     pub fn layout_wrapped_line<Text>(
         &self,
         text: Text,

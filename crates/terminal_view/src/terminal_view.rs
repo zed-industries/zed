@@ -576,6 +576,7 @@ impl TerminalView {
         if breadcrumb_visibility_changed {
             cx.emit(ItemEvent::UpdateBreadcrumbs);
         }
+
         cx.notify();
     }
 
@@ -1156,15 +1157,7 @@ impl TerminalView {
             terminal.focus_in();
         });
 
-        let should_blink = match TerminalSettings::get_global(cx).blinking {
-            TerminalBlink::Off => false,
-            TerminalBlink::On => true,
-            TerminalBlink::TerminalControlled => self.blinking_terminal_enabled,
-        };
-
-        if should_blink {
-            self.blink_manager.update(cx, BlinkManager::enable);
-        }
+        self.blink_manager.update(cx, BlinkManager::enable);
 
         window.invalidate_character_coordinates();
         cx.notify();

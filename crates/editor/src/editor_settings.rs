@@ -9,8 +9,13 @@ pub use settings::{
     MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics,
     SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
-use settings::{RegisterSetting, RelativeLineNumbers, Settings};
+use settings::{
+    CursorVfxContent, CursorVfxModeContent, RegisterSetting, RelativeLineNumbers, Settings,
+    SmoothCaretSetting,
+};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
+
+use crate::cursor_vfx::CursorVfxMode;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
@@ -18,6 +23,8 @@ use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
+    pub smooth_caret: SmoothCaret,
+    pub cursor_vfx: CursorVfx,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
@@ -176,6 +183,83 @@ pub struct SearchSettings {
     pub center_on_match: bool,
 }
 
+/// Runtime settings for smooth cursor animation.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SmoothCaret {
+    /// Whether smooth cursor animation is enabled.
+    pub enabled: bool,
+    /// Animation duration for large jumps (search, goto) in milliseconds.
+    pub animation_time_ms: u64,
+    /// Animation duration for small moves (typing) in milliseconds.
+    pub short_animation_time_ms: u64,
+    /// Trail size controls cursor responsiveness vs smoothness (0.0-1.0).
+    pub trail_size: f32,
+    /// Whether to animate cursor during insert mode (typing).
+    pub animate_in_insert_mode: bool,
+}
+
+impl Default for SmoothCaret {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            animation_time_ms: 150,
+            short_animation_time_ms: 25,
+            trail_size: 1.0,
+            animate_in_insert_mode: true,
+        }
+    }
+}
+
+impl SmoothCaret {
+    /// Parse from the settings content, supporting both boolean and object forms.
+    pub fn from_setting(setting: Option<SmoothCaretSetting>) -> Self {
+        match setting {
+            Some(SmoothCaretSetting::Bool(enabled)) => Self {
+                enabled,
+                ..Self::default()
+            },
+            Some(SmoothCaretSetting::Config(config)) => Self {
+                enabled: config.enabled.unwrap_or(true),
+                animation_time_ms: config.animation_time_ms.unwrap_or(150),
+                short_animation_time_ms: config.short_animation_time_ms.unwrap_or(25),
+                trail_size: config.trail_size.unwrap_or(1.0).clamp(0.0, 1.0),
+                animate_in_insert_mode: config.animate_in_insert_mode.unwrap_or(true),
+            },
+            None => Self::default(),
+        }
+    }
+}
+
+/// Runtime settings for cursor visual effects.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct CursorVfx {
+    pub mode: CursorVfxMode,
+}
+
+impl CursorVfx {
+    pub fn from_setting(setting: Option<CursorVfxContent>) -> Self {
+        Self {
+            mode: setting
+                .and_then(|c| c.mode)
+                .map(Into::into)
+                .unwrap_or(CursorVfxMode::None),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.mode != CursorVfxMode::None
+    }
+}
+
+impl From<CursorVfxModeContent> for CursorVfxMode {
+    fn from(mode: CursorVfxModeContent) -> Self {
+        match mode {
+            CursorVfxModeContent::None => CursorVfxMode::None,
+            CursorVfxModeContent::Sonicboom => CursorVfxMode::Sonicboom,
+        }
+    }
+}
+
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
@@ -202,6 +286,8 @@ impl Settings for EditorSettings {
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
+            smooth_caret: SmoothCaret::from_setting(editor.smooth_caret),
+            cursor_vfx: CursorVfx::from_setting(editor.cursor_vfx),
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),

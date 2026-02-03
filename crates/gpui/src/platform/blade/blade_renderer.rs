@@ -682,7 +682,7 @@ impl BladeRenderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, overlay: Option<&Scene>) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -717,7 +717,7 @@ impl BladeRenderer {
         );
 
         profiling::scope!("render pass");
-        for batch in scene.batches() {
+        for batch in scene.batches_with_overlay(overlay) {
             match batch {
                 PrimitiveBatch::Quads(range) => {
                     let quads = &scene.quads[range];
