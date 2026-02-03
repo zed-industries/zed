@@ -1276,9 +1276,9 @@ pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPred
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert_default()
-            .edit_prediction_provider = Some(provider);
+            .provider = Some(provider);
     });
 }
 
@@ -1359,9 +1359,9 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert(Default::default())
-            .edit_prediction_provider = Some(EditPredictionProvider::None);
+            .provider = Some(EditPredictionProvider::None);
     });
 }
 

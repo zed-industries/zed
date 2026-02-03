@@ -2333,9 +2333,9 @@ pub fn init(cx: &mut App) {
                 settings
                     .project
                     .all_languages
-                    .features
+                    .edit_predictions
                     .get_or_insert_default()
-                    .edit_prediction_provider = Some(EditPredictionProvider::None)
+                    .provider = Some(EditPredictionProvider::None)
             });
         });
         fn copilot_for_project(project: &Entity<Project>, cx: &mut App) -> Option<Entity<Copilot>> {

@@ -34,8 +34,6 @@ pub struct ModifiersContent {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
-    /// The settings for enabling/disabling features.
-    pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
     pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
@@ -52,7 +50,6 @@ pub struct AllLanguageSettingsContent {
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
     fn merge_from(&mut self, other: &Self) {
         self.file_types.merge_from(&other.file_types);
-        self.features.merge_from(&other.features);
         self.edit_predictions.merge_from(&other.edit_predictions);
 
         // A user's global settings override the default global settings and
@@ -75,15 +72,6 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
             }
         }
     }
-}
-
-/// The settings for enabling/disabling features.
-#[with_fallible_options]
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(rename_all = "snake_case")]
-pub struct FeaturesContent {
-    /// Determines which edit prediction provider to use.
-    pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// The provider that supplies edit predictions.
@@ -192,6 +180,8 @@ impl EditPredictionProvider {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
+    /// Determines which edit prediction provider to use.
+    pub provider: Option<EditPredictionProvider>,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
