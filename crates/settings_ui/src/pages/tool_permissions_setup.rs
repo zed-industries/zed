@@ -1,7 +1,7 @@
 use agent::ToolPermissionDecision;
 use agent_settings::AgentSettings;
 use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prelude::*};
-use settings::{Settings as _, SettingsStore, ToolPermissionMode, default_settings};
+use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
@@ -506,20 +506,16 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
 fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDecision {
     let settings = AgentSettings::get_global(cx);
 
-    let shell_kind = if tool_id == "terminal" {
-        ShellKind::system()
-    } else {
-        None
-    };
-
     // Always pass false for always_allow_tool_actions so we test the actual rules,
     // not the global override that bypasses all checks.
+    // ShellKind is only used for terminal tool's hardcoded security rules;
+    // for other tools, the check returns None immediately.
     ToolPermissionDecision::from_input(
         tool_id,
         input,
         &settings.tool_permissions,
         false,
-        shell_kind,
+        ShellKind::system(),
     )
 }
 
