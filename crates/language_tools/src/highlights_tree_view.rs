@@ -272,6 +272,7 @@ impl HighlightsTreeView {
             let lsp_store = project.read(cx).lsp_store().read(cx);
             let server_caps = &lsp_store
                 .lsp_server_capabilities;
+            // TODO kb need to deduplicate & cache this in the editor/lsp_store/etc.
             let mut cache = FxHashMap::default();
             for (_, (tokens, interner)) in display_map.all_semantic_token_highlights() {
                 for token in tokens.iter() {
@@ -300,8 +301,8 @@ impl HighlightsTreeView {
                         range_display,
                         style: interner[token.style],
                         category: HighlightCategory::SemanticToken {
-                            token_type: stylizer.token_type(token.token_type).map(|s| SharedString::new(s)),
-                            token_modifiers: stylizer.token_modifiers(token.token_modifiers).map(|s| SharedString::new(s)),
+                            token_type: stylizer.token_type_name(token.token_type).map(SharedString::new),
+                            token_modifiers: stylizer.token_modifiers(token.token_modifiers).map(SharedString::new),
                         },
                         sort_key,
                     });

@@ -325,10 +325,13 @@ pub struct BufferSemanticTokens {
     pub tokens: Option<HashMap<LanguageServerId, Arc<[BufferSemanticToken]>>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TokenType(pub u32);
+
 #[derive(Debug, Clone)]
 pub struct BufferSemanticToken {
     pub range: Range<Anchor>,
-    pub token_type: u32,
+    pub token_type: TokenType,
     pub token_modifiers: u32,
 }
 
@@ -414,7 +417,7 @@ struct SemanticTokenValue {
     delta_line: u32,
     delta_start: u32,
     length: u32,
-    token_type: u32,
+    token_type: TokenType,
     token_modifiers: u32,
 }
 
@@ -424,7 +427,7 @@ pub struct SemanticToken {
     pub line: u32,
     pub start: u32,
     pub length: u32,
-    pub token_type: u32,
+    pub token_type: TokenType,
     pub token_modifiers: u32,
 }
 
@@ -458,7 +461,7 @@ impl Iterator for SemanticTokensIter<'_> {
             delta_line: chunk[0],
             delta_start: chunk[1],
             length: chunk[2],
-            token_type: chunk[3],
+            token_type: TokenType(chunk[3]),
             token_modifiers: chunk[4],
         };
 
@@ -490,14 +493,7 @@ impl Iterator for SemanticTokensIter<'_> {
 mod tests {
     use super::*;
     use crate::lsp_command::SemanticTokensEdit;
-    use lsp::{SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES};
-
-    fn token_type_name(index: u32) -> String {
-        SEMANTIC_TOKEN_TYPES
-            .get(index as usize)
-            .map(|t| t.as_str().to_string())
-            .unwrap_or_else(|| format!("?{}", index))
-    }
+    use lsp::SEMANTIC_TOKEN_MODIFIERS;
 
     fn modifier_names(bits: u32) -> String {
         if bits == 0 {
@@ -636,7 +632,7 @@ mod tests {
                 token.line,
                 token.start,
                 token.length,
-                token_type_name(token.token_type),
+                token.token_type.0,
                 modifier_names(token.token_modifiers),
             );
         }
@@ -720,21 +716,21 @@ mod tests {
                     line: 2,
                     start: 5,
                     length: 3,
-                    token_type: 0,
+                    token_type: TokenType(0),
                     token_modifiers: 3
                 },
                 SemanticToken {
                     line: 2,
                     start: 10,
                     length: 4,
-                    token_type: 1,
+                    token_type: TokenType(1),
                     token_modifiers: 0
                 },
                 SemanticToken {
                     line: 5,
                     start: 2,
                     length: 7,
-                    token_type: 2,
+                    token_type: TokenType(2),
                     token_modifiers: 0
                 }
             ]
@@ -769,21 +765,21 @@ mod tests {
                     line: 3,
                     start: 5,
                     length: 3,
-                    token_type: 0,
+                    token_type: TokenType(0),
                     token_modifiers: 3
                 },
                 SemanticToken {
                     line: 3,
                     start: 10,
                     length: 4,
-                    token_type: 1,
+                    token_type: TokenType(1),
                     token_modifiers: 0
                 },
                 SemanticToken {
                     line: 6,
                     start: 2,
                     length: 7,
-                    token_type: 2,
+                    token_type: TokenType(2),
                     token_modifiers: 0
                 }
             ]

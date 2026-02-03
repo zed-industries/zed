@@ -9,7 +9,7 @@ use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use lsp::LanguageServerId;
 use project::{
-    lsp_store::{BufferSemanticToken, BufferSemanticTokens, RefreshForServer},
+    lsp_store::{BufferSemanticToken, BufferSemanticTokens, RefreshForServer, TokenType},
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -232,8 +232,8 @@ fn buffer_into_editor_highlights<'a, 'b>(
 
 pub struct SemanticTokenStylizer<'a> {
     server_id: LanguageServerId,
-    rules_by_token_type: HashMap<u32, Vec<&'a SemanticTokenRule>>,
-    token_types: Vec<&'a str>,
+    rules_by_token_type: HashMap<TokenType, Vec<&'a SemanticTokenRule>>,
+    token_type_names: HashMap<TokenType, &'a str>,
     modifier_mask: HashMap<&'a str, u32>,
 }
 
@@ -246,8 +246,9 @@ impl<'a> SemanticTokenStylizer<'a> {
         let token_types = legend
             .token_types
             .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>();
+            .enumerate()
+            .map(|(i, token_type)| (TokenType(i as u32), token_type.as_str()))
+            .collect::<HashMap<_, _>>();
         let modifier_mask = legend
             .token_modifiers
             .iter()
@@ -261,7 +262,6 @@ impl<'a> SemanticTokenStylizer<'a> {
 
         let rules_by_token_type = token_types
             .iter()
-            .enumerate()
             .map(|(index, token_type_name)| {
                 let matching_rules = rules
                     .rules
@@ -270,23 +270,23 @@ impl<'a> SemanticTokenStylizer<'a> {
                     .filter(|rule| {
                         rule.token_type
                             .as_ref()
-                            .is_none_or(|t| t == *token_type_name)
+                            .is_none_or(|rule_token_type| rule_token_type == token_type_name)
                     })
                     .collect();
-                (index as u32, matching_rules)
+                (*index, matching_rules)
             })
             .collect();
 
         SemanticTokenStylizer {
             server_id,
             rules_by_token_type,
-            token_types,
+            token_type_names: token_types,
             modifier_mask,
         }
     }
 
-    pub fn token_type(&self, token_type: u32) -> Option<&'a str> {
-        self.token_types.get(token_type as usize).copied()
+    pub fn token_type_name(&self, token_type: TokenType) -> Option<&'a str> {
+        self.token_type_names.get(&token_type).copied()
     }
 
     pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {
@@ -313,7 +313,7 @@ impl<'a> SemanticTokenStylizer<'a> {
     pub fn convert(
         &self,
         theme: &'a SyntaxTheme,
-        token_type: u32,
+        token_type: TokenType,
         modifiers: u32,
     ) -> Option<HighlightStyle> {
         let matching = self

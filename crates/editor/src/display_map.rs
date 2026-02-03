@@ -103,8 +103,8 @@ use multi_buffer::{
     MultiBufferOffsetUtf16, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo,
     ToOffset, ToPoint,
 };
-use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
+use project::{InlayId, lsp_store::TokenType};
 use serde::Deserialize;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
@@ -359,7 +359,7 @@ pub struct HighlightStyleId(u32);
 pub struct SemanticTokenHighlight {
     pub range: Range<DiffbaselessAnchor>,
     pub style: HighlightStyleId,
-    pub token_type: u32,
+    pub token_type: TokenType,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
 }
