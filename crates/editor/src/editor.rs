@@ -25278,7 +25278,12 @@ fn comment_delimiter_for_newline(
         .filter_map(|delimiter| {
             let prefix = delimiter.trim_end();
             if comment_candidate.starts_with(prefix) {
-                let is_repl = comment_candidate[prefix.len()..].starts_with(" %%");
+                let is_repl = if let Some(stripped_comment) = comment_candidate.strip_prefix(prefix)
+                {
+                    stripped_comment.starts_with(" %%")
+                } else {
+                    false
+                };
                 Some((delimiter, prefix.len(), is_repl))
             } else {
                 None
