@@ -4,8 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{App, Entity, Task, http_client};
-use gpui_tokio::Tokio;
+use gpui::{App, AppContext as _, Entity, Task, http_client};
 use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToOffset, ToPoint as _,
     apply_reversed_diff_patch, language_settings::all_language_settings,
@@ -106,10 +105,7 @@ impl Ollama {
 
         let is_sweep_model = is_sweep_next_edit_model(&model);
 
-        // Use gpui_tokio::Tokio::spawn_result to run the HTTP request on Tokio's runtime.
-        // This ensures proper cancellation: when the returned GPUI Task is dropped,
-        // the underlying Tokio task is aborted via its AbortHandle.
-        let result = Tokio::spawn_result(cx, async move {
+        let result = cx.background_spawn(async move {
             let (editable_range, context_range) =
                 cursor_excerpt::editable_and_context_ranges_for_cursor_position(
                     cursor_point,
@@ -217,9 +213,13 @@ impl Ollama {
                 compute_edits(old_text, &new_text, buffer_editable_start, &snapshot)
             } else {
                 let completion: Arc<str> = clean_fim_completion(&ollama_response.response).into();
-                let cursor_offset = cursor_point.to_offset(&snapshot);
-                let anchor = snapshot.anchor_after(cursor_offset);
-                vec![(anchor..anchor, completion)]
+                if completion.is_empty() {
+                    vec![]
+                } else {
+                    let cursor_offset = cursor_point.to_offset(&snapshot);
+                    let anchor = snapshot.anchor_after(cursor_offset);
+                    vec![(anchor..anchor, completion)]
+                }
             };
 
             anyhow::Ok(OllamaRequestOutput {
@@ -331,9 +331,6 @@ fn format_sweep_next_edit_prompt(
     let editable_range_in_excerpt =
         compute_line_window_byte_range(&inputs.cursor_excerpt, current_cursor_line);
 
-    std::fs::write("/tmp/prompt.txt", &prompt).ok();
-
-    eprintln!("{}", prompt);
     SweepPromptOutput {
         prompt,
         editable_range_in_excerpt,
@@ -473,9 +470,6 @@ fn parse_diff_to_original_updated(diff: &str) -> Option<(String, String)> {
 }
 
 fn parse_sweep_next_edit_response(response: &str, inputs: &ZetaPromptInput) -> String {
-    eprintln!("=============== RESPONSE: \n{}", response);
-    std::fs::write("/tmp/response.txt", response).ok();
-
     let file_path = path_to_unix_string(&inputs.cursor_path);
     let updated_marker = format!("updated/{}", file_path);
 
