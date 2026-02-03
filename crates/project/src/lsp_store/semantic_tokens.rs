@@ -317,6 +317,42 @@ impl LspStore {
             .result_id
             .clone()
     }
+
+    pub(super) fn create_semantic_token_stylizer(
+        &mut self,
+        server_id: LanguageServerId,
+        capabilities: &lsp::ServerCapabilities,
+        cx: &App,
+    ) {
+        let Some(legend) = capabilities
+            .semantic_tokens_provider
+            .as_ref()
+            .map(|provider| match provider {
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
+                    &opts.semantic_tokens_options.legend
+                }
+            })
+        else {
+            return;
+        };
+        let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
+        self.semantic_token_stylizers.insert(server_id, stylizer);
+    }
+
+    pub fn semantic_token_stylizer(
+        &self,
+        server_id: LanguageServerId,
+    ) -> Option<&SemanticTokenStylizer> {
+        self.semantic_token_stylizers.get(&server_id)
+    }
+
+    pub(super) fn recreate_semantic_token_stylizers(&mut self, cx: &App) {
+        self.semantic_token_stylizers.clear();
+        for (server_id, capabilities) in self.lsp_server_capabilities.clone() {
+            self.create_semantic_token_stylizer(server_id, &capabilities, cx);
+        }
+    }
 }
 
 pub type SemanticTokensTask =
@@ -398,8 +434,8 @@ impl SemanticTokenStylizer {
         self.server_id
     }
 
-    pub fn token_type_name(&self, token_type: TokenType) -> Option<&str> {
-        self.token_type_names.get(&token_type).map(|s| s.as_ref())
+    pub fn token_type_name(&self, token_type: TokenType) -> Option<&SharedString> {
+        self.token_type_names.get(&token_type)
     }
 
     pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {

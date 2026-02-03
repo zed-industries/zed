@@ -282,9 +282,7 @@ impl HighlightsTreeView {
                         range_display,
                         style: interner[token.style],
                         category: HighlightCategory::SemanticToken {
-                            token_type: stylizer
-                                .token_type_name(token.token_type)
-                                .map(|s| SharedString::from(s.to_string())),
+                            token_type: stylizer.token_type_name(token.token_type).cloned(),
                             token_modifiers: stylizer
                                 .token_modifiers(token.token_modifiers)
                                 .map(SharedString::from),
