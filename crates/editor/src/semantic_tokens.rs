@@ -1525,7 +1525,9 @@ mod tests {
         );
 
         // Now update via the semantic_token_rules.json file simulation
-        // by directly calling set_user_semantic_token_rules
+        // by directly calling set_user_semantic_token_rules.
+        // The file acts as a base layer (like defaults), and settings.json
+        // customizations are applied on top.
         let blue_color = Rgba {
             r: 0.0,
             g: 0.0,
@@ -1550,8 +1552,8 @@ mod tests {
         full_request.next().await;
         cx.run_until_parked();
 
-        // Verify the highlights now have the blue color from the config file
-        // (which takes priority over settings.json)
+        // Verify the highlights still have the red color from settings.json
+        // (settings.json takes priority over the file, which acts as base layer)
         let styles_after_file_change = extract_semantic_highlight_styles(&cx.editor, &cx);
         assert_eq!(
             styles_after_file_change.len(),
@@ -1560,8 +1562,143 @@ mod tests {
         );
         assert_eq!(
             styles_after_file_change[0].color,
-            Some(Hsla::from(blue_color)),
-            "Highlight should have the blue color from semantic_token_rules.json (higher priority)"
+            Some(Hsla::from(red_color)),
+            "Highlight should keep the red color from settings.json (higher priority than file)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_tokens_settings_json_persists_after_file_opened(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{Hsla, Rgba, UpdateGlobal as _};
+        use settings::{GlobalLspSettingsContent, SemanticTokenRule};
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, |language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: Vec::from(["keyword".into()]),
+                                token_modifiers: Vec::new(),
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..lsp::SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| {
+                    async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                data: vec![
+                                    0, // delta_line
+                                    0, // delta_start
+                                    2, // length ("fn" keyword)
+                                    0, // token_type (keyword)
+                                    0, // token_modifiers_bitset
+                                ],
+                                result_id: None,
+                            },
+                        )))
+                    }
+                },
+            );
+
+        // Set custom foreground color (red) and font_style (italic) for keyword tokens via settings.json
+        let red_color = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: Vec::from([SemanticTokenRule {
+                                token_type: Some("keyword".to_string()),
+                                foreground_color: Some(red_color),
+                                font_style: Some(settings::SemanticTokenFontStyle::Italic),
+                                ..SemanticTokenRule::default()
+                            }]),
+                        }),
+                        ..GlobalLspSettingsContent::default()
+                    });
+                });
+            });
+        });
+
+        // Trigger initial semantic tokens fetch
+        cx.set_state("ˇfn main() {}");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        // Verify highlights have custom red color and italic style
+        let styles_before_file = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(styles_before_file.len(), 1, "Should have one highlight");
+        assert_eq!(
+            styles_before_file[0].color,
+            Some(Hsla::from(red_color)),
+            "Keyword should be red from settings.json"
+        );
+        assert_eq!(
+            styles_before_file[0].font_style,
+            Some(gpui::FontStyle::Italic),
+            "Keyword should be italic from settings.json"
+        );
+
+        // Simulate opening semantic_token_rules.json file (prefilled with defaults)
+        // by calling set_user_semantic_token_rules with the default rules content
+        let default_rules = settings::default_semantic_token_rules();
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.set_user_semantic_token_rules(&default_rules, cx);
+        });
+
+        // Trigger a refetch by making an edit
+        cx.set_state("ˇfn main() { }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        // Verify the highlights STILL have the red color and italic style from settings.json
+        // The file (with defaults) should act as base layer, settings.json on top
+        let styles_after_file = extract_semantic_highlight_styles(&cx.editor, &cx);
+        assert_eq!(
+            styles_after_file.len(),
+            1,
+            "Should still have one highlight"
+        );
+        assert_eq!(
+            styles_after_file[0].color,
+            Some(Hsla::from(red_color)),
+            "Keyword should still be red from settings.json after file opened"
+        );
+        assert_eq!(
+            styles_after_file[0].font_style,
+            Some(gpui::FontStyle::Italic),
+            "Keyword should still be italic from settings.json after file opened"
         );
     }
 

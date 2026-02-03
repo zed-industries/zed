@@ -1157,6 +1157,15 @@ impl SettingsStore {
 
         if changed_local_path.is_none() {
             let mut merged = self.default_settings.as_ref().clone();
+            // If user has a semantic_token_rules.json file, use it as the base layer
+            // instead of the bundled defaults. settings.json customizations will be
+            // merged on top of this.
+            if let Some(user_semantic_token_rules) = &self.user_semantic_token_rules {
+                let global_lsp = merged
+                    .global_lsp_settings
+                    .get_or_insert_with(GlobalLspSettingsContent::default);
+                global_lsp.semantic_token_rules = Some(user_semantic_token_rules.clone());
+            }
             merged.merge_from_option(self.extension_settings.as_deref());
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
@@ -1164,16 +1173,6 @@ impl SettingsStore {
                 merged.merge_from_option(user_settings.for_release_channel());
                 merged.merge_from_option(user_settings.for_os());
                 merged.merge_from_option(user_settings.for_profile(cx));
-            }
-            // Merge user semantic token rules from the dedicated file (highest priority)
-            if let Some(user_semantic_token_rules) = &self.user_semantic_token_rules {
-                let global_lsp = merged
-                    .global_lsp_settings
-                    .get_or_insert_with(GlobalLspSettingsContent::default);
-                let existing_rules = global_lsp
-                    .semantic_token_rules
-                    .get_or_insert_with(SemanticTokenRules::default);
-                existing_rules.merge_from(user_semantic_token_rules);
             }
             merged.merge_from_option(self.server_settings.as_deref());
             self.merged_settings = Rc::new(merged);
