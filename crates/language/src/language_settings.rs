@@ -454,6 +454,8 @@ pub struct SweepSettings {
 pub struct OllamaSettings {
     /// Model to use for completions.
     pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
     /// Custom API URL to use for Ollama.
     pub api_url: Option<String>,
 }
@@ -691,6 +693,7 @@ impl settings::Settings for AllLanguageSettings {
         let ollama = edit_predictions.ollama.unwrap();
         let ollama_settings = OllamaSettings {
             model: ollama.model.map(|m| m.0),
+            max_tokens: ollama.max_tokens,
             api_url: ollama.api_url,
         };
 

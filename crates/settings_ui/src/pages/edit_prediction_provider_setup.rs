@@ -357,7 +357,7 @@ fn render_ollama_provider(
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
-        .child(additional_fields)
+        .child(div().px_neg_8().child(additional_fields))
 }
 
 fn ollama_settings() -> Box<[SettingsPageItem]> {
@@ -426,6 +426,36 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                 placeholder: Some(OLLAMA_MODEL_PLACEHOLDER),
                 ..Default::default()
             })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .max_tokens
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .max_tokens = value;
+                },
+                json_path: Some("edit_predictions.ollama.max_tokens"),
+            }),
+            metadata: None,
             files: USER,
         }),
     ])

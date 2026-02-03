@@ -89,6 +89,7 @@ impl Ollama {
         let Some(model) = settings.model.clone() else {
             return Task::ready(Ok(None));
         };
+        let max_tokens = settings.max_tokens;
 
         log::debug!("Ollama: Requesting completion (model: {})", model);
 
@@ -154,7 +155,7 @@ impl Ollama {
                 let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
                 let prompt = format_fim_prompt(&model, &prefix, &suffix);
                 let stop_tokens = get_fim_stop_tokens();
-                (prompt, stop_tokens, 64u32, None)
+                (prompt, stop_tokens, max_tokens.unwrap_or(64), None)
             };
 
             let request = OllamaGenerateRequest {
