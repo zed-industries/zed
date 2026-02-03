@@ -130,16 +130,21 @@ impl Ollama {
                 excerpt_start_row: Some(context_start_row),
             };
 
-            let (prompt, stop_tokens, num_predict) = if is_sweep_model {
-                let prompt = format_sweep_next_edit_prompt(&inputs, &events, &related_files);
+            let (prompt, stop_tokens, num_predict, sweep_window_range) = if is_sweep_model {
+                let output = format_sweep_next_edit_prompt(&inputs, &events, &related_files);
                 let stop_tokens = get_sweep_stop_tokens();
-                (prompt, stop_tokens, 512u32)
+                (
+                    output.prompt,
+                    stop_tokens,
+                    512u32,
+                    Some(output.editable_range_in_excerpt),
+                )
             } else {
                 let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
                 let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
                 let prompt = format_fim_prompt(&model, &prefix, &suffix);
                 let stop_tokens = get_fim_stop_tokens();
-                (prompt, stop_tokens, 64u32)
+                (prompt, stop_tokens, 64u32, None)
             };
 
             let request = OllamaGenerateRequest {
@@ -186,11 +191,15 @@ impl Ollama {
             );
 
             let edits = if is_sweep_model {
+                let editable_range =
+                    sweep_window_range.expect("sweep model should have editable range");
+                let buffer_editable_start = context_offset_range.start + editable_range.start;
+                let buffer_editable_end = context_offset_range.start + editable_range.end;
                 let old_text = snapshot
-                    .text_for_range(editable_offset_range.clone())
+                    .text_for_range(buffer_editable_start..buffer_editable_end)
                     .collect::<String>();
                 let new_text = parse_sweep_next_edit_response(&ollama_response.response, &inputs);
-                compute_edits(old_text, &new_text, editable_offset_range.start, &snapshot)
+                compute_edits(old_text, &new_text, buffer_editable_start, &snapshot)
             } else {
                 let completion: Arc<str> = clean_fim_completion(&ollama_response.response).into();
                 let cursor_offset = cursor_point.to_offset(&snapshot);
@@ -227,11 +236,16 @@ fn is_sweep_next_edit_model(model: &str) -> bool {
     model_lower.contains("sweep") || model_lower.contains("sweepai")
 }
 
+struct SweepPromptOutput {
+    prompt: String,
+    editable_range_in_excerpt: std::ops::Range<usize>,
+}
+
 fn format_sweep_next_edit_prompt(
     inputs: &ZetaPromptInput,
     events: &[Arc<Event>],
     related_files: &[zeta_prompt::RelatedFile],
-) -> String {
+) -> SweepPromptOutput {
     let mut prompt = String::new();
 
     for related_file in related_files {
@@ -294,10 +308,16 @@ fn format_sweep_next_edit_prompt(
 
     write!(prompt, "{FILE_SEPARATOR}updated/{file_path}\n").ok();
 
+    let editable_range_in_excerpt =
+        compute_line_window_byte_range(&inputs.cursor_excerpt, current_cursor_line);
+
     std::fs::write("/tmp/prompt.txt", &prompt).ok();
 
     eprintln!("{}", prompt);
-    prompt
+    SweepPromptOutput {
+        prompt,
+        editable_range_in_excerpt,
+    }
 }
 
 fn get_cursor_line(content: &str, cursor_offset: usize) -> usize {
@@ -311,6 +331,28 @@ fn extract_lines_around(content: &str, cursor_line: usize) -> String {
     let start = cursor_line.saturating_sub(SWEEP_CONTEXT_LINES);
     let end = (cursor_line + SWEEP_CONTEXT_LINES + 1).min(lines.len());
     lines[start..end].join("\n")
+}
+
+fn compute_line_window_byte_range(content: &str, cursor_line: usize) -> std::ops::Range<usize> {
+    let lines: Vec<&str> = content.lines().collect();
+    let start_line = cursor_line.saturating_sub(SWEEP_CONTEXT_LINES);
+    let end_line = (cursor_line + SWEEP_CONTEXT_LINES + 1).min(lines.len());
+
+    let mut byte_start = 0;
+    for line in lines.iter().take(start_line) {
+        byte_start += line.len() + 1; // +1 for newline
+    }
+
+    let mut byte_end = byte_start;
+    for line in lines.iter().skip(start_line).take(end_line - start_line) {
+        byte_end += line.len() + 1; // +1 for newline
+    }
+
+    // Clamp to content length (handles missing trailing newline)
+    byte_start = byte_start.min(content.len());
+    byte_end = byte_end.min(content.len());
+
+    byte_start..byte_end
 }
 
 fn compute_original_cursor_line(diff: &str, current_cursor_line: usize) -> usize {
