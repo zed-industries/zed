@@ -350,6 +350,54 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_internal_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".editorconfig": "[*]\nindent_size = 99\n",
+            "src": {
+                ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+                "file.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let file_entry = tree
+            .entry_for_path(rel_path("src/file.rs"))
+            .unwrap()
+            .clone();
+        let file = File::for_entry(file_entry, worktree.clone());
+        let file_language = project
+            .read(cx)
+            .languages()
+            .load_language_for_file_path(file.path.as_std_path());
+        let file_language = cx
+            .foreground_executor()
+            .block_on(file_language)
+            .expect("Failed to get file language");
+        let file = file as _;
+        let settings = language_settings(Some(file_language.name()), Some(&file), cx).into_owned();
+
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
+    });
+}
+
+#[gpui::test]
 async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
