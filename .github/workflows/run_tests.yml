@@ -254,6 +254,36 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::debug_rustup_state
+      run: |
+        echo "=== Environment ==="
+        echo "HOME=$HOME"
+        echo "RUSTUP_HOME=${RUSTUP_HOME:-not set}"
+        echo "CARGO_HOME=${CARGO_HOME:-not set}"
+
+        echo "=== ~/.rustup contents ==="
+        ls -la ~/.rustup/ || echo "~/.rustup not found"
+
+        echo "=== ~/.rustup/toolchains contents ==="
+        ls -la ~/.rustup/toolchains/ || echo "no toolchains dir"
+
+        echo "=== ~/.rustup/update-hashes contents ==="
+        ls -la ~/.rustup/update-hashes/ || echo "no update-hashes dir"
+
+        echo "=== ~/.rustup/settings.toml ==="
+        cat ~/.rustup/settings.toml || echo "no settings.toml"
+
+        echo "=== Toolchain component manifest ==="
+        TOOLCHAIN_DIR=$(ls -d ~/.rustup/toolchains/*-apple-darwin 2>/dev/null | head -1 || true)
+        if [ -n "$TOOLCHAIN_DIR" ]; then
+            echo "Found toolchain: $TOOLCHAIN_DIR"
+            cat "$TOOLCHAIN_DIR/lib/rustlib/components" || echo "no components file"
+        else
+            echo "No apple-darwin toolchain found"
+        fi
+
+        echo "=== rustup show ==="
+        rustup show || echo "rustup show failed"
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:

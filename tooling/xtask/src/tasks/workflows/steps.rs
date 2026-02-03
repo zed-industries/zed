@@ -138,6 +138,39 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
         .add_with(("path", "~/.rustup"))
 }
 
+pub fn debug_rustup_state() -> Step<Run> {
+    named::bash(indoc::indoc! {r#"
+        echo "=== Environment ==="
+        echo "HOME=$HOME"
+        echo "RUSTUP_HOME=${RUSTUP_HOME:-not set}"
+        echo "CARGO_HOME=${CARGO_HOME:-not set}"
+
+        echo "=== ~/.rustup contents ==="
+        ls -la ~/.rustup/ || echo "~/.rustup not found"
+
+        echo "=== ~/.rustup/toolchains contents ==="
+        ls -la ~/.rustup/toolchains/ || echo "no toolchains dir"
+
+        echo "=== ~/.rustup/update-hashes contents ==="
+        ls -la ~/.rustup/update-hashes/ || echo "no update-hashes dir"
+
+        echo "=== ~/.rustup/settings.toml ==="
+        cat ~/.rustup/settings.toml || echo "no settings.toml"
+
+        echo "=== Toolchain component manifest ==="
+        TOOLCHAIN_DIR=$(ls -d ~/.rustup/toolchains/*-apple-darwin 2>/dev/null | head -1 || true)
+        if [ -n "$TOOLCHAIN_DIR" ]; then
+            echo "Found toolchain: $TOOLCHAIN_DIR"
+            cat "$TOOLCHAIN_DIR/lib/rustlib/components" || echo "no components file"
+        else
+            echo "No apple-darwin toolchain found"
+        fi
+
+        echo "=== rustup show ==="
+        rustup show || echo "rustup show failed"
+    "#})
+}
+
 pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }

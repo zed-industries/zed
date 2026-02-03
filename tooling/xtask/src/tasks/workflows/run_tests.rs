@@ -13,7 +13,7 @@ use crate::tasks::workflows::{
 
 use super::{
     runners::{self, Platform},
-    steps::{self, FluentBuilder, NamedJob, named, release_job},
+    steps::{self, FluentBuilder, NamedJob, debug_rustup_state, named, release_job},
 };
 
 pub(crate) fn run_tests() -> Workflow {
@@ -357,6 +357,9 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
                 platform == Platform::Linux || platform == Platform::Mac,
                 |this| this.add_step(steps::cache_rust_dependencies_namespace()),
             )
+            .when(platform == Platform::Mac, |this| {
+                this.add_step(debug_rustup_state())
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
