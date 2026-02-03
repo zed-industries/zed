@@ -81,7 +81,7 @@ mod wrap_map;
 pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionView, CompanionViewWithBlockMap,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionView, CompanionViewMut,
     CustomBlockId, EditorMargins, RenderBlock, StickyHeaderExcerpt,
 };
 pub use crease_map::*;
@@ -785,20 +785,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_new_wrap_snapshot,
-                            self_new_wrap_edits,
-                            Some(companion_view),
-                        )
-                        .insert(blocks);
+                    companion.update(cx, |companion, _| {
+                        self.block_map
+                            .write(
+                                self_new_wrap_snapshot,
+                                self_new_wrap_edits,
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .insert(blocks);
+                    })
                 })
                 .ok();
         } else {
@@ -877,18 +878,19 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map.write(
-                        self_new_wrap_snapshot,
-                        self_new_wrap_edits,
-                        Some(companion_view),
-                    );
+                    companion.update(cx, |companion, _| {
+                        self.block_map.write(
+                            self_new_wrap_snapshot,
+                            self_new_wrap_edits,
+                            Some(CompanionViewMut::new(
+                                self.entity_id,
+                                snapshot,
+                                edits,
+                                companion,
+                                &mut dm.block_map,
+                            )),
+                        );
+                    })
                 })
                 .ok();
         } else {
@@ -971,20 +973,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_new_wrap_snapshot.clone(),
-                            self_new_wrap_edits,
-                            Some(companion_view),
-                        )
-                        .remove_intersecting_replace_blocks(offset_ranges, inclusive);
+                    companion.update(cx, |companion, _| {
+                        self.block_map
+                            .write(
+                                self_new_wrap_snapshot.clone(),
+                                self_new_wrap_edits,
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .remove_intersecting_replace_blocks(offset_ranges, inclusive);
+                    })
                 })
                 .ok();
         } else {
@@ -1031,20 +1034,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_wrap_snapshot.clone(),
-                            self_wrap_edits.clone(),
-                            Some(companion_view),
-                        )
-                        .disable_header_for_buffer(buffer_id);
+                    companion.update(cx, |companion, _| {
+                        self.block_map
+                            .write(
+                                self_wrap_snapshot.clone(),
+                                self_wrap_edits.clone(),
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .disable_header_for_buffer(buffer_id);
+                    })
                 })
                 .ok();
         } else {
@@ -1110,20 +1114,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_wrap_snapshot.clone(),
-                            self_wrap_edits.clone(),
-                            Some(companion_view),
-                        )
-                        .fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
+                    companion.update(cx, |companion, cx| {
+                        self.block_map
+                            .write(
+                                self_wrap_snapshot.clone(),
+                                self_wrap_edits.clone(),
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .fold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
+                    })
                 })
                 .ok();
         } else {
@@ -1143,20 +1148,30 @@ impl DisplayMap {
 
             let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
-                    let companion_view = dm.companion.as_ref().map(|(_, their_companion)| {
-                        CompanionViewWithBlockMap::new(
-                            dm.entity_id,
-                            &self_wrap_snapshot,
-                            &self_wrap_edits,
-                            their_companion.read(cx),
-                            &mut self.block_map,
-                        )
-                    });
-                    let mut block_map =
-                        dm.block_map
-                            .write(companion_snapshot, companion_edits, companion_view);
-                    if !their_buffer_ids.is_empty() {
-                        block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                    if let Some((_, their_companion)) = dm.companion.as_ref() {
+                        their_companion.update(cx, |their_companion, cx| {
+                            let mut block_map = dm.block_map.write(
+                                companion_snapshot,
+                                companion_edits,
+                                Some(CompanionViewMut::new(
+                                    dm.entity_id,
+                                    &self_wrap_snapshot,
+                                    &self_wrap_edits,
+                                    their_companion,
+                                    &mut self.block_map,
+                                )),
+                            );
+                            if !their_buffer_ids.is_empty() {
+                                block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                            }
+                        })
+                    } else {
+                        let mut block_map =
+                            dm.block_map
+                                .write(companion_snapshot, companion_edits, None);
+                        if !their_buffer_ids.is_empty() {
+                            block_map.fold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                        }
                     }
                 }
             });
@@ -1200,20 +1215,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_wrap_snapshot.clone(),
-                            self_wrap_edits.clone(),
-                            Some(companion_view),
-                        )
-                        .unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
+                    companion.update(cx, |companion, cx| {
+                        self.block_map
+                            .write(
+                                self_wrap_snapshot.clone(),
+                                self_wrap_edits.clone(),
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .unfold_buffers(buffer_ids.iter().copied(), self.buffer.read(cx), cx);
+                    })
                 })
                 .ok();
         } else {
@@ -1233,20 +1249,30 @@ impl DisplayMap {
 
             let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
-                    let companion_view = dm.companion.as_ref().map(|(_, their_companion)| {
-                        CompanionViewWithBlockMap::new(
-                            dm.entity_id,
-                            &self_wrap_snapshot,
-                            &self_wrap_edits,
-                            their_companion.read(cx),
-                            &mut self.block_map,
-                        )
-                    });
-                    let mut block_map =
-                        dm.block_map
-                            .write(companion_snapshot, companion_edits, companion_view);
-                    if !their_buffer_ids.is_empty() {
-                        block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                    if let Some((_, their_companion)) = dm.companion.as_ref() {
+                        their_companion.update(cx, |their_companion, cx| {
+                            let mut block_map = dm.block_map.write(
+                                companion_snapshot,
+                                companion_edits,
+                                Some(CompanionViewMut::new(
+                                    dm.entity_id,
+                                    &self_wrap_snapshot,
+                                    &self_wrap_edits,
+                                    their_companion,
+                                    &mut self.block_map,
+                                )),
+                            );
+                            if !their_buffer_ids.is_empty() {
+                                block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                            }
+                        })
+                    } else {
+                        let mut block_map =
+                            dm.block_map
+                                .write(companion_snapshot, companion_edits, None);
+                        if !their_buffer_ids.is_empty() {
+                            block_map.unfold_buffers(their_buffer_ids, dm.buffer.read(cx), cx);
+                        }
                     }
                 }
             });
@@ -1302,20 +1328,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_wrap_snapshot.clone(),
-                            self_wrap_edits.clone(),
-                            Some(companion_view),
-                        )
-                        .insert(blocks)
+                    companion.update(cx, |companion, _| {
+                        self.block_map
+                            .write(
+                                self_wrap_snapshot.clone(),
+                                self_wrap_edits.clone(),
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .insert(blocks)
+                    })
                 })
                 .ok()
                 .expect("success inserting blocks with companion")
@@ -1363,20 +1390,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_wrap_snapshot.clone(),
-                            self_wrap_edits.clone(),
-                            Some(companion_view),
-                        )
-                        .resize(heights);
+                    companion.update(cx, |companion, _| {
+                        self.block_map
+                            .write(
+                                self_wrap_snapshot.clone(),
+                                self_wrap_edits.clone(),
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .resize(heights);
+                    })
                 })
                 .ok();
         } else {
@@ -1426,20 +1454,21 @@ impl DisplayMap {
         {
             companion_dm
                 .update(cx, |dm, cx| {
-                    let companion_view = CompanionViewWithBlockMap::new(
-                        self.entity_id,
-                        snapshot,
-                        edits,
-                        companion.read(cx),
-                        &mut dm.block_map,
-                    );
-                    self.block_map
-                        .write(
-                            self_wrap_snapshot.clone(),
-                            self_wrap_edits.clone(),
-                            Some(companion_view),
-                        )
-                        .remove(ids);
+                    companion.update(cx, |companion, _| {
+                        self.block_map
+                            .write(
+                                self_wrap_snapshot.clone(),
+                                self_wrap_edits.clone(),
+                                Some(CompanionViewMut::new(
+                                    self.entity_id,
+                                    snapshot,
+                                    edits,
+                                    companion,
+                                    &mut dm.block_map,
+                                )),
+                            )
+                            .remove(ids);
+                    })
                 })
                 .ok();
         } else {

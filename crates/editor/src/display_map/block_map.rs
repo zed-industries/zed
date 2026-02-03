@@ -57,10 +57,10 @@ pub struct BlockMapWriter<'a> {
     companion: Option<BlockMapWriterCompanion<'a>>,
 }
 
-struct BlockMapWriterCompanion<'a>(CompanionViewWithBlockMap<'a>);
+struct BlockMapWriterCompanion<'a>(CompanionViewMut<'a>);
 
 impl<'a> Deref for BlockMapWriterCompanion<'a> {
-    type Target = CompanionViewWithBlockMap<'a>;
+    type Target = CompanionViewMut<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -548,21 +548,49 @@ impl<'a> CompanionView<'a> {
     }
 }
 
-pub struct CompanionViewWithBlockMap<'a> {
-    view: CompanionView<'a>,
+impl<'a> From<CompanionViewMut<'a>> for CompanionView<'a> {
+    fn from(view_mut: CompanionViewMut<'a>) -> Self {
+        Self {
+            entity_id: view_mut.entity_id,
+            wrap_snapshot: view_mut.wrap_snapshot,
+            wrap_edits: view_mut.wrap_edits,
+            companion: view_mut.companion,
+        }
+    }
+}
+
+impl<'a> From<&'a CompanionViewMut<'a>> for CompanionView<'a> {
+    fn from(view_mut: &'a CompanionViewMut<'a>) -> Self {
+        Self {
+            entity_id: view_mut.entity_id,
+            wrap_snapshot: view_mut.wrap_snapshot,
+            wrap_edits: view_mut.wrap_edits,
+            companion: view_mut.companion,
+        }
+    }
+}
+
+pub struct CompanionViewMut<'a> {
+    entity_id: EntityId,
+    wrap_snapshot: &'a WrapSnapshot,
+    wrap_edits: &'a WrapPatch,
+    companion: &'a mut Companion,
     block_map: &'a mut BlockMap,
 }
 
-impl<'a> CompanionViewWithBlockMap<'a> {
+impl<'a> CompanionViewMut<'a> {
     pub(crate) fn new(
         entity_id: EntityId,
         wrap_snapshot: &'a WrapSnapshot,
         wrap_edits: &'a WrapPatch,
-        companion: &'a Companion,
+        companion: &'a mut Companion,
         block_map: &'a mut BlockMap,
     ) -> Self {
         Self {
-            view: CompanionView::new(entity_id, wrap_snapshot, wrap_edits, companion),
+            entity_id,
+            wrap_snapshot,
+            wrap_edits,
+            companion,
             block_map,
         }
     }
@@ -626,12 +654,12 @@ impl BlockMap {
         &'a mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
-        companion_view: Option<CompanionViewWithBlockMap<'a>>,
+        companion_view: Option<CompanionViewMut<'a>>,
     ) -> BlockMapWriter<'a> {
         self.sync(
             &wrap_snapshot,
             edits,
-            companion_view.as_ref().map(|c| c.view),
+            companion_view.as_ref().map(CompanionView::from),
         );
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter {
@@ -1606,19 +1634,21 @@ impl BlockMapWriter<'_> {
                 .insert(id, new_block.clone());
 
             // Insert a matching custom block in the companion (if any)
-            if let Some(CompanionViewWithBlockMap {
-                view,
+            if let Some(CompanionViewMut {
+                entity_id: their_entity_id,
+                wrap_snapshot: their_snapshot,
                 block_map: their_block_map,
+                companion,
+                ..
             }) = self.companion.as_deref_mut()
             {
                 use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
                 let my_anchor = block.placement.start();
                 let my_point = my_anchor.to_point(buffer);
-                let their_point = view
-                    .companion
+                let their_point = companion
                     .convert_rows_to_companion(
-                        view.entity_id,
-                        view.wrap_snapshot.buffer_snapshot(),
+                        *their_entity_id,
+                        their_snapshot.buffer_snapshot(),
                         buffer,
                         (Bound::Included(my_point), Bound::Included(my_point)),
                     )
@@ -1629,10 +1659,7 @@ impl BlockMapWriter<'_> {
                     .unwrap()
                     .1
                     .start;
-                let anchor = view
-                    .wrap_snapshot
-                    .buffer_snapshot()
-                    .anchor_before(their_point);
+                let anchor = their_snapshot.buffer_snapshot().anchor_before(their_point);
                 let height = new_block.height.unwrap_or(1);
                 let their_new_block = BlockProperties {
                     placement: BlockPlacement::Above(anchor),
@@ -1652,7 +1679,7 @@ impl BlockMapWriter<'_> {
                     "Inserting matching companion custom block: {new_block:#?} => {their_new_block:#?}"
                 );
                 their_block_map
-                    .write(view.wrap_snapshot.clone(), Patch::default(), None)
+                    .write(their_snapshot.clone(), Patch::default(), None)
                     .insert([their_new_block]);
             }
 
@@ -1666,16 +1693,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion
-                .as_deref()
-                .map(|&CompanionViewWithBlockMap { view, .. }| {
-                    CompanionView::new(
-                        view.entity_id,
-                        view.wrap_snapshot,
-                        &default_patch,
-                        view.companion,
-                    )
-                }),
+            self.companion.as_deref().map(
+                |CompanionViewMut {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
         );
         ids
     }
@@ -1736,16 +1763,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion
-                .as_deref()
-                .map(|&CompanionViewWithBlockMap { view, .. }| {
-                    CompanionView::new(
-                        view.entity_id,
-                        view.wrap_snapshot,
-                        &default_patch,
-                        view.companion,
-                    )
-                }),
+            self.companion.as_deref().map(
+                |CompanionViewMut {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
         );
     }
 
@@ -1796,16 +1823,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             wrap_snapshot,
             edits,
-            self.companion
-                .as_deref()
-                .map(|&CompanionViewWithBlockMap { view, .. }| {
-                    CompanionView::new(
-                        view.entity_id,
-                        view.wrap_snapshot,
-                        &default_patch,
-                        view.companion,
-                    )
-                }),
+            self.companion.as_deref().map(
+                |CompanionViewMut {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
         );
     }
 
@@ -1891,16 +1918,16 @@ impl BlockMapWriter<'_> {
         self.block_map.sync(
             &wrap_snapshot,
             edits,
-            self.companion
-                .as_deref()
-                .map(|&CompanionViewWithBlockMap { view, .. }| {
-                    CompanionView::new(
-                        view.entity_id,
-                        view.wrap_snapshot,
-                        &default_patch,
-                        view.companion,
-                    )
-                }),
+            self.companion.as_deref().map(
+                |CompanionViewMut {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
         );
     }
 
