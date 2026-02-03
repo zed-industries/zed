@@ -492,10 +492,62 @@ impl DisplayMap {
         self.block_map
             .read(snapshot.clone(), edits.clone(), companion_view);
 
-        if let Some((companion_dm, _)) = &self.companion {
-            let _ = companion_dm.update(cx, |dm, _cx| {
+        if let Some((companion_dm, companion)) = &self.companion {
+            let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
-                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(_cx));
+                    let companion_ref = companion.read(cx);
+                    let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c.read(cx));
+
+                    if self.entity_id != companion_ref.rhs_display_map_id {
+                        use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
+                        // Sync existing custom blocks to the companion
+                        let buffer_snapshot = snapshot.buffer_snapshot();
+                        let new_custom_blocks = dm.block_map.read(companion_snapshot.clone(), Patch::default(), None)
+                            .blocks
+                            .iter()
+                            .map(|block| {
+                                let their_anchor = block.placement.start();
+                                let their_point =
+                                    their_anchor.to_point(companion_snapshot.buffer_snapshot());
+                                let my_point = companion_ref
+                                    .convert_rows_from_companion(
+                                        self.entity_id,
+                                        buffer_snapshot,
+                                        companion_snapshot.buffer_snapshot(),
+                                        (
+                                            Bound::Included(their_point),
+                                            Bound::Included(their_point),
+                                        ),
+                                    )
+                                    .first()
+                                    .unwrap()
+                                    .boundaries
+                                    .first()
+                                    .unwrap()
+                                    .1
+                                    .start;
+                                let anchor = buffer_snapshot.anchor_before(my_point);
+                                let height = block.height.unwrap_or(1);
+                                let new_block = BlockProperties {
+                                    placement: BlockPlacement::Above(anchor),
+                                    height: Some(height),
+                                    style: BlockStyle::Sticky,
+                                    render: Arc::new(move |cx| {
+                                        div()
+                                            .id(cx.block_id)
+                                            .size_full()
+                                            .h(Pixels::from(cx.line_height * height as f32))
+                                            .bg(pattern_slash(white(), 8.0, 8.0))
+                                            .into_any()
+                                    }),
+                                    priority: 0,
+                                };
+                                log::debug!("Creating a matching companion block: {block:#?} => {new_block:#?}");
+                                new_block
+                            });
+                        self.block_map.write(snapshot.clone(), Patch::default(), None).insert(new_custom_blocks);
+                    }
+
                     dm.block_map.read(
                         companion_snapshot,
                         companion_edits,

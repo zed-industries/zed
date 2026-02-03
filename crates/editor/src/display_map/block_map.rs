@@ -48,7 +48,7 @@ pub struct BlockMap {
 }
 
 pub struct BlockMapReader<'a> {
-    blocks: &'a Vec<Arc<CustomBlock>>,
+    pub blocks: &'a Vec<Arc<CustomBlock>>,
     pub snapshot: BlockSnapshot,
 }
 
