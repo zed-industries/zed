@@ -60,6 +60,7 @@ use {
     image::RgbaImage,
     project_panel::ProjectPanel,
     settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings_ui::SettingsWindow,
     std::{
         any::Any,
         path::{Path, PathBuf},
@@ -69,6 +70,7 @@ use {
     },
     watch,
     workspace::{AppState, Workspace},
+    zed_actions::OpenSettingsAt,
 };
 
 // All macOS-specific constants grouped together
@@ -183,6 +185,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        settings_ui::init(cx);
 
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
@@ -476,6 +479,23 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
         Err(e) => {
             eprintln!("✗ diff_review_button: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 7: Settings UI sub-page auto-open visual tests
+    println!("\n--- Test 7: settings_ui_subpage_auto_open (2 variants) ---");
+    match run_settings_ui_subpage_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ settings_ui_subpage_auto_open: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ settings_ui_subpage_auto_open: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ settings_ui_subpage_auto_open: FAILED - {}", e);
             failed += 1;
         }
     }
@@ -845,7 +865,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     theme::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
-    Arc::new(AppState {
+    let app_state = Arc::new(AppState {
         client,
         fs,
         languages,
@@ -854,7 +874,9 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         node_runtime: NodeRuntime::unavailable(),
         build_window_options: |_, _| Default::default(),
         session,
-    })
+    });
+    AppState::set_global(Arc::downgrade(&app_state), cx);
+    app_state
 }
 
 /// Runs visual tests for breakpoint hover states in the editor gutter.
@@ -1142,6 +1164,171 @@ fn run_breakpoint_hover_visual_tests(
         (TestResult::BaselineUpdated(p), _, _)
         | (_, TestResult::BaselineUpdated(p), _)
         | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    }
+}
+
+/// Runs visual tests for the settings UI sub-page auto-open feature.
+///
+/// This test verifies that when opening settings via OpenSettingsAt with a path
+/// that maps to a single SubPageLink, the sub-page is automatically opened.
+///
+/// This test captures two states:
+/// 1. Settings opened with a path that maps to multiple items (no auto-open)
+/// 2. Settings opened with a path that maps to a single SubPageLink (auto-opens sub-page)
+#[cfg(target_os = "macos")]
+fn run_settings_ui_subpage_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // Create a workspace window for dispatching actions
+    let window_size = size(px(1280.0), px(800.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window")?;
+
+    cx.run_until_parked();
+
+    // Test 1: Open settings with a path that maps to multiple items (e.g., "agent")
+    // This should NOT auto-open a sub-page since multiple items match
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt for multiple items")?;
+
+    cx.run_until_parked();
+
+    // Find the settings window
+    let settings_window_1 = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+        })
+        .context("Settings window not found")?;
+
+    // Refresh and capture screenshot
+    cx.update_window(settings_window_1.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test1_result = run_visual_test(
+        "settings_ui_no_auto_open",
+        settings_window_1.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Close the settings window
+    let _ = cx.update_window(settings_window_1.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Test 2: Open settings with a path that maps to a single SubPageLink
+    // "edit_predictions.providers" maps to the "Configure Providers" SubPageLink
+    // This should auto-open the sub-page
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "edit_predictions.providers".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt for single SubPageLink")?;
+
+    cx.run_until_parked();
+
+    // Find the new settings window
+    let settings_window_2 = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+        })
+        .context("Settings window not found for sub-page test")?;
+
+    // Refresh and capture screenshot
+    cx.update_window(settings_window_2.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test2_result = run_visual_test(
+        "settings_ui_subpage_auto_open",
+        settings_window_2.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Clean up: close the settings window
+    let _ = cx.update_window(settings_window_2.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Clean up: close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Give background tasks time to finish
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Return combined result
+    match (&test1_result, &test2_result) {
+        (TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _) | (_, TestResult::BaselineUpdated(p)) => {
+            Ok(TestResult::BaselineUpdated(p.clone()))
+        }
     }
 }
 
@@ -1951,7 +2138,7 @@ fn run_subagent_visual_tests(
     )?;
 
     // Expand the first subagent
-    thread_view.update(cx, |view: &mut agent_ui::acp::AcpThreadView, cx| {
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpServerView, cx| {
         view.expand_subagent(acp::SessionId::new("subagent-1"), cx);
     });
 

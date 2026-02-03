@@ -737,8 +737,8 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -746,8 +746,8 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -1350,8 +1350,8 @@
       "ctrl-m": "notebook::AddCodeBlock",
       "ctrl-shift-m": "notebook::AddMarkdownBlock",
       "ctrl-shift-r": "notebook::RestartKernel",
-      "ctrl-c": "notebook::InterruptKernel"
-    }
+      "ctrl-c": "notebook::InterruptKernel",
+    },
   },
   {
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",

@@ -156,6 +156,7 @@ pub fn capture_example(
                 cursor_offset: full_cursor_offset,
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
+                excerpt_start_row: Some(0),
                 events: captured_events,
                 related_files: captured_related_files,
             }

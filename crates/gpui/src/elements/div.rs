@@ -1295,6 +1295,7 @@ pub fn div() -> Div {
         children: SmallVec::default(),
         prepaint_listener: None,
         image_cache: None,
+        prepaint_order_fn: None,
     }
 }
 
@@ -1304,6 +1305,7 @@ pub struct Div {
     children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
+    prepaint_order_fn: Option<Box<dyn Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]>>>,
 }
 
 impl Div {
@@ -1320,6 +1322,22 @@ impl Div {
     /// Add an image cache at the location of this div in the element tree.
     pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
         self.image_cache = Some(Box::new(cache));
+        self
+    }
+
+    /// Specify a function that determines the order in which children are prepainted.
+    ///
+    /// The function is called at prepaint time and should return a vector of child indices
+    /// in the desired prepaint order. Each index should appear exactly once.
+    ///
+    /// This is useful when the prepaint of one child affects state that another child reads.
+    /// For example, in split editor views, the editor with an autoscroll request should
+    /// be prepainted first so its scroll position update is visible to the other editor.
+    pub fn with_dynamic_prepaint_order(
+        mut self,
+        order_fn: impl Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]> + 'static,
+    ) -> Self {
+        self.prepaint_order_fn = Some(Box::new(order_fn));
         self
     }
 }
@@ -1486,8 +1504,17 @@ impl Element for Div {
 
                 window.with_image_cache(image_cache, |window| {
                     window.with_element_offset(scroll_offset, |window| {
-                        for child in &mut self.children {
-                            child.prepaint(window, cx);
+                        if let Some(order_fn) = &self.prepaint_order_fn {
+                            let order = order_fn(window, cx);
+                            for idx in order {
+                                if let Some(child) = self.children.get_mut(idx) {
+                                    child.prepaint(window, cx);
+                                }
+                            }
+                        } else {
+                            for child in &mut self.children {
+                                child.prepaint(window, cx);
+                            }
                         }
                     });
 

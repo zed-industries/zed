@@ -943,3 +943,19 @@ pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'
         _ => name,
     }
 }
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks_shared<'a>(
+    name: &'a SharedString,
+    system: &'a SharedString,
+) -> &'a SharedString {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name.as_str() {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
+        ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
+        _ => name,
+    }
+}

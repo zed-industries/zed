@@ -192,23 +192,10 @@ struct RenderBlocksOutput {
     resized_blocks: Option<HashMap<CustomBlockId, u32>>,
 }
 
-/// Data passed to overlay painters during the paint phase.
-pub struct OverlayPainterData<'a> {
-    pub editor: &'a Entity<Editor>,
-    pub snapshot: &'a EditorSnapshot,
-    pub scroll_position: gpui::Point<ScrollOffset>,
-    pub line_height: Pixels,
-    pub visible_row_range: Range<DisplayRow>,
-    pub hitbox: &'a Hitbox,
-}
-
-pub type OverlayPainter = Box<dyn FnOnce(OverlayPainterData<'_>, &mut Window, &mut App)>;
-
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
     split_side: Option<SplitSide>,
-    overlay_painter: Option<OverlayPainter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,16 +212,11 @@ impl EditorElement {
             editor: editor.clone(),
             style,
             split_side: None,
-            overlay_painter: None,
         }
     }
 
     pub fn set_split_side(&mut self, side: SplitSide) {
         self.split_side = Some(side);
-    }
-
-    pub fn set_overlay_painter(&mut self, painter: OverlayPainter) {
-        self.overlay_painter = Some(painter);
     }
 
     fn should_show_buffer_headers(&self) -> bool {
@@ -1835,67 +1817,74 @@ impl EditorElement {
                     let cursor_next_x = cursor_row_layout.x_for_index(cursor_column + 1)
                         + cursor_row_layout
                             .alignment_offset(self.style.text.text_align, text_hitbox.size.width);
-                    let mut block_width = cursor_next_x - cursor_character_x;
-                    if block_width == Pixels::ZERO {
-                        block_width = em_advance;
+                    let mut cell_width = cursor_next_x - cursor_character_x;
+                    if cell_width == Pixels::ZERO {
+                        cell_width = em_advance;
                     }
-                    let block_text = if selection.cursor_shape == CursorShape::Block
-                        && !redacted_ranges.iter().any(|range| {
-                            range.start <= cursor_position && cursor_position < range.end
+
+                    let mut block_width = cell_width;
+                    let mut block_text = None;
+
+                    let is_cursor_in_redacted_range = redacted_ranges
+                        .iter()
+                        .any(|range| range.start <= cursor_position && cursor_position < range.end);
+
+                    if selection.cursor_shape == CursorShape::Block && !is_cursor_in_redacted_range
+                    {
+                        if let Some(text) = snapshot.grapheme_at(cursor_position).or_else(|| {
+                            if snapshot.is_empty() {
+                                snapshot.placeholder_text().and_then(|s| {
+                                    s.graphemes(true).next().map(|s| s.to_string().into())
+                                })
+                            } else {
+                                None
+                            }
                         }) {
-                        snapshot
-                            .grapheme_at(cursor_position)
-                            .or_else(|| {
-                                if snapshot.is_empty() {
-                                    snapshot.placeholder_text().and_then(|s| {
-                                        s.graphemes(true).next().map(|s| s.to_string().into())
-                                    })
-                                } else {
-                                    None
+                            let is_ascii_whitespace_only =
+                                text.as_ref().chars().all(|c| c.is_ascii_whitespace());
+                            let len = text.len();
+
+                            let mut font = cursor_row_layout
+                                .font_id_for_index(cursor_column)
+                                .and_then(|cursor_font_id| {
+                                    window.text_system().get_font_for_id(cursor_font_id)
+                                })
+                                .unwrap_or(self.style.text.font());
+                            font.features = self.style.text.font_features.clone();
+
+                            // Invert the text color for the block cursor. Ensure that the text
+                            // color is opaque enough to be visible against the background color.
+                            //
+                            // 0.75 is an arbitrary threshold to determine if the background color is
+                            // opaque enough to use as a text color.
+                            //
+                            // TODO: In the future we should ensure themes have a `text_inverse` color.
+                            let color = if cx.theme().colors().editor_background.a < 0.75 {
+                                match cx.theme().appearance {
+                                    Appearance::Dark => Hsla::black(),
+                                    Appearance::Light => Hsla::white(),
                                 }
-                            })
-                            .map(|text| {
-                                let len = text.len();
+                            } else {
+                                cx.theme().colors().editor_background
+                            };
 
-                                let mut font = cursor_row_layout
-                                    .font_id_for_index(cursor_column)
-                                    .and_then(|cursor_font_id| {
-                                        window.text_system().get_font_for_id(cursor_font_id)
-                                    })
-                                    .unwrap_or(self.style.text.font());
-                                font.features = self.style.text.font_features.clone();
-
-                                // Invert the text color for the block cursor. Ensure that the text
-                                // color is opaque enough to be visible against the background color.
-                                //
-                                // 0.75 is an arbitrary threshold to determine if the background color is
-                                // opaque enough to use as a text color.
-                                //
-                                // TODO: In the future we should ensure themes have a `text_inverse` color.
-                                let color = if cx.theme().colors().editor_background.a < 0.75 {
-                                    match cx.theme().appearance {
-                                        Appearance::Dark => Hsla::black(),
-                                        Appearance::Light => Hsla::white(),
-                                    }
-                                } else {
-                                    cx.theme().colors().editor_background
-                                };
-
-                                window.text_system().shape_line(
-                                    text,
-                                    cursor_row_layout.font_size,
-                                    &[TextRun {
-                                        len,
-                                        font,
-                                        color,
-                                        ..Default::default()
-                                    }],
-                                    None,
-                                )
-                            })
-                    } else {
-                        None
-                    };
+                            let shaped = window.text_system().shape_line(
+                                text,
+                                cursor_row_layout.font_size,
+                                &[TextRun {
+                                    len,
+                                    font,
+                                    color,
+                                    ..Default::default()
+                                }],
+                                None,
+                            );
+                            if !is_ascii_whitespace_only {
+                                block_width = block_width.max(shaped.width);
+                            }
+                            block_text = Some(shaped);
+                        }
+                    }
 
                     let x = cursor_character_x - scroll_pixel_position.x.into();
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
@@ -1977,10 +1966,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if self.split_side == Some(SplitSide::Left) {
-            return None;
-        }
-
         let show_scrollbars = self.editor.read(cx).show_scrollbars;
         if (!show_scrollbars.horizontal && !show_scrollbars.vertical)
             || self.style.scrollbar_width.is_zero()
@@ -4990,7 +4975,9 @@ impl EditorElement {
             std::collections::HashMap::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor.sticky_headers(style, cx).unwrap_or_default();
+        let items = editor
+            .sticky_headers(&snapshot.display_snapshot, style, cx)
+            .unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -5737,7 +5724,7 @@ impl EditorElement {
                 snapshot,
                 visible_display_row_range.clone(),
                 max_size,
-                &editor.text_layout_details(window),
+                &editor.text_layout_details(window, cx),
                 window,
                 cx,
             )
@@ -6063,13 +6050,6 @@ impl EditorElement {
                 }
                 let row_ix = (display_row_range.start - row_range.start).0 as usize;
                 if row_infos[row_ix].diff_status.is_none() {
-                    continue;
-                }
-                if row_infos[row_ix]
-                    .diff_status
-                    .is_some_and(|status| status.is_added())
-                    && !status.is_added()
-                {
                     continue;
                 }
 
@@ -10136,38 +10116,6 @@ impl Element for EditorElement {
                         }
                     };
 
-                    // When jumping from one side of a side-by-side diff to the
-                    // other, we autoscroll autoscroll to keep the target range in view.
-                    //
-                    // If our scroll companion has a pending autoscroll request, process it
-                    // first so that both editors render with synchronized scroll positions.
-                    // This is important for split diff views where one editor may prepaint
-                    // before the other.
-                    if let Some(companion) = self
-                        .editor
-                        .read(cx)
-                        .scroll_companion()
-                        .and_then(|c| c.upgrade())
-                    {
-                        if companion.read(cx).scroll_manager.has_autoscroll_request() {
-                            companion.update(cx, |companion_editor, cx| {
-                                let companion_autoscroll_request =
-                                    companion_editor.scroll_manager.take_autoscroll_request();
-                                companion_editor.autoscroll_vertically(
-                                    bounds,
-                                    line_height,
-                                    max_scroll_top,
-                                    companion_autoscroll_request,
-                                    window,
-                                    cx,
-                                );
-                            });
-                            snapshot = self
-                                .editor
-                                .update(cx, |editor, cx| editor.snapshot(window, cx));
-                        }
-                    }
-
                     let (
                         autoscroll_request,
                         autoscroll_containing_element,
@@ -10800,8 +10748,8 @@ impl Element for EditorElement {
                     );
 
                     self.editor.update(cx, |editor, cx| {
-                        if editor.scroll_manager.clamp_scroll_left(scroll_max.x) {
-                            scroll_position.x = scroll_position.x.min(scroll_max.x);
+                        if editor.scroll_manager.clamp_scroll_left(scroll_max.x, cx) {
+                            scroll_position.x = scroll_max.x.min(scroll_position.x);
                         }
 
                         if needs_horizontal_autoscroll.0
@@ -11425,18 +11373,6 @@ impl Element for EditorElement {
                     self.paint_scrollbars(layout, window, cx);
                     self.paint_edit_prediction_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
-
-                    if let Some(overlay_painter) = self.overlay_painter.take() {
-                        let data = OverlayPainterData {
-                            editor: &self.editor,
-                            snapshot: &layout.position_map.snapshot,
-                            scroll_position: layout.position_map.snapshot.scroll_position(),
-                            line_height: layout.position_map.line_height,
-                            visible_row_range: layout.visible_display_row_range.clone(),
-                            hitbox: &layout.hitbox,
-                        };
-                        overlay_painter(data, window, cx);
-                    }
                 });
             })
         })

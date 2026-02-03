@@ -25,10 +25,7 @@ use language::{
 use project::{DisableAiSettings, Project};
 use regex::Regex;
 use settings::{
-    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
-    update_settings_file,
+    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore, update_settings_file,
 };
 use std::{
     sync::{Arc, LazyLock},
@@ -306,30 +303,36 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
+            provider @ (EditPredictionProvider::Experimental(_)
+            | EditPredictionProvider::Zed
+            | EditPredictionProvider::Sweep
+            | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
+                let icons = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .map(|p| p.icons(cx))
+                    .unwrap_or_else(|| {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    });
 
                 let ep_icon;
                 let tooltip_meta;
                 let mut missing_token = false;
 
                 match provider {
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
-                        ep_icon = IconName::SweepAi;
+                    EditPredictionProvider::Sweep => {
+                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         tooltip_meta = if missing_token {
                             "Missing API key for Sweep"
                         } else {
                             "Powered by Sweep"
                         };
-                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                     }
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => {
-                        ep_icon = IconName::Inception;
+                    EditPredictionProvider::Mercury => {
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
                         tooltip_meta = if missing_token {
@@ -339,11 +342,7 @@ impl Render for EditPredictionButton {
                         };
                     }
                     _ => {
-                        ep_icon = if enabled {
-                            IconName::ZedPredict
-                        } else {
-                            IconName::ZedPredictDisabled
-                        };
+                        ep_icon = if enabled { icons.base } else { icons.disabled };
                         tooltip_meta = "Powered by Zeta"
                     }
                 };
@@ -536,65 +535,13 @@ impl EditPredictionButton {
         }
     }
 
-    fn get_available_providers(&self, cx: &mut App) -> Vec<EditPredictionProvider> {
-        let mut providers = Vec::new();
-
-        providers.push(EditPredictionProvider::Zed);
-
-        if cx.has_flag::<Zeta2FeatureFlag>() {
-            providers.push(EditPredictionProvider::Experimental(
-                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-            ));
-        }
-
-        if let Some(_) = EditPredictionStore::try_global(cx)
-            .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
-        {
-            providers.push(EditPredictionProvider::Copilot);
-        }
-
-        if let Some(supermaven) = Supermaven::global(cx) {
-            if let Supermaven::Spawned(agent) = supermaven.read(cx) {
-                if matches!(agent.account_status, AccountStatus::Ready) {
-                    providers.push(EditPredictionProvider::Supermaven);
-                }
-            }
-        }
-
-        if CodestralEditPredictionDelegate::has_api_key(cx) {
-            providers.push(EditPredictionProvider::Codestral);
-        }
-
-        if cx.has_flag::<SweepFeatureFlag>()
-            && edit_prediction::sweep_ai::sweep_api_token(cx)
-                .read(cx)
-                .has_key()
-        {
-            providers.push(EditPredictionProvider::Experimental(
-                EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-            ));
-        }
-
-        if cx.has_flag::<MercuryFeatureFlag>()
-            && edit_prediction::mercury::mercury_api_token(cx)
-                .read(cx)
-                .has_key()
-        {
-            providers.push(EditPredictionProvider::Experimental(
-                EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-            ));
-        }
-
-        providers
-    }
-
     fn add_provider_switching_section(
         &self,
         mut menu: ContextMenu,
         current_provider: EditPredictionProvider,
         cx: &mut App,
     ) -> ContextMenu {
-        let available_providers = self.get_available_providers(cx);
+        let available_providers = get_available_providers(cx);
 
         let providers: Vec<_> = available_providers
             .into_iter()
@@ -605,27 +552,11 @@ impl EditPredictionButton {
             menu = menu.separator().header("Providers");
 
             for provider in providers {
+                let Some(name) = provider.display_name() else {
+                    continue;
+                };
                 let is_current = provider == current_provider;
                 let fs = self.fs.clone();
-
-                let name = match provider {
-                    EditPredictionProvider::Zed => "Zed AI",
-                    EditPredictionProvider::Copilot => "GitHub Copilot",
-                    EditPredictionProvider::Supermaven => "Supermaven",
-                    EditPredictionProvider::Codestral => "Codestral",
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => "Sweep",
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => "Mercury",
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                    ) => "Zeta2",
-                    EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => {
-                        continue;
-                    }
-                };
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
@@ -917,10 +848,17 @@ impl EditPredictionButton {
         );
 
         if !self.editor_enabled.unwrap_or(true) {
+            let icons = self
+                .edit_prediction_provider
+                .as_ref()
+                .map(|p| p.icons(cx))
+                .unwrap_or_else(|| {
+                    edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                });
             menu = menu.item(
                 ContextMenuEntry::new("This file is excluded.")
                     .disabled(true)
-                    .icon(IconName::ZedPredictDisabled)
+                    .icon(icons.disabled)
                     .icon_size(IconSize::Small),
             );
         }
@@ -1339,15 +1277,64 @@ async fn open_disabled_globs_setting_in_editor(
     anyhow::Ok(())
 }
 
-fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
+pub fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
     update_settings_file(fs, cx, move |settings, _| {
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert_default()
-            .edit_prediction_provider = Some(provider);
+            .provider = Some(provider);
     });
+}
+
+pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
+    let mut providers = Vec::new();
+
+    providers.push(EditPredictionProvider::Zed);
+
+    if cx.has_flag::<Zeta2FeatureFlag>() {
+        providers.push(EditPredictionProvider::Experimental(
+            EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
+        ));
+    }
+
+    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
+        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
+    {
+        providers.push(EditPredictionProvider::Copilot);
+    };
+
+    if let Some(supermaven) = Supermaven::global(cx) {
+        if let Supermaven::Spawned(agent) = supermaven.read(cx) {
+            if matches!(agent.account_status, AccountStatus::Ready) {
+                providers.push(EditPredictionProvider::Supermaven);
+            }
+        }
+    }
+
+    if CodestralEditPredictionDelegate::has_api_key(cx) {
+        providers.push(EditPredictionProvider::Codestral);
+    }
+
+    if cx.has_flag::<SweepFeatureFlag>()
+        && edit_prediction::sweep_ai::sweep_api_token(cx)
+            .read(cx)
+            .has_key()
+    {
+        providers.push(EditPredictionProvider::Sweep);
+    }
+
+    if cx.has_flag::<MercuryFeatureFlag>()
+        && edit_prediction::mercury::mercury_api_token(cx)
+            .read(cx)
+            .has_key()
+    {
+        providers.push(EditPredictionProvider::Mercury);
+    }
+
+    providers
 }
 
 fn toggle_show_edit_predictions_for_language(
@@ -1374,9 +1361,9 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert(Default::default())
-            .edit_prediction_provider = Some(EditPredictionProvider::None);
+            .provider = Some(EditPredictionProvider::None);
     });
 }
 

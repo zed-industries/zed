@@ -65,10 +65,8 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use workspace::{
     Save, Toast, Workspace,
-    dock::Panel,
     item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
@@ -1011,8 +1009,7 @@ impl TextThreadEditor {
                 .as_f64();
             let scroll_position = editor
                 .scroll_manager
-                .anchor()
-                .scroll_position(&snapshot.display_snapshot);
+                .scroll_position(&snapshot.display_snapshot, cx);
 
             let scroll_bottom = scroll_position.y + editor.visible_line_count().unwrap_or(0.);
             if (scroll_position.y..scroll_bottom).contains(&cursor_row) {
@@ -1498,39 +1495,8 @@ impl TextThreadEditor {
             return;
         };
 
-        // Try terminal selection first (requires focus, so more specific)
-        if let Some(terminal_text) = maybe!({
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx)?;
-
-            if !terminal_panel
-                .read(cx)
-                .focus_handle(cx)
-                .contains_focused(window, cx)
-            {
-                return None;
-            }
-
-            let terminal_view = terminal_panel.read(cx).pane().and_then(|pane| {
-                pane.read(cx)
-                    .active_item()
-                    .and_then(|t| t.downcast::<TerminalView>())
-            })?;
-
-            terminal_view
-                .read(cx)
-                .terminal()
-                .read(cx)
-                .last_content
-                .selection_text
-                .clone()
-        }) {
-            if !terminal_text.is_empty() {
-                agent_panel_delegate.quote_terminal_text(workspace, terminal_text, window, cx);
-                return;
-            }
-        }
-
-        // Try editor selection
+        // Get buffer info for the delegate call (even if empty, AcpThreadView ignores these
+        // params and calls insert_selections which handles both terminal and buffer)
         if let Some((selections, buffer)) = maybe!({
             let editor = workspace
                 .active_item(cx)
@@ -1551,9 +1517,7 @@ impl TextThreadEditor {
             });
             Some((selections, buffer))
         }) {
-            if !selections.is_empty() {
-                agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
-            }
+            agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
         }
     }
 
@@ -1586,7 +1550,7 @@ impl TextThreadEditor {
             project_diff
                 .editor()
                 .read(cx)
-                .primary_editor()
+                .rhs_editor()
                 .read(cx)
                 .buffer()
                 .clone()
@@ -1595,7 +1559,7 @@ impl TextThreadEditor {
         // Extract all stored comments from all hunks
         let all_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)> =
             project_diff.update(cx, |project_diff, cx| {
-                let editor = project_diff.editor().read(cx).primary_editor().clone();
+                let editor = project_diff.editor().read(cx).rhs_editor().clone();
                 editor.update(cx, |editor, cx| editor.take_all_review_comments(cx))
             });
 
@@ -3061,14 +3025,15 @@ impl FollowableItem for TextThreadEditor {
         self.remote_id
     }
 
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant> {
-        let text_thread = self.text_thread.read(cx);
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
+        let context_id = self.text_thread.read(cx).id().to_proto();
+        let editor_proto = self
+            .editor
+            .update(cx, |editor, cx| editor.to_state_proto(window, cx));
         Some(proto::view::Variant::ContextEditor(
             proto::view::ContextEditor {
-                context_id: text_thread.id().to_proto(),
-                editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(window, cx)
-                {
+                context_id,
+                editor: if let Some(proto::view::Variant::Editor(proto)) = editor_proto {
                     Some(proto)
                 } else {
                     None
@@ -3135,12 +3100,12 @@ impl FollowableItem for TextThreadEditor {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool {
-        self.editor
-            .read(cx)
-            .add_event_to_update_proto(event, update, window, cx)
+        self.editor.update(cx, |editor, cx| {
+            editor.add_event_to_update_proto(event, update, window, cx)
+        })
     }
 
     fn apply_update_proto(

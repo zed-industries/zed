@@ -219,6 +219,9 @@ pub enum Shell {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
+    /// Use the current file's directory, falling back to the project directory,
+    /// then the first project in the workspace.
+    CurrentFileDirectory,
     /// Use the current file's project directory. Fallback to the
     /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
