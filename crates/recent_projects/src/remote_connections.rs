@@ -245,6 +245,7 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Mock(_) => {
                                     "Failed to connect to mock server"
                                 }
+                                _ => "Failed to connect to remote project",
                             },
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
@@ -308,6 +309,7 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Mock(_) => {
                                     "Failed to connect to mock server"
                                 }
+                                _ => "Failed to connect to remote project",
                             },
                             Some(&format!("{e:#}")),
                             &["Retry", "Cancel"],
