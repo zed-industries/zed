@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy::StringMatch;
 use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Task, Window, px};
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
@@ -24,7 +24,6 @@ struct OllamaModelPickerDelegate {
     models: Vec<SharedString>,
     filtered_models: Vec<StringMatch>,
     selected_index: usize,
-    current_model: SharedString,
     query: String,
     on_model_changed: Arc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
 }
@@ -65,7 +64,6 @@ impl OllamaModelPickerDelegate {
             models,
             filtered_models,
             selected_index,
-            current_model,
             query: String::new(),
             on_model_changed: Arc::new(on_model_changed),
         }
@@ -105,7 +103,6 @@ impl PickerDelegate for OllamaModelPickerDelegate {
     ) -> Task<()> {
         self.query = query.clone();
         let models = self.models.clone();
-        let current_model = self.current_model.clone();
 
         let matches: Vec<StringMatch> = if query.is_empty() {
             models
@@ -119,13 +116,7 @@ impl PickerDelegate for OllamaModelPickerDelegate {
                 })
                 .collect()
         } else {
-            let _candidates: Vec<StringMatchCandidate> = models
-                .iter()
-                .enumerate()
-                .map(|(id, model)| StringMatchCandidate::new(id, model.as_ref()))
-                .collect();
-
-            models
+            let filtered: Vec<StringMatch> = models
                 .iter()
                 .enumerate()
                 .filter(|(_, model)| model.to_lowercase().contains(&query.to_lowercase()))
@@ -135,23 +126,25 @@ impl PickerDelegate for OllamaModelPickerDelegate {
                     positions: Vec::new(),
                     score: 0.0,
                 })
+                .collect();
+
+            let query_already_in_list = filtered.iter().any(|m| m.string == query);
+            if query_already_in_list {
+                filtered
+            } else {
+                std::iter::once(StringMatch {
+                    candidate_id: usize::MAX,
+                    string: query.clone(),
+                    positions: Vec::new(),
+                    score: 0.0,
+                })
+                .chain(filtered)
                 .collect()
+            }
         };
 
-        let selected_index = if query.is_empty() {
-            models
-                .iter()
-                .position(|model| *model == current_model)
-                .unwrap_or(0)
-        } else {
-            matches
-                .iter()
-                .position(|m| models[m.candidate_id] == current_model)
-                .unwrap_or(0)
-        };
-
+        self.selected_index = 0;
         self.filtered_models = matches;
-        self.selected_index = selected_index;
         cx.notify();
 
         Task::ready(())
@@ -163,15 +156,11 @@ impl PickerDelegate for OllamaModelPickerDelegate {
         window: &mut Window,
         cx: &mut Context<OllamaModelPicker>,
     ) {
-        let model_name = if let Some(model_match) = self.filtered_models.get(self.selected_index) {
-            model_match.string.clone().into()
-        } else if !self.query.is_empty() {
-            SharedString::from(self.query.clone())
-        } else {
+        let Some(model_match) = self.filtered_models.get(self.selected_index) else {
             return;
         };
 
-        (self.on_model_changed)(model_name, window, cx);
+        (self.on_model_changed)(model_match.string.clone().into(), window, cx);
         cx.emit(DismissEvent);
     }
 
