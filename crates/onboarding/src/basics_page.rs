@@ -209,8 +209,8 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
     ) {
         let fs = <dyn Fs>::global(cx);
         let theme = theme.into();
-        update_settings_file(fs, cx, move |settings, cx| {
-            if theme_mode == ThemeAppearanceMode::System {
+        update_settings_file(fs, cx, move |settings, cx| match theme_mode {
+            ThemeAppearanceMode::System => {
                 let (light_theme, dark_theme) =
                     get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
 
@@ -219,10 +219,19 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                     light: ThemeName(light_theme.into()),
                     dark: ThemeName(dark_theme.into()),
                 });
-            } else {
-                let appearance = *SystemAppearance::global(cx);
-                theme::set_theme(settings, theme, appearance, appearance);
             }
+            ThemeAppearanceMode::Light => theme::set_theme(
+                settings,
+                theme,
+                Appearance::Light,
+                *SystemAppearance::global(cx),
+            ),
+            ThemeAppearanceMode::Dark => theme::set_theme(
+                settings,
+                theme,
+                Appearance::Dark,
+                *SystemAppearance::global(cx),
+            ),
         });
     }
 }

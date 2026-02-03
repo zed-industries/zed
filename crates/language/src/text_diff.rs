@@ -23,11 +23,24 @@ pub fn unified_diff_with_offsets(
     old_start_line: u32,
     new_start_line: u32,
 ) -> String {
+    unified_diff_with_context(old_text, new_text, old_start_line, new_start_line, 3)
+}
+
+/// Computes a diff between two strings, returning a unified diff string with
+/// hunk headers adjusted to reflect the given starting line numbers (zero-indexed),
+/// and a configurable number of context lines around changes.
+pub fn unified_diff_with_context(
+    old_text: &str,
+    new_text: &str,
+    old_start_line: u32,
+    new_start_line: u32,
+    context_lines: u32,
+) -> String {
     let input = InternedInput::new(old_text, new_text);
     diff(
         Algorithm::Histogram,
         &input,
-        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line),
+        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines),
     )
 }
 
@@ -45,13 +58,19 @@ struct OffsetUnifiedDiffBuilder<'a> {
 
     old_line_offset: u32,
     new_line_offset: u32,
+    context_lines: u32,
 
     buffer: String,
     dst: String,
 }
 
 impl<'a> OffsetUnifiedDiffBuilder<'a> {
-    fn new(input: &'a InternedInput<&'a str>, old_line_offset: u32, new_line_offset: u32) -> Self {
+    fn new(
+        input: &'a InternedInput<&'a str>,
+        old_line_offset: u32,
+        new_line_offset: u32,
+        context_lines: u32,
+    ) -> Self {
         Self {
             before_hunk_start: 0,
             after_hunk_start: 0,
@@ -59,6 +78,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             after_hunk_len: 0,
             old_line_offset,
             new_line_offset,
+            context_lines,
             buffer: String::with_capacity(8),
             dst: String::new(),
             interner: &input.interner,
@@ -79,7 +99,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             return;
         }
 
-        let end = (self.pos + 3).min(self.before.len() as u32);
+        let end = (self.pos + self.context_lines).min(self.before.len() as u32);
         self.update_pos(end, end);
 
         writeln!(
@@ -110,13 +130,13 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
     type Out = String;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        if before.start - self.pos > 6 {
+        if before.start - self.pos > self.context_lines * 2 {
             self.flush();
         }
         if self.before_hunk_len == 0 && self.after_hunk_len == 0 {
-            self.pos = before.start.saturating_sub(3);
+            self.pos = before.start.saturating_sub(self.context_lines);
             self.before_hunk_start = self.pos;
-            self.after_hunk_start = after.start.saturating_sub(3);
+            self.after_hunk_start = after.start.saturating_sub(self.context_lines);
         }
         self.update_pos(before.start, before.end);
         self.before_hunk_len += before.end - before.start;
@@ -466,5 +486,30 @@ mod tests {
             diff_with_offset,
             format!("@@ -100,3 +105,3 @@\n{}", expected_diff_body)
         );
+    }
+
+    #[test]
+    fn test_unified_diff_with_context() {
+        // Test that full context includes all lines from the start
+        let old_text = "line1\nline2\nline3\nline4\nline5\nCHANGE_ME\nline7\nline8\n";
+        let new_text = "line1\nline2\nline3\nline4\nline5\nCHANGED\nline7\nline8\n";
+
+        // With default 3 lines of context, the diff starts at line 3
+        let diff_default = unified_diff_with_offsets(old_text, new_text, 0, 0);
+        assert_eq!(
+            diff_default,
+            "@@ -3,6 +3,6 @@\n line3\n line4\n line5\n-CHANGE_ME\n+CHANGED\n line7\n line8\n"
+        );
+
+        // With full context (8 lines), the diff starts at line 1
+        let diff_full_context = unified_diff_with_context(old_text, new_text, 0, 0, 8);
+        assert_eq!(
+            diff_full_context,
+            "@@ -1,8 +1,8 @@\n line1\n line2\n line3\n line4\n line5\n-CHANGE_ME\n+CHANGED\n line7\n line8\n"
+        );
+
+        // With 0 context, only the changed line is shown
+        let diff_no_context = unified_diff_with_context(old_text, new_text, 0, 0, 0);
+        assert_eq!(diff_no_context, "@@ -6,1 +6,1 @@\n-CHANGE_ME\n+CHANGED\n");
     }
 }

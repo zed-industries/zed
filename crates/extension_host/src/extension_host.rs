@@ -282,7 +282,7 @@ impl ExtensionStore {
         // list of the installed extensions and the resources that they provide.
         // This index is loaded synchronously on startup.
         let (index_content, index_metadata, extensions_metadata) =
-            cx.background_executor().block(async {
+            cx.foreground_executor().block_on(async {
                 futures::join!(
                     this.fs.load(&this.index_path),
                     this.fs.metadata(&this.index_path),
@@ -336,6 +336,7 @@ impl ExtensionStore {
 
                 let mut index_changed = false;
                 let mut debounce_timer = cx.background_spawn(futures::future::pending()).fuse();
+
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
@@ -351,21 +352,15 @@ impl ExtensionStore {
                             Self::update_remote_clients(&this, cx).await?;
                         }
                         _ = connection_registered_rx.next() => {
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
+                            debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
-                            this.update(cx, |this, _| {
+                            this.update(cx, |this, _cx| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
                             index_changed = true;
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
+                            debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
                         }
                     }
                 }
@@ -986,7 +981,7 @@ impl ExtensionStore {
                         .compile_extension(
                             &extension_source_path,
                             &mut extension_manifest,
-                            CompileExtensionOptions { release: false },
+                            CompileExtensionOptions::dev(),
                             fs,
                         )
                         .await
@@ -1046,12 +1041,7 @@ impl ExtensionStore {
         let compile = cx.background_spawn(async move {
             let mut manifest = ExtensionManifest::load(fs.clone(), &path).await?;
             builder
-                .compile_extension(
-                    &path,
-                    &mut manifest,
-                    CompileExtensionOptions { release: true },
-                    fs,
-                )
+                .compile_extension(&path, &mut manifest, CompileExtensionOptions::dev(), fs)
                 .await
         });
 
@@ -1079,6 +1069,7 @@ impl ExtensionStore {
     /// no longer in the manifest, or whose files have changed on disk.
     /// Then it loads any themes, languages, or grammars that are newly
     /// added to the manifest, or whose files have changed on disk.
+    #[ztracing::instrument(skip_all)]
     fn extensions_updated(
         &mut self,
         mut new_index: ExtensionIndex,
@@ -1261,10 +1252,12 @@ impl ExtensionStore {
                     (path, icons_root_path)
                 },
             ));
-            snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
-                let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
-                path
+            snippets_to_add.extend(extension.manifest.snippets.iter().flat_map(|snippets| {
+                snippets.paths().map(|snippets_path| {
+                    let mut path = self.installed_dir.clone();
+                    path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
+                    path
+                })
             }));
         }
 

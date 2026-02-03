@@ -760,6 +760,7 @@ impl Database {
                     path: ActiveValue::Set(update.path.clone()),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
+                    outside_worktree: ActiveValue::Set(update.outside_worktree.unwrap_or(false)),
                 })
                 .on_conflict(
                     OnConflict::columns([
@@ -767,7 +768,10 @@ impl Database {
                         worktree_settings_file::Column::WorktreeId,
                         worktree_settings_file::Column::Path,
                     ])
-                    .update_column(worktree_settings_file::Column::Content)
+                    .update_columns([
+                        worktree_settings_file::Column::Content,
+                        worktree_settings_file::Column::OutsideWorktree,
+                    ])
                     .to_owned(),
                 )
                 .exec(&*tx)
@@ -1050,6 +1054,7 @@ impl Database {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
+                        outside_worktree: db_settings_file.outside_worktree,
                     });
                 }
             }

@@ -5,7 +5,6 @@ use crate::tasks::workflows::{
 
 use super::{runners, steps, steps::named, vars};
 use gh_workflow::*;
-use indoc::indoc;
 
 pub(crate) fn build_nix(
     platform: Platform,
@@ -14,16 +13,6 @@ pub(crate) fn build_nix(
     cachix_filter: Option<&str>,
     deps: &[&NamedJob],
 ) -> NamedJob {
-    // on our macs we manually install nix. for some reason the cachix action is running
-    // under a non-login /bin/bash shell which doesn't source the proper script to add the
-    // nix profile to PATH, so we manually add them here
-    pub fn set_path() -> Step<Run> {
-        named::bash(indoc! {r#"
-                echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-                echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
-            "#})
-    }
-
     pub fn install_nix() -> Step<Use> {
         named::uses(
             "cachix",
@@ -55,14 +44,6 @@ pub(crate) fn build_nix(
         ))
     }
 
-    pub fn limit_store() -> Step<Run> {
-        named::bash(indoc! {r#"
-                if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
-                    nix-collect-garbage -d || true
-                fi"#
-        })
-    }
-
     let runner = match platform {
         Platform::Windows => unimplemented!(),
         Platform::Linux => runners::LINUX_X86_BUNDLER,
@@ -86,16 +67,10 @@ pub(crate) fn build_nix(
         job = job.needs(deps.iter().map(|d| d.name.clone()).collect::<Vec<String>>());
     }
 
-    job = if platform == Platform::Linux {
-        job.add_step(install_nix())
-            .add_step(cachix_action(cachix_filter))
-            .add_step(build(&flake_output))
-    } else {
-        job.add_step(set_path())
-            .add_step(cachix_action(cachix_filter))
-            .add_step(build(&flake_output))
-            .add_step(limit_store())
-    };
+    job = job
+        .add_step(install_nix())
+        .add_step(cachix_action(cachix_filter))
+        .add_step(build(&flake_output));
 
     NamedJob {
         name: format!("build_nix_{platform}_{arch}"),

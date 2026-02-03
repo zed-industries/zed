@@ -2,11 +2,11 @@ use acp_thread::{AcpThread, AgentConnection, UserMessageId};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use collections::HashSet;
-use futures::channel::mpsc;
+use collections::{BTreeMap, HashSet};
+use futures::{FutureExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use language_model::LanguageModelToolUseId;
 use project::Project;
-use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
@@ -19,8 +19,8 @@ use util::ResultExt;
 use watch;
 
 use crate::{
-    AgentTool, ContextServerRegistry, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext,
-    Templates, Thread, ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
+    AgentTool, AnyAgentTool, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext, Thread,
+    ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
 };
 
 /// When a subagent's remaining context window falls below this fraction (25%),
@@ -29,26 +29,26 @@ const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 
 /// Spawns a subagent with its own context window to perform a delegated task.
 ///
-/// Use this tool when you need to:
-/// - Perform research that would consume too many tokens in the main context
-/// - Execute a complex subtask independently
-/// - Run multiple parallel investigations
+/// Use this tool when you want to do any of the following:
+/// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
+/// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
+/// - Run multiple tasks in parallel that would take significantly longer to run sequentially.
 ///
 /// You control what the subagent does by providing:
 /// 1. A task prompt describing what the subagent should do
 /// 2. A summary prompt that tells the subagent how to summarize its work when done
 /// 3. A "context running out" prompt for when the subagent is low on tokens
 ///
-/// The subagent has access to the same tools you do. You can optionally restrict
-/// which tools the subagent can use.
+/// Each subagent has access to the same tools you do. You can optionally restrict
+/// which tools each subagent can use.
 ///
-/// IMPORTANT:
-/// - Maximum 8 subagents can be spawned per turn
+/// Note:
+/// - Maximum 8 subagents can run in parallel
 /// - Subagents cannot use tools you don't have access to
 /// - If spawning multiple subagents that might write to the filesystem, provide
-///   guidance on how to avoid conflicts (e.g., assign each to different directories)
+///   guidance on how to avoid conflicts (e.g. assign each to different directories)
 /// - Instruct subagents to be concise in their summaries to conserve your context
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SubagentToolInput {
     /// Short label displayed in the UI while the subagent runs (e.g., "Researching alternatives")
     pub label: String,
@@ -83,49 +83,44 @@ pub struct SubagentToolInput {
     pub allowed_tools: Option<Vec<String>>,
 }
 
+/// Tool that spawns a subagent thread to work on a task.
 pub struct SubagentTool {
     parent_thread: WeakEntity<Thread>,
-    project: Entity<Project>,
-    project_context: Entity<ProjectContext>,
-    context_server_registry: Entity<ContextServerRegistry>,
-    templates: Arc<Templates>,
     current_depth: u8,
-    parent_tool_names: HashSet<SharedString>,
 }
 
 impl SubagentTool {
-    pub fn new(
-        parent_thread: WeakEntity<Thread>,
-        project: Entity<Project>,
-        project_context: Entity<ProjectContext>,
-        context_server_registry: Entity<ContextServerRegistry>,
-        templates: Arc<Templates>,
-        current_depth: u8,
-        parent_tool_names: Vec<SharedString>,
-    ) -> Self {
+    pub fn new(parent_thread: WeakEntity<Thread>, current_depth: u8) -> Self {
         Self {
             parent_thread,
-            project,
-            project_context,
-            context_server_registry,
-            templates,
             current_depth,
-            parent_tool_names: parent_tool_names.into_iter().collect(),
         }
     }
 
-    pub fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
-        if let Some(tools) = allowed_tools {
-            for tool in tools {
-                if !self.parent_tool_names.contains(tool.as_str()) {
-                    return Err(anyhow!(
-                        "Tool '{}' is not available to the parent agent. Available tools: {:?}",
-                        tool,
-                        self.parent_tool_names.iter().collect::<Vec<_>>()
-                    ));
-                }
-            }
+    pub fn validate_allowed_tools(
+        &self,
+        allowed_tools: &Option<Vec<String>>,
+        cx: &App,
+    ) -> Result<()> {
+        let Some(allowed_tools) = allowed_tools else {
+            return Ok(());
+        };
+
+        let invalid_tools: Vec<_> = self.parent_thread.read_with(cx, |thread, _cx| {
+            allowed_tools
+                .iter()
+                .filter(|tool| !thread.tools.contains_key(tool.as_str()))
+                .map(|s| format!("'{s}'"))
+                .collect()
+        })?;
+
+        if !invalid_tools.is_empty() {
+            return Err(anyhow!(
+                "The following tools do not exist: {}",
+                invalid_tools.join(", ")
+            ));
         }
+
         Ok(())
     }
 }
@@ -165,18 +160,19 @@ impl AgentTool for SubagentTool {
             )));
         }
 
-        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools) {
+        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
             return Task::ready(Err(e));
         }
 
-        let Some(parent_thread) = self.parent_thread.upgrade() else {
+        let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
             return Task::ready(Err(anyhow!(
                 "Parent thread no longer exists (subagent depth={})",
                 self.current_depth + 1
             )));
         };
+        let parent_thread = parent_thread_entity.read(cx);
 
-        let running_count = parent_thread.read(cx).running_subagent_count();
+        let running_count = parent_thread.running_subagent_count();
         if running_count >= MAX_PARALLEL_SUBAGENTS {
             return Task::ready(Err(anyhow!(
                 "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
@@ -184,43 +180,51 @@ impl AgentTool for SubagentTool {
             )));
         }
 
-        let parent_thread_id = parent_thread.read(cx).id().clone();
-        let parent_model = parent_thread.read(cx).model().cloned();
-        let tool_use_id = event_stream.tool_use_id().clone();
-
+        let parent_model = parent_thread.model().cloned();
         let Some(model) = parent_model else {
             return Task::ready(Err(anyhow!("No model configured")));
         };
 
-        let subagent_context = SubagentContext {
-            parent_thread_id,
-            tool_use_id,
-            depth: self.current_depth + 1,
-            summary_prompt: input.summary_prompt.clone(),
-            context_low_prompt: input.context_low_prompt.clone(),
-        };
-
-        let project = self.project.clone();
-        let project_context = self.project_context.clone();
-        let context_server_registry = self.context_server_registry.clone();
-        let templates = self.templates.clone();
-        let task_prompt = input.task_prompt;
-        let timeout_ms = input.timeout_ms;
-        let allowed_tools: Option<HashSet<SharedString>> = input
-            .allowed_tools
-            .map(|tools| tools.into_iter().map(SharedString::from).collect());
-
-        let parent_thread = self.parent_thread.clone();
+        let parent_thread_id = parent_thread.id().clone();
+        let project = parent_thread.project.clone();
+        let project_context = parent_thread.project_context().clone();
+        let context_server_registry = parent_thread.context_server_registry.clone();
+        let templates = parent_thread.templates.clone();
+        let parent_tools = parent_thread.tools.clone();
+        let current_depth = self.current_depth;
+        let parent_thread_weak = self.parent_thread.clone();
 
         cx.spawn(async move |cx| {
+            let subagent_context = SubagentContext {
+                parent_thread_id: parent_thread_id.clone(),
+                tool_use_id: LanguageModelToolUseId::from(uuid::Uuid::new_v4().to_string()),
+                depth: current_depth + 1,
+                summary_prompt: input.summary_prompt.clone(),
+                context_low_prompt: input.context_low_prompt.clone(),
+            };
+
+            // Determine which tools this subagent gets
+            let subagent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> =
+                if let Some(ref allowed) = input.allowed_tools {
+                    let allowed_set: HashSet<&str> = allowed.iter().map(|s| s.as_str()).collect();
+                    parent_tools
+                        .iter()
+                        .filter(|(name, _)| allowed_set.contains(name.as_ref()))
+                        .map(|(name, tool)| (name.clone(), tool.clone()))
+                        .collect()
+                } else {
+                    parent_tools.clone()
+                };
+
             let subagent_thread: Entity<Thread> = cx.new(|cx| {
                 Thread::new_subagent(
                     project.clone(),
                     project_context.clone(),
                     context_server_registry.clone(),
                     templates.clone(),
-                    model,
+                    model.clone(),
                     subagent_context,
+                    subagent_tools,
                     cx,
                 )
             });
@@ -232,7 +236,7 @@ impl AgentTool for SubagentTool {
                 let action_log: Entity<ActionLog> = cx.new(|_| ActionLog::new(project.clone()));
                 let connection: Rc<dyn AgentConnection> = Rc::new(SubagentDisplayConnection);
                 AcpThread::new(
-                    "Subagent",
+                    &input.label,
                     connection,
                     project.clone(),
                     action_log,
@@ -244,23 +248,53 @@ impl AgentTool for SubagentTool {
 
             event_stream.update_subagent_thread(acp_thread.clone());
 
-            if let Some(parent) = parent_thread.upgrade() {
+            let mut user_stop_rx: watch::Receiver<bool> =
+                acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
+
+            if let Some(parent) = parent_thread_weak.upgrade() {
                 parent.update(cx, |thread, _cx| {
                     thread.register_running_subagent(subagent_weak.clone());
                 });
             }
 
-            let result = run_subagent(
-                &subagent_thread,
-                &acp_thread,
-                allowed_tools,
-                task_prompt,
-                timeout_ms,
-                cx,
-            )
-            .await;
+            // Helper to wait for user stop signal on the subagent card
+            let wait_for_user_stop = async {
+                loop {
+                    if *user_stop_rx.borrow() {
+                        return;
+                    }
+                    if user_stop_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            };
 
-            if let Some(parent) = parent_thread.upgrade() {
+            // Run the subagent, handling cancellation from both:
+            // 1. Parent turn cancellation (event_stream.cancelled_by_user)
+            // 2. Direct user stop on subagent card (user_stop_rx)
+            let result = futures::select! {
+                result = run_subagent(
+                    &subagent_thread,
+                    &acp_thread,
+                    input.task_prompt,
+                    input.timeout_ms,
+                    cx,
+                ).fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    let _ = subagent_thread.update(cx, |thread, cx| {
+                        thread.cancel(cx).detach();
+                    });
+                    Err(anyhow!("Subagent cancelled by user"))
+                }
+                _ = wait_for_user_stop.fuse() => {
+                    let _ = subagent_thread.update(cx, |thread, cx| {
+                        thread.cancel(cx).detach();
+                    });
+                    Err(anyhow!("Subagent stopped by user"))
+                }
+            };
+
+            if let Some(parent) = parent_thread_weak.upgrade() {
                 let _ = parent.update(cx, |thread, _cx| {
                     thread.unregister_running_subagent(&subagent_weak);
                 });
@@ -274,17 +308,10 @@ impl AgentTool for SubagentTool {
 async fn run_subagent(
     subagent_thread: &Entity<Thread>,
     acp_thread: &Entity<AcpThread>,
-    allowed_tools: Option<HashSet<SharedString>>,
     task_prompt: String,
     timeout_ms: Option<u64>,
     cx: &mut AsyncApp,
 ) -> Result<String> {
-    if let Some(ref allowed) = allowed_tools {
-        subagent_thread.update(cx, |thread, _cx| {
-            thread.restrict_tools(allowed);
-        });
-    }
-
     let mut events_rx =
         subagent_thread.update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))?;
 
@@ -405,6 +432,7 @@ fn forward_event_to_acp_thread(
             tool_call,
             options,
             response,
+            ..
         }) => {
             let outcome_task = acp_thread.update(cx, |thread, cx| {
                 thread.request_tool_call_authorization(tool_call, options, true, cx)

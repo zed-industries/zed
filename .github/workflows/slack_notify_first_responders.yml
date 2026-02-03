@@ -1,0 +1,103 @@
+name: Slack Notify First Responders
+
+on:
+  issues:
+    types: [labeled]
+
+env:
+  FIRST_RESPONDER_LABELS: '["priority:P0", "priority:P1"]'
+
+jobs:
+  notify-slack:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check if label requires first responder notification
+        id: check-label
+        env:
+          LABEL_NAME: ${{ github.event.label.name }}
+        run: |
+          if echo '${{ env.FIRST_RESPONDER_LABELS }}' | jq -e --arg label "$LABEL_NAME" 'index($label) != null' > /dev/null; then
+            echo "should_notify=true" >> "$GITHUB_OUTPUT"
+            echo "Label '$LABEL_NAME' requires first responder notification"
+          else
+            echo "should_notify=false" >> "$GITHUB_OUTPUT"
+            echo "Label '$LABEL_NAME' does not require first responder notification, skipping"
+          fi
+
+      - name: Build Slack message payload
+        if: steps.check-label.outputs.should_notify == 'true'
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          LABELED_BY: ${{ github.event.sender.login }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
+        run: |
+          LABELS=$(echo "$LABELS_JSON" | jq -r 'join(", ")')
+
+          jq -n \
+            --arg label_name "$LABEL_NAME" \
+            --arg issue_title "$ISSUE_TITLE" \
+            --arg issue_url "$ISSUE_URL" \
+            --arg labeled_by "$LABELED_BY" \
+            --arg labels "$LABELS" \
+            '{
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "<!subteam^S096CPUUGLF> Issue labeled *\($label_name)*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Issue:*\n<\($issue_url)|\($issue_title)>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Labeled by:*\n\($labeled_by)"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Labels:*\n\($labels)"
+                    }
+                  ]
+                }
+              ]
+            }' > payload.json
+
+          echo "Payload built successfully:"
+          cat payload.json
+
+      - name: Send Slack notification
+        if: steps.check-label.outputs.should_notify == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_FIRST_RESPONDERS }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::error::SLACK_WEBHOOK_FIRST_RESPONDERS secret is not set"
+            exit 1
+          fi
+
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @payload.json)
+
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+
+          echo "Slack API response status: $HTTP_STATUS"
+          echo "Slack API response body: $HTTP_BODY"
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::error::Slack notification failed with status $HTTP_STATUS: $HTTP_BODY"
+            exit 1
+          fi
+
+          echo "Slack notification sent successfully"

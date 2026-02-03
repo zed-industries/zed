@@ -5,7 +5,7 @@ use crate::tasks::workflows::{
         prep_release_artifacts,
     },
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
-    run_tests::run_platform_tests,
+    run_tests::{clippy, run_platform_tests},
     runners::{Arch, Platform, ReleaseChannel},
     steps::{CommonJobConditions, FluentBuilder, NamedJob},
 };
@@ -18,15 +18,16 @@ pub fn release_nightly() -> Workflow {
     let style = check_style();
     // run only on windows as that's our fastest platform right now.
     let tests = run_platform_tests(Platform::Windows);
+    let clippy_job = clippy(Platform::Windows);
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &tests]),
-        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &tests]),
-        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &tests]),
-        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests]),
-        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests]),
-        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests]),
+        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
+        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
+        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
+        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
     };
 
     let nix_linux_x86 = build_nix(
@@ -55,6 +56,7 @@ pub fn release_nightly() -> Workflow {
         .add_env(("RUST_BACKTRACE", "1"))
         .add_job(style.name, style.job)
         .add_job(tests.name, tests.job)
+        .add_job(clippy_job.name, clippy_job.job)
         .map(|mut workflow| {
             for job in bundle.into_jobs() {
                 workflow = workflow.add_job(job.name, job.job);

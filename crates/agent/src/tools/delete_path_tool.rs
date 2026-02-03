@@ -86,7 +86,15 @@ impl AgentTool for DeletePathTool {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                Some(event_stream.authorize(format!("Delete {}", MarkdownInlineCode(&path)), cx))
+                let context = crate::ToolPermissionContext {
+                    tool_name: "delete_path".to_string(),
+                    input_value: path.clone(),
+                };
+                Some(event_stream.authorize(
+                    format!("Delete {}", MarkdownInlineCode(&path)),
+                    context,
+                    cx,
+                ))
             }
         };
 

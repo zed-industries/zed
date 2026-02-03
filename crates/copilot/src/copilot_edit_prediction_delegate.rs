@@ -1,8 +1,17 @@
-use crate::{Copilot, CopilotEditPrediction};
+use crate::{
+    CompletionSource, Copilot, CopilotEditPrediction,
+    request::{
+        DidShowCompletion, DidShowCompletionParams, DidShowInlineEdit, DidShowInlineEditParams,
+        InlineCompletionItem,
+    },
+};
 use anyhow::Result;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
+use edit_prediction_types::{
+    EditPrediction, EditPredictionDelegate, EditPredictionIconSet, interpolate_edits,
+};
 use gpui::{App, Context, Entity, Task};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt};
+use icons::IconName;
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToPointUtf16};
 use std::{ops::Range, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -42,6 +51,12 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn icons(&self, _cx: &App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::Copilot)
+            .with_disabled(IconName::CopilotDisabled)
+            .with_error(IconName::CopilotError)
     }
 
     fn is_refreshing(&self, _cx: &App) -> bool {
@@ -137,10 +152,41 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         )];
         let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)
             .filter(|edits| !edits.is_empty())?;
-
+        self.copilot.update(cx, |this, _| {
+            if let Ok(server) = this.server.as_authenticated() {
+                match completion.source {
+                    CompletionSource::NextEditSuggestion => {
+                        if let Some(cmd) = completion.command.as_ref() {
+                            _ = server
+                                .lsp
+                                .notify::<DidShowInlineEdit>(DidShowInlineEditParams {
+                                    item: serde_json::json!({"command": {"arguments": cmd.arguments}}),
+                                });
+                        }
+                    }
+                    CompletionSource::InlineCompletion => {
+                        _ = server.lsp.notify::<DidShowCompletion>(DidShowCompletionParams {
+                            item: InlineCompletionItem {
+                                insert_text: completion.text.clone(),
+                                range: lsp::Range::new(
+                                    language::point_to_lsp(
+                                        completion.range.start.to_point_utf16(&completion.snapshot),
+                                    ),
+                                    language::point_to_lsp(
+                                        completion.range.end.to_point_utf16(&completion.snapshot),
+                                    ),
+                                ),
+                                command: completion.command.clone(),
+                            },
+                        });
+                    }
+                }
+            }
+        });
         Some(EditPrediction::Local {
             id: None,
             edits,
+            cursor_position: None,
             edit_preview: Some(edit_preview.clone()),
         })
     }

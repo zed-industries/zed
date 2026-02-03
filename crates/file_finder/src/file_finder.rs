@@ -1,17 +1,11 @@
 #[cfg(test)]
 mod file_finder_tests;
-#[cfg(test)]
-mod open_path_prompt_tests;
-
-pub mod file_finder_settings;
-mod open_path_prompt;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::Editor;
-use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -19,12 +13,14 @@ use gpui::{
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
     Window, actions, rems,
 };
-use open_path_prompt::OpenPathPrompt;
+use open_path_prompt::{
+    OpenPathPrompt,
+    file_finder_settings::{FileFinderSettings, FileFinderWidth},
+};
 use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
-use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -51,6 +47,7 @@ use workspace::{
     ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
     notifications::NotifyResultExt, pane,
 };
+use zed_actions::search::ToggleIncludeIgnored;
 
 actions!(
     file_finder,

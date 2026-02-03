@@ -287,7 +287,7 @@ impl EditorTestContext {
                 .text
                 .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);
-            let details = editor.text_layout_details(window);
+            let details = editor.text_layout_details(window, cx);
 
             let y = pixel_position.y
                 + f32::from(line_height)

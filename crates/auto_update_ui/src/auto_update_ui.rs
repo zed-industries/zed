@@ -5,7 +5,7 @@ use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPrevi
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::Workspace;
 use workspace::notifications::ErrorMessagePrompt;
 use workspace::notifications::simple_message_notification::MessageNotification;
@@ -39,14 +39,14 @@ struct ReleaseNotesBody {
     release_notes: String,
 }
 
-fn notify_release_notes_failed_to_show_locally(
+fn notify_release_notes_failed_to_show(
     workspace: &mut Workspace,
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    struct ViewReleaseNotesLocallyError;
+    struct ViewReleaseNotesError;
     workspace.show_notification(
-        NotificationId::unique::<ViewReleaseNotesLocallyError>(),
+        NotificationId::unique::<ViewReleaseNotesError>(),
         cx,
         |cx| {
             cx.new(move |cx| {
@@ -92,70 +92,71 @@ fn view_release_notes_locally(
         .languages
         .language_for_name("Markdown");
 
-    workspace
-        .with_local_workspace(window, cx, move |_, window, cx| {
-            cx.spawn_in(window, async move |workspace, cx| {
-                let markdown = markdown.await.log_err();
-                let response = client.get(&url, Default::default(), true).await;
-                let Some(mut response) = response.log_err() else {
-                    workspace
-                        .update_in(cx, notify_release_notes_failed_to_show_locally)
-                        .log_err();
-                    return;
-                };
+    cx.spawn_in(window, async move |workspace, cx| {
+        let markdown = markdown.await.log_err();
+        let response = client.get(&url, Default::default(), true).await;
+        let Some(mut response) = response.log_err() else {
+            workspace
+                .update_in(cx, notify_release_notes_failed_to_show)
+                .log_err();
+            return;
+        };
 
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await.ok();
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await.ok();
 
-                let body: serde_json::Result<ReleaseNotesBody> =
-                    serde_json::from_slice(body.as_slice());
+        let body: serde_json::Result<ReleaseNotesBody> = serde_json::from_slice(body.as_slice());
 
-                if let Ok(body) = body {
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, false, cx)
-                            });
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, body.release_notes)], None, cx)
-                            });
-                            let language_registry = project.read(cx).languages().clone();
+        let res: Option<()> = maybe!(async {
+            let body = body.ok()?;
+            let project = workspace
+                .read_with(cx, |workspace, _| workspace.project().clone())
+                .ok()?;
+            let (language_registry, buffer) = project.update(cx, |project, cx| {
+                (
+                    project.languages().clone(),
+                    project.create_buffer(markdown, false, cx),
+                )
+            });
+            let buffer = buffer.await.ok()?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, body.release_notes)], None, cx)
+            });
 
-                            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-                            let editor = cx.new(|cx| {
-                                Editor::for_multibuffer(buffer, Some(project), window, cx)
-                            });
-                            let workspace_handle = workspace.weak_handle();
-                            let markdown_preview: Entity<MarkdownPreviewView> =
-                                MarkdownPreviewView::new(
-                                    MarkdownPreviewMode::Default,
-                                    editor,
-                                    workspace_handle,
-                                    language_registry,
-                                    window,
-                                    cx,
-                                );
-                            workspace.add_item_to_active_pane(
-                                Box::new(markdown_preview),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        })
-                        .log_err();
-                } else {
-                    workspace
-                        .update_in(cx, notify_release_notes_failed_to_show_locally)
-                        .log_err();
-                }
-            })
-            .detach();
+            let ws_handle = workspace.clone();
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let editor =
+                        cx.new(|cx| Editor::for_multibuffer(buffer, Some(project), window, cx));
+                    let markdown_preview: Entity<MarkdownPreviewView> = MarkdownPreviewView::new(
+                        MarkdownPreviewMode::Default,
+                        editor,
+                        ws_handle,
+                        language_registry,
+                        window,
+                        cx,
+                    );
+                    workspace.add_item_to_active_pane(
+                        Box::new(markdown_preview),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    cx.notify();
+                })
+                .ok()
         })
-        .detach();
+        .await;
+        if res.is_none() {
+            workspace
+                .update_in(cx, notify_release_notes_failed_to_show)
+                .log_err();
+        }
+    })
+    .detach();
 }
 
 /// Shows a notification across all workspaces if an update was previously automatically installed

@@ -76,6 +76,8 @@ pub fn go_to_parent_module(
         return;
     };
 
+    let nav_entry = editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
+
     let project = project.clone();
     let lsp_store = project.read(cx).lsp_store();
     let upstream_client = lsp_store.read(cx).upstream_client();
@@ -123,6 +125,7 @@ pub fn go_to_parent_module(
                 editor.navigate_to_hover_links(
                     Some(GotoDefinitionKind::Declaration),
                     location_links.into_iter().map(HoverLink::Text).collect(),
+                    nav_entry,
                     false,
                     window,
                     cx,
@@ -200,12 +203,13 @@ pub fn expand_macro_recursively(
         }
 
         let buffer = project
-            .update(cx, |project, cx| project.create_buffer(false, cx))
+            .update(cx, |project, cx| {
+                project.create_buffer(Some(rust_language), false, cx)
+            })
             .await?;
         workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(macro_expansion.expansion, cx);
-                buffer.set_language(Some(rust_language), cx);
                 buffer.set_capability(Capability::ReadOnly, cx);
             });
             let multibuffer =

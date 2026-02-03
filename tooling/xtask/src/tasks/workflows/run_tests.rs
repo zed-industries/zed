@@ -1,12 +1,13 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression},
     vars::{self, PathCondition},
 };
 
@@ -48,6 +49,9 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
+        should_run_tests.guard(clippy(Platform::Windows)),
+        should_run_tests.guard(clippy(Platform::Linux)),
+        should_run_tests.guard(clippy(Platform::Mac)),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
         should_run_tests.guard(run_platform_tests(Platform::Linux)),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
@@ -171,12 +175,7 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
             "fetch-depth",
             "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
         )))
-        .add_step(
-            Step::new(step_name.clone())
-                .run(script)
-                .id(step_name)
-                .shell(BASH_SHELL),
-        );
+        .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
 }
@@ -304,6 +303,30 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
+pub(crate) fn clippy(platform: Platform) -> NamedJob {
+    let runner = match platform {
+        Platform::Windows => runners::WINDOWS_DEFAULT,
+        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Mac => runners::MAC_DEFAULT,
+    };
+    NamedJob {
+        name: format!("clippy_{platform}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(platform))
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
+            .when(
+                platform == Platform::Linux,
+                steps::install_linux_dependencies,
+            )
+            .add_step(steps::clippy(platform)),
+    }
+}
+
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
@@ -314,20 +337,35 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                job.add_service(
+                    "postgres",
+                    Container::new("postgres:15")
+                        .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                        .ports(vec![Port::Name("5432:5432".into())])
+                        .options(
+                            "--health-cmd pg_isready \
+                             --health-interval 500ms \
+                             --health-timeout 5s \
+                             --health-retries 10",
+                        ),
+                )
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .add_step(steps::clippy(platform))
-            .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::cargo_install_nextest())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::cargo_nextest(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
