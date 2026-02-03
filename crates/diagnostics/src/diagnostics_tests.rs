@@ -16,7 +16,7 @@ use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
 use project::{
     FakeFs,
-    project_settings::{GoToDiagnosticSeverity, GoToDiagnosticSeverityFilter},
+    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverity, GoToDiagnosticSeverityFilter},
 };
 use rand::{Rng, rngs::StdRng, seq::IteratorRandom as _};
 use serde_json::json;
@@ -114,7 +114,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -349,7 +355,13 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -458,7 +470,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -668,7 +686,13 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
     let workspace = window.root(cx).unwrap();
 
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -778,7 +802,13 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("constructing reference diagnostics view");
     let reference_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     cx.executor()
         .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
@@ -841,7 +871,13 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
     let workspace = window.root(cx).unwrap();
 
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -1437,7 +1473,13 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            DiagnosticSeverity::Warning,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -1706,7 +1748,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
             project_path.clone(),
             project.clone(),
             buffer,
-            true,
+            DiagnosticSeverity::Warning,
             window,
             cx,
         )
@@ -1833,12 +1875,17 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
     });
 
     let include_warnings = false;
+    let max_severity = if include_warnings {
+        DiagnosticSeverity::Warning
+    } else {
+        DiagnosticSeverity::Error
+    };
     let buffer_diagnostics = window.build_entity(cx, |window, cx| {
         BufferDiagnosticsEditor::new(
             project_path.clone(),
             project.clone(),
             buffer,
-            include_warnings,
+            max_severity,
             window,
             cx,
         )
@@ -1973,7 +2020,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             project_path.clone(),
             project.clone(),
             buffer,
-            true,
+            DiagnosticSeverity::Warning,
             window,
             cx,
         )
@@ -2010,7 +2057,9 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             *buffer_diagnostics.summary(),
             DiagnosticSummary {
                 warning_count: 2,
-                error_count: 0
+                error_count: 0,
+                info_count: 0,
+                hint_count: 0,
             }
         );
     })

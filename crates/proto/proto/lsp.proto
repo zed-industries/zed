@@ -534,6 +534,8 @@ message DiagnosticSummary {
   uint64 language_server_id = 2;
   uint32 error_count = 3;
   uint32 warning_count = 4;
+  uint32 info_count = 5;
+  uint32 hint_count = 6;
 }
 
 message UpdateLanguageServer {
