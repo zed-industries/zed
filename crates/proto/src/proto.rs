@@ -55,6 +55,7 @@ messages!(
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
     (CreateImageForPeer, Foreground),
+    (CreateFileForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
     (CreateContext, Foreground),
@@ -66,6 +67,8 @@ messages!(
     (DeleteChannel, Foreground),
     (DeleteNotification, Foreground),
     (DeleteProjectEntry, Foreground),
+    (DownloadFileByPath, Background),
+    (DownloadFileResponse, Background),
     (EndStream, Foreground),
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
@@ -371,6 +374,7 @@ request_messages!(
     (DeclineCall, Ack),
     (DeleteChannel, Ack),
     (DeleteProjectEntry, ProjectEntryResponse),
+    (DownloadFileByPath, DownloadFileResponse),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
@@ -576,6 +580,7 @@ entity_messages!(
     GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
+    CreateFileForPeer,
     CreateImageForPeer,
     CreateProjectEntry,
     GetDocumentColor,
@@ -722,6 +727,7 @@ entity_messages!(
     RestrictWorktrees,
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
+    DownloadFileByPath
 );
 
 entity_messages!(

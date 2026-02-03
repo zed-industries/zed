@@ -241,6 +241,14 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
+    downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+}
+
+struct DownloadingFile {
+    destination_path: PathBuf,
+    chunks: Vec<u8>,
+    total_size: u64,
+    file_id: Option<u64>, // Set when we receive the State message
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1091,6 +1099,7 @@ impl Project {
         client.add_entity_message_handler(Self::handle_create_image_for_peer);
         client.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
         client.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
+        client.add_entity_message_handler(Self::handle_create_file_for_peer);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1299,6 +1308,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
+                downloading_files: Default::default(),
             }
         })
     }
@@ -1529,6 +1539,7 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
+                downloading_files: Default::default(),
             };
 
             // remote server -> local machine handlers
@@ -1544,6 +1555,7 @@ impl Project {
 
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_create_image_for_peer);
+            remote_proto.add_entity_message_handler(Self::handle_create_file_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
@@ -1803,6 +1815,7 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
+                downloading_files: Default::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2879,6 +2892,73 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("no such path")))
         }
+    }
+
+    pub fn download_file(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        destination_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        log::debug!(
+            "download_file called: worktree_id={:?}, path={:?}, destination={:?}",
+            worktree_id,
+            path,
+            destination_path
+        );
+
+        let Some(remote_client) = &self.remote_client else {
+            log::error!("download_file: not a remote project");
+            return Task::ready(Err(anyhow!("not a remote project")));
+        };
+
+        let proto_client = remote_client.read(cx).proto_client();
+        // For SSH remote projects, use REMOTE_SERVER_PROJECT_ID instead of remote_id()
+        // because SSH projects have client_state: Local but still need to communicate with remote server
+        let project_id = self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID);
+        let downloading_files = self.downloading_files.clone();
+        let path_str = path.to_proto();
+
+        static NEXT_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let file_id = NEXT_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        // Register BEFORE sending request to avoid race condition
+        let key = (worktree_id, path_str.clone());
+        log::debug!(
+            "download_file: pre-registering download with key={:?}, file_id={}",
+            key,
+            file_id
+        );
+        downloading_files.lock().insert(
+            key,
+            DownloadingFile {
+                destination_path: destination_path,
+                chunks: Vec::new(),
+                total_size: 0,
+                file_id: Some(file_id),
+            },
+        );
+        log::debug!(
+            "download_file: sending DownloadFileByPath request, path_str={}",
+            path_str
+        );
+
+        cx.spawn(async move |_this, _cx| {
+            log::debug!("download_file: sending request with file_id={}...", file_id);
+            let response = proto_client
+                .request(proto::DownloadFileByPath {
+                    project_id,
+                    worktree_id: worktree_id.to_proto(),
+                    path: path_str.clone(),
+                    file_id,
+                })
+                .await?;
+
+            log::debug!("download_file: got response, file_id={}", response.file_id);
+            // The file_id is set from the State message, we just confirm the request succeeded
+            Ok(())
+        })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -5348,6 +5428,128 @@ impl Project {
                 image_store.handle_create_image_for_peer(envelope, cx)
             })
         })
+    }
+
+    async fn handle_create_file_for_peer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CreateFileForPeer>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        use proto::create_file_for_peer::Variant;
+        log::debug!("handle_create_file_for_peer: received message");
+
+        let downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>> =
+            this.update(&mut cx, |this, _| this.downloading_files.clone());
+
+        match &envelope.payload.variant {
+            Some(Variant::State(state)) => {
+                log::debug!(
+                    "handle_create_file_for_peer: got State: id={}, content_size={}",
+                    state.id,
+                    state.content_size
+                );
+
+                // Extract worktree_id and path from the File field
+                if let Some(ref file) = state.file {
+                    let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                    let path = file.path.clone();
+                    let key = (worktree_id, path);
+                    log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
+
+                    let mut files = downloading_files.lock();
+                    log::trace!(
+                        "handle_create_file_for_peer: current downloading_files keys: {:?}",
+                        files.keys().collect::<Vec<_>>()
+                    );
+
+                    if let Some(file_entry) = files.get_mut(&key) {
+                        file_entry.total_size = state.content_size;
+                        file_entry.file_id = Some(state.id);
+                        log::debug!(
+                            "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
+                            state.content_size,
+                            state.id
+                        );
+                    } else {
+                        log::warn!(
+                            "handle_create_file_for_peer: key={:?} not found in downloading_files",
+                            key
+                        );
+                    }
+                } else {
+                    log::warn!("handle_create_file_for_peer: State has no file field");
+                }
+            }
+            Some(Variant::Chunk(chunk)) => {
+                log::debug!(
+                    "handle_create_file_for_peer: got Chunk: file_id={}, data_len={}",
+                    chunk.file_id,
+                    chunk.data.len()
+                );
+
+                // Extract data while holding the lock, then release it before await
+                let (key_to_remove, write_info): (
+                    Option<(WorktreeId, String)>,
+                    Option<(PathBuf, Vec<u8>)>,
+                ) = {
+                    let mut files = downloading_files.lock();
+                    let mut found_key: Option<(WorktreeId, String)> = None;
+                    let mut write_data: Option<(PathBuf, Vec<u8>)> = None;
+
+                    for (key, file_entry) in files.iter_mut() {
+                        if file_entry.file_id == Some(chunk.file_id) {
+                            file_entry.chunks.extend_from_slice(&chunk.data);
+                            log::debug!(
+                                "handle_create_file_for_peer: accumulated {} bytes, total_size={}",
+                                file_entry.chunks.len(),
+                                file_entry.total_size
+                            );
+
+                            if file_entry.chunks.len() as u64 >= file_entry.total_size
+                                && file_entry.total_size > 0
+                            {
+                                let destination = file_entry.destination_path.clone();
+                                let content = std::mem::take(&mut file_entry.chunks);
+                                found_key = Some(key.clone());
+                                write_data = Some((destination, content));
+                            }
+                            break;
+                        }
+                    }
+                    (found_key, write_data)
+                }; // MutexGuard is dropped here
+
+                // Perform the async write outside the lock
+                if let Some((destination, content)) = write_info {
+                    log::debug!(
+                        "handle_create_file_for_peer: writing {} bytes to {:?}",
+                        content.len(),
+                        destination
+                    );
+                    match smol::fs::write(&destination, &content).await {
+                        Ok(_) => log::info!(
+                            "handle_create_file_for_peer: successfully wrote file to {:?}",
+                            destination
+                        ),
+                        Err(e) => log::error!(
+                            "handle_create_file_for_peer: failed to write file: {:?}",
+                            e
+                        ),
+                    }
+                }
+
+                // Remove the completed entry
+                if let Some(key) = key_to_remove {
+                    downloading_files.lock().remove(&key);
+                    log::debug!("handle_create_file_for_peer: removed completed download entry");
+                }
+            }
+            None => {
+                log::warn!("handle_create_file_for_peer: got None variant");
+            }
+        }
+
+        Ok(())
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {

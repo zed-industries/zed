@@ -90,6 +90,7 @@ impl From<Connection> for RemoteConnectionOptions {
             Connection::DevContainer(conn) => {
                 RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     name: conn.name,
+                    remote_user: conn.remote_user,
                     container_id: conn.container_id,
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
