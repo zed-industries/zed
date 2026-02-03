@@ -1,5 +1,6 @@
 use crate::{
-    DecoratedIcon, DiffStat, IconDecoration, IconDecorationKind, SpinnerLabel, prelude::*,
+    DecoratedIcon, DiffStat, HighlightedLabel, IconDecoration, IconDecorationKind, SpinnerLabel,
+    prelude::*,
 };
 use gpui::{ClickEvent, SharedString};
 
@@ -8,6 +9,7 @@ pub struct ThreadItem {
     id: ElementId,
     icon: IconName,
     title: SharedString,
+    highlight_positions: Vec<usize>,
     timestamp: SharedString,
     running: bool,
     generation_done: bool,
@@ -24,6 +26,7 @@ impl ThreadItem {
             id: id.into(),
             icon: IconName::ZedAgent,
             title: title.into(),
+            highlight_positions: Vec::new(),
             timestamp: "".into(),
             running: false,
             generation_done: false,
@@ -75,6 +78,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn highlight_positions(mut self, positions: Vec<usize>) -> Self {
+        self.highlight_positions = positions;
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -114,6 +122,16 @@ impl RenderOnce for ThreadItem {
 
         let has_no_changes = self.added.is_none() && self.removed.is_none();
 
+        let title = self.title;
+        let highlight_positions = self.highlight_positions;
+        let title_label = if highlight_positions.is_empty() {
+            Label::new(title).truncate().into_any_element()
+        } else {
+            HighlightedLabel::new(title, highlight_positions)
+                .truncate()
+                .into_any_element()
+        };
+
         v_flex()
             .id(self.id.clone())
             .cursor_pointer()
@@ -127,7 +145,7 @@ impl RenderOnce for ThreadItem {
                     .w_full()
                     .gap_1p5()
                     .child(icon)
-                    .child(Label::new(self.title).truncate())
+                    .child(title_label)
                     .when(self.running, |this| {
                         this.child(icon_container().child(SpinnerLabel::new().color(Color::Accent)))
                     }),

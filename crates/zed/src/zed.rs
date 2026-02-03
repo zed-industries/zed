@@ -357,9 +357,12 @@ pub fn initialize_workspace(
     })
     .detach();
 
-    cx.observe_new(|multi_workspace: &mut MultiWorkspace, _window, cx| {
+    cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
         let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, cx));
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
         multi_workspace.register_sidebar(sidebar, cx);
     })
     .detach();
