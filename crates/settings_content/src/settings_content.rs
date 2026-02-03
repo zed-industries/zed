@@ -995,6 +995,7 @@ pub struct RemoteSettingsContent {
 )]
 pub struct DevContainerConnection {
     pub name: String,
+    pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
 }
@@ -1071,6 +1072,16 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 50
     pub inline_output_max_length: Option<usize>,
+    /// Maximum number of lines of output to display before scrolling.
+    /// Set to 0 to disable output height limits.
+    ///
+    /// Default: 0
+    pub output_max_height_lines: Option<usize>,
+    /// Maximum number of columns of output to display before scaling images.
+    /// Set to 0 to disable output width limits.
+    ///
+    /// Default: 0
+    pub output_max_width_columns: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

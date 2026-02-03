@@ -19,7 +19,7 @@ use gpui::{
 use multi_buffer::{MultiBufferOffset, ToPoint};
 use pretty_assertions::assert_eq;
 use project::{Project, project_settings::DiagnosticSeverity};
-use ui::{App, BorrowAppContext, px};
+use ui::{App, BorrowAppContext, IntoElement, px};
 use util::test::{generate_marked_text, marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
@@ -193,7 +193,9 @@ pub fn editor_content_with_blocks_and_size(
     cx: &mut VisualTestContext,
 ) -> String {
     cx.simulate_resize(draw_size);
-    cx.draw(gpui::Point::default(), draw_size, |_, _| editor.clone());
+    cx.draw(gpui::Point::default(), draw_size, |_, _| {
+        editor.clone().into_any_element()
+    });
     let (snapshot, mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let text = editor.display_text(cx);

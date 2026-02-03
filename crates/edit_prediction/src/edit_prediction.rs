@@ -30,11 +30,11 @@ use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
-use project::{Project, ProjectPath, WorktreeId};
+use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use settings::{EditPredictionProvider, update_settings_file};
+use settings::{EditPredictionProvider, Settings as _, update_settings_file};
 use std::collections::{VecDeque, hash_map};
 use text::Edit;
 use workspace::Workspace;
@@ -263,7 +263,7 @@ struct ProjectState {
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     user_actions: VecDeque<UserActionRecord>,
-    _subscription: gpui::Subscription,
+    _subscriptions: [gpui::Subscription; 2],
     copilot: Option<Entity<Copilot>>,
 }
 
@@ -655,6 +655,29 @@ impl EditPredictionStore {
         self.edit_prediction_model = model;
     }
 
+    pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
+        use ui::IconName;
+        match self.edit_prediction_model {
+            EditPredictionModel::Sweep => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::SweepAi)
+                    .with_disabled(IconName::SweepAiDisabled)
+                    .with_up(IconName::SweepAiUp)
+                    .with_down(IconName::SweepAiDown)
+                    .with_error(IconName::SweepAiError)
+            }
+            EditPredictionModel::Mercury => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
+            }
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
+                    .with_disabled(IconName::ZedPredictDisabled)
+                    .with_up(IconName::ZedPredictUp)
+                    .with_down(IconName::ZedPredictDown)
+                    .with_error(IconName::ZedPredictError)
+            }
+        }
+    }
+
     pub fn has_sweep_api_token(&self, cx: &App) -> bool {
         self.sweep_ai.api_token.read(cx).has_key()
     }
@@ -725,6 +748,9 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Copilot>> {
+        if DisableAiSettings::get(None, cx).disable_ai {
+            return None;
+        }
         let state = self.get_or_init_project(project, cx);
 
         if state.copilot.is_some() {
@@ -815,7 +841,13 @@ impl EditPredictionStore {
                 last_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
                 user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
-                _subscription: cx.subscribe(&project, Self::handle_project_event),
+                _subscriptions: [
+                    cx.subscribe(&project, Self::handle_project_event),
+                    cx.observe_release(&project, move |this, _, cx| {
+                        this.projects.remove(&entity_id);
+                        cx.notify();
+                    }),
+                ],
                 copilot: None,
             })
     }
@@ -2324,9 +2356,9 @@ pub fn init(cx: &mut App) {
                 settings
                     .project
                     .all_languages
-                    .features
+                    .edit_predictions
                     .get_or_insert_default()
-                    .edit_prediction_provider = Some(EditPredictionProvider::None)
+                    .provider = Some(EditPredictionProvider::None)
             });
         });
         fn copilot_for_project(project: &Entity<Project>, cx: &mut App) -> Option<Entity<Copilot>> {
