@@ -244,6 +244,7 @@ fn render_code_lens_line(
             .pl(cx.anchor_x)
             .flex()
             .flex_row()
+            .items_center()
             .children(children)
             .into_any_element()
     }

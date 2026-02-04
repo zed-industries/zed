@@ -278,6 +278,7 @@ fn set_initialization_options(params: &mut InitializeParams) {
             "implementations": { "enable": true },
             "references": {
                 "adt": { "enable": true },
+                "adt.field": { "enable": true },
                 "enumVariant": { "enable": true },
                 "method": { "enable": true },
                 "trait": { "enable": true }
@@ -685,6 +686,7 @@ impl LspAdapter for RustLspAdapter {
                 "implementations": { "enable": true },
                 "references": {
                     "adt": { "enable": true },
+                    "adt.field": { "enable": true },
                     "enumVariant": { "enable": true },
                     "method": { "enable": true },
                     "trait": { "enable": true }
