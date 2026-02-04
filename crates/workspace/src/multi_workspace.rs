@@ -217,7 +217,7 @@ impl MultiWorkspace {
 
     fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
         let pane = self.workspace().read(cx).active_pane().clone();
-        let focus_handle = pane.read(cx).focus_handle(cx).clone();
+        let focus_handle = pane.read(cx).focus_handle(cx);
         window.focus(&focus_handle, cx);
     }
 
