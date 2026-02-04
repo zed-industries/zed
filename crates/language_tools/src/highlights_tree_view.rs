@@ -1,5 +1,5 @@
 use editor::{
-    Anchor, Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
+    Anchor, Editor, ExcerptId, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
     scroll::Autoscroll,
 };
 use gpui::{
@@ -93,11 +93,24 @@ impl HighlightCategory {
 
 #[derive(Debug, Clone)]
 struct HighlightEntry {
+    excerpt_id: ExcerptId,
     range: Range<Anchor>,
     range_display: SharedString,
     style: HighlightStyle,
     category: HighlightCategory,
-    sort_key: (u32, u32, u32, u32),
+    sort_key: (ExcerptId, u32, u32, u32, u32),
+}
+
+/// An item in the display list: either a separator between excerpts or a highlight entry.
+#[derive(Debug, Clone)]
+enum DisplayItem {
+    ExcerptSeparator {
+        label: SharedString,
+    },
+    Entry {
+        /// Index into `cached_entries`.
+        entry_ix: usize,
+    },
 }
 
 pub struct HighlightsTreeView {
@@ -108,6 +121,8 @@ pub struct HighlightsTreeView {
     hovered_item_ix: Option<usize>,
     focus_handle: FocusHandle,
     cached_entries: Vec<HighlightEntry>,
+    display_items: Vec<DisplayItem>,
+    is_singleton: bool,
     show_text_highlights: bool,
     show_semantic_tokens: bool,
     skip_next_scroll: bool,
@@ -139,6 +154,8 @@ impl HighlightsTreeView {
             selected_item_ix: None,
             focus_handle: cx.focus_handle(),
             cached_entries: Vec::new(),
+            display_items: Vec::new(),
+            is_singleton: true,
             show_text_highlights: true,
             show_semantic_tokens: true,
             skip_next_scroll: false,
@@ -199,6 +216,7 @@ impl HighlightsTreeView {
         {
             self.editor = None;
             self.cached_entries.clear();
+            self.display_items.clear();
             cx.notify();
         }
     }
@@ -231,6 +249,7 @@ impl HighlightsTreeView {
     fn refresh_highlights(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor_state) = self.editor.as_ref() else {
             self.cached_entries.clear();
+            self.display_items.clear();
             cx.notify();
             return;
         };
@@ -250,15 +269,23 @@ impl HighlightsTreeView {
         };
 
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+        let is_singleton = multi_buffer_snapshot.is_singleton();
+        self.is_singleton = is_singleton;
 
         let mut entries = Vec::new();
 
         display_map.update(cx, |display_map, cx| {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
-                    let (range_display, sort_key) =
-                        format_anchor_range(range, &multi_buffer_snapshot);
+                    let excerpt_id = range.start.excerpt_id;
+                    let (range_display, sort_key) = format_anchor_range(
+                        range,
+                        excerpt_id,
+                        &multi_buffer_snapshot,
+                        is_singleton,
+                    );
                     entries.push(HighlightEntry {
+                        excerpt_id,
                         range: range.clone(),
                         range_display,
                         style: text_highlights.0,
@@ -275,9 +302,14 @@ impl HighlightsTreeView {
                         .buffer(*buffer_id)
                         .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
-                        let range = token.range.start.into()..token.range.end.into();
-                        let (range_display, sort_key) =
-                            format_anchor_range(&range, &multi_buffer_snapshot);
+                        let range: Range<Anchor> = token.range.start.into()..token.range.end.into();
+                        let excerpt_id = range.start.excerpt_id;
+                        let (range_display, sort_key) = format_anchor_range(
+                            &range,
+                            excerpt_id,
+                            &multi_buffer_snapshot,
+                            is_singleton,
+                        );
                         let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
                             token.server_id,
                             language_name.as_ref(),
@@ -286,6 +318,7 @@ impl HighlightsTreeView {
                             continue;
                         };
                         entries.push(HighlightEntry {
+                            excerpt_id,
                             range,
                             range_display,
                             style: interner[token.style],
@@ -310,6 +343,7 @@ impl HighlightsTreeView {
         entries.dedup_by(|a, b| a.sort_key == b.sort_key && a.category == b.category);
 
         self.cached_entries = entries;
+        self.rebuild_display_items(&multi_buffer_snapshot, cx);
 
         if self.skip_next_scroll {
             self.skip_next_scroll = false;
@@ -319,43 +353,74 @@ impl HighlightsTreeView {
         cx.notify();
     }
 
+    fn rebuild_display_items(&mut self, snapshot: &MultiBufferSnapshot, cx: &App) {
+        self.display_items.clear();
+
+        let mut last_excerpt_id: Option<ExcerptId> = None;
+
+        for (entry_ix, entry) in self.cached_entries.iter().enumerate() {
+            if !self.should_show_entry(entry) {
+                continue;
+            }
+
+            if !self.is_singleton {
+                let excerpt_changed =
+                    last_excerpt_id.is_none_or(|last_id| last_id != entry.excerpt_id);
+                if excerpt_changed {
+                    last_excerpt_id = Some(entry.excerpt_id);
+                    let label = excerpt_label_for(entry.excerpt_id, snapshot, cx);
+                    self.display_items
+                        .push(DisplayItem::ExcerptSeparator { label });
+                }
+            }
+
+            self.display_items.push(DisplayItem::Entry { entry_ix });
+        }
+    }
+
+    fn should_show_entry(&self, entry: &HighlightEntry) -> bool {
+        match entry.category {
+            HighlightCategory::Text(_) => self.show_text_highlights,
+            HighlightCategory::SemanticToken { .. } => self.show_semantic_tokens,
+        }
+    }
+
     fn scroll_to_cursor_position(&mut self, cursor: &Anchor, snapshot: &MultiBufferSnapshot) {
         let cursor_point = cursor.to_point(snapshot);
         let cursor_key = (cursor_point.row, cursor_point.column);
+        let cursor_excerpt = cursor.excerpt_id;
 
-        let filtered = self.filtered_entries();
-
-        let best_ix = filtered
+        let best = self
+            .display_items
             .iter()
             .enumerate()
-            .filter(|(_, (_, entry))| {
-                let (start_row, start_col, end_row, end_col) = entry.sort_key;
+            .filter_map(|(display_ix, item)| match item {
+                DisplayItem::Entry { entry_ix } => {
+                    let entry = &self.cached_entries[*entry_ix];
+                    Some((display_ix, *entry_ix, entry))
+                }
+                _ => None,
+            })
+            .filter(|(_, _, entry)| {
+                let (excerpt_id, start_row, start_col, end_row, end_col) = entry.sort_key;
+                if !self.is_singleton && excerpt_id != cursor_excerpt {
+                    return false;
+                }
                 let start = (start_row, start_col);
                 let end = (end_row, end_col);
                 cursor_key >= start && cursor_key <= end
             })
-            .min_by_key(|(_, (_, entry))| {
-                let (start_row, start_col, end_row, end_col) = entry.sort_key;
+            .min_by_key(|(_, _, entry)| {
+                let (_, start_row, start_col, end_row, end_col) = entry.sort_key;
                 (end_row - start_row, end_col.saturating_sub(start_col))
             })
-            .map(|(filtered_ix, (original_ix, _))| (filtered_ix, original_ix));
+            .map(|(display_ix, entry_ix, _)| (display_ix, entry_ix));
 
-        if let Some((filtered_ix, original_ix)) = best_ix {
-            self.selected_item_ix = Some(*original_ix);
+        if let Some((display_ix, entry_ix)) = best {
+            self.selected_item_ix = Some(entry_ix);
             self.list_scroll_handle
-                .scroll_to_item(filtered_ix, ScrollStrategy::Center);
+                .scroll_to_item(display_ix, ScrollStrategy::Center);
         }
-    }
-
-    fn filtered_entries(&self) -> Vec<(usize, &HighlightEntry)> {
-        self.cached_entries
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| match entry.category {
-                HighlightCategory::Text(_) => self.show_text_highlights,
-                HighlightCategory::SemanticToken { .. } => self.show_semantic_tokens,
-            })
-            .collect()
     }
 
     fn update_editor_with_range_for_entry(
@@ -398,65 +463,88 @@ impl HighlightsTreeView {
             .hover(|style| style.bg(colors.element_hover))
     }
 
+    fn render_separator(&self, label: &SharedString, cx: &App) -> Div {
+        let colors = cx.theme().colors();
+        h_flex()
+            .gap_1()
+            .px(rems(0.5))
+            .bg(colors.surface_background)
+            .border_b_1()
+            .border_color(colors.border_variant)
+            .child(
+                Label::new(label.clone())
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+    }
+
     fn compute_items(
         &mut self,
         visible_range: Range<usize>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Div> {
-        let filtered = self.filtered_entries();
         let mut items = Vec::new();
 
-        for visible_ix in visible_range {
-            let Some(&(original_ix, entry)) = filtered.get(visible_ix) else {
+        for display_ix in visible_range {
+            let Some(display_item) = self.display_items.get(display_ix) else {
                 continue;
             };
 
-            let selected = Some(original_ix) == self.selected_item_ix;
-            let rendered = self
-                .render_entry(entry, selected, cx)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |tree_view, _: &MouseDownEvent, window, cx| {
-                        tree_view.selected_item_ix = Some(original_ix);
-                        tree_view.skip_next_scroll = true;
-                        tree_view.update_editor_with_range_for_entry(
-                            original_ix,
-                            window,
-                            cx,
-                            |editor, mut range, _, window, cx| {
-                                mem::swap(&mut range.start, &mut range.end);
-                                editor.change_selections(
-                                    SelectionEffects::scroll(Autoscroll::newest()),
+            match display_item {
+                DisplayItem::ExcerptSeparator { label } => {
+                    items.push(self.render_separator(label, cx));
+                }
+                DisplayItem::Entry { entry_ix } => {
+                    let entry_ix = *entry_ix;
+                    let entry = &self.cached_entries[entry_ix];
+                    let selected = Some(entry_ix) == self.selected_item_ix;
+                    let rendered = self
+                        .render_entry(entry, selected, cx)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |tree_view, _: &MouseDownEvent, window, cx| {
+                                tree_view.selected_item_ix = Some(entry_ix);
+                                tree_view.skip_next_scroll = true;
+                                tree_view.update_editor_with_range_for_entry(
+                                    entry_ix,
                                     window,
                                     cx,
-                                    |selections| {
-                                        selections.select_ranges([range]);
+                                    |editor, mut range, _, window, cx| {
+                                        mem::swap(&mut range.start, &mut range.end);
+                                        editor.change_selections(
+                                            SelectionEffects::scroll(Autoscroll::newest()),
+                                            window,
+                                            cx,
+                                            |selections| {
+                                                selections.select_ranges([range]);
+                                            },
+                                        );
                                     },
                                 );
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_move(cx.listener(
+                            move |tree_view, _: &MouseMoveEvent, window, cx| {
+                                if tree_view.hovered_item_ix != Some(entry_ix) {
+                                    tree_view.hovered_item_ix = Some(entry_ix);
+                                    tree_view.update_editor_with_range_for_entry(
+                                        entry_ix,
+                                        window,
+                                        cx,
+                                        |editor, range, key, _, cx| {
+                                            Self::set_editor_highlights(editor, key, &[range], cx);
+                                        },
+                                    );
+                                    cx.notify();
+                                }
                             },
-                        );
-                        cx.notify();
-                    }),
-                )
-                .on_mouse_move(
-                    cx.listener(move |tree_view, _: &MouseMoveEvent, window, cx| {
-                        if tree_view.hovered_item_ix != Some(original_ix) {
-                            tree_view.hovered_item_ix = Some(original_ix);
-                            tree_view.update_editor_with_range_for_entry(
-                                original_ix,
-                                window,
-                                cx,
-                                |editor, range, key, _, cx| {
-                                    Self::set_editor_highlights(editor, key, &[range], cx);
-                                },
-                            );
-                            cx.notify();
-                        }
-                    }),
-                );
+                        ));
 
-            items.push(rendered);
+                    items.push(rendered);
+                }
+            }
         }
 
         items
@@ -492,34 +580,47 @@ impl HighlightsTreeView {
     }
 
     fn move_selection(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
-        let filtered = self.filtered_entries();
-        if filtered.is_empty() {
+        if self.display_items.is_empty() {
             return;
         }
 
-        let current_filtered_ix = self
+        let entry_display_items: Vec<(usize, usize)> = self
+            .display_items
+            .iter()
+            .enumerate()
+            .filter_map(|(display_ix, item)| match item {
+                DisplayItem::Entry { entry_ix } => Some((display_ix, *entry_ix)),
+                _ => None,
+            })
+            .collect();
+
+        if entry_display_items.is_empty() {
+            return;
+        }
+
+        let current_pos = self
             .selected_item_ix
             .and_then(|selected| {
-                filtered
+                entry_display_items
                     .iter()
-                    .position(|(original_ix, _)| *original_ix == selected)
+                    .position(|(_, entry_ix)| *entry_ix == selected)
             })
             .unwrap_or(0);
 
-        let new_filtered_ix = if delta < 0 {
-            current_filtered_ix.saturating_sub((-delta) as usize)
+        let new_pos = if delta < 0 {
+            current_pos.saturating_sub((-delta) as usize)
         } else {
-            (current_filtered_ix + delta as usize).min(filtered.len() - 1)
+            (current_pos + delta as usize).min(entry_display_items.len() - 1)
         };
 
-        if let Some(&(original_ix, _)) = filtered.get(new_filtered_ix) {
-            self.selected_item_ix = Some(original_ix);
+        if let Some(&(display_ix, entry_ix)) = entry_display_items.get(new_pos) {
+            self.selected_item_ix = Some(entry_ix);
             self.skip_next_scroll = true;
             self.list_scroll_handle
-                .scroll_to_item(new_filtered_ix, ScrollStrategy::Center);
+                .scroll_to_item(display_ix, ScrollStrategy::Center);
 
             self.update_editor_with_range_for_entry(
-                original_ix,
+                entry_ix,
                 window,
                 cx,
                 |editor, mut range, _, window, cx| {
@@ -538,11 +639,18 @@ impl HighlightsTreeView {
             cx.notify();
         }
     }
+
+    fn entry_count(&self) -> usize {
+        self.cached_entries
+            .iter()
+            .filter(|entry| self.should_show_entry(entry))
+            .count()
+    }
 }
 
 impl Render for HighlightsTreeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let filtered_count = self.filtered_entries().len();
+        let display_count = self.display_items.len();
 
         div()
             .flex_1()
@@ -552,11 +660,11 @@ impl Render for HighlightsTreeView {
             .on_action(cx.listener(Self::select_next))
             .bg(cx.theme().colors().editor_background)
             .map(|this| {
-                if filtered_count > 0 {
+                if display_count > 0 {
                     this.child(
                         uniform_list(
                             "HighlightsTreeView",
-                            filtered_count,
+                            display_count,
                             cx.processor(move |this, range: Range<usize>, window, cx| {
                                 this.compute_items(range, window, cx)
                             }),
@@ -684,7 +792,7 @@ impl HighlightsTreeToolbarItemView {
         let tree_view = tree_view.read(cx);
 
         let total = tree_view.cached_entries.len();
-        let filtered = tree_view.filtered_entries().len();
+        let filtered = tree_view.entry_count();
 
         let label = if filtered == total {
             format!("{} highlights", total)
@@ -733,6 +841,12 @@ impl HighlightsTreeToolbarItemView {
                                 if let Some(view) = tree_view.as_ref() {
                                     view.update(cx, |view, cx| {
                                         view.show_text_highlights = !view.show_text_highlights;
+                                        let snapshot = view.editor.as_ref().map(|s| {
+                                            s.editor.read(cx).buffer().read(cx).snapshot(cx)
+                                        });
+                                        if let Some(snapshot) = snapshot {
+                                            view.rebuild_display_items(&snapshot, cx);
+                                        }
                                         cx.notify();
                                     })
                                     .ok();
@@ -750,6 +864,12 @@ impl HighlightsTreeToolbarItemView {
                                 if let Some(view) = tree_view_for_semantic.as_ref() {
                                     view.update(cx, |view, cx| {
                                         view.show_semantic_tokens = !view.show_semantic_tokens;
+                                        let snapshot = view.editor.as_ref().map(|s| {
+                                            s.editor.read(cx).buffer().read(cx).snapshot(cx)
+                                        });
+                                        if let Some(snapshot) = snapshot {
+                                            view.rebuild_display_items(&snapshot, cx);
+                                        }
                                         cx.notify();
                                     })
                                     .ok();
@@ -795,21 +915,68 @@ impl ToolbarItemView for HighlightsTreeToolbarItemView {
     }
 }
 
+fn excerpt_label_for(
+    excerpt_id: ExcerptId,
+    snapshot: &MultiBufferSnapshot,
+    cx: &App,
+) -> SharedString {
+    let buffer = snapshot.buffer_for_excerpt(excerpt_id);
+    let path_label = buffer
+        .and_then(|buf| buf.file())
+        .map(|file| {
+            let full_path = file.full_path(cx);
+            full_path.to_string_lossy().to_string()
+        })
+        .unwrap_or_else(|| "untitled".to_string());
+    path_label.into()
+}
+
 fn format_anchor_range(
     range: &Range<Anchor>,
+    excerpt_id: ExcerptId,
     snapshot: &MultiBufferSnapshot,
-) -> (SharedString, (u32, u32, u32, u32)) {
-    let start = range.start.to_point(snapshot);
-    let end = range.end.to_point(snapshot);
-    let display = SharedString::from(format!(
-        "[{}:{} - {}:{}]",
-        start.row + 1,
-        start.column + 1,
-        end.row + 1,
-        end.column + 1,
-    ));
-    let sort_key = (start.row, start.column, end.row, end.column);
-    (display, sort_key)
+    is_singleton: bool,
+) -> (SharedString, (ExcerptId, u32, u32, u32, u32)) {
+    if is_singleton {
+        let start = range.start.to_point(snapshot);
+        let end = range.end.to_point(snapshot);
+        let display = SharedString::from(format!(
+            "[{}:{} - {}:{}]",
+            start.row + 1,
+            start.column + 1,
+            end.row + 1,
+            end.column + 1,
+        ));
+        let sort_key = (excerpt_id, start.row, start.column, end.row, end.column);
+        (display, sort_key)
+    } else {
+        let buffer = snapshot.buffer_for_excerpt(excerpt_id);
+        if let Some(buffer) = buffer {
+            let start = language::ToPoint::to_point(&range.start.text_anchor, buffer);
+            let end = language::ToPoint::to_point(&range.end.text_anchor, buffer);
+            let display = SharedString::from(format!(
+                "[{}:{} - {}:{}]",
+                start.row + 1,
+                start.column + 1,
+                end.row + 1,
+                end.column + 1,
+            ));
+            let sort_key = (excerpt_id, start.row, start.column, end.row, end.column);
+            (display, sort_key)
+        } else {
+            let start = range.start.to_point(snapshot);
+            let end = range.end.to_point(snapshot);
+            let display = SharedString::from(format!(
+                "[{}:{} - {}:{}]",
+                start.row + 1,
+                start.column + 1,
+                end.row + 1,
+                end.column + 1,
+            ));
+            let sort_key = (excerpt_id, start.row, start.column, end.row, end.column);
+            (display, sort_key)
+        }
+    }
 }
 
 fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
