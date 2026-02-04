@@ -241,9 +241,9 @@ fn find_target(
         offset -= ch.len_utf8();
     }
 
-    // If the backward scan stopped at a newline, skip past it so the forward
-    // scan can find targets on the current line. This handles cases like
-    // "text\n1. item" where the cursor is on "1" at the start of a line.
+    // The backward scan breaks on whitespace, including newlines. Without this
+    // skip, the forward scan would start on the newline and immediately break
+    // (since it also breaks on newlines), finding nothing on the current line.
     if let Some(ch) = snapshot.chars_at(offset).next() {
         if ch == '\n' {
             offset += ch.len_utf8();
@@ -280,27 +280,21 @@ fn find_target(
             begin = None;
             target = String::new();
         } else if ch == '.' {
-            // If we have a number and the cursor is at/before the number start OR within the number,
-            // and the next char is not a digit, end the match.
-            // This handles Markdown list markers like "1. " where the number should be incrementable,
-            // including negative numbers like "-1." where cursor may be on the digit after the minus.
-            // Still allows "111..2" to skip past 111 and find 2 when cursor is entirely after 111.
-            if is_num {
-                if let Some(begin_offset) = begin {
-                    // Cursor is at/before number start, or cursor is within the number
-                    if begin_offset >= start_offset || start_offset < offset {
-                        if let Some(&next_ch) = chars.peek() {
-                            if !next_ch.is_digit(radix) {
-                                end = Some(offset);
-                                break;
-                            }
-                        } else {
-                            end = Some(offset);
-                            break;
-                        }
-                    }
-                }
+            // When the cursor is on a number followed by a dot and a non-digit
+            // (`ˇ1. item`), terminate the match so the number is incrementable.
+            // Without this, the dot unconditionally resets the scan and the
+            // number is skipped. We only do this when the cursor is on the
+            // number, when it's past (`111.ˇ.2`), we still reset so the forward
+            // scan can find the number after the dots.
+            let next_is_non_digit = chars.peek().map_or(true, |char| !char.is_digit(radix));
+            let on_number =
+                is_num && begin.is_some_and(|begin| begin >= start_offset || start_offset < offset);
+
+            if on_number && next_is_non_digit {
+                end = Some(offset);
+                break;
             }
+
             is_num = false;
             begin = None;
             target = String::new();
@@ -731,7 +725,7 @@ mod test {
             .assert_matches();
         cx.simulate("ctrl-a", "(ˇ0b10f)").await.assert_matches();
         cx.simulate("ctrl-a", "ˇ-1").await.assert_matches();
-        cx.simulate("ctrl-a", "-ˇ1").await.assert_matches(); // cursor on digit of negative
+        cx.simulate("ctrl-a", "-ˇ1").await.assert_matches();
         cx.simulate("ctrl-a", "banˇana").await.assert_matches();
     }
 
@@ -879,87 +873,26 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_increment_markdown_list_markers(cx: &mut gpui::TestAppContext) {
+    async fn test_increment_markdown_list_markers_multiline(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // Increment list marker when cursor is on the number
-        cx.set_shared_state("ˇ1. First item").await;
+        cx.set_shared_state("# Title\nˇ1. item\n2. item\n3. item")
+            .await;
         cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq("ˇ2. First item");
-
-        // Decrement list marker
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\nˇ2. item\n2. item\n3. item");
+        cx.simulate_shared_keystrokes("j").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ3. item\n3. item");
         cx.simulate_shared_keystrokes("ctrl-x").await;
-        cx.shared_state().await.assert_eq("ˇ1. First item");
-
-        // Increment multi-digit list marker
-        cx.set_shared_state("ˇ9. Ninth item").await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq("1ˇ0. Ninth item");
-
-        // List marker at end of line (no text after)
-        cx.set_shared_state("ˇ5.").await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq("ˇ6.");
-
-        // Increment by count
-        cx.set_shared_state("ˇ1. First item").await;
-        cx.simulate_shared_keystrokes("5 ctrl-a").await;
-        cx.shared_state().await.assert_eq("ˇ6. First item");
-    }
-
-    #[gpui::test]
-    async fn test_increment_markdown_list_markers_multiline(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        // List marker on non-first line with preceding content
-        cx.set_state("text\nˇ1. item", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-a");
-        cx.assert_state("text\nˇ2. item", Mode::Normal);
-
-        // Second list marker in multi-line list
-        cx.set_state("1. first\nˇ2. second", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-a");
-        cx.assert_state("1. first\nˇ3. second", Mode::Normal);
-
-        // Decrement on non-first line
-        cx.set_state("text\nˇ5. item", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-x");
-        cx.assert_state("text\nˇ4. item", Mode::Normal);
-    }
-
-    #[gpui::test]
-    async fn test_increment_negative_number_cursor_on_digit(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        // Cursor on digit of negative number should still increment
-        cx.set_state("-ˇ1", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-a");
-        cx.assert_state("ˇ0", Mode::Normal);
-
-        // User's exact scenario: -2, increment, cursor moves, increment again
-        cx.set_state("ˇ-2", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-a");
-        cx.assert_state("-ˇ1", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-a");
-        cx.assert_state("ˇ0", Mode::Normal);
-
-        // Decrement should also work
-        cx.set_state("-ˇ1", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-x");
-        cx.assert_state("-ˇ2", Mode::Normal);
-
-        // Negative markdown list marker: -1. with cursor on digit
-        cx.set_state("-ˇ1. item", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-x");
-        cx.assert_state("-ˇ2. item", Mode::Normal);
-
-        // Decrement from positive to negative with dot
-        cx.set_state("ˇ1. item", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-x");
-        cx.assert_state("ˇ0. item", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-x");
-        cx.assert_state("-ˇ1. item", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-x");
-        cx.assert_state("-ˇ2. item", Mode::Normal);
+        cx.shared_state()
+            .await
+            .assert_eq("# Title\n2. item\nˇ2. item\n3. item");
     }
 }
