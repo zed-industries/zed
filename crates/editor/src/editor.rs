@@ -26985,20 +26985,27 @@ impl EditorSnapshot {
                 }
 
                 let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
-                let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
 
                 let hunk_display_start = self.point_to_display_point(hunk_start_point, Bias::Left);
-                let hunk_display_end = self.point_to_display_point(hunk_end_point, Bias::Right);
 
                 let display_hunk = if hunk_display_start.column() != 0 {
                     DisplayDiffHunk::Folded {
                         display_row: hunk_display_start.row(),
                     }
                 } else {
-                    let mut end_row = hunk_display_end.row();
-                    if hunk_display_end.column() > 0 {
-                        end_row.0 += 1;
-                    }
+                    let end_row = if hunk.row_range.end > hunk.row_range.start {
+                        let last_row = MultiBufferRow(hunk.row_range.end.0 - 1);
+                        let line_len = self.buffer_snapshot().line_len(last_row);
+                        let last_point = Point::new(last_row.0, line_len);
+                        let last_display = self.point_to_display_point(last_point, Bias::Left);
+                        DisplayRow(last_display.row().0 + 1)
+                    } else {
+                        self.point_to_display_point(
+                            Point::new(hunk.row_range.end.0, 0),
+                            Bias::Right,
+                        )
+                        .row()
+                    };
                     let is_created_file = hunk.is_created_file();
 
                     DisplayDiffHunk::Unfolded {
