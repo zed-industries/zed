@@ -1393,6 +1393,7 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
+    semantic_tokens_enabled: bool,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -3115,6 +3116,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
+            semantic_tokens_enabled: self.semantic_tokens_enabled,
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,

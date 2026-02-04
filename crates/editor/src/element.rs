@@ -3785,7 +3785,8 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let use_tree_sitter = snapshot.use_tree_sitter_for_syntax(rows.start, cx);
+            let use_tree_sitter = !snapshot.semantic_tokens_enabled
+                || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
             let chunks = snapshot.highlighted_chunks(rows.clone(), use_tree_sitter, style);
             LineWithInvisibles::from_chunks(
                 chunks,
@@ -11708,7 +11709,8 @@ pub fn layout_line(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    let use_tree_sitter = snapshot.use_tree_sitter_for_syntax(row, cx);
+    let use_tree_sitter =
+        !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), use_tree_sitter, style);
     LineWithInvisibles::from_chunks(
         chunks,
