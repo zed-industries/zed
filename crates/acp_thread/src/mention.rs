@@ -49,7 +49,10 @@ pub enum MentionUri {
     Selection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         abs_path: Option<PathBuf>,
-        line_range: RangeInclusive<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        line_ranges: Vec<RangeInclusive<u32>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line_range: Option<RangeInclusive<u32>>,
     },
     Fetch {
         url: Url,
@@ -67,10 +70,8 @@ impl MentionUri {
             let (start, end) = if let Some((start, end)) = range.split_once(":") {
                 (start, end)
             } else if let Some((start, end)) = range.split_once("-") {
-                // Also handle L10-20 or L10-L20 format
                 (start, end.strip_prefix("L").unwrap_or(end))
             } else {
-                // Single line number like L1872 - treat as a range of one line
                 (range, range)
             };
 
@@ -88,6 +89,29 @@ impl MentionUri {
             Ok(start_line..=end_line)
         }
 
+        fn parse_selection_fragment(fragment: &str) -> Vec<RangeInclusive<u32>> {
+            let fragment_stripped = fragment.strip_prefix("L").unwrap_or(fragment);
+
+            if fragment_stripped.contains(',') {
+                fragment_stripped
+                    .split(',')
+                    .filter_map(|part| {
+                        let part = part.trim();
+                        if let Some((start, end)) = part.split_once('-') {
+                            let start = start.parse::<u32>().ok()?.checked_sub(1)?;
+                            let end = end.parse::<u32>().ok()?.checked_sub(1)?;
+                            Some(start..=end)
+                        } else {
+                            let line = part.parse::<u32>().ok()?.checked_sub(1)?;
+                            Some(line..=line)
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![parse_line_range(fragment).log_err().unwrap_or(1..=1)]
+            }
+        }
+
         let url = url::Url::parse(input)?;
         let path = url.path();
         match url.scheme() {
@@ -101,17 +125,20 @@ impl MentionUri {
                 let path = decoded.as_ref();
 
                 if let Some(fragment) = url.fragment() {
-                    let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
                     if let Some(name) = single_query_param(&url, "symbol")? {
+                        let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
                         Ok(Self::Symbol {
                             name,
                             abs_path: path.into(),
                             line_range,
                         })
                     } else {
+                        let line_ranges = parse_selection_fragment(fragment);
+                        let first_range = line_ranges.first().cloned().unwrap_or(1..=1);
                         Ok(Self::Selection {
                             abs_path: Some(path.into()),
-                            line_range,
+                            line_ranges,
+                            line_range: Some(first_range),
                         })
                     }
                 } else if input.ends_with("/") {
@@ -167,7 +194,8 @@ impl MentionUri {
                     let line_range = parse_line_range(fragment)?;
                     Ok(Self::Selection {
                         abs_path: None,
-                        line_range,
+                        line_ranges: vec![line_range.clone()],
+                        line_range: Some(line_range),
                     })
                 } else if let Some(name) = path.strip_prefix("/agent/symbol/") {
                     let fragment = url
@@ -195,12 +223,15 @@ impl MentionUri {
                     })
                 } else if path.starts_with("/agent/selection") {
                     let fragment = url.fragment().context("Missing fragment for selection")?;
-                    let line_range = parse_line_range(fragment)?;
                     let path =
                         single_query_param(&url, "path")?.context("Missing path for selection")?;
+
+                    let line_ranges = parse_selection_fragment(fragment);
+                    let first_range = line_ranges.first().cloned();
                     Ok(Self::Selection {
                         abs_path: Some(path.into()),
-                        line_range,
+                        line_ranges,
+                        line_range: first_range,
                     })
                 } else if path.starts_with("/agent/terminal-selection") {
                     let line_count = single_query_param(&url, "lines")?
@@ -239,9 +270,22 @@ impl MentionUri {
             }
             MentionUri::Selection {
                 abs_path: path,
+                line_ranges,
                 line_range,
                 ..
-            } => selection_name(path.as_deref(), line_range),
+            } => {
+                if !line_ranges.is_empty() {
+                    selection_name_multi(path.as_deref(), line_ranges)
+                } else if let Some(range) = line_range {
+                    selection_name(path.as_deref(), range)
+                } else {
+                    path.as_ref()
+                        .and_then(|p| p.file_name())
+                        .unwrap_or("Untitled".as_ref())
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            }
             MentionUri::Fetch { url } => url.to_string(),
         }
     }
@@ -290,15 +334,20 @@ impl MentionUri {
                 let mut url = Url::parse("file:///").unwrap();
                 url.set_path(&abs_path.to_string_lossy());
                 url.query_pairs_mut().append_pair("symbol", name);
-                url.set_fragment(Some(&format!(
-                    "L{}:{}",
-                    line_range.start() + 1,
-                    line_range.end() + 1
-                )));
+                if line_range.start() == line_range.end() {
+                    url.set_fragment(Some(&format!("L{}", line_range.start() + 1)));
+                } else {
+                    url.set_fragment(Some(&format!(
+                        "L{}-{}",
+                        line_range.start() + 1,
+                        line_range.end() + 1
+                    )));
+                }
                 url
             }
             MentionUri::Selection {
                 abs_path,
+                line_ranges,
                 line_range,
             } => {
                 let mut url = if let Some(path) = abs_path {
@@ -310,11 +359,42 @@ impl MentionUri {
                     url.set_path("/agent/untitled-buffer");
                     url
                 };
-                url.set_fragment(Some(&format!(
-                    "L{}:{}",
-                    line_range.start() + 1,
-                    line_range.end() + 1
-                )));
+
+                if !line_ranges.is_empty() {
+                    if line_ranges.len() == 1 {
+                        let r = &line_ranges[0];
+                        if r.start() == r.end() {
+                            url.set_fragment(Some(&format!("L{}", r.start() + 1)));
+                        } else {
+                            url.set_fragment(Some(&format!("L{}-{}", r.start() + 1, r.end() + 1)));
+                        }
+                    } else {
+                        let ranges_str = line_ranges
+                            .iter()
+                            .map(|r| {
+                                if r.start() == r.end() {
+                                    format!("{}", r.start() + 1)
+                                } else {
+                                    format!("{}-{}", r.start() + 1, r.end() + 1)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        url.set_fragment(Some(&format!("L{}", ranges_str)));
+                    }
+                } else if let Some(range) = line_range {
+                    if range.start() == range.end() {
+                        url.set_fragment(Some(&format!("L{}", range.start() + 1)));
+                    } else {
+                        url.set_fragment(Some(&format!(
+                            "L{}-{}",
+                            range.start() + 1,
+                            range.end() + 1
+                        )));
+                    }
+                } else {
+                    url.set_fragment(Some("L1"));
+                }
                 url
             }
             MentionUri::Thread { name, id } => {
@@ -392,14 +472,72 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
 }
 
 pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
-    format!(
-        "{} ({}:{})",
-        path.and_then(|path| path.file_name())
-            .unwrap_or("Untitled".as_ref())
-            .display(),
-        *line_range.start() + 1,
-        *line_range.end() + 1
-    )
+    let file_name = path
+        .and_then(|path| path.file_name())
+        .unwrap_or("Untitled".as_ref())
+        .display()
+        .to_string();
+
+    if line_range.start() == line_range.end() {
+        format!("{} ({})", file_name, line_range.start() + 1)
+    } else {
+        format!(
+            "{} ({}-{})",
+            file_name,
+            line_range.start() + 1,
+            line_range.end() + 1
+        )
+    }
+}
+
+pub fn selection_name_multi(path: Option<&Path>, line_ranges: &[RangeInclusive<u32>]) -> String {
+    let file_name = path
+        .and_then(|path| path.file_name())
+        .unwrap_or("Untitled".as_ref())
+        .display()
+        .to_string();
+
+    if line_ranges.is_empty() {
+        return file_name;
+    }
+
+    if line_ranges.len() == 1 {
+        let range = &line_ranges[0];
+        if range.start() == range.end() {
+            return format!("{} ({})", file_name, range.start() + 1);
+        } else {
+            return format!("{} ({}-{})", file_name, range.start() + 1, range.end() + 1);
+        }
+    }
+
+    let lines_display: String = if line_ranges.len() <= 5 {
+        line_ranges
+            .iter()
+            .map(|r| {
+                if r.start() == r.end() {
+                    format!("{}", r.start() + 1)
+                } else {
+                    format!("{}-{}", r.start() + 1, r.end() + 1)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        let first_five: Vec<String> = line_ranges
+            .iter()
+            .take(5)
+            .map(|r| {
+                if r.start() == r.end() {
+                    format!("{}", r.start() + 1)
+                } else {
+                    format!("{}-{}", r.start() + 1, r.end() + 1)
+                }
+            })
+            .collect();
+        format!("{}, ...", first_five.join(", "))
+    };
+
+    format!("{} ({})", file_name, lines_display)
 }
 
 #[cfg(test)]
@@ -445,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_parse_symbol_uri() {
-        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
+        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10-20");
         let parsed = MentionUri::parse(symbol_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Symbol {
@@ -465,16 +603,19 @@ mod tests {
 
     #[test]
     fn test_parse_selection_uri() {
-        let selection_uri = uri!("file:///path/to/file.rs#L5:15");
+        let selection_uri = uri!("file:///path/to/file.rs#L5-15");
         let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
+                line_ranges,
                 line_range,
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
-                assert_eq!(line_range.start(), &4);
-                assert_eq!(line_range.end(), &14);
+                assert_eq!(line_ranges.len(), 1);
+                assert_eq!(line_ranges[0].start(), &4);
+                assert_eq!(line_ranges[0].end(), &14);
+                assert!(line_range.is_some());
             }
             _ => panic!("Expected Selection variant"),
         }
@@ -496,15 +637,17 @@ mod tests {
 
     #[test]
     fn test_parse_untitled_selection_uri() {
-        let selection_uri = uri!("zed:///agent/untitled-buffer#L1:10");
+        let selection_uri = uri!("zed:///agent/untitled-buffer#L1-10");
         let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: None,
-                line_range,
+                line_ranges,
+                ..
             } => {
-                assert_eq!(line_range.start(), &0);
-                assert_eq!(line_range.end(), &9);
+                assert_eq!(line_ranges.len(), 1);
+                assert_eq!(line_ranges[0].start(), &0);
+                assert_eq!(line_ranges[0].end(), &9);
             }
             _ => panic!("Expected Selection variant without path"),
         }
@@ -623,11 +766,13 @@ mod tests {
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
-                line_range,
+                line_ranges,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
-                assert_eq!(line_range.start(), &1871);
-                assert_eq!(line_range.end(), &1871);
+                assert_eq!(line_ranges.len(), 1);
+                assert_eq!(line_ranges[0].start(), &1871);
+                assert_eq!(line_ranges[0].end(), &1871);
             }
             _ => panic!("Expected Selection variant"),
         }
@@ -640,11 +785,13 @@ mod tests {
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
-                line_range,
+                line_ranges,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
-                assert_eq!(line_range.start(), &9);
-                assert_eq!(line_range.end(), &19);
+                assert_eq!(line_ranges.len(), 1);
+                assert_eq!(line_ranges[0].start(), &9);
+                assert_eq!(line_ranges[0].end(), &19);
             }
             _ => panic!("Expected Selection variant"),
         }
@@ -655,11 +802,13 @@ mod tests {
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
-                line_range,
+                line_ranges,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
-                assert_eq!(line_range.start(), &9);
-                assert_eq!(line_range.end(), &19);
+                assert_eq!(line_ranges.len(), 1);
+                assert_eq!(line_ranges[0].start(), &9);
+                assert_eq!(line_ranges[0].end(), &19);
             }
             _ => panic!("Expected Selection variant"),
         }

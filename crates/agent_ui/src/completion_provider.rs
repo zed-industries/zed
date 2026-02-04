@@ -2221,18 +2221,51 @@ fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) ->
     panel.read(cx).terminal_selections(cx)
 }
 
-fn selection_ranges(
+pub(crate) fn selection_ranges(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
-    let Some(editor) = workspace
-        .read(cx)
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-    else {
-        return Vec::new();
+    let active_editor = {
+        let workspace_read = workspace.read(cx);
+        workspace_read
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
     };
 
+    if let Some(active_editor) = active_editor {
+        let selections = extract_selections_from_editor(&active_editor, cx);
+        if !selections.is_empty() {
+            return selections;
+        }
+    }
+
+    let all_editors: Vec<Entity<Editor>> = {
+        let workspace_read = workspace.read(cx);
+        let mut editors = Vec::new();
+        for pane in workspace_read.panes() {
+            for item in pane.read(cx).items() {
+                if let Some(editor) = item.act_as::<Editor>(cx) {
+                    editors.push(editor);
+                }
+            }
+        }
+        editors
+    };
+
+    for editor in all_editors {
+        let selections = extract_selections_from_editor(&editor, cx);
+        if !selections.is_empty() {
+            return selections;
+        }
+    }
+
+    Vec::new()
+}
+
+fn extract_selections_from_editor(
+    editor: &Entity<Editor>,
+    cx: &mut App,
+) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
     editor.update(cx, |editor, cx| {
         let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
 
@@ -2250,7 +2283,7 @@ fn selection_ranges(
                 }
                 Some((start_buffer, start..end))
             })
-            .collect::<Vec<_>>()
+            .collect()
     })
 }
 
