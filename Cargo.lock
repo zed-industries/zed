@@ -8481,7 +8481,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
- "platform_title_bar",
  "project",
  "serde_json",
  "serde_json_lenient",

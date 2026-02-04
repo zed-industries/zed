@@ -287,7 +287,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = ThreadPickerDelegate::new(multi_workspace.clone());
+        let delegate = ThreadPickerDelegate::new(multi_workspace);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .max_height(None)
@@ -314,9 +314,8 @@ impl Sidebar {
             }
         });
 
-        let observe_thread_history = cx.observe_new::<AcpThreadHistory>({
-            let weak_sidebar = weak_sidebar.clone();
-            move |_view, _window, cx| {
+        let observe_thread_history =
+            cx.observe_new::<AcpThreadHistory>(move |_view, _window, cx| {
                 let entity = cx.entity();
                 weak_sidebar
                     .update(cx, |sidebar, cx| {
@@ -328,8 +327,7 @@ impl Sidebar {
                         ));
                     })
                     .ok();
-            }
-        });
+            });
 
         Self {
             width: DEFAULT_WIDTH,
