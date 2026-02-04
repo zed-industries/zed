@@ -2142,12 +2142,17 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::LanguageServerRemoved(..) => {
+                    project::Event::LanguageServerRemoved(server_id) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
+                        editor.update_semantic_tokens(None, None, cx);
+                        editor.refresh_inlay_hints(
+                            InlayHintRefreshReason::ServerRemoved(*server_id),
+                            cx,
+                        );
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {

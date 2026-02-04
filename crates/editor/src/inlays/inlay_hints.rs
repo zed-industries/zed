@@ -210,6 +210,7 @@ pub enum InlayHintRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(BufferId),
+    ServerRemoved(LanguageServerId),
     RefreshRequested {
         server_id: LanguageServerId,
         request_id: Option<usize>,
@@ -297,7 +298,8 @@ impl Editor {
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
-            | InlayHintRefreshReason::SettingsChange(_) => true,
+            | InlayHintRefreshReason::SettingsChange(_)
+            | InlayHintRefreshReason::ServerRemoved(_) => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
             | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
@@ -505,6 +507,7 @@ impl Editor {
                 self.splice_inlays(&to_remove, Vec::new(), cx);
                 return None;
             }
+            InlayHintRefreshReason::ServerRemoved(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested {

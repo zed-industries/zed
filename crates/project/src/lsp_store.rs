@@ -4532,7 +4532,7 @@ impl LspStore {
                                     },
                                     result_id: None,
                                     registration_id: None,
-                                    server_id: server_id,
+                                    server_id,
                                     disk_based_sources: Cow::Borrowed(&[]),
                                 })
                                 .collect::<Vec<_>>();

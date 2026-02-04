@@ -52,9 +52,9 @@ impl Editor {
             return;
         }
 
-        let mut invalidate_semantic_highlgights_for_buffers = HashSet::default();
+        let mut invalidate_semantic_highlights_for_buffers = HashSet::default();
         if for_server.is_some() {
-            invalidate_semantic_highlgights_for_buffers.extend(
+            invalidate_semantic_highlights_for_buffers.extend(
                 self.semantic_tokens_fetched_for_buffers
                     .drain()
                     .map(|(buffer_id, _)| buffer_id),
@@ -121,7 +121,7 @@ impl Editor {
             let all_semantic_tokens = join_all(all_semantic_tokens_task).await;
             editor.update(cx, |editor, cx| {
                 editor.display_map.update(cx, |display_map, _| {
-                    for buffer_id in invalidate_semantic_highlgights_for_buffers {
+                    for buffer_id in invalidate_semantic_highlights_for_buffers {
                         display_map.invalidate_semantic_highlights(buffer_id);
                     }
                 });
