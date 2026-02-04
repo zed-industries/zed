@@ -408,6 +408,14 @@ pub fn into_google(
                         },
                     })]
                 }
+                language_model::MessageContent::Document { data, media_type } => {
+                    vec![Part::InlineDataPart(google_ai::InlineDataPart {
+                        inline_data: google_ai::GenerativeContentBlob {
+                            mime_type: media_type.to_string(),
+                            data: data.to_string(),
+                        },
+                    })]
+                }
                 language_model::MessageContent::ToolUse(tool_use) => {
                     // Normalize empty string signatures to None
                     let thought_signature = tool_use.thought_signature.filter(|s| !s.is_empty());
@@ -450,6 +458,27 @@ pub fn into_google(
                                     inline_data: google_ai::GenerativeContentBlob {
                                         mime_type: "image/png".to_string(),
                                         data: image.source.to_string(),
+                                    },
+                                }),
+                            ]
+                        }
+                        language_model::LanguageModelToolResultContent::Document {
+                            data,
+                            media_type,
+                        } => {
+                            vec![
+                                Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        response: serde_json::json!({
+                                            "output": "Tool responded with a document"
+                                        }),
+                                    },
+                                }),
+                                Part::InlineDataPart(google_ai::InlineDataPart {
+                                    inline_data: google_ai::GenerativeContentBlob {
+                                        mime_type: media_type.to_string(),
+                                        data: data.to_string(),
                                     },
                                 }),
                             ]

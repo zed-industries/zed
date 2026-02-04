@@ -1155,6 +1155,9 @@ impl RequestMarkdown {
                     MessageContent::Image(_) => {
                         messages.push_str("[IMAGE DATA]\n\n");
                     }
+                    MessageContent::Document { media_type, .. } => {
+                        messages.push_str(&format!("[DOCUMENT: {}]\n\n", media_type));
+                    }
                     MessageContent::Thinking { text, signature } => {
                         messages.push_str("**Thinking**:\n\n");
                         if let Some(sig) = signature {
@@ -1197,6 +1200,9 @@ impl RequestMarkdown {
                             }
                             LanguageModelToolResultContent::Image(image) => {
                                 writeln!(messages, "![Image](data:base64,{})\n", image.source).ok();
+                            }
+                            LanguageModelToolResultContent::Document { media_type, .. } => {
+                                writeln!(messages, "[Document: {media_type}]\n").ok();
                             }
                         }
 

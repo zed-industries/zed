@@ -761,6 +761,12 @@ fn into_copilot_chat(
                     if let MessageContent::ToolResult(tool_result) = content {
                         let content = match &tool_result.content {
                             LanguageModelToolResultContent::Text(text) => text.to_string().into(),
+                            LanguageModelToolResultContent::Document { .. } => {
+                                // Copilot Chat doesn't support document content
+                                "[Document content not supported by this model]"
+                                    .to_string()
+                                    .into()
+                            }
                             LanguageModelToolResultContent::Image(image) => {
                                 if model.supports_vision() {
                                     ChatMessageContent::Multipart(vec![ChatMessagePart::Image {
@@ -844,7 +850,8 @@ fn into_copilot_chat(
                         MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
-                        | MessageContent::Image(_) => None,
+                        | MessageContent::Image(_)
+                        | MessageContent::Document { .. } => None,
                     }) {
                         buffer.push_str(string);
                     }
@@ -971,6 +978,11 @@ fn into_copilot_responses(
                                         )
                                     }
                                 }
+                                LanguageModelToolResultContent::Document { .. } => {
+                                    responses::ResponseFunctionOutput::Text(
+                                        "[Document content not supported by this model]".into(),
+                                    )
+                                }
                             }
                         };
 
@@ -1046,6 +1058,11 @@ fn into_copilot_responses(
                         MessageContent::Image(_) => {
                             parts.push(responses::ResponseInputContent::OutputText {
                                 text: "[image omitted]".to_string(),
+                            });
+                        }
+                        MessageContent::Document { .. } => {
+                            parts.push(responses::ResponseInputContent::OutputText {
+                                text: "[document omitted]".to_string(),
                             });
                         }
                         _ => {}

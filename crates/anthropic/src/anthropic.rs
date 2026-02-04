@@ -768,6 +768,12 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "document")]
+    Document {
+        source: DocumentSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -798,6 +804,7 @@ pub enum ToolResultContent {
 pub enum ToolResultPart {
     Text { text: String },
     Image { source: ImageSource },
+    Document { source: DocumentSource },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -819,6 +826,14 @@ pub enum ResponseContent {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImageSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocumentSource {
     #[serde(rename = "type")]
     pub source_type: String,
     pub media_type: String,
@@ -1148,4 +1163,49 @@ fn test_match_window_exceeded() {
         message: "prompt is too long: invalid tokens".to_string(),
     };
     assert_eq!(error.match_window_exceeded(), None);
+}
+
+#[test]
+fn test_document_content_serialization() {
+    // Test that Document content serializes to the format expected by Anthropic's API:
+    // {
+    //   "type": "document",
+    //   "source": {
+    //     "type": "base64",
+    //     "media_type": "application/pdf",
+    //     "data": "<base64-encoded-data>"
+    //   }
+    // }
+    let doc = RequestContent::Document {
+        source: DocumentSource {
+            source_type: "base64".to_string(),
+            media_type: "application/pdf".to_string(),
+            data: "JVBERi0xLjQK".to_string(),
+        },
+        cache_control: None,
+    };
+
+    let json = serde_json::to_value(&doc).expect("Failed to serialize Document content");
+
+    assert_eq!(json["type"], "document");
+    assert_eq!(json["source"]["type"], "base64");
+    assert_eq!(json["source"]["media_type"], "application/pdf");
+    assert_eq!(json["source"]["data"], "JVBERi0xLjQK");
+    assert!(json.get("cache_control").is_none());
+
+    // Test with cache_control
+    let doc_with_cache = RequestContent::Document {
+        source: DocumentSource {
+            source_type: "base64".to_string(),
+            media_type: "application/pdf".to_string(),
+            data: "JVBERi0xLjQK".to_string(),
+        },
+        cache_control: Some(CacheControl {
+            cache_type: CacheControlType::Ephemeral,
+        }),
+    };
+
+    let json_cached =
+        serde_json::to_value(&doc_with_cache).expect("Failed to serialize Document with cache");
+    assert_eq!(json_cached["cache_control"]["type"], "ephemeral");
 }

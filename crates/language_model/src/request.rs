@@ -242,6 +242,10 @@ pub struct LanguageModelToolResult {
 pub enum LanguageModelToolResultContent {
     Text(Arc<str>),
     Image(LanguageModelImage),
+    Document {
+        data: Arc<str>,
+        media_type: Arc<str>,
+    },
 }
 
 impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
@@ -325,6 +329,7 @@ impl LanguageModelToolResultContent {
         match self {
             Self::Text(text) => Some(text),
             Self::Image(_) => None,
+            Self::Document { .. } => None,
         }
     }
 
@@ -332,6 +337,7 @@ impl LanguageModelToolResultContent {
         match self {
             Self::Text(text) => text.chars().all(|c| c.is_whitespace()),
             Self::Image(_) => false,
+            Self::Document { .. } => false,
         }
     }
 }
@@ -363,6 +369,10 @@ pub enum MessageContent {
     },
     RedactedThinking(String),
     Image(LanguageModelImage),
+    Document {
+        data: Arc<str>,
+        media_type: Arc<str>,
+    },
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
 }
@@ -374,7 +384,9 @@ impl MessageContent {
             MessageContent::Thinking { text, .. } => Some(text.as_str()),
             MessageContent::RedactedThinking(_) => None,
             MessageContent::ToolResult(tool_result) => tool_result.content.to_str(),
-            MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
+            MessageContent::ToolUse(_)
+            | MessageContent::Image(_)
+            | MessageContent::Document { .. } => None,
         }
     }
 
@@ -385,7 +397,8 @@ impl MessageContent {
             MessageContent::ToolResult(tool_result) => tool_result.content.is_empty(),
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Image(_) => false,
+            | MessageContent::Image(_)
+            | MessageContent::Document { .. } => false,
         }
     }
 }

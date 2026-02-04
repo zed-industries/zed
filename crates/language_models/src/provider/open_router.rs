@@ -411,6 +411,9 @@ pub fn into_open_router(
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
+                MessageContent::Document { .. } => {
+                    // OpenRouter doesn't support document content; skip silently
+                }
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {
@@ -456,6 +459,11 @@ pub fn into_open_router(
                         LanguageModelToolResultContent::Image(image) => {
                             vec![open_router::MessagePart::Image {
                                 image_url: image.to_base64_url(),
+                            }]
+                        }
+                        LanguageModelToolResultContent::Document { .. } => {
+                            vec![open_router::MessagePart::Text {
+                                text: "[Document content not supported by this model]".to_string(),
                             }]
                         }
                     };

@@ -13,7 +13,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use crate::{AgentTool, Thread, ToolCallEventStream, outline};
+use crate::{AgentTool, Thread, ToolCallEventStream, outline, pdf::Pdf};
 
 /// Reads the content of the given file in the project.
 ///
@@ -23,6 +23,7 @@ use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
+/// - This tool supports reading PDF files. PDF files are returned as document content that you can analyze directly.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -168,6 +169,45 @@ impl AgentTool for ReadFileTool {
                 acp::ToolCallLocation::new(&abs_path)
                     .line(input.start_line.map(|line| line.saturating_sub(1))),
             ]));
+
+        if Pdf::is_pdf_path(&abs_path) {
+            let worktree_id = project_path.worktree_id;
+            let path = project_path.path.clone();
+
+            return cx.spawn(async move |cx| {
+                let binary_file = self
+                    .project
+                    .update(cx, |project, cx| {
+                        let worktree = project
+                            .worktree_for_id(worktree_id, cx)
+                            .ok_or_else(|| anyhow!("worktree not found"))?;
+                        anyhow::Ok(worktree.update(cx, |wt, cx| wt.load_binary_file(&path, cx)))
+                    })?
+                    .await?;
+
+                let pdf = Pdf::load(abs_path.clone(), binary_file.content)?;
+                let base64_data = pdf.to_base64();
+
+                event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Resource(
+                        acp::EmbeddedResource::new(
+                            acp::EmbeddedResourceResource::BlobResourceContents(
+                                acp::BlobResourceContents::new(
+                                    base64_data.clone(),
+                                    format!("file://{}", abs_path.display()),
+                                )
+                                .mime_type("application/pdf"),
+                            ),
+                        ),
+                    ))),
+                ]));
+
+                Ok(LanguageModelToolResultContent::Document {
+                    data: base64_data.into(),
+                    media_type: "application/pdf".into(),
+                })
+            });
+        }
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {

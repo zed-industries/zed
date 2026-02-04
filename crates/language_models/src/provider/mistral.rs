@@ -417,6 +417,9 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Document { .. } => {
+                            // Document content is not supported in Mistral
+                        }
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
@@ -425,6 +428,9 @@ pub fn into_mistral(
                                 LanguageModelToolResultContent::Text(text) => text.to_string(),
                                 LanguageModelToolResultContent::Image(_) => {
                                     "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                                }
+                                LanguageModelToolResultContent::Document { .. } => {
+                                    "[Tool responded with a document, but Zed doesn't support these in Mistral models yet]".to_string()
                                 }
                             };
                             messages.push(mistral::RequestMessage::Tool {
@@ -468,6 +474,7 @@ pub fn into_mistral(
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
+                        MessageContent::Document { .. } => {}
                         MessageContent::ToolUse(tool_use) => {
                             let tool_call = mistral::ToolCall {
                                 id: tool_use.id.to_string(),
@@ -522,9 +529,10 @@ pub fn into_mistral(
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_)
+                        | MessageContent::Document { .. }
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {
-                            // Images and tools are not supported in System messages
+                            // Images, documents, and tools are not supported in System messages
                         }
                     }
                 }

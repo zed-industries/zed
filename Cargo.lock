@@ -161,6 +161,7 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
+ "base64 0.22.1",
  "brush-parser",
  "chrono",
  "client",

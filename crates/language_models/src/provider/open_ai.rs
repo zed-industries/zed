@@ -433,6 +433,9 @@ pub fn into_open_ai(
                     }
                 }
                 MessageContent::RedactedThinking(_) => {}
+                MessageContent::Document { .. } => {
+                    // OpenAI doesn't support document content; skip silently
+                }
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_ai::MessagePart::Image {
@@ -481,6 +484,12 @@ pub fn into_open_ai(
                                     url: image.to_base64_url(),
                                     detail: None,
                                 },
+                            }]
+                        }
+                        LanguageModelToolResultContent::Document { .. } => {
+                            // OpenAI doesn't support document content in tool results
+                            vec![open_ai::MessagePart::Text {
+                                text: "[Document content not supported by this model]".to_string(),
                             }]
                         }
                     };
@@ -612,6 +621,9 @@ fn append_message_to_response_items(
                 push_response_text_part(&message.role, text, &mut content_parts);
             }
             MessageContent::RedactedThinking(_) => {}
+            MessageContent::Document { .. } => {
+                // OpenAI doesn't support document content; skip silently
+            }
             MessageContent::Image(image) => {
                 push_response_image_part(&message.role, image, &mut content_parts);
             }
@@ -708,6 +720,9 @@ fn tool_result_output(result: &LanguageModelToolResult) -> String {
         match &result.content {
             LanguageModelToolResultContent::Text(text) => text.to_string(),
             LanguageModelToolResultContent::Image(image) => image.to_base64_url(),
+            LanguageModelToolResultContent::Document { .. } => {
+                "[Document content not supported by this model]".to_string()
+            }
         }
     }
 }
