@@ -153,7 +153,7 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
 
-Use {#kb agent::CycleProfile} to switch between profiles without opening the modal.
+Use {#kb agent::CycleModeSelector} to switch between profiles without opening the modal.
 
 #### Custom Profiles {#custom-profiles}
 
