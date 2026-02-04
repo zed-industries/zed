@@ -445,40 +445,7 @@ impl SplittableEditor {
                             let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
                             if !translated.is_empty() {
                                 this.rhs_editor.update(cx, |editor, cx| {
-                                    let mut revert_changes = HashMap::default();
-                                    let chunk_by =
-                                        translated.into_iter().chunk_by(|hunk| hunk.buffer_id);
-                                    for (buffer_id, hunks) in &chunk_by {
-                                        let hunks = hunks.collect::<Vec<_>>();
-                                        for hunk in &hunks {
-                                            editor.prepare_restore_change(
-                                                &mut revert_changes,
-                                                hunk,
-                                                cx,
-                                            );
-                                        }
-                                        editor.do_stage_or_unstage(
-                                            false,
-                                            buffer_id,
-                                            hunks.into_iter(),
-                                            cx,
-                                        );
-                                    }
-                                    editor.buffer().update(cx, |multi_buffer, cx| {
-                                        for (buffer_id, changes) in revert_changes {
-                                            if let Some(buffer) = multi_buffer.buffer(buffer_id) {
-                                                buffer.update(cx, |buffer, cx| {
-                                                    buffer.edit(
-                                                        changes.into_iter().map(|(range, text)| {
-                                                            (range, text.to_string())
-                                                        }),
-                                                        None,
-                                                        cx,
-                                                    );
-                                                });
-                                            }
-                                        }
-                                    });
+                                    editor.restore_diff_hunks(translated, cx);
                                 });
                             }
                         }

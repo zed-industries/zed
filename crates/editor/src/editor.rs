@@ -11427,12 +11427,18 @@ impl Editor {
             }
             return;
         }
+        let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
+        self.transact(window, cx, |editor, window, cx| {
+            editor.restore_diff_hunks(hunks, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.refresh()
+            });
+        });
+    }
+
+    pub(crate) fn restore_diff_hunks(&self, hunks: Vec<MultiBufferDiffHunk>, cx: &mut App) {
         let mut revert_changes = HashMap::default();
-        let chunk_by = self
-            .snapshot(window, cx)
-            .hunks_for_ranges(ranges)
-            .into_iter()
-            .chunk_by(|hunk| hunk.buffer_id);
+        let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
             let hunks = hunks.collect::<Vec<_>>();
             for hunk in &hunks {
@@ -11440,10 +11446,21 @@ impl Editor {
             }
             self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), cx);
         }
-        drop(chunk_by);
         if !revert_changes.is_empty() {
-            self.transact(window, cx, |editor, window, cx| {
-                editor.restore(revert_changes, window, cx);
+            self.buffer().update(cx, |multi_buffer, cx| {
+                for (buffer_id, changes) in revert_changes {
+                    if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit(
+                                changes
+                                    .into_iter()
+                                    .map(|(range, text)| (range, text.to_string())),
+                                None,
+                                cx,
+                            );
+                        });
+                    }
+                }
             });
         }
     }
