@@ -89,9 +89,9 @@ impl Render for EditPredictionButton {
             return div().hidden();
         }
 
-        let all_language_settings = all_language_settings(None, cx);
+        let language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.edit_predictions.provider {
+        match language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = EditPredictionStore::try_global(cx)
                     .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
@@ -292,6 +292,60 @@ impl Render for EditPredictionButton {
                                         ))
                                 }),
                             move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::Ollama,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("ollama-icon", IconName::AiOllama)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                let settings = all_language_settings(None, cx);
+                                let tooltip_meta = match settings
+                                    .edit_predictions
+                                    .ollama
+                                    .model
+                                    .as_deref()
+                                {
+                                    Some(model) if !model.trim().is_empty() => {
+                                        format!("Powered by Ollama ({model})")
+                                    }
+                                    _ => {
+                                        "Ollama model not configured — configure a model before use"
+                                            .to_string()
+                                    }
+                                };
+
                                 Tooltip::with_meta(
                                     "Edit Prediction",
                                     Some(&ToggleMenu),
@@ -1308,6 +1362,10 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     if CodestralEditPredictionDelegate::has_api_key(cx) {
         providers.push(EditPredictionProvider::Codestral);
+    }
+
+    if edit_prediction::ollama::is_available(cx) {
+        providers.push(EditPredictionProvider::Ollama);
     }
 
     if cx.has_flag::<SweepFeatureFlag>()

@@ -56,6 +56,7 @@ pub mod cursor_excerpt;
 pub mod example_spec;
 mod license_detection;
 pub mod mercury;
+pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
@@ -76,6 +77,7 @@ use crate::capture_example::{
 };
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
+use crate::ollama::Ollama;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
@@ -153,6 +155,7 @@ pub struct EditPredictionStore {
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
+    pub ollama: Ollama,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -169,6 +172,7 @@ pub enum EditPredictionModel {
     },
     Sweep,
     Mercury,
+    Ollama,
 }
 
 #[derive(Clone)]
@@ -307,17 +311,25 @@ impl ProjectState {
     ) {
         self.cancelled_predictions.insert(pending_prediction.id);
 
-        cx.spawn(async move |this, cx| {
-            let Some(prediction_id) = pending_prediction.task.await else {
-                return;
-            };
+        if pending_prediction.drop_on_cancel {
+            drop(pending_prediction.task);
+        } else {
+            cx.spawn(async move |this, cx| {
+                let Some(prediction_id) = pending_prediction.task.await else {
+                    return;
+                };
 
-            this.update(cx, |this, _cx| {
-                this.reject_prediction(prediction_id, EditPredictionRejectReason::Canceled, false);
+                this.update(cx, |this, _cx| {
+                    this.reject_prediction(
+                        prediction_id,
+                        EditPredictionRejectReason::Canceled,
+                        false,
+                    );
+                })
+                .ok();
             })
-            .ok();
-        })
-        .detach()
+            .detach()
+        }
     }
 
     fn active_buffer(
@@ -399,6 +411,9 @@ impl PredictionRequestedBy {
 struct PendingPrediction {
     id: usize,
     task: Task<Option<EditPredictionId>>,
+    /// If true, the task is dropped immediately on cancel (cancelling the HTTP request).
+    /// If false, the task is awaited to completion so rejection can be reported.
+    drop_on_cancel: bool,
 }
 
 /// A prediction from the perspective of a buffer.
@@ -632,6 +647,7 @@ impl EditPredictionStore {
             },
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
+            ollama: Ollama::new(),
 
             data_collection_choice,
             reject_predictions_tx: reject_tx,
@@ -1184,7 +1200,7 @@ impl EditPredictionStore {
             EditPredictionModel::Sweep => {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
-            EditPredictionModel::Mercury => {}
+            EditPredictionModel::Mercury | EditPredictionModel::Ollama => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
@@ -1324,7 +1340,9 @@ impl EditPredictionStore {
                     return;
                 }
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
+            EditPredictionModel::Sweep
+            | EditPredictionModel::Mercury
+            | EditPredictionModel::Ollama => return,
         }
 
         self.reject_predictions_tx
@@ -1513,6 +1531,9 @@ impl EditPredictionStore {
             -> Task<Result<Option<(EditPredictionResult, PredictionRequestedBy)>>>
         + 'static,
     ) {
+        let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
+        let drop_on_cancel = is_ollama;
+        let max_pending_predictions = if is_ollama { 1 } else { 2 };
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
@@ -1627,16 +1648,18 @@ impl EditPredictionStore {
             new_prediction_id
         });
 
-        if project_state.pending_predictions.len() <= 1 {
+        if project_state.pending_predictions.len() < max_pending_predictions {
             project_state.pending_predictions.push(PendingPrediction {
                 id: pending_prediction_id,
                 task,
+                drop_on_cancel,
             });
-        } else if project_state.pending_predictions.len() == 2 {
+        } else {
             let pending_prediction = project_state.pending_predictions.pop().unwrap();
             project_state.pending_predictions.push(PendingPrediction {
                 id: pending_prediction_id,
                 task,
+                drop_on_cancel,
             });
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
@@ -1771,6 +1794,7 @@ impl EditPredictionStore {
             }
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
+            EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
         };
 
         cx.spawn(async move |this, cx| {

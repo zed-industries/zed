@@ -45,7 +45,8 @@ use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
-    SettingsSectionHeader, font_picker, icon_theme_picker, theme_picker,
+    SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
+    theme_picker,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -535,6 +536,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
+        .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         // please semicolon stay on next line
         ;
 }
