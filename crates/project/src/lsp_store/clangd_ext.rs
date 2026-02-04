@@ -10,7 +10,7 @@ use crate::{LspStore, lsp_store::DocumentDiagnosticsUpdate};
 
 pub const CLANGD_SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 const INACTIVE_REGION_MESSAGE: &str = "inactive region";
-const INACTIVE_DIAGNOSTIC_SEVERITY: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::INFORMATION;
+const INACTIVE_DIAGNOSTIC_SEVERITY: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::HINT;
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
