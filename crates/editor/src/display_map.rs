@@ -306,6 +306,10 @@ impl Companion {
         }
     }
 
+    pub(crate) fn lhs_to_rhs_buffer(&self, lhs_buffer_id: BufferId) -> Option<BufferId> {
+        self.lhs_buffer_to_rhs_buffer.get(&lhs_buffer_id).copied()
+    }
+
     pub(crate) fn add_buffer_mapping(&mut self, lhs_buffer: BufferId, rhs_buffer: BufferId) {
         self.lhs_buffer_to_rhs_buffer.insert(lhs_buffer, rhs_buffer);
         self.rhs_buffer_to_lhs_buffer.insert(rhs_buffer, lhs_buffer);
