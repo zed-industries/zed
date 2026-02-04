@@ -64,6 +64,14 @@ Deletes a file or directory (including contents recursively) at the specified pa
 
 Edits files by replacing specific text with new content.
 
+### `restore_file_from_disk`
+
+Discards unsaved changes in a buffer by reloading the file from disk. When the agent encounters a file with unsaved modifications, it can use this tool to restore the buffer to match the saved version before making edits.
+
+### `save_file`
+
+Writes a buffer's current contents to disk. When the agent needs to edit a file that has unsaved changes, it can save those changes first rather than discarding them. This preserves your work while allowing the agent to proceed with its modifications.
+
 ### `move_path`
 
 Moves or renames a file or directory in the project, performing a rename if only the filename differs.
