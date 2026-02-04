@@ -2142,7 +2142,7 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::LanguageServerRemoved(server_id) => {
+                    project::Event::LanguageServerRemoved(_server_id) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
