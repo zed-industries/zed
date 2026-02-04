@@ -2030,7 +2030,7 @@ fn run_subagent_visual_tests(
             thread_view
                 .read(cx)
                 .as_active_thread()
-                .map(|active| active.thread.clone())
+                .map(|active| active.read(cx).thread.clone())
         })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
@@ -2440,7 +2440,7 @@ fn run_agent_thread_view_test(
             thread_view
                 .read(cx)
                 .as_active_thread()
-                .map(|active| active.thread.clone())
+                .map(|active| active.read(cx).thread.clone())
         })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
