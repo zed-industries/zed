@@ -164,7 +164,7 @@ pub struct InvalidRegexPattern {
     pub error: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ToolRules {
     pub default: Option<ToolPermissionMode>,
     pub always_allow: Vec<CompiledRegex>,
@@ -172,18 +172,6 @@ pub struct ToolRules {
     pub always_confirm: Vec<CompiledRegex>,
     /// Patterns that failed to compile. If non-empty, tool calls should be blocked.
     pub invalid_patterns: Vec<InvalidRegexPattern>,
-}
-
-impl Default for ToolRules {
-    fn default() -> Self {
-        Self {
-            default: None,
-            always_allow: Vec::new(),
-            always_deny: Vec::new(),
-            always_confirm: Vec::new(),
-            invalid_patterns: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone)]
