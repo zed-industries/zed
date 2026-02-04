@@ -963,7 +963,7 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 }
 
 fn config_state(
-    cx: &App,
+    _cx: &App,
     modes: Option<acp::SessionModeState>,
     models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
@@ -972,9 +972,7 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if cx.has_flag::<AcpBetaFeatureFlag>()
-        && let Some(opts) = config_options
-    {
+    if let Some(opts) = config_options {
         return (None, None, Some(Rc::new(RefCell::new(opts))));
     }
 
