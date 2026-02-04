@@ -1,5 +1,7 @@
 use collections::HashMap;
 
+use crate::reorder_patch::{Patch, PatchLine};
+
 pub type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
 
@@ -382,6 +384,32 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
     ClassificationMetrics::from_counts(&expected_lines, &actual_lines)
 }
 
+/// A simple proxy for whether the prediction respects editable region.
+pub fn is_editable_region_correct(actual_patch: &str) -> bool {
+    // A typical sign of a wrong editable region: a bunch of lines deletion
+    // at the beginning or end of the patch.
+    let patch = Patch::parse_unified_diff(actual_patch);
+    if patch.hunks.is_empty() {
+        return true;
+    }
+
+    let hunk = &patch.hunks[0];
+    let mut deletions_at_start = 0;
+
+    for line in hunk.lines.iter() {
+        match line {
+            PatchLine::Deletion(_) => deletions_at_start += 1,
+            _ => break,
+        }
+    }
+
+    if deletions_at_start >= 3 {
+        return false;
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod test_optimization {
     use super::*;
@@ -530,6 +558,7 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -725,5 +754,24 @@ index abc123..def456 100644
         assert_eq!(metrics.true_positives, 0);
         assert_eq!(metrics.false_positives, 0);
         assert_eq!(metrics.false_negatives, 0);
+    }
+
+    #[test]
+    fn test_is_editable_region_correct() {
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            -context
+            -removed
+            -from the beginning of the file
+            import sys
+            +sys.exit(0)
+
+            "};
+        assert!(!is_editable_region_correct(patch));
+
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            "};
+        assert!(is_editable_region_correct(patch));
     }
 }
