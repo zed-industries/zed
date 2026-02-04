@@ -48,11 +48,8 @@ pub fn toggle(
         .snapshot(cx)
         .outline(Some(cx.theme().syntax()));
 
-    let workspace = window
-        .root::<MultiWorkspace>()
-        .flatten()
-        .map(|mw| mw.read(cx).workspace().clone())
-        .or_else(|| window.root::<Workspace>().flatten());
+    let workspace = editor.read(cx).workspace();
+
     if let Some((workspace, outline)) = workspace.zip(outline) {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
