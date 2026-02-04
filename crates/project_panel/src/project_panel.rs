@@ -58,10 +58,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconDecoration,
+    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
+    ListHeader, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -1375,18 +1375,12 @@ impl ProjectPanel {
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
-        let multiple_worktrees = self.project.read(cx).worktrees(cx).count() > 1;
         let project = self.project.read(cx);
 
         self.state
             .expanded_dir_ids
             .iter_mut()
             .for_each(|(worktree_id, expanded_entries)| {
-                if multiple_worktrees {
-                    *expanded_entries = Default::default();
-                    return;
-                }
-
                 let root_entry_id = project
                     .worktree_for_id(*worktree_id, cx)
                     .map(|worktree| worktree.read(cx).snapshot())
@@ -6256,6 +6250,27 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .child(
+                            ListHeader::new("Files")
+                                .end_slot(
+                                    IconButton::new("collapse-all-folders", IconName::ListCollapse)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Collapse All",
+                                            &CollapseAllEntries,
+                                            &self.focus_handle,
+                                        ))
+                                        .on_click(cx.listener(
+                                            |this, _, window, cx| {
+                                                this.collapse_all_entries(
+                                                    &CollapseAllEntries,
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        )),
+                                )
+                                .inset(true),
+                        )
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
