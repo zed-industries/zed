@@ -492,7 +492,12 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
 
     fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
 
-    fn discard(&mut self, _cx: &mut gpui::Context<Self>) {}
+    fn discard(
+        &mut self,
+        _reason: edit_prediction_types::EditPredictionDismissReason,
+        _cx: &mut gpui::Context<Self>,
+    ) {
+    }
 
     fn suggest<'a>(
         &mut self,
@@ -563,7 +568,12 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
 
     fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
 
-    fn discard(&mut self, _cx: &mut gpui::Context<Self>) {}
+    fn discard(
+        &mut self,
+        _reason: edit_prediction_types::EditPredictionDismissReason,
+        _cx: &mut gpui::Context<Self>,
+    ) {
+    }
 
     fn suggest<'a>(
         &mut self,
