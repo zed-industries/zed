@@ -2362,6 +2362,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
             chars = 1u128.unbounded_shl(bullet_len as u32).wrapping_sub(1);
             tabs = 0;
+            newlines = 0;
         }
 
         let chunk = Chunk {
