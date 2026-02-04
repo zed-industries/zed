@@ -6,7 +6,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
@@ -132,17 +132,21 @@ impl WorkspacePickerDelegate {
         self.rebuild_entries(workspace_threads, cx);
     }
 
-    fn open_workspace_ids(&self, cx: &App) -> Vec<WorkspaceId> {
+    fn open_workspace_path_sets(&self, cx: &App) -> Vec<Vec<Arc<Path>>> {
         self.multi_workspace
             .read(cx)
             .workspaces()
             .iter()
-            .filter_map(|workspace| workspace.read(cx).database_id())
+            .map(|workspace| {
+                let mut paths = workspace.read(cx).root_paths(cx);
+                paths.sort();
+                paths
+            })
             .collect()
     }
 
     fn rebuild_entries(&mut self, workspace_threads: Vec<WorkspaceThreadEntry>, cx: &App) {
-        let open_ids = self.open_workspace_ids(cx);
+        let open_path_sets = self.open_workspace_path_sets(cx);
 
         self.entries.clear();
 
@@ -157,7 +161,18 @@ impl WorkspacePickerDelegate {
         let recent: Vec<_> = self
             .recent_projects
             .iter()
-            .filter(|project| !open_ids.contains(&project.workspace_id))
+            .filter(|project| {
+                let mut project_paths: Vec<&Path> =
+                    project.paths.iter().map(|p| p.as_path()).collect();
+                project_paths.sort();
+                !open_path_sets.iter().any(|open_paths| {
+                    open_paths.len() == project_paths.len()
+                        && open_paths
+                            .iter()
+                            .zip(&project_paths)
+                            .all(|(a, b)| a.as_ref() == *b)
+                })
+            })
             .cloned()
             .collect();
 
