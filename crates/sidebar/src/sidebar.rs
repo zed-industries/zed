@@ -14,8 +14,8 @@ use ui::{Divider, HighlightedLabel, ListItem, Tab, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    CloseIntent, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
-    ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    CloseIntent, MultiWorkspace, NewWorkspaceInWindow, OpenOptions, OpenVisible,
+    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
 };
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
@@ -180,28 +180,53 @@ impl WorkspacePickerDelegate {
             return;
         };
 
-        workspace.update(cx, |_workspace, cx| {
-            cx.spawn_in(window, {
-                let paths = paths.clone();
-                async move |workspace, cx| {
-                    let continue_replacing = workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
-                        })?
-                        .await?;
-                    if continue_replacing {
-                        workspace
+        let has_worktrees = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .is_some();
+
+        if has_worktrees {
+            workspace.update(cx, |_workspace, cx| {
+                cx.spawn_in(window, {
+                    let paths = paths.clone();
+                    async move |workspace, cx| {
+                        let continue_replacing = workspace
                             .update_in(cx, |workspace, window, cx| {
-                                workspace.open_workspace_for_paths(true, paths, window, cx)
+                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
                             })?
-                            .await
-                    } else {
-                        Ok(())
+                            .await?;
+                        if continue_replacing {
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    workspace.open_workspace_for_paths(true, paths, window, cx)
+                                })?
+                                .await
+                        } else {
+                            Ok(())
+                        }
                     }
-                }
-            })
-            .detach_and_log_err(cx);
-        });
+                })
+                .detach_and_log_err(cx);
+            });
+        } else {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .open_paths(
+                        paths,
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                    .detach();
+            });
+        }
     }
 }
 
