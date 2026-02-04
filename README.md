@@ -5,6 +5,8 @@
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
+> **Experiment**: This fork includes an experiment for developing IDE tooling optimized for AI models. See [MODEL_EXPERIMENT_OVERVIEW.md](./MODEL_EXPERIMENT_OVERVIEW.md) for details.
+
 ---
 
 ### Installation
