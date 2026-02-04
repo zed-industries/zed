@@ -100,6 +100,30 @@ pub trait Extension: Send + Sync {
         Ok(None)
     }
 
+    /// Returns the JSON schema for the initialization options.
+    ///
+    /// The schema should conform to JSON Schema and will be used to provide
+    /// autocomplete in settings files.
+    fn language_server_initialization_options_schema(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    /// Returns the JSON schema for the settings (workspace configuration).
+    ///
+    /// The schema should conform to JSON Schema and will be used to provide
+    /// autocomplete in settings files.
+    fn language_server_settings_schema(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
     /// Returns the initialization options to pass to the other language server.
     fn language_server_additional_initialization_options(
         &mut self,
@@ -367,6 +391,26 @@ impl wit::Guest for Component {
         let language_server_id = LanguageServerId(language_server_id);
         Ok(extension()
             .language_server_workspace_configuration(&language_server_id, worktree)?
+            .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_initialization_options_schema(
+        language_server_id: String,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        Ok(extension()
+            .language_server_initialization_options_schema(&language_server_id, worktree)?
+            .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_settings_schema(
+        language_server_id: String,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        Ok(extension()
+            .language_server_settings_schema(&language_server_id, worktree)?
             .and_then(|value| serde_json::to_string(&value).ok()))
     }
 

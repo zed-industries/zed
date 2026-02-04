@@ -349,6 +349,38 @@ impl LspAdapter for ExtensionLspAdapter {
         })
     }
 
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_initialization_options_schema(self.language_server_id.clone(), delegate)
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    async fn settings_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_settings_schema(self.language_server_id.clone(), delegate)
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
     async fn additional_initialization_options(
         self: Arc<Self>,
         target_language_server_id: LanguageServerName,
