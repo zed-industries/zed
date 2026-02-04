@@ -46,12 +46,58 @@ jobs:
             echo "${output_name}=false" >> "$GITHUB_OUTPUT"
         }
 
+        # Check for changes that require full rebuild (no filter)
+        # Direct pushes to main/stable/preview always run full suite
+        if [ -z "$GITHUB_BASE_REF" ]; then
+          echo "Not a PR, running full test suite"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|.github/)'; then
+          echo "Toolchain, .github or cargo config changed, will run all tests"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        else
+          # Extract changed packages from file paths
+          FILE_CHANGED_PKGS=$(echo "$CHANGED_FILES" | \
+            grep -oP '^(crates|tooling)/\K[^/]+' | \
+            sort -u || true)
+
+          # If assets/ changed, add crates that depend on those assets
+          if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
+            FILE_CHANGED_PKGS=$(echo -e "${FILE_CHANGED_PKGS}\nsettings\nstorybook\nassets" | sort -u)
+          fi
+
+          # Parse Cargo.lock diff for added/changed crates
+          LOCK_CHANGED_PKGS=""
+          if echo "$CHANGED_FILES" | grep -qP '^Cargo\.lock$'; then
+            echo "Cargo.lock changed, analyzing diff..."
+            LOCK_CHANGED_PKGS=$(git diff "$COMPARE_REV" "${{ github.sha }}" -- Cargo.lock | \
+              grep -oP '^[+-]name = "\K[^"]+' | \
+              sort -u || true)
+          fi
+
+          # Combine all changed packages
+          ALL_CHANGED_PKGS=$(echo -e "${FILE_CHANGED_PKGS}\n${LOCK_CHANGED_PKGS}" | sort -u | uniq | grep -v '^$' || true)
+
+          if [ -z "$ALL_CHANGED_PKGS" ]; then
+            echo "No package changes detected, will run all tests"
+            echo "changed_packages=" >> "$GITHUB_OUTPUT"
+          else
+            # Build nextest filterset with rdeps for each package
+            FILTERSET=$(echo "$ALL_CHANGED_PKGS" | \
+              sed 's/.*/rdeps(package(\&))/' | \
+              tr '\n' '|' | \
+              sed 's/|$//')
+            echo "Changed packages filterset: $FILTERSET"
+            echo "changed_packages=$FILTERSET" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
     outputs:
+      changed_packages: ${{ steps.filter.outputs.changed_packages }}
       run_action_checks: ${{ steps.filter.outputs.run_action_checks }}
       run_docs: ${{ steps.filter.outputs.run_docs }}
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
@@ -179,7 +225,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -221,7 +267,7 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -263,7 +309,7 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
