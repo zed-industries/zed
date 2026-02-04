@@ -1463,9 +1463,15 @@ impl ProjectSearchView {
     }
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let match_ranges = self.entity.read(cx).match_ranges.clone();
+        let (has_matches, first_match) = {
+            let model = self.entity.read(cx);
+            (
+                !model.match_ranges.is_empty(),
+                model.match_ranges.first().cloned(),
+            )
+        };
 
-        if match_ranges.is_empty() {
+        if !has_matches {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
                 editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
@@ -1477,8 +1483,8 @@ impl ProjectSearchView {
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
-                    let range_to_select = match_ranges
-                        .first()
+                    let range_to_select = first_match
+                        .as_ref()
                         .map(|range| editor.range_for_match(range));
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
