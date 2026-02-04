@@ -24,6 +24,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 lsp.workspace = true
+menu.workspace = true
 project.workspace = true
 proto.workspace = true
 serde_json.workspace = true

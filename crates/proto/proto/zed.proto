@@ -463,7 +463,11 @@ message Envelope {
 
         DownloadFileByPath download_file_by_path = 415;
         DownloadFileResponse download_file_response = 416;
-        CreateFileForPeer create_file_for_peer = 417; // current max
+        CreateFileForPeer create_file_for_peer = 417;
+
+        SemanticTokens semantic_tokens = 418;
+        SemanticTokensResponse semantic_tokens_response = 419;
+        RefreshSemanticTokens refresh_semantic_tokens = 420; // current max
     }
 
     reserved 87 to 88;

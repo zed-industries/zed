@@ -537,6 +537,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
+        .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
