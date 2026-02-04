@@ -15332,6 +15332,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "picker",
+ "recent_projects",
  "theme",
  "ui",
  "ui_input",

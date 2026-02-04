@@ -18,6 +18,7 @@ default = []
 fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
+recent_projects.workspace = true
 theme.workspace = true
 ui.workspace = true
 ui_input.workspace = true
