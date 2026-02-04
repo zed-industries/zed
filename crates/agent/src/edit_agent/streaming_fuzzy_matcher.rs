@@ -50,7 +50,6 @@ impl StreamingFuzzyMatcher {
 
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
-        self.line_hint = line_hint;
 
         if let Some((last_pos, _)) = self.incomplete_line.match_indices('\n').next_back() {
             let complete_part = &self.incomplete_line[..=last_pos];
