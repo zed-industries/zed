@@ -272,13 +272,14 @@ impl Output {
             Self::ClearOutputWaitMarker => None,
         };
 
-        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. });
 
         h_flex()
             .id("output-content")
             .w_full()
-            .when_some(max_width, |this, max_w| this.max_w(max_w))
-            .overflow_x_scroll()
+            .when_some(max_width, |this, max_width| this.max_w(max_width))
+            .when(needs_horizontal_scroll, |this| this.overflow_x_scroll())
+            .when(!needs_horizontal_scroll, |this| this.overflow_x_hidden())
             .items_start()
             .child(
                 div()

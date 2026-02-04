@@ -22,7 +22,7 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
+use gpui::{Bounds, ClipboardItem, Entity, FontStyle, Pixels, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
