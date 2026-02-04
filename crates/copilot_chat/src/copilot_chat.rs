@@ -3,6 +3,7 @@ pub mod responses;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
@@ -508,14 +509,6 @@ pub struct CopilotQuotaSnapshot {
 }
 
 impl CopilotQuotaSnapshot {
-    pub fn used(&self) -> f64 {
-        if self.unlimited {
-            0.0
-        } else {
-            self.quota_remaining - self.remaining
-        }
-    }
-
     pub fn percent_used(&self) -> f64 {
         if self.unlimited {
             0.0
@@ -524,12 +517,8 @@ impl CopilotQuotaSnapshot {
         }
     }
 
-    pub fn display_remaining(&self) -> String {
-        if self.unlimited {
-            "Unlimited".to_string()
-        } else {
-            format!("{:.2}", self.remaining)
-        }
+    pub fn is_unlimited(&self) -> bool {
+        self.unlimited
     }
 }
 
@@ -649,6 +638,7 @@ impl CopilotChat {
                 let key = task.await?;
                 this.update(cx, |this, cx| {
                     this.stats_api_key = Some(key);
+                    this.fetch_user_stats(cx).detach_and_log_err(cx);
                     cx.notify();
                 });
             }
@@ -731,6 +721,28 @@ impl CopilotChat {
         });
     }
 
+    fn monitor_stream_for_stats<T: 'static>(
+        mut stream: BoxStream<'static, T>,
+        cx: &mut AsyncApp,
+    ) -> BoxStream<'static, T> {
+        let (tx, rx) = futures::channel::oneshot::channel::<()>();
+        cx.spawn(|cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let _ = rx.await;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                Self::get_user_stats(&mut cx);
+            }
+        })
+        .detach();
+
+        futures::stream::poll_fn(move |cx| {
+            let _ = &tx;
+            stream.poll_next_unpin(cx)
+        })
+        .boxed()
+    }
+
     pub async fn stream_completion(
         request: Request,
         is_user_initiated: bool,
@@ -738,17 +750,17 @@ impl CopilotChat {
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
-        Self::get_user_stats(&mut cx);
-
         let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
-        stream_completion(
+        let stream = stream_completion(
             client.clone(),
             token.api_key,
             api_url.into(),
             request,
             is_user_initiated,
         )
-        .await
+        .await?;
+
+        Ok(Self::monitor_stream_for_stats(stream, &mut cx))
     }
 
     pub async fn stream_response(
@@ -758,17 +770,17 @@ impl CopilotChat {
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
-        Self::get_user_stats(&mut cx);
-
         let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);
-        responses::stream_response(
+        let stream = responses::stream_response(
             client.clone(),
             token.api_key,
             api_url,
             request,
             is_user_initiated,
         )
-        .await
+        .await?;
+
+        Ok(Self::monitor_stream_for_stats(stream, &mut cx))
     }
 
     async fn get_auth_details(
@@ -881,6 +893,7 @@ async fn request_user_stats(
         .uri(url.as_ref())
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Accept", "application/json")
+        .header("Cache-Control", "no-cache")
         .body(AsyncBody::empty())?;
 
     let mut response = client.send(request).await?;

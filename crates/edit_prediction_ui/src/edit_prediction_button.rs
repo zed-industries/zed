@@ -1021,88 +1021,178 @@ impl EditPredictionButton {
                 .clone(),
         };
         let settings_url = copilot_settings_url(copilot_config.enterprise_uri.as_deref());
+        let usage_metrics: Option<copilot_chat::CopilotQuotaSnapshots> =
+            if let Some(chat) = copilot_chat::CopilotChat::global(cx) {
+                let chat = chat.read(cx);
+                chat.user_stats().and_then(|stats| {
+                    let snapshots = stats.quota_snapshots.as_ref()?;
+                    Some(snapshots.clone())
+                })
+            } else {
+                None
+            };
 
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            let menu = self.build_language_settings_menu(menu, window, cx);
-            let menu =
-                self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
+        ContextMenu::build(window, cx, |mut menu, window, cx| {
+            menu = self.build_language_settings_menu(menu, window, cx);
+            menu = self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
+
+            menu = menu
+                .separator()
+                .item(
+                    ContextMenuEntry::new("Copilot: Next Edit Suggestions")
+                        .toggleable(IconPosition::Start, next_edit_suggestions)
+                        .handler({
+                            let fs = self.fs.clone();
+                            move |_, cx| {
+                                update_settings_file(fs.clone(), cx, move |settings, _| {
+                                    settings
+                                        .project
+                                        .all_languages
+                                        .edit_predictions
+                                        .get_or_insert_default()
+                                        .copilot
+                                        .get_or_insert_default()
+                                        .enable_next_edit_suggestions =
+                                        Some(!next_edit_suggestions);
+                                });
+                            }
+                        }),
+                )
+                .separator()
+                .link(
+                    "Go to Copilot Settings",
+                    OpenBrowser { url: settings_url }.boxed_clone(),
+                );
+
+            if let Some(usage_metrics) = usage_metrics {
+                let has_any = usage_metrics.chat.is_some()
+                    || usage_metrics.completions.is_some()
+                    || usage_metrics.premium_interactions.is_some();
+
+                if has_any {
+                    menu = menu.separator().header("GitHub Copilot Usage");
+
+                    if let Some(snapshot) = usage_metrics.chat {
+                        let used_percentage = snapshot.percent_used();
+                        let is_unlimited = snapshot.is_unlimited();
+                        menu = menu.custom_row(move |_window, cx| {
+                            v_flex()
+                                .flex_1()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .justify_between()
+                                        .child(
+                                            Label::new("Chat")
+                                                .size(LabelSize::Default)
+                                                .color(Color::Default),
+                                        )
+                                        .child(
+                                            Label::new(if is_unlimited {
+                                                "Included".to_string()
+                                            } else {
+                                                format!("{used_percentage:.2}%")
+                                            })
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(ProgressBar::new(
+                                    "copilot_chat_usage",
+                                    if is_unlimited {
+                                        100.
+                                    } else {
+                                        used_percentage as f32
+                                    },
+                                    100.,
+                                    cx,
+                                ))
+                                .into_any_element()
+                        });
+                    }
+
+                    if let Some(snapshot) = usage_metrics.completions {
+                        let used_percentage = snapshot.percent_used();
+                        let is_unlimited = snapshot.is_unlimited();
+                        menu = menu.custom_row(move |_window, cx| {
+                            v_flex()
+                                .flex_1()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .justify_between()
+                                        .child(
+                                            Label::new("Completions")
+                                                .size(LabelSize::Default)
+                                                .color(Color::Default),
+                                        )
+                                        .child(
+                                            Label::new(if is_unlimited {
+                                                "Included".to_string()
+                                            } else {
+                                                format!("{used_percentage:.2}%")
+                                            })
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(ProgressBar::new(
+                                    "copilot_completions_usage",
+                                    if is_unlimited {
+                                        100.
+                                    } else {
+                                        used_percentage as f32
+                                    },
+                                    100.,
+                                    cx,
+                                ))
+                                .into_any_element()
+                        });
+                    }
+
+                    if let Some(snapshot) = usage_metrics.premium_interactions {
+                        let used_percentage = snapshot.percent_used();
+                        let is_unlimited = snapshot.is_unlimited();
+                        menu = menu.custom_row(move |_window, cx| {
+                            v_flex()
+                                .flex_1()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .justify_between()
+                                        .child(
+                                            Label::new("Premium Requests")
+                                                .size(LabelSize::Default)
+                                                .color(Color::Default),
+                                        )
+                                        .child(
+                                            Label::new(if is_unlimited {
+                                                "Included".to_string()
+                                            } else {
+                                                format!("{used_percentage:.2}%")
+                                            })
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(ProgressBar::new(
+                                    "copilot_premium_usage",
+                                    if is_unlimited {
+                                        100.
+                                    } else {
+                                        used_percentage as f32
+                                    },
+                                    100.,
+                                    cx,
+                                ))
+                                .into_any_element()
+                        });
+                    }
+                }
+            }
 
             menu.separator()
-                .header("GitHub Copilot Usage")
-                .custom_row(|_window, cx| {
-                    let used_percentage = 45.;
-                    v_flex()
-                        .flex_1()
-                        .gap_1()
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .child(
-                                    Label::new("Premium Requests")
-                                        .size(LabelSize::Default)
-                                        .color(Color::Default),
-                                )
-                                .child(
-                                    Label::new(format!("{used_percentage:.0}%"))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        )
-                        .child(ProgressBar::new("copilot_usage", used_percentage, 100., cx))
-                        .into_any_element()
-                })
-            // menu.separator()
-            //     .item(
-            //         ContextMenuEntry::new("Copilot: Next Edit Suggestions")
-            //             .toggleable(IconPosition::Start, next_edit_suggestions)
-            //             .handler({
-            //                 let fs = self.fs.clone();
-            //                 move |_, cx| {
-            //                     update_settings_file(fs.clone(), cx, move |settings, _| {
-            //                         settings
-            //                             .project
-            //                             .all_languages
-            //                             .edit_predictions
-            //                             .get_or_insert_default()
-            //                             .copilot
-            //                             .get_or_insert_default()
-            //                             .enable_next_edit_suggestions =
-            //                             Some(!next_edit_suggestions);
-            //                     });
-            //                 }
-            //             }),
-            //     )
-            //     .separator()
-            //     .link(
-            //         "Go to Copilot Settings",
-            //         OpenBrowser { url: settings_url }.boxed_clone(),
-            //     )
-            //     .separator()
-            //     .header("GitHub Copilot Usage")
-            //     .custom_row(|_window, cx| {
-            //         let used_percentage = 30.;
-            //         v_flex()
-            //             .flex_1()
-            //             .gap_1()
-            //             .child(
-            //                 h_flex()
-            //                     .justify_between()
-            //                     .child(
-            //                         Label::new("Premium Requests")
-            //                             .size(LabelSize::Default)
-            //                             .color(Color::Default),
-            //                     )
-            //                     .child(
-            //                         Label::new(format!("{used_percentage:.0}%"))
-            //                             .size(LabelSize::Small)
-            //                             .color(Color::Muted),
-            //                     ),
-            //             )
-            //             .child(ProgressBar::new("copilot_usage", used_percentage, 100., cx))
-            //             .into_any_element()
-            //     })
-            //     .separator()
-            //     .action("Sign Out", copilot::SignOut.boxed_clone())
+                .action("Sign Out", copilot::SignOut.boxed_clone())
         })
     }
 
