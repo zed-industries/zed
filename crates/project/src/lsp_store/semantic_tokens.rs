@@ -9,10 +9,12 @@ use futures::{
     future::{Shared, join_all},
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
+use itertools::Itertools;
 use language::Buffer;
 use lsp::{AdapterServerCapabilities, LSP_REQUEST_TIMEOUT, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
 use settings::{SemanticTokenRule, Settings as _};
+use smol::future::yield_now;
 use text::{Anchor, Bias, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
 
@@ -88,8 +90,8 @@ impl LspStore {
             .spawn(async move |lsp_store, cx| {
                 let buffer = task_buffer;
                 let version_queried_for = task_version_queried_for;
-                if let Some(new_tokens) = new_tokens.await {
-                    lsp_store
+                let res = if let Some(new_tokens) = new_tokens.await {
+                    let (raw_tokens, buffer_snapshot) = lsp_store
                         .update(cx, |lsp_store, cx| {
                             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
                             let semantic_tokens_data =
@@ -101,7 +103,9 @@ impl LspStore {
                                         SemanticTokensResponse::Full { data, result_id } => {
                                             semantic_tokens_data.raw_tokens.servers.insert(
                                                 server_id,
-                                                ServerSemanticTokens::from_full(data, result_id),
+                                                Arc::new(ServerSemanticTokens::from_full(
+                                                    data, result_id,
+                                                )),
                                             );
                                         }
                                         SemanticTokensResponse::Delta { edits, result_id } => {
@@ -110,6 +114,7 @@ impl LspStore {
                                                 .servers
                                                 .get_mut(&server_id)
                                             {
+                                                let tokens = Arc::make_mut(tokens);
                                                 tokens.result_id = result_id;
                                                 tokens.apply(&edits);
                                             }
@@ -119,15 +124,10 @@ impl LspStore {
                             }
                             let buffer_snapshot =
                                 buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                            let tokens = raw_to_buffer_semantic_tokens(
-                                &semantic_tokens_data.raw_tokens,
-                                &buffer_snapshot,
-                            );
-                            BufferSemanticTokens {
-                                tokens: Some(tokens),
-                            }
+                            (semantic_tokens_data.raw_tokens.clone(), buffer_snapshot)
                         })
-                        .map_err(Arc::new)
+                        .map_err(Arc::new)?;
+                    Some(raw_to_buffer_semantic_tokens(raw_tokens, &buffer_snapshot).await)
                 } else {
                     lsp_store.update(cx, |lsp_store, cx| {
                         if let Some(current_lsp_data) =
@@ -138,8 +138,9 @@ impl LspStore {
                             }
                         }
                     })?;
-                    Ok(BufferSemanticTokens { tokens: None })
-                }
+                    None
+                };
+                Ok(BufferSemanticTokens { tokens: res })
             })
             .shared();
 
@@ -458,44 +459,49 @@ impl SemanticTokenStylizer {
     }
 }
 
-fn raw_to_buffer_semantic_tokens(
-    raw_tokens: &RawSemanticTokens,
+async fn raw_to_buffer_semantic_tokens(
+    raw_tokens: RawSemanticTokens,
     buffer_snapshot: &text::BufferSnapshot,
 ) -> HashMap<LanguageServerId, Arc<[BufferSemanticToken]>> {
-    raw_tokens
-        .servers
-        .iter()
-        .map(|(&server_id, server_tokens)| {
-            let buffer_tokens: Arc<[BufferSemanticToken]> = server_tokens
-                .tokens()
-                .filter_map(|token| {
-                    let start = Unclipped(PointUtf16::new(token.line, token.start));
-                    let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
-                    let start_offset = buffer_snapshot
-                        .as_rope()
-                        .point_utf16_to_offset_utf16(clipped_start);
-                    let end_offset = start_offset + OffsetUtf16(token.length as usize);
+    let mut res = HashMap::default();
+    for (&server_id, server_tokens) in &raw_tokens.servers {
+        // We don't do `collect` here due to the filter map not pre-allocating
+        // we'd rather over allocate here than not since we have to re-allocate into an arc slice anyways
+        let mut buffer_tokens = Vec::with_capacity(server_tokens.data.len() / 5);
+        // 5000 was chosen by profiling, on a decent machine this will take about 1ms per chunk
+        // This is to avoid blocking the main thread for hundreds of milliseconds at a time for very big files
+        // If we every change the below code to not query the underlying rope 6 times per token we can bump this up
+        for chunk in server_tokens.tokens().chunks(5000).into_iter() {
+            buffer_tokens.extend(chunk.filter_map(|token| {
+                let start = Unclipped(PointUtf16::new(token.line, token.start));
+                let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
+                let start_offset = buffer_snapshot
+                    .as_rope()
+                    .point_utf16_to_offset_utf16(clipped_start);
+                let end_offset = start_offset + OffsetUtf16(token.length as usize);
 
-                    let start = buffer_snapshot
-                        .as_rope()
-                        .offset_utf16_to_offset(start_offset);
-                    let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
+                let start = buffer_snapshot
+                    .as_rope()
+                    .offset_utf16_to_offset(start_offset);
+                let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
 
-                    if start == end {
-                        return None;
-                    }
+                if start == end {
+                    return None;
+                }
 
-                    Some(BufferSemanticToken {
-                        range: buffer_snapshot.anchor_before(start)
-                            ..buffer_snapshot.anchor_after(end),
-                        token_type: token.token_type,
-                        token_modifiers: token.token_modifiers,
-                    })
+                Some(BufferSemanticToken {
+                    range: buffer_snapshot.anchor_before(start)..buffer_snapshot.anchor_after(end),
+                    token_type: token.token_type,
+                    token_modifiers: token.token_modifiers,
                 })
-                .collect();
-            (server_id, buffer_tokens)
-        })
-        .collect()
+            }));
+            yield_now().await;
+        }
+
+        res.insert(server_id, buffer_tokens.into());
+        yield_now().await;
+    }
+    res
 }
 
 #[derive(Default, Debug)]
@@ -509,13 +515,13 @@ pub struct SemanticTokensData {
 ///
 /// This aggregates semantic tokens from multiple language servers in a specific order.
 /// Semantic tokens later in the list will override earlier ones in case of overlap.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub(super) struct RawSemanticTokens {
-    pub servers: HashMap<lsp::LanguageServerId, ServerSemanticTokens>,
+    pub servers: HashMap<lsp::LanguageServerId, Arc<ServerSemanticTokens>>,
 }
 
 /// All the semantic tokens for a buffer, from a single language server.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ServerSemanticTokens {
     /// Each value is:
     /// data[5*i] - deltaLine: token line number, relative to the start of the previous token
