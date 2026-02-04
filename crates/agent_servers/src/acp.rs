@@ -963,7 +963,7 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 }
 
 fn config_state(
-    cx: &App,
+    _cx: &App,
     modes: Option<acp::SessionModeState>,
     models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
