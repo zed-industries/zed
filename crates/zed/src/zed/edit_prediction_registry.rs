@@ -2,9 +2,7 @@ use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
-use edit_prediction::{
-    MercuryFeatureFlag, SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag,
-};
+use edit_prediction::{ZedEditPredictionDelegate, Zeta2FeatureFlag};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
@@ -193,6 +191,7 @@ fn assign_edit_prediction_provider(
         }
         value @ (EditPredictionProvider::Experimental(_)
         | EditPredictionProvider::Zed
+        | EditPredictionProvider::Ollama
         | EditPredictionProvider::Sweep
         | EditPredictionProvider::Mercury) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -203,11 +202,17 @@ fn assign_edit_prediction_provider(
             {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
                     let model = match value {
-                        EditPredictionProvider::Sweep if cx.has_flag::<SweepFeatureFlag>() => {
+                        EditPredictionProvider::Sweep => {
                             edit_prediction::EditPredictionModel::Sweep
                         }
-                        EditPredictionProvider::Mercury if cx.has_flag::<MercuryFeatureFlag>() => {
+                        EditPredictionProvider::Mercury => {
                             edit_prediction::EditPredictionModel::Mercury
+                        }
+                        EditPredictionProvider::Ollama => {
+                            if !edit_prediction::ollama::is_available(cx) {
+                                return false;
+                            }
+                            edit_prediction::EditPredictionModel::Ollama
                         }
                         EditPredictionProvider::Experimental(name)
                             if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME

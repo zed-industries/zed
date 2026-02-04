@@ -1,6 +1,6 @@
 mod components;
 mod page_data;
-mod pages;
+pub mod pages;
 
 use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
@@ -47,7 +47,8 @@ use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
-    SettingsSectionHeader, font_picker, icon_theme_picker, theme_picker,
+    SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
+    theme_picker,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -537,6 +538,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
+        .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         // please semicolon stay on next line
         ;
 }
@@ -3442,6 +3444,105 @@ impl SettingsWindow {
             .push(SubPage::new(sub_page_link, section_header));
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    /// Push a dynamically-created sub-page with a custom render function.
+    /// This is useful for nested sub-pages that aren't defined in the main pages list.
+    pub fn push_dynamic_sub_page(
+        &mut self,
+        title: impl Into<SharedString>,
+        section_header: impl Into<SharedString>,
+        json_path: Option<&'static str>,
+        render: fn(
+            &SettingsWindow,
+            &ScrollHandle,
+            &mut Window,
+            &mut Context<SettingsWindow>,
+        ) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let sub_page_link = SubPageLink {
+            title: title.into(),
+            r#type: SubPageType::default(),
+            description: None,
+            json_path,
+            in_json: true,
+            files: USER,
+            render,
+        };
+        self.push_sub_page(sub_page_link, section_header.into(), window, cx);
+    }
+
+    /// Navigate to a sub-page by its json_path.
+    /// Returns true if the sub-page was found and pushed, false otherwise.
+    pub fn navigate_to_sub_page(
+        &mut self,
+        json_path: &str,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> bool {
+        for page in &self.pages {
+            for (item_index, item) in page.items.iter().enumerate() {
+                if let SettingsPageItem::SubPageLink(sub_page_link) = item {
+                    if sub_page_link.json_path == Some(json_path) {
+                        let section_header = page
+                            .items
+                            .iter()
+                            .take(item_index)
+                            .rev()
+                            .find_map(|item| item.header_text().map(SharedString::new_static))
+                            .unwrap_or_else(|| "Settings".into());
+
+                        self.push_sub_page(sub_page_link.clone(), section_header, window, cx);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Navigate to a setting by its json_path.
+    /// Clears the sub-page stack and scrolls to the setting item.
+    /// Returns true if the setting was found, false otherwise.
+    pub fn navigate_to_setting(
+        &mut self,
+        json_path: &str,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> bool {
+        self.sub_page_stack.clear();
+
+        for (page_index, page) in self.pages.iter().enumerate() {
+            for (item_index, item) in page.items.iter().enumerate() {
+                let item_json_path = match item {
+                    SettingsPageItem::SettingItem(setting_item) => setting_item.field.json_path(),
+                    SettingsPageItem::DynamicItem(dynamic_item) => {
+                        dynamic_item.discriminant.field.json_path()
+                    }
+                    _ => None,
+                };
+                if item_json_path == Some(json_path) {
+                    if let Some(navbar_entry_index) = self
+                        .navbar_entries
+                        .iter()
+                        .position(|e| e.page_index == page_index && e.is_root)
+                    {
+                        self.open_and_scroll_to_navbar_entry(
+                            navbar_entry_index,
+                            None,
+                            false,
+                            window,
+                            cx,
+                        );
+                        self.scroll_to_content_item(item_index, window, cx);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {

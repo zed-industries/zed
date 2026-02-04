@@ -483,6 +483,41 @@ pub mod v0131_git_merge_markers_prefix {
     }
 }
 
+/// The zeta1 prompt format
+pub mod zeta1 {
+    pub const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+    pub const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
+    pub const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
+    pub const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
+
+    const INSTRUCTION_HEADER: &str = concat!(
+        "### Instruction:\n",
+        "You are a code completion assistant and your task is to analyze user edits and then rewrite an ",
+        "excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking ",
+        "into account the cursor location.\n\n",
+        "### User Edits:\n\n"
+    );
+    const EXCERPT_HEADER: &str = "\n\n### User Excerpt:\n\n";
+    const RESPONSE_HEADER: &str = "\n\n### Response:\n";
+
+    /// Formats a complete zeta1 prompt from the input events and excerpt.
+    pub fn format_zeta1_prompt(input_events: &str, input_excerpt: &str) -> String {
+        let mut prompt = String::with_capacity(
+            INSTRUCTION_HEADER.len()
+                + input_events.len()
+                + EXCERPT_HEADER.len()
+                + input_excerpt.len()
+                + RESPONSE_HEADER.len(),
+        );
+        prompt.push_str(INSTRUCTION_HEADER);
+        prompt.push_str(input_events);
+        prompt.push_str(EXCERPT_HEADER);
+        prompt.push_str(input_excerpt);
+        prompt.push_str(RESPONSE_HEADER);
+        prompt
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -233,9 +233,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ea4b85f3bcd56ebe65f830321d34bc939af1b5a33b9dcb683195a3b72de0cdb"
+checksum = "2659b1089101b15db31137710159421cb44785ecdb5ba784be3b4a6f8cb8a475"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -250,9 +250,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.10.6"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70829a300bd178abe42836ac779cd3eb3b0dd3881250c752b2621b5324735df1"
+checksum = "44bc1fef9c32f03bce2ab44af35b6f483bfd169bf55cc59beeb2e3b1a00ae4d1"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
@@ -2090,7 +2090,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2110,7 +2110,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "regex",
@@ -12968,7 +12968,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.11.1",
  "heck 0.5.0",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "log",
  "multimap 0.10.1",
  "once_cell",
@@ -13001,7 +13001,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -13866,6 +13866,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -13960,6 +13961,7 @@ dependencies = [
  "regex",
  "serde",
  "tokio",
+ "util",
  "zed-reqwest",
 ]
 
@@ -15199,6 +15201,8 @@ dependencies = [
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
+ "agent",
+ "agent_settings",
  "anyhow",
  "assets",
  "bm25",
@@ -15209,7 +15213,6 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",

@@ -81,14 +81,14 @@ impl Display for DevContainerError {
             "{}",
             match self {
                 DevContainerError::DockerNotAvailable =>
-                    "Docker CLI not found on $PATH".to_string(),
+                    "docker CLI not found on $PATH".to_string(),
                 DevContainerError::DevContainerCliNotAvailable =>
-                    "Docker not found on path".to_string(),
-                DevContainerError::DevContainerUpFailed(message) => {
-                    format!("DevContainer creation failed with error: {}", message)
+                    "devcontainer CLI not found on path".to_string(),
+                DevContainerError::DevContainerUpFailed(_) => {
+                    "DevContainer creation failed".to_string()
                 }
-                DevContainerError::DevContainerTemplateApplyFailed(message) => {
-                    format!("DevContainer template apply failed with error: {}", message)
+                DevContainerError::DevContainerTemplateApplyFailed(_) => {
+                    "DevContainer template apply failed".to_string()
                 }
                 DevContainerError::DevContainerNotFound =>
                     "No valid dev container definition found in project".to_string(),
@@ -194,12 +194,6 @@ pub fn find_devcontainer_configs(workspace: &Workspace, cx: &gpui::App) -> Vec<D
     });
 
     configs
-}
-
-pub async fn start_dev_container(
-    context: DevContainerContext,
-) -> Result<(DevContainerConnection, String), DevContainerError> {
-    start_dev_container_with_config(context, None).await
 }
 
 pub async fn start_dev_container_with_config(
@@ -398,7 +392,7 @@ async fn devcontainer_up(
                 parse_json_from_cli(&raw)
             } else {
                 let message = format!(
-                    "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
+                    "Non-success status running devcontainer up for workspace: out: {}, err: {}",
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 );
