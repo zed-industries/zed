@@ -2,9 +2,7 @@ use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
-use edit_prediction::{
-    MercuryFeatureFlag, SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag,
-};
+use edit_prediction::{ZedEditPredictionDelegate, Zeta2FeatureFlag};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
@@ -204,10 +202,10 @@ fn assign_edit_prediction_provider(
             {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
                     let model = match value {
-                        EditPredictionProvider::Sweep if cx.has_flag::<SweepFeatureFlag>() => {
+                        EditPredictionProvider::Sweep => {
                             edit_prediction::EditPredictionModel::Sweep
                         }
-                        EditPredictionProvider::Mercury if cx.has_flag::<MercuryFeatureFlag>() => {
+                        EditPredictionProvider::Mercury => {
                             edit_prediction::EditPredictionModel::Mercury
                         }
                         EditPredictionProvider::Ollama => {

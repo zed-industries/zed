@@ -3,9 +3,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
 use copilot::Status;
-use edit_prediction::{
-    EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag,
-};
+use edit_prediction::{EditPredictionStore, Zeta2FeatureFlag};
 use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -1366,18 +1364,16 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Ollama);
     }
 
-    if cx.has_flag::<SweepFeatureFlag>()
-        && edit_prediction::sweep_ai::sweep_api_token(cx)
-            .read(cx)
-            .has_key()
+    if edit_prediction::sweep_ai::sweep_api_token(cx)
+        .read(cx)
+        .has_key()
     {
         providers.push(EditPredictionProvider::Sweep);
     }
 
-    if cx.has_flag::<MercuryFeatureFlag>()
-        && edit_prediction::mercury::mercury_api_token(cx)
-            .read(cx)
-            .has_key()
+    if edit_prediction::mercury::mercury_api_token(cx)
+        .read(cx)
+        .has_key()
     {
         providers.push(EditPredictionProvider::Mercury);
     }
