@@ -238,7 +238,7 @@ pub fn init(cx: &mut App) {
                 if !is_local {
                     cx.prompt(
                         gpui::PromptLevel::Critical,
-                        "Cannot open Dev Container from remote  project",
+                        "Cannot open Dev Container from remote project",
                         None,
                         &["Ok"],
                     )
