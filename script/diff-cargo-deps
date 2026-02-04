@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""
+Diff workspace dependencies between two git revisions.
+
+Compares both Cargo.toml [workspace.dependencies] and Cargo.lock [[package]]
+entries to find which dependencies have changed.
+
+Usage: diff-cargo-deps <old-git-ref>
+
+Outputs one dependency name per line for any deps that were added, removed,
+or modified (version, features, checksum, etc).
+"""
+
+import subprocess
+import sys
+import tomllib
+
+
+def get_file_at_ref(ref: str, path: str) -> str:
+    """Get file contents at a specific git ref."""
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def get_workspace_deps(toml_content: str) -> dict:
+    """Extract [workspace.dependencies] from Cargo.toml content."""
+    if not toml_content:
+        return {}
+    try:
+        data = tomllib.loads(toml_content)
+        return data.get("workspace", {}).get("dependencies", {})
+    except Exception:
+        return {}
+
+
+def get_lock_packages(lock_content: str) -> dict[str, dict]:
+    """Extract [[package]] entries from Cargo.lock as {name: full_entry}."""
+    if not lock_content:
+        return {}
+    try:
+        data = tomllib.loads(lock_content)
+        return {pkg["name"]: pkg for pkg in data.get("package", [])}
+    except Exception:
+        return {}
+
+
+def diff_dicts(old: dict, new: dict) -> set[str]:
+    """Find keys that were added, removed, or whose values changed."""
+    changed = set()
+
+    for name, value in new.items():
+        if name not in old or old[name] != value:
+            changed.add(name)
+
+    for name in old:
+        if name not in new:
+            changed.add(name)
+
+    return changed
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: diff-cargo-deps <old-git-ref>", file=sys.stderr)
+        sys.exit(1)
+
+    old_ref = sys.argv[1]
+    changed = set()
+
+    # Diff Cargo.toml workspace dependencies
+    old_toml = get_file_at_ref(old_ref, "Cargo.toml")
+    new_toml = open("Cargo.toml").read()
+    old_deps = get_workspace_deps(old_toml)
+    new_deps = get_workspace_deps(new_toml)
+    changed |= diff_dicts(old_deps, new_deps)
+
+    # Diff Cargo.lock packages
+    old_lock = get_file_at_ref(old_ref, "Cargo.lock")
+    new_lock = open("Cargo.lock").read()
+    old_pkgs = get_lock_packages(old_lock)
+    new_pkgs = get_lock_packages(new_lock)
+    changed |= diff_dicts(old_pkgs, new_pkgs)
+
+    for name in sorted(changed):
+        print(name)
+
+
+if __name__ == "__main__":
+    main()
