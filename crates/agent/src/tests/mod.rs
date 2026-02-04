@@ -3661,7 +3661,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             settings.tool_permissions.tools.insert(
                 "terminal".into(),
                 agent_settings::ToolRules {
-                    default: settings::ToolPermissionMode::Confirm,
+                    default: Some(settings::ToolPermissionMode::Confirm),
                     always_allow: vec![],
                     always_deny: vec![
                         agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap(),
@@ -3713,7 +3713,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             settings.tool_permissions.tools.insert(
                 "terminal".into(),
                 agent_settings::ToolRules {
-                    default: settings::ToolPermissionMode::Deny,
+                    default: Some(settings::ToolPermissionMode::Deny),
                     always_allow: vec![
                         agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap(),
                     ],
@@ -3772,7 +3772,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             settings.tool_permissions.tools.insert(
                 "terminal".into(),
                 agent_settings::ToolRules {
-                    default: settings::ToolPermissionMode::Allow,
+                    default: Some(settings::ToolPermissionMode::Allow),
                     always_allow: vec![],
                     always_deny: vec![],
                     always_confirm: vec![
@@ -3821,7 +3821,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             settings.tool_permissions.tools.insert(
                 "terminal".into(),
                 agent_settings::ToolRules {
-                    default: settings::ToolPermissionMode::Deny,
+                    default: Some(settings::ToolPermissionMode::Deny),
                     always_allow: vec![],
                     always_deny: vec![],
                     always_confirm: vec![],
@@ -5051,7 +5051,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             "edit_file".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"sensitive", false).unwrap()],
                 always_confirm: vec![],
@@ -5119,7 +5119,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
         settings.tool_permissions.tools.insert(
             "delete_path".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"important", false).unwrap()],
                 always_confirm: vec![],
@@ -5173,7 +5173,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         settings.tool_permissions.tools.insert(
             "move_path".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"protected", false).unwrap()],
                 always_confirm: vec![],
@@ -5229,7 +5229,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             "move_path".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"secret", false).unwrap()],
                 always_confirm: vec![],
@@ -5285,7 +5285,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             "copy_path".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"confidential", false).unwrap(),
@@ -5342,7 +5342,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
         settings.tool_permissions.tools.insert(
             "save_file".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"readonly", false).unwrap()],
                 always_confirm: vec![],
@@ -5394,7 +5394,7 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             "save_file".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"\.secret$", false).unwrap()],
                 always_confirm: vec![],
@@ -5435,7 +5435,7 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             "web_search".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"internal\.company", false).unwrap(),
@@ -5478,7 +5478,7 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         settings.tool_permissions.tools.insert(
             "edit_file".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Confirm,
+                default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -5542,7 +5542,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             "fetch".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"internal\.company\.com", false).unwrap(),
@@ -5582,7 +5582,7 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         settings.tool_permissions.tools.insert(
             "fetch".into(),
             agent_settings::ToolRules {
-                default: settings::ToolPermissionMode::Confirm,
+                default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"docs\.rs", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],

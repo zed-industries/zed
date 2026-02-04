@@ -411,10 +411,17 @@ fn render_verification_section(
                 )
                 .when(decision.is_some(), |this| {
                     if matched_patterns.is_empty() {
+                        let action_name = match &decision {
+                            Some(ToolPermissionDecision::Allow) => "allow",
+                            Some(ToolPermissionDecision::Deny(_)) => "deny",
+                            Some(ToolPermissionDecision::Confirm) | None => "confirm",
+                        };
                         this.child(
-                            Label::new("No regex matches, using the default action (confirm).")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            Label::new(format!(
+                                "No regex matches, using the default action ({action_name})."
+                            ))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                         )
                     } else {
                         this.child(render_matched_patterns(&matched_patterns, cx))
@@ -791,7 +798,7 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
 
     match tool_rules {
         Some(rules) => ToolRulesView {
-            default: rules.default,
+            default: rules.default.unwrap_or(settings.tool_permissions.default),
             always_allow: rules
                 .always_allow
                 .iter()
@@ -809,7 +816,7 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
                 .collect(),
         },
         None => ToolRulesView {
-            default: ToolPermissionMode::Confirm,
+            default: settings.tool_permissions.default,
             always_allow: Vec::new(),
             always_deny: Vec::new(),
             always_confirm: Vec::new(),

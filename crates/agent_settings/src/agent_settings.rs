@@ -166,7 +166,7 @@ pub struct InvalidRegexPattern {
 
 #[derive(Clone, Debug)]
 pub struct ToolRules {
-    pub default: ToolPermissionMode,
+    pub default: Option<ToolPermissionMode>,
     pub always_allow: Vec<CompiledRegex>,
     pub always_deny: Vec<CompiledRegex>,
     pub always_confirm: Vec<CompiledRegex>,
@@ -177,7 +177,7 @@ pub struct ToolRules {
 impl Default for ToolRules {
     fn default() -> Self {
         Self {
-            default: ToolPermissionMode::Confirm,
+            default: None,
             always_allow: Vec::new(),
             always_deny: Vec::new(),
             always_confirm: Vec::new(),
@@ -313,8 +313,8 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
             }
 
             let rules = ToolRules {
-                // Use tool-specific default if set, otherwise fall back to global default
-                default: rules_content.default.unwrap_or(global_default),
+                // Preserve tool-specific default; None means fall back to global default at decision time
+                default: rules_content.default,
                 always_allow,
                 always_deny,
                 always_confirm,
@@ -401,7 +401,7 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal_rules = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal_rules.default, ToolPermissionMode::Allow);
+        assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
         assert_eq!(terminal_rules.always_deny.len(), 1);
         assert_eq!(terminal_rules.always_allow.len(), 1);
         assert!(terminal_rules.always_deny[0].is_match("rm -rf /"));
@@ -422,7 +422,7 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let rules = permissions.tools.get("edit_file").unwrap();
-        assert_eq!(rules.default, ToolPermissionMode::Deny);
+        assert_eq!(rules.default, Some(ToolPermissionMode::Deny));
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn test_tool_rules_default_returns_confirm() {
         let default_rules = ToolRules::default();
-        assert_eq!(default_rules.default, ToolPermissionMode::Confirm);
+        assert_eq!(default_rules.default, None);
         assert!(default_rules.always_allow.is_empty());
         assert!(default_rules.always_deny.is_empty());
         assert!(default_rules.always_confirm.is_empty());
@@ -464,15 +464,15 @@ mod tests {
         assert_eq!(permissions.tools.len(), 3);
 
         let terminal = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal.default, ToolPermissionMode::Allow);
+        assert_eq!(terminal.default, Some(ToolPermissionMode::Allow));
         assert_eq!(terminal.always_deny.len(), 1);
 
         let edit_file = permissions.tools.get("edit_file").unwrap();
-        assert_eq!(edit_file.default, ToolPermissionMode::Confirm);
+        assert_eq!(edit_file.default, Some(ToolPermissionMode::Confirm));
         assert!(edit_file.always_deny[0].is_match("secrets.env"));
 
         let delete_path = permissions.tools.get("delete_path").unwrap();
-        assert_eq!(delete_path.default, ToolPermissionMode::Deny);
+        assert_eq!(delete_path.default, Some(ToolPermissionMode::Deny));
     }
 
     #[test]
@@ -492,7 +492,7 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal.default, settings::ToolPermissionMode::Allow);
+        assert_eq!(terminal.default, Some(settings::ToolPermissionMode::Allow));
         assert_eq!(terminal.always_allow.len(), 1);
         assert_eq!(terminal.always_deny.len(), 1);
         assert_eq!(terminal.always_confirm.len(), 1);
@@ -863,9 +863,8 @@ mod tests {
 
         // Verify default_mode is Confirm (the default)
         assert_eq!(
-            terminal.default,
-            settings::ToolPermissionMode::Confirm,
-            "default should be Confirm when not specified"
+            terminal.default, None,
+            "default should be None when not specified"
         );
     }
 }

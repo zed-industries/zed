@@ -100,10 +100,10 @@ impl ToolPermissionDecision {
     ///    the user is prompted for confirmation.
     /// 4. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
     ///    the tool call proceeds without prompting.
-    /// 5. **Tool-specific `default`** - If no patterns match, falls back to the tool's
-    ///    default mode (if configured).
-    /// 6. **Global `default`** - Falls back to `tool_permissions.default` if no
-    ///    tool-specific default is set.
+    /// 5. **Tool-specific `default`** - If no patterns match and the tool has an explicit
+    ///    `default` configured, that mode is used.
+    /// 6. **Global `default`** - Falls back to `tool_permissions.default` when no
+    ///    tool-specific default is set, or when the tool has no entry at all.
     ///
     /// # Shell Compatibility (Terminal Tool Only)
     ///
@@ -186,21 +186,41 @@ impl ToolPermissionDecision {
                     ));
                 }
                 // No always_allow rules, so we can still check deny/confirm patterns.
-                return check_commands(std::iter::once(input.to_string()), rules, tool_name, false);
+                return check_commands(
+                    std::iter::once(input.to_string()),
+                    rules,
+                    tool_name,
+                    false,
+                    permissions.default,
+                );
             }
 
             match extract_commands(input) {
-                Some(commands) => check_commands(commands, rules, tool_name, true),
+                Some(commands) => {
+                    check_commands(commands, rules, tool_name, true, permissions.default)
+                }
                 None => {
                     // The command failed to parse, so we check to see if we should auto-deny
                     // or auto-confirm; if neither auto-deny nor auto-confirm applies here,
                     // fall back on the default (based on the user's settings, which is Confirm
                     // if not specified otherwise). Ignore "always allow" when it failed to parse.
-                    check_commands(std::iter::once(input.to_string()), rules, tool_name, false)
+                    check_commands(
+                        std::iter::once(input.to_string()),
+                        rules,
+                        tool_name,
+                        false,
+                        permissions.default,
+                    )
                 }
             }
         } else {
-            check_commands(std::iter::once(input.to_string()), rules, tool_name, true)
+            check_commands(
+                std::iter::once(input.to_string()),
+                rules,
+                tool_name,
+                true,
+                permissions.default,
+            )
         }
     }
 }
@@ -220,6 +240,7 @@ fn check_commands(
     rules: &ToolRules,
     tool_name: &str,
     allow_enabled: bool,
+    global_default: ToolPermissionMode,
 ) -> ToolPermissionDecision {
     // Single pass through all commands:
     // - DENY: If ANY command matches a deny pattern, deny immediately (short-circuit)
@@ -260,7 +281,7 @@ fn check_commands(
         return ToolPermissionDecision::Allow;
     }
 
-    match rules.default {
+    match rules.default.unwrap_or(global_default) {
         ToolPermissionMode::Deny => {
             ToolPermissionDecision::Deny(format!("{} tool is disabled", tool_name))
         }
@@ -322,7 +343,7 @@ mod tests {
     struct PermTest {
         tool: &'static str,
         input: &'static str,
-        mode: ToolPermissionMode,
+        mode: Option<ToolPermissionMode>,
         allow: Vec<(&'static str, bool)>,
         deny: Vec<(&'static str, bool)>,
         confirm: Vec<(&'static str, bool)>,
@@ -335,7 +356,7 @@ mod tests {
             Self {
                 tool: "terminal",
                 input,
-                mode: ToolPermissionMode::Confirm,
+                mode: None,
                 allow: vec![],
                 deny: vec![],
                 confirm: vec![],
@@ -349,7 +370,7 @@ mod tests {
             self
         }
         fn mode(mut self, m: ToolPermissionMode) -> Self {
-            self.mode = m;
+            self.mode = Some(m);
             self
         }
         fn allow(mut self, p: &[&'static str]) -> Self {
@@ -487,15 +508,21 @@ mod tests {
     }
     #[test]
     fn allow_no_match_uses_tool_default() {
-        // When allow patterns are configured but don't match, the tool's default is used
-        // (which defaults to Confirm), NOT the global default.
-        // This is because tool-specific configuration takes precedence.
+        // When allow patterns are configured but don't match and no explicit tool
+        // default is set, the global default is used.
         t("python x.py")
             .allow(&[pattern("cargo")])
             .global_default(ToolPermissionMode::Allow)
+            .is_allow();
+
+        // An explicit tool default takes precedence over the global default
+        t("python x.py")
+            .allow(&[pattern("cargo")])
+            .mode(ToolPermissionMode::Confirm)
+            .global_default(ToolPermissionMode::Allow)
             .is_confirm();
 
-        // To get Allow behavior, the tool's default must be set to Allow
+        // To get Allow behavior with an explicit tool default
         t("python x.py")
             .allow(&[pattern("cargo")])
             .mode(ToolPermissionMode::Allow)
@@ -697,7 +724,7 @@ mod tests {
         tools.insert(
             Arc::from("terminal"),
             ToolRules {
-                default: ToolPermissionMode::Deny,
+                default: Some(ToolPermissionMode::Deny),
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -707,7 +734,7 @@ mod tests {
         tools.insert(
             Arc::from("edit_file"),
             ToolRules {
-                default: ToolPermissionMode::Allow,
+                default: Some(ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -736,7 +763,7 @@ mod tests {
         tools.insert(
             Arc::from("term"),
             ToolRules {
-                default: ToolPermissionMode::Deny,
+                default: Some(ToolPermissionMode::Deny),
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -761,7 +788,7 @@ mod tests {
         tools.insert(
             Arc::from("terminal"),
             ToolRules {
-                default: ToolPermissionMode::Allow,
+                default: Some(ToolPermissionMode::Allow),
                 always_allow: vec![CompiledRegex::new("echo", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -957,7 +984,7 @@ mod tests {
         tools.insert(
             Arc::from("terminal"),
             ToolRules {
-                default: ToolPermissionMode::Deny,
+                default: Some(ToolPermissionMode::Deny),
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -967,7 +994,7 @@ mod tests {
         tools.insert(
             Arc::from("mcp:srv:terminal"),
             ToolRules {
-                default: ToolPermissionMode::Allow,
+                default: Some(ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -1061,7 +1088,7 @@ mod tests {
         tools.insert(
             Arc::from("terminal"),
             ToolRules {
-                default: ToolPermissionMode::Allow,
+                default: Some(ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![],
                 always_confirm: vec![],
