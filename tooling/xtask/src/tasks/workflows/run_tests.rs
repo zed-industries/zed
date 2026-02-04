@@ -173,17 +173,15 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
             FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
           fi
 
-          # Parse Cargo.lock diff for added/changed crates
-          LOCK_CHANGED_PKGS=""
-          if echo "$CHANGED_FILES" | grep -qP '^Cargo\.lock$'; then
-            echo "Cargo.lock changed, analyzing diff..."
-            LOCK_CHANGED_PKGS=$(git diff "$COMPARE_REV" "${{ github.sha }}" -- Cargo.lock | \
-              grep -oP '^[+-]name = "\K[^"]+' | \
-              sort -u || true)
+          # Parse Cargo.toml and Cargo.lock for changed dependencies
+          CARGO_CHANGED_DEPS=""
+          if echo "$CHANGED_FILES" | grep -qP '^Cargo\.(toml|lock)$'; then
+            echo "Cargo files changed, analyzing..."
+            CARGO_CHANGED_DEPS=$(./script/diff-cargo-deps "$COMPARE_REV" || true)
           fi
 
           # Combine all changed packages
-          ALL_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$LOCK_CHANGED_PKGS" | sort -u | grep -v '^$' || true)
+          ALL_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$CARGO_CHANGED_DEPS" | sort -u | grep -v '^$' || true)
 
           if [ -z "$ALL_CHANGED_PKGS" ]; then
             echo "No package changes detected, will run all tests"
