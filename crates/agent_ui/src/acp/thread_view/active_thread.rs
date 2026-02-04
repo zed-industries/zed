@@ -396,16 +396,14 @@ impl AcpThreadView {
 
     pub fn handle_message_editor_event(
         &mut self,
-        editor: &Entity<MessageEditor>,
+        _editor: &Entity<MessageEditor>,
         event: &MessageEditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            MessageEditorEvent::Send => self.send(editor.clone(), window, cx),
-            MessageEditorEvent::SendImmediately => {
-                self.interrupt_and_send(editor.clone(), window, cx)
-            }
+            MessageEditorEvent::Send => self.send(window, cx),
+            MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
             MessageEditorEvent::Cancel => self.cancel_generation(cx),
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -567,18 +565,14 @@ impl AcpThreadView {
 
     // sending
 
-    pub fn send(
-        &mut self,
-        message_editor: Entity<MessageEditor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = &self.thread;
 
         if self.is_loading_contents {
             return;
         }
 
+        let message_editor = self.message_editor.clone();
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
@@ -794,18 +788,14 @@ impl AcpThreadView {
         .detach();
     }
 
-    pub fn interrupt_and_send(
-        &mut self,
-        message_editor: Entity<MessageEditor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn interrupt_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = &self.thread;
 
         if self.is_loading_contents {
             return;
         }
 
+        let message_editor = self.message_editor.clone();
         if thread.read(cx).status() == ThreadStatus::Idle {
             self.send_impl(message_editor, window, cx);
             return;
@@ -972,7 +962,7 @@ impl AcpThreadView {
 
     // message queueing
 
-    pub fn queue_message(
+    fn queue_message(
         &mut self,
         message_editor: Entity<MessageEditor>,
         window: &mut Window,
@@ -1222,15 +1212,15 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
         self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx);
     }
 
-    fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
         self.authorize_pending_with_granularity(true, window, cx);
     }
 
-    fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
         self.authorize_pending_with_granularity(false, window, cx);
     }
 
@@ -2817,7 +2807,7 @@ impl AcpThreadView {
                     }
                 })
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.send(this.message_editor.clone(), window, cx);
+                    this.send(window, cx);
                 }))
                 .into_any_element()
         }
@@ -3628,7 +3618,7 @@ impl AcpThreadView {
             .into_any_element()
     }
 
-    fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
         let entries = self.thread.read(cx).entries();
         if entries.is_empty() {
             return;
@@ -3673,7 +3663,7 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
         self.list_state.scroll_to(ListOffset::default());
         cx.notify();
     }
@@ -3773,7 +3763,7 @@ impl AcpThreadView {
                     )
                     .child(
                         div().min_w(rems(8.)).child(
-                            LoadingLabel::new("Waiting Confirmation")
+                            LoadingLabel::new("Awaiting Confirmation")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),

@@ -2286,20 +2286,22 @@ fn plan_label_markdown_style(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::StubAgentConnection;
-    // use action_log::ActionLog;
-    // use agent::ToolPermissionContext;
-    // use agent_client_protocol::SessionId;
-    // use editor::MultiBufferOffset;
+    use acp_thread::{
+        AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
+    };
+    use action_log::ActionLog;
+    use agent::ToolPermissionContext;
+    use agent_client_protocol::SessionId;
+    use editor::MultiBufferOffset;
     use fs::FakeFs;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
     use project::Project;
-    // use serde_json::json;
+    use serde_json::json;
     use settings::SettingsStore;
     use std::any::Any;
     use std::path::Path;
     use std::rc::Rc;
-    // use workspace::Item;
+    use workspace::Item;
 
     use super::*;
 
@@ -2313,393 +2315,377 @@ pub(crate) mod tests {
         assert!(!weak_view.is_upgradable());
     }
 
-    //     #[gpui::test]
-    //     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         cx.deactivate_window();
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         assert!(
-    //             cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some())
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_notification_for_error(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         cx.deactivate_window();
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         assert!(
-    //             cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some())
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_recent_history_refreshes_when_history_cache_updated(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
-    //         let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
-
-    //         let fs = FakeFs::new(cx.executor());
-    //         let project = Project::test(fs, [], cx).await;
-    //         let (workspace, cx) =
-    //             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-    //         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-    //         // Create history without an initial session list - it will be set after connection
-    //         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
-
-    //         let thread_view = cx.update(|window, cx| {
-    //             cx.new(|cx| {
-    //                 AcpServerView::new(
-    //                     Rc::new(StubAgentServer::default_response()),
-    //                     None,
-    //                     None,
-    //                     workspace.downgrade(),
-    //                     project,
-    //                     Some(thread_store),
-    //                     None,
-    //                     history.clone(),
-    //                     window,
-    //                     cx,
-    //                 )
-    //             })
-    //         });
-
-    //         // Wait for connection to establish
-    //         cx.run_until_parked();
-
-    //         // Initially empty because StubAgentConnection.session_list() returns None
-    //         thread_view.read_with(cx, |view, _cx| {
-    //             assert_eq!(view.recent_history_entries.len(), 0);
-    //         });
-
-    //         // Now set the session list - this simulates external agents providing their history
-    //         let list_a: Rc<dyn AgentSessionList> =
-    //             Rc::new(StubSessionList::new(vec![session_a.clone()]));
-    //         history.update(cx, |history, cx| {
-    //             history.set_session_list(Some(list_a), cx);
-    //         });
-    //         cx.run_until_parked();
-
-    //         thread_view.read_with(cx, |view, _cx| {
-    //             assert_eq!(view.recent_history_entries.len(), 1);
-    //             assert_eq!(
-    //                 view.recent_history_entries[0].session_id,
-    //                 session_a.session_id
-    //             );
-    //         });
-
-    //         // Update to a different session list
-    //         let list_b: Rc<dyn AgentSessionList> =
-    //             Rc::new(StubSessionList::new(vec![session_b.clone()]));
-    //         history.update(cx, |history, cx| {
-    //             history.set_session_list(Some(list_b), cx);
-    //         });
-    //         cx.run_until_parked();
-
-    //         thread_view.read_with(cx, |view, _cx| {
-    //             assert_eq!(view.recent_history_entries.len(), 1);
-    //             assert_eq!(
-    //                 view.recent_history_entries[0].session_id,
-    //                 session_b.session_id
-    //             );
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_resume_without_history_adds_notice(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let session = AgentSessionInfo::new(SessionId::new("resume-session"));
-    //         let fs = FakeFs::new(cx.executor());
-    //         let project = Project::test(fs, [], cx).await;
-    //         let (workspace, cx) =
-    //             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-    //         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-    //         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
-
-    //         let thread_view = cx.update(|window, cx| {
-    //             cx.new(|cx| {
-    //                 AcpServerView::new(
-    //                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
-    //                     Some(session),
-    //                     None,
-    //                     workspace.downgrade(),
-    //                     project,
-    //                     Some(thread_store),
-    //                     None,
-    //                     history,
-    //                     window,
-    //                     cx,
-    //                 )
-    //             })
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             let state = view.as_active_thread().unwrap();
-    //             assert!(state.read(cx).resumed_without_history);
-    //             assert_eq!(state.read(cx).list_state.item_count(), 0);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_refusal_handling(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(RefusalAgentConnection), cx).await;
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Do something harmful", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Check that the refusal error is set
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let state = thread_view.as_active_thread().unwrap();
-    //             assert!(
-    //                 matches!(state.read(cx).thread_error, Some(ThreadError::Refusal)),
-    //                 "Expected refusal error to be set"
-    //             );
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("1");
-    //         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Label")
-    //             .kind(acp::ToolKind::Edit)
-    //             .content(vec!["hi".into()]);
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id,
-    //                 PermissionOptions::Flat(vec![acp::PermissionOption::new(
-    //                     "1",
-    //                     "Allow",
-    //                     acp::PermissionOptionKind::AllowOnce,
-    //                 )]),
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         cx.deactivate_window();
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         assert!(
-    //             cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some())
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_notification_when_panel_hidden(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         // Window is active (don't deactivate), but panel will be hidden
-    //         // Note: In the test environment, the panel is not actually added to the dock,
-    //         // so is_agent_panel_hidden will return true
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Should show notification because window is active but panel is hidden
-    //         assert!(
-    //             cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some()),
-    //             "Expected notification when panel is hidden"
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_notification_still_works_when_window_inactive(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         // Deactivate window - should show notification regardless of setting
-    //         cx.deactivate_window();
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Should still show notification when window is inactive (existing behavior)
-    //         assert!(
-    //             cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some()),
-    //             "Expected notification when window is inactive"
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_notification_respects_never_setting(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         // Set notify_when_agent_waiting to Never
-    //         cx.update(|cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         // Window is active
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Should NOT show notification because notify_when_agent_waiting is Never
-    //         assert!(
-    //             !cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some()),
-    //             "Expected no notification when notify_when_agent_waiting is Never"
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-    //         let weak_view = thread_view.downgrade();
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-
-    //         cx.deactivate_window();
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify notification is shown
-    //         assert!(
-    //             cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some()),
-    //             "Expected notification to be shown"
-    //         );
-
-    //         // Drop the thread view (simulating navigation to a new thread)
-    //         drop(thread_view);
-    //         drop(message_editor);
-    //         // Trigger an update to flush effects, which will call release_dropped_entities
-    //         cx.update(|_window, _cx| {});
-    //         cx.run_until_parked();
-
-    //         // Verify the entity was actually released
-    //         assert!(
-    //             !weak_view.is_upgradable(),
-    //             "Thread view entity should be released after dropping"
-    //         );
-
-    //         // The notification should be automatically closed via on_release
-    //         assert!(
-    //             !cx.windows()
-    //                 .iter()
-    //                 .any(|window| window.downcast::<AgentNotification>().is_some()),
-    //             "Notification should be closed when thread view is dropped"
-    //         );
-    //     }
+    #[gpui::test]
+    async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_for_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_recent_history_refreshes_when_history_cache_updated(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
+        let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        // Create history without an initial session list - it will be set after connection
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpServerView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    history.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        // Wait for connection to establish
+        cx.run_until_parked();
+
+        // Initially empty because StubAgentConnection.session_list() returns None
+        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+            assert_eq!(view.recent_history_entries.len(), 0);
+        });
+
+        // Now set the session list - this simulates external agents providing their history
+        let list_a: Rc<dyn AgentSessionList> =
+            Rc::new(StubSessionList::new(vec![session_a.clone()]));
+        history.update(cx, |history, cx| {
+            history.set_session_list(Some(list_a), cx);
+        });
+        cx.run_until_parked();
+
+        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+            assert_eq!(view.recent_history_entries.len(), 1);
+            assert_eq!(
+                view.recent_history_entries[0].session_id,
+                session_a.session_id
+            );
+        });
+
+        // Update to a different session list
+        let list_b: Rc<dyn AgentSessionList> =
+            Rc::new(StubSessionList::new(vec![session_b.clone()]));
+        history.update(cx, |history, cx| {
+            history.set_session_list(Some(list_b), cx);
+        });
+        cx.run_until_parked();
+
+        active_thread(&thread_view, cx).read_with(cx, |view, _cx| {
+            assert_eq!(view.recent_history_entries.len(), 1);
+            assert_eq!(
+                view.recent_history_entries[0].session_id,
+                session_b.session_id
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_resume_without_history_adds_notice(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session = AgentSessionInfo::new(SessionId::new("resume-session"));
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpServerView::new(
+                    Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
+                    Some(session),
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    history,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            let state = view.as_active_thread().unwrap();
+            assert!(state.read(cx).resumed_without_history);
+            assert_eq!(state.read(cx).list_state.item_count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_refusal_handling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(RefusalAgentConnection), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Do something harmful", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Check that the refusal error is set
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.as_active_thread().unwrap();
+            assert!(
+                matches!(state.read(cx).thread_error, Some(ThreadError::Refusal)),
+                "Expected refusal error to be set"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Label")
+            .kind(acp::ToolKind::Edit)
+            .content(vec!["hi".into()]);
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id,
+                PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    "1",
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )]),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_when_panel_hidden(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Window is active (don't deactivate), but panel will be hidden
+        // Note: In the test environment, the panel is not actually added to the dock,
+        // so is_agent_panel_hidden will return true
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Should show notification because window is active but panel is hidden
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when panel is hidden"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_still_works_when_window_inactive(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Deactivate window - should show notification regardless of setting
+        cx.deactivate_window();
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Should still show notification when window is inactive (existing behavior)
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when window is inactive"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_respects_never_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Set notify_when_agent_waiting to Never
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Window is active
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Should NOT show notification because notify_when_agent_waiting is Never
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected no notification when notify_when_agent_waiting is Never"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let weak_view = thread_view.downgrade();
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify notification is shown
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification to be shown"
+        );
+
+        // Drop the thread view (simulating navigation to a new thread)
+        drop(thread_view);
+        drop(message_editor);
+        // Trigger an update to flush effects, which will call release_dropped_entities
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        // Verify the entity was actually released
+        assert!(
+            !weak_view.is_upgradable(),
+            "Thread view entity should be released after dropping"
+        );
+
+        // The notification should be automatically closed via on_release
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Notification should be closed when thread view is dropped"
+        );
+    }
 
     async fn setup_thread_view(
         agent: impl AgentServer + 'static,
@@ -2733,49 +2719,49 @@ pub(crate) mod tests {
         (thread_view, cx)
     }
 
-    //     fn add_to_workspace(thread_view: Entity<AcpServerView>, cx: &mut VisualTestContext) {
-    //         let workspace = thread_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
+    fn add_to_workspace(thread_view: Entity<AcpServerView>, cx: &mut VisualTestContext) {
+        let workspace = thread_view.read_with(cx, |thread_view, _cx| thread_view.workspace.clone());
 
-    //         workspace
-    //             .update_in(cx, |workspace, window, cx| {
-    //                 workspace.add_item_to_active_pane(
-    //                     Box::new(cx.new(|_| ThreadViewItem(thread_view.clone()))),
-    //                     None,
-    //                     true,
-    //                     window,
-    //                     cx,
-    //                 );
-    //             })
-    //             .unwrap();
-    //     }
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(
+                    Box::new(cx.new(|_| ThreadViewItem(thread_view.clone()))),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+    }
 
-    //     struct ThreadViewItem(Entity<AcpServerView>);
+    struct ThreadViewItem(Entity<AcpServerView>);
 
-    //     impl Item for ThreadViewItem {
-    //         type Event = ();
+    impl Item for ThreadViewItem {
+        type Event = ();
 
-    //         fn include_in_nav_history() -> bool {
-    //             false
-    //         }
+        fn include_in_nav_history() -> bool {
+            false
+        }
 
-    //         fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-    //             "Test".into()
-    //         }
-    //     }
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
+        }
+    }
 
-    //     impl EventEmitter<()> for ThreadViewItem {}
+    impl EventEmitter<()> for ThreadViewItem {}
 
-    //     impl Focusable for ThreadViewItem {
-    //         fn focus_handle(&self, cx: &App) -> FocusHandle {
-    //             self.0.read(cx).focus_handle(cx)
-    //         }
-    //     }
+    impl Focusable for ThreadViewItem {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.0.read(cx).focus_handle(cx)
+        }
+    }
 
-    //     impl Render for ThreadViewItem {
-    //         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-    //             self.0.clone().into_any_element()
-    //         }
-    //     }
+    impl Render for ThreadViewItem {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone().into_any_element()
+        }
+    }
 
     struct StubAgentServer<C> {
         connection: C,
@@ -2823,249 +2809,249 @@ pub(crate) mod tests {
         }
     }
 
-    // #[derive(Clone)]
-    // struct StubSessionList {
-    //     sessions: Vec<AgentSessionInfo>,
-    // }
+    #[derive(Clone)]
+    struct StubSessionList {
+        sessions: Vec<AgentSessionInfo>,
+    }
 
-    // impl StubSessionList {
-    //     fn new(sessions: Vec<AgentSessionInfo>) -> Self {
-    //         Self { sessions }
-    //     }
-    // }
+    impl StubSessionList {
+        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+            Self { sessions }
+        }
+    }
 
-    // impl AgentSessionList for StubSessionList {
-    //     fn list_sessions(
-    //         &self,
-    //         _request: AgentSessionListRequest,
-    //         _cx: &mut App,
-    //     ) -> Task<anyhow::Result<AgentSessionListResponse>> {
-    //         Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
-    //     }
-    //     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-    //         self
-    //     }
-    // }
+    impl AgentSessionList for StubSessionList {
+        fn list_sessions(
+            &self,
+            _request: AgentSessionListRequest,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
+            Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
+        }
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
 
-    //     #[derive(Clone)]
-    //     struct ResumeOnlyAgentConnection;
+    #[derive(Clone)]
+    struct ResumeOnlyAgentConnection;
 
-    //     impl AgentConnection for ResumeOnlyAgentConnection {
-    //         fn telemetry_id(&self) -> SharedString {
-    //             "resume-only".into()
-    //         }
+    impl AgentConnection for ResumeOnlyAgentConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "resume-only".into()
+        }
 
-    //         fn new_thread(
-    //             self: Rc<Self>,
-    //             project: Entity<Project>,
-    //             _cwd: &Path,
-    //             cx: &mut gpui::App,
-    //         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-    //             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-    //             let thread = cx.new(|cx| {
-    //                 AcpThread::new(
-    //                     "ResumeOnlyAgentConnection",
-    //                     self.clone(),
-    //                     project,
-    //                     action_log,
-    //                     SessionId::new("new-session"),
-    //                     watch::Receiver::constant(
-    //                         acp::PromptCapabilities::new()
-    //                             .image(true)
-    //                             .audio(true)
-    //                             .embedded_context(true),
-    //                     ),
-    //                     cx,
-    //                 )
-    //             });
-    //             Task::ready(Ok(thread))
-    //         }
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    "ResumeOnlyAgentConnection",
+                    self.clone(),
+                    project,
+                    action_log,
+                    SessionId::new("new-session"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            Task::ready(Ok(thread))
+        }
 
-    //         fn supports_resume_session(&self, _cx: &App) -> bool {
-    //             true
-    //         }
+        fn supports_resume_session(&self, _cx: &App) -> bool {
+            true
+        }
 
-    //         fn resume_session(
-    //             self: Rc<Self>,
-    //             session: AgentSessionInfo,
-    //             project: Entity<Project>,
-    //             _cwd: &Path,
-    //             cx: &mut App,
-    //         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-    //             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-    //             let thread = cx.new(|cx| {
-    //                 AcpThread::new(
-    //                     "ResumeOnlyAgentConnection",
-    //                     self.clone(),
-    //                     project,
-    //                     action_log,
-    //                     session.session_id,
-    //                     watch::Receiver::constant(
-    //                         acp::PromptCapabilities::new()
-    //                             .image(true)
-    //                             .audio(true)
-    //                             .embedded_context(true),
-    //                     ),
-    //                     cx,
-    //                 )
-    //             });
-    //             Task::ready(Ok(thread))
-    //         }
+        fn resume_session(
+            self: Rc<Self>,
+            session: AgentSessionInfo,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    "ResumeOnlyAgentConnection",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session.session_id,
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            Task::ready(Ok(thread))
+        }
 
-    //         fn auth_methods(&self) -> &[acp::AuthMethod] {
-    //             &[]
-    //         }
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
 
-    //         fn authenticate(
-    //             &self,
-    //             _method_id: acp::AuthMethodId,
-    //             _cx: &mut App,
-    //         ) -> Task<gpui::Result<()>> {
-    //             Task::ready(Ok(()))
-    //         }
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
 
-    //         fn prompt(
-    //             &self,
-    //             _id: Option<acp_thread::UserMessageId>,
-    //             _params: acp::PromptRequest,
-    //             _cx: &mut App,
-    //         ) -> Task<gpui::Result<acp::PromptResponse>> {
-    //             Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
-    //         }
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
 
-    //         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
 
-    //         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-    //             self
-    //         }
-    //     }
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
 
-    //     #[derive(Clone)]
-    //     struct SaboteurAgentConnection;
+    #[derive(Clone)]
+    struct SaboteurAgentConnection;
 
-    //     impl AgentConnection for SaboteurAgentConnection {
-    //         fn telemetry_id(&self) -> SharedString {
-    //             "saboteur".into()
-    //         }
+    impl AgentConnection for SaboteurAgentConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "saboteur".into()
+        }
 
-    //         fn new_thread(
-    //             self: Rc<Self>,
-    //             project: Entity<Project>,
-    //             _cwd: &Path,
-    //             cx: &mut gpui::App,
-    //         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-    //             Task::ready(Ok(cx.new(|cx| {
-    //                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
-    //                 AcpThread::new(
-    //                     "SaboteurAgentConnection",
-    //                     self,
-    //                     project,
-    //                     action_log,
-    //                     SessionId::new("test"),
-    //                     watch::Receiver::constant(
-    //                         acp::PromptCapabilities::new()
-    //                             .image(true)
-    //                             .audio(true)
-    //                             .embedded_context(true),
-    //                     ),
-    //                     cx,
-    //                 )
-    //             })))
-    //         }
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            Task::ready(Ok(cx.new(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                AcpThread::new(
+                    "SaboteurAgentConnection",
+                    self,
+                    project,
+                    action_log,
+                    SessionId::new("test"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            })))
+        }
 
-    //         fn auth_methods(&self) -> &[acp::AuthMethod] {
-    //             &[]
-    //         }
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
 
-    //         fn authenticate(
-    //             &self,
-    //             _method_id: acp::AuthMethodId,
-    //             _cx: &mut App,
-    //         ) -> Task<gpui::Result<()>> {
-    //             unimplemented!()
-    //         }
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
 
-    //         fn prompt(
-    //             &self,
-    //             _id: Option<acp_thread::UserMessageId>,
-    //             _params: acp::PromptRequest,
-    //             _cx: &mut App,
-    //         ) -> Task<gpui::Result<acp::PromptResponse>> {
-    //             Task::ready(Err(anyhow::anyhow!("Error prompting")))
-    //         }
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Err(anyhow::anyhow!("Error prompting")))
+        }
 
-    //         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-    //             unimplemented!()
-    //         }
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
 
-    //         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-    //             self
-    //         }
-    //     }
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
 
-    //     /// Simulates a model which always returns a refusal response
-    //     #[derive(Clone)]
-    //     struct RefusalAgentConnection;
+    /// Simulates a model which always returns a refusal response
+    #[derive(Clone)]
+    struct RefusalAgentConnection;
 
-    //     impl AgentConnection for RefusalAgentConnection {
-    //         fn telemetry_id(&self) -> SharedString {
-    //             "refusal".into()
-    //         }
+    impl AgentConnection for RefusalAgentConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "refusal".into()
+        }
 
-    //         fn new_thread(
-    //             self: Rc<Self>,
-    //             project: Entity<Project>,
-    //             _cwd: &Path,
-    //             cx: &mut gpui::App,
-    //         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-    //             Task::ready(Ok(cx.new(|cx| {
-    //                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
-    //                 AcpThread::new(
-    //                     "RefusalAgentConnection",
-    //                     self,
-    //                     project,
-    //                     action_log,
-    //                     SessionId::new("test"),
-    //                     watch::Receiver::constant(
-    //                         acp::PromptCapabilities::new()
-    //                             .image(true)
-    //                             .audio(true)
-    //                             .embedded_context(true),
-    //                     ),
-    //                     cx,
-    //                 )
-    //             })))
-    //         }
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            Task::ready(Ok(cx.new(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                AcpThread::new(
+                    "RefusalAgentConnection",
+                    self,
+                    project,
+                    action_log,
+                    SessionId::new("test"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            })))
+        }
 
-    //         fn auth_methods(&self) -> &[acp::AuthMethod] {
-    //             &[]
-    //         }
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
 
-    //         fn authenticate(
-    //             &self,
-    //             _method_id: acp::AuthMethodId,
-    //             _cx: &mut App,
-    //         ) -> Task<gpui::Result<()>> {
-    //             unimplemented!()
-    //         }
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
 
-    //         fn prompt(
-    //             &self,
-    //             _id: Option<acp_thread::UserMessageId>,
-    //             _params: acp::PromptRequest,
-    //             _cx: &mut App,
-    //         ) -> Task<gpui::Result<acp::PromptResponse>> {
-    //             Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::Refusal)))
-    //         }
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::Refusal)))
+        }
 
-    //         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-    //             unimplemented!()
-    //         }
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
 
-    //         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-    //             self
-    //         }
-    //     }
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3078,1854 +3064,1832 @@ pub(crate) mod tests {
         });
     }
 
-    //     #[gpui::test]
-    //     async fn test_rewind_views(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let fs = FakeFs::new(cx.executor());
-    //         fs.insert_tree(
-    //             "/project",
-    //             json!({
-    //                 "test1.txt": "old content 1",
-    //                 "test2.txt": "old content 2"
-    //             }),
-    //         )
-    //         .await;
-    //         let project = Project::test(fs, [Path::new("/project")], cx).await;
-    //         let (workspace, cx) =
-    //             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-    //         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-    //         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
-
-    //         let connection = Rc::new(StubAgentConnection::new());
-    //         let thread_view = cx.update(|window, cx| {
-    //             cx.new(|cx| {
-    //                 AcpServerView::new(
-    //                     Rc::new(StubAgentServer::new(connection.as_ref().clone())),
-    //                     None,
-    //                     None,
-    //                     workspace.downgrade(),
-    //                     project.clone(),
-    //                     Some(thread_store.clone()),
-    //                     None,
-    //                     history,
-    //                     window,
-    //                     cx,
-    //                 )
-    //             })
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         let thread = thread_view
-    //             .read_with(cx, |view, cx| {
-    //                 view.as_active_thread().map(|r| r.read(cx).thread.clone())
-    //             })
-    //             .unwrap();
-
-    //         // First user message
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-    //             acp::ToolCall::new("tool1", "Edit file 1")
-    //                 .kind(acp::ToolKind::Edit)
-    //                 .status(acp::ToolCallStatus::Completed)
-    //                 .content(vec![acp::ToolCallContent::Diff(
-    //                     acp::Diff::new("/project/test1.txt", "new content 1").old_text("old content 1"),
-    //                 )]),
-    //         )]);
-
-    //         thread
-    //             .update(cx, |thread, cx| thread.send_raw("Give me a diff", cx))
-    //             .await
-    //             .unwrap();
-    //         cx.run_until_parked();
-
-    //         thread.read_with(cx, |thread, _cx| {
-    //             assert_eq!(thread.entries().len(), 2);
-    //         });
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             let entry_view_state = view
-    //                 .as_active_thread()
-    //                 .map(|active| active.read(cx).entry_view_state.clone())
-    //                 .unwrap();
-    //             entry_view_state.read_with(cx, |entry_view_state, _| {
-    //                 assert!(
-    //                     entry_view_state
-    //                         .entry(0)
-    //                         .unwrap()
-    //                         .message_editor()
-    //                         .is_some()
-    //                 );
-    //                 assert!(entry_view_state.entry(1).unwrap().has_content());
-    //             });
-    //         });
-
-    //         // Second user message
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
-    //             acp::ToolCall::new("tool2", "Edit file 2")
-    //                 .kind(acp::ToolKind::Edit)
-    //                 .status(acp::ToolCallStatus::Completed)
-    //                 .content(vec![acp::ToolCallContent::Diff(
-    //                     acp::Diff::new("/project/test2.txt", "new content 2").old_text("old content 2"),
-    //                 )]),
-    //         )]);
-
-    //         thread
-    //             .update(cx, |thread, cx| thread.send_raw("Another one", cx))
-    //             .await
-    //             .unwrap();
-    //         cx.run_until_parked();
-
-    //         let second_user_message_id = thread.read_with(cx, |thread, _| {
-    //             assert_eq!(thread.entries().len(), 4);
-    //             let AgentThreadEntry::UserMessage(user_message) = &thread.entries()[2] else {
-    //                 panic!();
-    //             };
-    //             user_message.id.clone().unwrap()
-    //         });
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             let entry_view_state = view
-    //                 .as_active_thread()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .entry_view_state
-    //                 .clone();
-    //             entry_view_state.read_with(cx, |entry_view_state, _| {
-    //                 assert!(
-    //                     entry_view_state
-    //                         .entry(0)
-    //                         .unwrap()
-    //                         .message_editor()
-    //                         .is_some()
-    //                 );
-    //                 assert!(entry_view_state.entry(1).unwrap().has_content());
-    //                 assert!(
-    //                     entry_view_state
-    //                         .entry(2)
-    //                         .unwrap()
-    //                         .message_editor()
-    //                         .is_some()
-    //                 );
-    //                 assert!(entry_view_state.entry(3).unwrap().has_content());
-    //             });
-    //         });
-
-    //         // Rewind to first message
-    //         thread
-    //             .update(cx, |thread, cx| thread.rewind(second_user_message_id, cx))
-    //             .await
-    //             .unwrap();
-
-    //         cx.run_until_parked();
-
-    //         thread.read_with(cx, |thread, _| {
-    //             assert_eq!(thread.entries().len(), 2);
-    //         });
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             let active = view.as_active_thread().unwrap();
-    //             active
-    //                 .read(cx)
-    //                 .entry_view_state
-    //                 .read_with(cx, |entry_view_state, _| {
-    //                     assert!(
-    //                         entry_view_state
-    //                             .entry(0)
-    //                             .unwrap()
-    //                             .message_editor()
-    //                             .is_some()
-    //                     );
-    //                     assert!(entry_view_state.entry(1).unwrap().has_content());
-
-    //                     // Old views should be dropped
-    //                     assert!(entry_view_state.entry(2).is_none());
-    //                     assert!(entry_view_state.entry(3).is_none());
-    //                 });
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_scroll_to_most_recent_user_prompt(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-
-    //         // Each user prompt will result in a user message entry plus an agent message entry.
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("Response 1".into()),
-    //         )]);
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-
-    //         let thread = thread_view
-    //             .read_with(cx, |view, cx| {
-    //                 view.as_active_thread().map(|r| r.read(cx).thread.clone())
-    //             })
-    //             .unwrap();
-
-    //         thread
-    //             .update(cx, |thread, cx| thread.send_raw("Prompt 1", cx))
-    //             .await
-    //             .unwrap();
-    //         cx.run_until_parked();
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("Response 2".into()),
-    //         )]);
-
-    //         thread
-    //             .update(cx, |thread, cx| thread.send_raw("Prompt 2", cx))
-    //             .await
-    //             .unwrap();
-    //         cx.run_until_parked();
-
-    //         // Move somewhere else first so we're not trivially already on the last user prompt.
-    //         thread_view.update(cx, |view, cx| {
-    //             view.scroll_to_top(cx);
-    //         });
-    //         cx.run_until_parked();
-
-    //         thread_view.update(cx, |view, cx| {
-    //             view.scroll_to_most_recent_user_prompt(cx);
-    //             let scroll_top = view
-    //                 .as_active_thread()
-    //                 .map(|active| &active.read(cx).list_state)
-    //                 .unwrap()
-    //                 .logical_scroll_top();
-    //             // Entries layout is: [User1, Assistant1, User2, Assistant2]
-    //             assert_eq!(scroll_top.item_ix, 2);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_scroll_to_most_recent_user_prompt_falls_back_to_bottom_without_user_messages(
-    //         cx: &mut TestAppContext,
-    //     ) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-    //         // With no entries, scrolling should be a no-op and must not panic.
-    //         thread_view.update(cx, |view, cx| {
-    //             view.scroll_to_most_recent_user_prompt(cx);
-    //             let scroll_top = view
-    //                 .as_active_thread()
-    //                 .map(|active| &active.read(cx).list_state)
-    //                 .unwrap()
-    //                 .logical_scroll_top();
-    //             assert_eq!(scroll_top.item_ix, 0);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_message_editing_cancel(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("Response".into()),
-    //         )]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Original message to edit", window, cx);
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         let user_message_editor = thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 None
-    //             );
-
-    //             view.as_active_thread()
-    //                 .map(|active| &active.read(cx).entry_view_state)
-    //                 .as_ref()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .entry(0)
-    //                 .unwrap()
-    //                 .message_editor()
-    //                 .unwrap()
-    //                 .clone()
-    //         });
-
-    //         // Focus
-    //         cx.focus(&user_message_editor);
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //         });
-
-    //         // Edit
-    //         user_message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Edited message content", window, cx);
-    //         });
-
-    //         // Cancel
-    //         user_message_editor.update_in(cx, |_editor, window, cx| {
-    //             window.dispatch_action(Box::new(editor::actions::Cancel), cx);
-    //         });
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 None
-    //             );
-    //         });
-
-    //         user_message_editor.read_with(cx, |editor, cx| {
-    //             assert_eq!(editor.text(cx), "Original message to edit");
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_message_doesnt_send_if_empty(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("", window, cx);
-    //         });
-
-    //         let thread = cx.read(|cx| {
-    //             thread_view
-    //                 .read(cx)
-    //                 .as_active_thread()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone()
-    //         });
-    //         let entries_before = cx.read(|cx| thread.read(cx).entries().len());
-
-    //         thread_view.update_in(cx, |view, window, cx| {
-    //             view.send(window, cx);
-    //         });
-    //         cx.run_until_parked();
-
-    //         let entries_after = cx.read(|cx| thread.read(cx).entries().len());
-    //         assert_eq!(
-    //             entries_before, entries_after,
-    //             "No message should be sent when editor is empty"
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_message_editing_regenerate(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("Response".into()),
-    //         )]);
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Original message to edit", window, cx);
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         let user_message_editor = thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 None
-    //             );
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .unwrap()
-    //                     .read(cx)
-    //                     .thread
-    //                     .read(cx)
-    //                     .entries()
-    //                     .len(),
-    //                 2
-    //             );
-
-    //             view.as_active_thread()
-    //                 .map(|active| &active.read(cx).entry_view_state)
-    //                 .as_ref()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .entry(0)
-    //                 .unwrap()
-    //                 .message_editor()
-    //                 .unwrap()
-    //                 .clone()
-    //         });
-
-    //         // Focus
-    //         cx.focus(&user_message_editor);
-
-    //         // Edit
-    //         user_message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Edited message content", window, cx);
-    //         });
-
-    //         // Send
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("New Response".into()),
-    //         )]);
-
-    //         user_message_editor.update_in(cx, |_editor, window, cx| {
-    //             window.dispatch_action(Box::new(Chat), cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 None
-    //             );
-
-    //             let entries = view
-    //                 .as_active_thread()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .thread
-    //                 .read(cx)
-    //                 .entries();
-    //             assert_eq!(entries.len(), 2);
-    //             assert_eq!(
-    //                 entries[0].to_markdown(cx),
-    //                 "## User\n\nEdited message content\n\n"
-    //             );
-    //             assert_eq!(
-    //                 entries[1].to_markdown(cx),
-    //                 "## Assistant\n\nNew Response\n\n"
-    //             );
-
-    //             let entry_view_state = view
-    //                 .as_active_thread()
-    //                 .map(|active| &active.read(cx).entry_view_state)
-    //                 .unwrap();
-    //             let new_editor = entry_view_state.read_with(cx, |state, _cx| {
-    //                 assert!(!state.entry(1).unwrap().has_content());
-    //                 state.entry(0).unwrap().message_editor().unwrap().clone()
-    //             });
-
-    //             assert_eq!(new_editor.read(cx).text(cx), "Edited message content");
-    //         })
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_message_editing_while_generating(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Original message to edit", window, cx);
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
-    //             let thread = view.as_active_thread().unwrap().read(cx).thread.read(cx);
-    //             assert_eq!(thread.entries().len(), 1);
-
-    //             let editor = view
-    //                 .as_active_thread()
-    //                 .map(|active| &active.read(cx).entry_view_state)
-    //                 .as_ref()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .entry(0)
-    //                 .unwrap()
-    //                 .message_editor()
-    //                 .unwrap()
-    //                 .clone();
-
-    //             (editor, thread.session_id().clone())
-    //         });
-
-    //         // Focus
-    //         cx.focus(&user_message_editor);
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //         });
-
-    //         // Edit
-    //         user_message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Edited message content", window, cx);
-    //         });
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //         });
-
-    //         // Finish streaming response
-    //         cx.update(|_, cx| {
-    //             connection.send_update(
-    //                 session_id.clone(),
-    //                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("Response".into())),
-    //                 cx,
-    //             );
-    //             connection.end_turn(session_id, acp::StopReason::EndTurn);
-    //         });
-
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Should still be editing
-    //         cx.update(|window, cx| {
-    //             assert!(user_message_editor.focus_handle(cx).is_focused(window));
-    //             assert_eq!(
-    //                 thread_view
-    //                     .read(cx)
-    //                     .as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //             assert_eq!(
-    //                 user_message_editor.read(cx).text(cx),
-    //                 "Edited message content"
-    //             );
-    //         });
-    //     }
-
-    //     struct GeneratingThreadSetup {
-    //         thread_view: Entity<AcpServerView>,
-    //         thread: Entity<AcpThread>,
-    //         message_editor: Entity<MessageEditor>,
-    //     }
-
-    //     async fn setup_generating_thread(
-    //         cx: &mut TestAppContext,
-    //     ) -> (GeneratingThreadSetup, &mut VisualTestContext) {
-    //         let connection = StubAgentConnection::new();
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Hello", window, cx);
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-    //             let thread = view
-    //                 .as_active_thread()
-    //                 .as_ref()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             (thread.clone(), thread.read(cx).session_id().clone())
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         cx.update(|_, cx| {
-    //             connection.send_update(
-    //                 session_id.clone(),
-    //                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-    //                     "Response chunk".into(),
-    //                 )),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         thread.read_with(cx, |thread, _cx| {
-    //             assert_eq!(thread.status(), ThreadStatus::Generating);
-    //         });
-
-    //         (
-    //             GeneratingThreadSetup {
-    //                 thread_view,
-    //                 thread,
-    //                 message_editor,
-    //             },
-    //             cx,
-    //         )
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_escape_cancels_generation_from_conversation_focus(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (setup, cx) = setup_generating_thread(cx).await;
-
-    //         let focus_handle = setup
-    //             .thread_view
-    //             .read_with(cx, |view, _cx| view.focus_handle.clone());
-    //         cx.update(|window, cx| {
-    //             window.focus(&focus_handle, cx);
-    //         });
-
-    //         setup.thread_view.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         setup.thread.read_with(cx, |thread, _cx| {
-    //             assert_eq!(thread.status(), ThreadStatus::Idle);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_escape_cancels_generation_from_editor_focus(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (setup, cx) = setup_generating_thread(cx).await;
-
-    //         let editor_focus_handle = setup
-    //             .message_editor
-    //             .read_with(cx, |editor, cx| editor.focus_handle(cx));
-    //         cx.update(|window, cx| {
-    //             window.focus(&editor_focus_handle, cx);
-    //         });
-
-    //         setup.message_editor.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(editor::actions::Cancel.boxed_clone(), cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         setup.thread.read_with(cx, |thread, _cx| {
-    //             assert_eq!(thread.status(), ThreadStatus::Idle);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_escape_when_idle_is_noop(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let thread = thread_view.read_with(cx, |view, cx| {
-    //             view.as_active_thread().unwrap().read(cx).thread.clone()
-    //         });
-
-    //         thread.read_with(cx, |thread, _cx| {
-    //             assert_eq!(thread.status(), ThreadStatus::Idle);
-    //         });
-
-    //         let focus_handle = thread_view.read_with(cx, |view, _cx| view.focus_handle.clone());
-    //         cx.update(|window, cx| {
-    //             window.focus(&focus_handle, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         thread.read_with(cx, |thread, _cx| {
-    //             assert_eq!(thread.status(), ThreadStatus::Idle);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_interrupt(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-
-    //         let (thread_view, cx) =
-    //             setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Message 1", window, cx);
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-    //             let thread = view.as_active_thread().unwrap().read(cx).thread.clone();
-
-    //             (thread.clone(), thread.read(cx).session_id().clone())
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         cx.update(|_, cx| {
-    //             connection.send_update(
-    //                 session_id.clone(),
-    //                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-    //                     "Message 1 resp".into(),
-    //                 )),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         thread.read_with(cx, |thread, cx| {
-    //             assert_eq!(
-    //                 thread.to_markdown(cx),
-    //                 indoc::indoc! {"
-    //                     ## User
-
-    //                     Message 1
-
-    //                     ## Assistant
-
-    //                     Message 1 resp
-
-    //                 "}
-    //             )
-    //         });
-
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Message 2", window, cx);
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.interrupt_and_send(window, cx);
-    //         });
-
-    //         cx.update(|_, cx| {
-    //             // Simulate a response sent after beginning to cancel
-    //             connection.send_update(
-    //                 session_id.clone(),
-    //                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("onse".into())),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Last Message 1 response should appear before Message 2
-    //         thread.read_with(cx, |thread, cx| {
-    //             assert_eq!(
-    //                 thread.to_markdown(cx),
-    //                 indoc::indoc! {"
-    //                     ## User
-
-    //                     Message 1
-
-    //                     ## Assistant
-
-    //                     Message 1 response
-
-    //                     ## User
-
-    //                     Message 2
-
-    //                 "}
-    //             )
-    //         });
-
-    //         cx.update(|_, cx| {
-    //             connection.send_update(
-    //                 session_id.clone(),
-    //                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-    //                     "Message 2 response".into(),
-    //                 )),
-    //                 cx,
-    //             );
-    //             connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         thread.read_with(cx, |thread, cx| {
-    //             assert_eq!(
-    //                 thread.to_markdown(cx),
-    //                 indoc::indoc! {"
-    //                     ## User
-
-    //                     Message 1
-
-    //                     ## Assistant
-
-    //                     Message 1 response
-
-    //                     ## User
-
-    //                     Message 2
-
-    //                     ## Assistant
-
-    //                     Message 2 response
-
-    //                 "}
-    //             )
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_message_editing_insert_selections(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("Response".into()),
-    //         )]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Original message to edit", window, cx)
-    //         });
-    //         thread_view.update_in(cx, |thread_view, window, cx| thread_view.send(window, cx));
-    //         cx.run_until_parked();
-
-    //         let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
-    //             thread_view
-    //                 .as_active_thread()
-    //                 .map(|active| &active.read(cx).entry_view_state)
-    //                 .as_ref()
-    //                 .unwrap()
-    //                 .read(cx)
-    //                 .entry(0)
-    //                 .expect("Should have at least one entry")
-    //                 .message_editor()
-    //                 .expect("Should have message editor")
-    //                 .clone()
-    //         });
-
-    //         cx.focus(&user_message_editor);
-    //         thread_view.read_with(cx, |view, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //         });
-
-    //         // Ensure to edit the focused message before proceeding otherwise, since
-    //         // its content is not different from what was sent, focus will be lost.
-    //         user_message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Original message to edit with ", window, cx)
-    //         });
-
-    //         // Create a simple buffer with some text so we can create a selection
-    //         // that will then be added to the message being edited.
-    //         let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
-    //             (thread_view.workspace.clone(), thread_view.project.clone())
-    //         });
-    //         let buffer = project.update(cx, |project, cx| {
-    //             project.create_local_buffer("let a = 10 + 10;", None, false, cx)
-    //         });
-
-    //         workspace
-    //             .update_in(cx, |workspace, window, cx| {
-    //                 let editor = cx.new(|cx| {
-    //                     let mut editor =
-    //                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
-
-    //                     editor.change_selections(Default::default(), window, cx, |selections| {
-    //                         selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
-    //                     });
-
-    //                     editor
-    //                 });
-    //                 workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
-    //             })
-    //             .unwrap();
-
-    //         thread_view.update_in(cx, |view, window, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 Some(0)
-    //             );
-    //             view.insert_selections(window, cx);
-    //         });
-
-    //         user_message_editor.read_with(cx, |editor, cx| {
-    //             let text = editor.editor().read(cx).text(cx);
-    //             let expected_text = String::from("Original message to edit with selection ");
-
-    //             assert_eq!(text, expected_text);
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_insert_selections(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let connection = StubAgentConnection::new();
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-    //             acp::ContentChunk::new("Response".into()),
-    //         )]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Can you review this snippet ", window, cx)
-    //         });
-
-    //         // Create a simple buffer with some text so we can create a selection
-    //         // that will then be added to the message being edited.
-    //         let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
-    //             (thread_view.workspace.clone(), thread_view.project.clone())
-    //         });
-    //         let buffer = project.update(cx, |project, cx| {
-    //             project.create_local_buffer("let a = 10 + 10;", None, false, cx)
-    //         });
-
-    //         workspace
-    //             .update_in(cx, |workspace, window, cx| {
-    //                 let editor = cx.new(|cx| {
-    //                     let mut editor =
-    //                         Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
-
-    //                     editor.change_selections(Default::default(), window, cx, |selections| {
-    //                         selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
-    //                     });
-
-    //                     editor
-    //                 });
-    //                 workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
-    //             })
-    //             .unwrap();
-
-    //         thread_view.update_in(cx, |view, window, cx| {
-    //             assert_eq!(
-    //                 view.as_active_thread()
-    //                     .and_then(|active| active.read(cx).editing_message),
-    //                 None
-    //             );
-    //             view.insert_selections(window, cx);
-    //         });
-
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let text = thread_view.message_editor.read(cx).text(cx);
-    //             let expected_txt = String::from("Can you review this snippet selection ");
-
-    //             assert_eq!(text, expected_txt);
-    //         })
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("terminal-1");
-    //         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
-    //             .kind(acp::ToolKind::Edit);
-
-    //         let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-    //             .build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options,
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-
-    //         // Disable notifications to avoid popup windows
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Run cargo build", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify the tool call is in WaitingForConfirmation state with the expected options
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-
-    //             let tool_call = thread.entries().iter().find_map(|entry| {
-    //                 if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
-    //                     Some(call)
-    //                 } else {
-    //                     None
-    //                 }
-    //             });
-
-    //             assert!(tool_call.is_some(), "Expected a tool call entry");
-    //             let tool_call = tool_call.unwrap();
-
-    //             // Verify it's waiting for confirmation
-    //             assert!(
-    //                 matches!(
-    //                     tool_call.status,
-    //                     acp_thread::ToolCallStatus::WaitingForConfirmation { .. }
-    //                 ),
-    //                 "Expected WaitingForConfirmation status, got {:?}",
-    //                 tool_call.status
-    //             );
-
-    //             // Verify the options count (granularity options only, no separate Deny option)
-    //             if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-    //                 &tool_call.status
-    //             {
-    //                 let PermissionOptions::Dropdown(choices) = options else {
-    //                     panic!("Expected dropdown permission options");
-    //                 };
-
-    //                 assert_eq!(
-    //                     choices.len(),
-    //                     3,
-    //                     "Expected 3 permission options (granularity only)"
-    //                 );
-
-    //                 // Verify specific button labels (now using neutral names)
-    //                 let labels: Vec<&str> = choices
-    //                     .iter()
-    //                     .map(|choice| choice.allow.name.as_ref())
-    //                     .collect();
-    //                 assert!(
-    //                     labels.contains(&"Always for terminal"),
-    //                     "Missing 'Always for terminal' option"
-    //                 );
-    //                 assert!(
-    //                     labels.contains(&"Always for `cargo` commands"),
-    //                     "Missing pattern option"
-    //                 );
-    //                 assert!(
-    //                     labels.contains(&"Only this time"),
-    //                     "Missing 'Only this time' option"
-    //                 );
-    //             }
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_tool_permission_buttons_edit_file_with_path_pattern(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("edit-file-1");
-    //         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
-    //             .kind(acp::ToolKind::Edit);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options,
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-
-    //         // Disable notifications
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Edit the main file", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify the options
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-
-    //             let tool_call = thread.entries().iter().find_map(|entry| {
-    //                 if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
-    //                     Some(call)
-    //                 } else {
-    //                     None
-    //                 }
-    //             });
-
-    //             assert!(tool_call.is_some(), "Expected a tool call entry");
-    //             let tool_call = tool_call.unwrap();
-
-    //             if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-    //                 &tool_call.status
-    //             {
-    //                 let PermissionOptions::Dropdown(choices) = options else {
-    //                     panic!("Expected dropdown permission options");
-    //                 };
-
-    //                 let labels: Vec<&str> = choices
-    //                     .iter()
-    //                     .map(|choice| choice.allow.name.as_ref())
-    //                     .collect();
-    //                 assert!(
-    //                     labels.contains(&"Always for edit file"),
-    //                     "Missing 'Always for edit file' option"
-    //                 );
-    //                 assert!(
-    //                     labels.contains(&"Always for `src/`"),
-    //                     "Missing path pattern option"
-    //                 );
-    //             } else {
-    //                 panic!("Expected WaitingForConfirmation status");
-    //             }
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_tool_permission_buttons_fetch_with_domain_pattern(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("fetch-1");
-    //         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
-    //             .kind(acp::ToolKind::Fetch);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options,
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-
-    //         // Disable notifications
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Fetch the docs", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify the options
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-
-    //             let tool_call = thread.entries().iter().find_map(|entry| {
-    //                 if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
-    //                     Some(call)
-    //                 } else {
-    //                     None
-    //                 }
-    //             });
-
-    //             assert!(tool_call.is_some(), "Expected a tool call entry");
-    //             let tool_call = tool_call.unwrap();
-
-    //             if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-    //                 &tool_call.status
-    //             {
-    //                 let PermissionOptions::Dropdown(choices) = options else {
-    //                     panic!("Expected dropdown permission options");
-    //                 };
-
-    //                 let labels: Vec<&str> = choices
-    //                     .iter()
-    //                     .map(|choice| choice.allow.name.as_ref())
-    //                     .collect();
-    //                 assert!(
-    //                     labels.contains(&"Always for fetch"),
-    //                     "Missing 'Always for fetch' option"
-    //                 );
-    //                 assert!(
-    //                     labels.contains(&"Always for `docs.rs`"),
-    //                     "Missing domain pattern option"
-    //                 );
-    //             } else {
-    //                 panic!("Expected WaitingForConfirmation status");
-    //             }
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_tool_permission_buttons_without_pattern(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("terminal-no-pattern-1");
-    //         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
-    //             .kind(acp::ToolKind::Edit);
-
-    //         // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
-    //         let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
-    //             .build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options,
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-
-    //         // Disable notifications
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Run the deploy script", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify only 2 options (no pattern button when command doesn't match pattern)
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-
-    //             let tool_call = thread.entries().iter().find_map(|entry| {
-    //                 if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
-    //                     Some(call)
-    //                 } else {
-    //                     None
-    //                 }
-    //             });
-
-    //             assert!(tool_call.is_some(), "Expected a tool call entry");
-    //             let tool_call = tool_call.unwrap();
-
-    //             if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
-    //                 &tool_call.status
-    //             {
-    //                 let PermissionOptions::Dropdown(choices) = options else {
-    //                     panic!("Expected dropdown permission options");
-    //                 };
-
-    //                 assert_eq!(
-    //                     choices.len(),
-    //                     2,
-    //                     "Expected 2 permission options (no pattern option)"
-    //                 );
-
-    //                 let labels: Vec<&str> = choices
-    //                     .iter()
-    //                     .map(|choice| choice.allow.name.as_ref())
-    //                     .collect();
-    //                 assert!(
-    //                     labels.contains(&"Always for terminal"),
-    //                     "Missing 'Always for terminal' option"
-    //                 );
-    //                 assert!(
-    //                     labels.contains(&"Only this time"),
-    //                     "Missing 'Only this time' option"
-    //                 );
-    //                 // Should NOT contain a pattern option
-    //                 assert!(
-    //                     !labels.iter().any(|l| l.contains("commands")),
-    //                     "Should not have pattern option"
-    //                 );
-    //             } else {
-    //                 panic!("Expected WaitingForConfirmation status");
-    //             }
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_authorize_tool_call_action_triggers_authorization(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("action-test-1");
-    //         let tool_call =
-    //             acp::ToolCall::new(tool_call_id.clone(), "Run `cargo test`").kind(acp::ToolKind::Edit);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("terminal", "cargo test").build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options,
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Run tests", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify tool call is waiting for confirmation
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-    //             let tool_call = thread.first_tool_awaiting_confirmation();
-    //             assert!(
-    //                 tool_call.is_some(),
-    //                 "Expected a tool call waiting for confirmation"
-    //             );
-    //         });
-
-    //         // Dispatch the AuthorizeToolCall action (simulating dropdown menu selection)
-    //         thread_view.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(
-    //                 crate::AuthorizeToolCall {
-    //                     tool_call_id: "action-test-1".to_string(),
-    //                     option_id: "allow".to_string(),
-    //                     option_kind: "AllowOnce".to_string(),
-    //                 }
-    //                 .boxed_clone(),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify tool call is no longer waiting for confirmation (was authorized)
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view.as_active_thread().expect("Thread should exist").read(cx).thread.clone();
-    //             let thread = thread.read(cx);
-    //             let tool_call = thread.first_tool_awaiting_confirmation();
-    //             assert!(
-    //                 tool_call.is_none(),
-    //                 "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
-    //             );
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_authorize_tool_call_action_with_pattern_option(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("pattern-action-test-1");
-    //         let tool_call =
-    //             acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("terminal", "npm install").build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options.clone(),
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Install dependencies", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Find the pattern option ID
-    //         let pattern_option = match &permission_options {
-    //             PermissionOptions::Dropdown(choices) => choices
-    //                 .iter()
-    //                 .find(|choice| {
-    //                     choice
-    //                         .allow
-    //                         .option_id
-    //                         .0
-    //                         .starts_with("always_allow_pattern:")
-    //                 })
-    //                 .map(|choice| &choice.allow)
-    //                 .expect("Should have a pattern option for npm command"),
-    //             _ => panic!("Expected dropdown permission options"),
-    //         };
-
-    //         // Dispatch action with the pattern option (simulating "Always allow `npm` commands")
-    //         thread_view.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(
-    //                 crate::AuthorizeToolCall {
-    //                     tool_call_id: "pattern-action-test-1".to_string(),
-    //                     option_id: pattern_option.option_id.0.to_string(),
-    //                     option_kind: "AllowAlways".to_string(),
-    //                 }
-    //                 .boxed_clone(),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify tool call was authorized
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-    //             let tool_call = thread.first_tool_awaiting_confirmation();
-    //             assert!(
-    //                 tool_call.is_none(),
-    //                 "Tool call should be authorized after selecting pattern option"
-    //             );
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_granularity_selection_updates_state(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("granularity-test-1");
-    //         let tool_call =
-    //             acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build`").kind(acp::ToolKind::Edit);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("terminal", "cargo build").build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options.clone(),
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Build the project", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify default granularity is the last option (index 2 = "Only this time")
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let state = thread_view.as_active_thread().unwrap();
-    //             let selected = state
-    //                 .read(cx)
-    //                 .selected_permission_granularity
-    //                 .get(&tool_call_id);
-    //             assert!(
-    //                 selected.is_none(),
-    //                 "Should have no selection initially (defaults to last)"
-    //             );
-    //         });
-
-    //         // Select the first option (index 0 = "Always for terminal")
-    //         thread_view.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(
-    //                 crate::SelectPermissionGranularity {
-    //                     tool_call_id: "granularity-test-1".to_string(),
-    //                     index: 0,
-    //                 }
-    //                 .boxed_clone(),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify the selection was updated
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let state = thread_view.as_active_thread().unwrap();
-    //             let selected = state
-    //                 .read(cx)
-    //                 .selected_permission_granularity
-    //                 .get(&tool_call_id);
-    //             assert_eq!(selected, Some(&0), "Should have selected index 0");
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("allow-granularity-test-1");
-    //         let tool_call =
-    //             acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("terminal", "npm install").build_permission_options();
-
-    //         // Verify we have the expected options
-    //         let PermissionOptions::Dropdown(choices) = &permission_options else {
-    //             panic!("Expected dropdown permission options");
-    //         };
-
-    //         assert_eq!(choices.len(), 3);
-    //         assert!(
-    //             choices[0]
-    //                 .allow
-    //                 .option_id
-    //                 .0
-    //                 .contains("always_allow:terminal")
-    //         );
-    //         assert!(
-    //             choices[1]
-    //                 .allow
-    //                 .option_id
-    //                 .0
-    //                 .contains("always_allow_pattern:terminal")
-    //         );
-    //         assert_eq!(choices[2].allow.option_id.0.as_ref(), "allow");
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options.clone(),
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Install dependencies", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Select the pattern option (index 1 = "Always for `npm` commands")
-    //         thread_view.update_in(cx, |_, window, cx| {
-    //             window.dispatch_action(
-    //                 crate::SelectPermissionGranularity {
-    //                     tool_call_id: "allow-granularity-test-1".to_string(),
-    //                     index: 1,
-    //                 }
-    //                 .boxed_clone(),
-    //                 cx,
-    //             );
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Simulate clicking the Allow button by dispatching AllowOnce action
-    //         // which should use the selected granularity
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.allow_once(&AllowOnce, window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify tool call was authorized
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-    //             let tool_call = thread.first_tool_awaiting_confirmation();
-    //             assert!(
-    //                 tool_call.is_none(),
-    //                 "Tool call should be authorized after Allow with pattern granularity"
-    //             );
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_deny_button_uses_selected_granularity(cx: &mut TestAppContext) {
-    //         init_test(cx);
-
-    //         let tool_call_id = acp::ToolCallId::new("deny-granularity-test-1");
-    //         let tool_call =
-    //             acp::ToolCall::new(tool_call_id.clone(), "Run `git push`").kind(acp::ToolKind::Edit);
-
-    //         let permission_options =
-    //             ToolPermissionContext::new("terminal", "git push").build_permission_options();
-
-    //         let connection =
-    //             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
-    //                 tool_call_id.clone(),
-    //                 permission_options.clone(),
-    //             )]));
-
-    //         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    //         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
-    //         add_to_workspace(thread_view.clone(), cx);
-
-    //         cx.update(|_window, cx| {
-    //             AgentSettings::override_global(
-    //                 AgentSettings {
-    //                     notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-    //                     ..AgentSettings::get_global(cx).clone()
-    //                 },
-    //                 cx,
-    //             );
-    //         });
-
-    //         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-    //         message_editor.update_in(cx, |editor, window, cx| {
-    //             editor.set_text("Push changes", window, cx);
-    //         });
-
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.send(window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Use default granularity (last option = "Only this time")
-    //         // Simulate clicking the Deny button
-    //         thread_view.update_in(cx, |thread_view, window, cx| {
-    //             thread_view.reject_once(&RejectOnce, window, cx);
-    //         });
-
-    //         cx.run_until_parked();
-
-    //         // Verify tool call was rejected (no longer waiting for confirmation)
-    //         thread_view.read_with(cx, |thread_view, cx| {
-    //             let thread = thread_view
-    //                 .as_active_thread()
-    //                 .expect("Thread should exist")
-    //                 .read(cx)
-    //                 .thread
-    //                 .clone();
-    //             let thread = thread.read(cx);
-    //             let tool_call = thread.first_tool_awaiting_confirmation();
-    //             assert!(
-    //                 tool_call.is_none(),
-    //                 "Tool call should be rejected after Deny"
-    //             );
-    //         });
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_option_id_transformation_for_allow() {
-    //         let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-    //             .build_permission_options();
-
-    //         let PermissionOptions::Dropdown(choices) = permission_options else {
-    //             panic!("Expected dropdown permission options");
-    //         };
-
-    //         let allow_ids: Vec<String> = choices
-    //             .iter()
-    //             .map(|choice| choice.allow.option_id.0.to_string())
-    //             .collect();
-
-    //         assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
-    //         assert!(allow_ids.contains(&"allow".to_string()));
-    //         assert!(
-    //             allow_ids
-    //                 .iter()
-    //                 .any(|id| id.starts_with("always_allow_pattern:terminal:")),
-    //             "Missing allow pattern option"
-    //         );
-    //     }
-
-    //     #[gpui::test]
-    //     async fn test_option_id_transformation_for_deny() {
-    //         let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-    //             .build_permission_options();
-
-    //         let PermissionOptions::Dropdown(choices) = permission_options else {
-    //             panic!("Expected dropdown permission options");
-    //         };
-
-    //         let deny_ids: Vec<String> = choices
-    //             .iter()
-    //             .map(|choice| choice.deny.option_id.0.to_string())
-    //             .collect();
-
-    //         assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
-    //         assert!(deny_ids.contains(&"deny".to_string()));
-    //         assert!(
-    //             deny_ids
-    //                 .iter()
-    //                 .any(|id| id.starts_with("always_deny_pattern:terminal:")),
-    //             "Missing deny pattern option"
-    //         );
-    //     }
+    fn active_thread(
+        thread_view: &Entity<AcpServerView>,
+        cx: &TestAppContext,
+    ) -> Entity<AcpThreadView> {
+        cx.read(|cx| thread_view.read(cx).as_connected().unwrap().current.clone())
+    }
+
+    fn message_editor(
+        thread_view: &Entity<AcpServerView>,
+        cx: &TestAppContext,
+    ) -> Entity<MessageEditor> {
+        let thread = active_thread(thread_view, cx);
+        cx.read(|cx| thread.read(cx).message_editor.clone())
+    }
+
+    #[gpui::test]
+    async fn test_rewind_views(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "test1.txt": "old content 1",
+                "test2.txt": "old content 2"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpServerView::new(
+                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store.clone()),
+                    None,
+                    history,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let thread = thread_view
+            .read_with(cx, |view, cx| {
+                view.as_active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        // First user message
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tool1", "Edit file 1")
+                .kind(acp::ToolKind::Edit)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Diff(
+                    acp::Diff::new("/project/test1.txt", "new content 1").old_text("old content 1"),
+                )]),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Give me a diff", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.entries().len(), 2);
+        });
+
+        thread_view.read_with(cx, |view, cx| {
+            let entry_view_state = view
+                .as_active_thread()
+                .map(|active| active.read(cx).entry_view_state.clone())
+                .unwrap();
+            entry_view_state.read_with(cx, |entry_view_state, _| {
+                assert!(
+                    entry_view_state
+                        .entry(0)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(1).unwrap().has_content());
+            });
+        });
+
+        // Second user message
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tool2", "Edit file 2")
+                .kind(acp::ToolKind::Edit)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Diff(
+                    acp::Diff::new("/project/test2.txt", "new content 2").old_text("old content 2"),
+                )]),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Another one", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let second_user_message_id = thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 4);
+            let AgentThreadEntry::UserMessage(user_message) = &thread.entries()[2] else {
+                panic!();
+            };
+            user_message.id.clone().unwrap()
+        });
+
+        thread_view.read_with(cx, |view, cx| {
+            let entry_view_state = view
+                .as_active_thread()
+                .unwrap()
+                .read(cx)
+                .entry_view_state
+                .clone();
+            entry_view_state.read_with(cx, |entry_view_state, _| {
+                assert!(
+                    entry_view_state
+                        .entry(0)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(1).unwrap().has_content());
+                assert!(
+                    entry_view_state
+                        .entry(2)
+                        .unwrap()
+                        .message_editor()
+                        .is_some()
+                );
+                assert!(entry_view_state.entry(3).unwrap().has_content());
+            });
+        });
+
+        // Rewind to first message
+        thread
+            .update(cx, |thread, cx| thread.rewind(second_user_message_id, cx))
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.entries().len(), 2);
+        });
+
+        thread_view.read_with(cx, |view, cx| {
+            let active = view.as_active_thread().unwrap();
+            active
+                .read(cx)
+                .entry_view_state
+                .read_with(cx, |entry_view_state, _| {
+                    assert!(
+                        entry_view_state
+                            .entry(0)
+                            .unwrap()
+                            .message_editor()
+                            .is_some()
+                    );
+                    assert!(entry_view_state.entry(1).unwrap().has_content());
+
+                    // Old views should be dropped
+                    assert!(entry_view_state.entry(2).is_none());
+                    assert!(entry_view_state.entry(3).is_none());
+                });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_most_recent_user_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        // Each user prompt will result in a user message entry plus an agent message entry.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response 1".into()),
+        )]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, cx| {
+                view.as_active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Prompt 1", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response 2".into()),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Prompt 2", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Move somewhere else first so we're not trivially already on the last user prompt.
+        active_thread(&thread_view, cx).update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+        });
+        cx.run_until_parked();
+
+        active_thread(&thread_view, cx).update(cx, |view, cx| {
+            view.scroll_to_most_recent_user_prompt(cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            // Entries layout is: [User1, Assistant1, User2, Assistant2]
+            assert_eq!(scroll_top.item_ix, 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_most_recent_user_prompt_falls_back_to_bottom_without_user_messages(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // With no entries, scrolling should be a no-op and must not panic.
+        active_thread(&thread_view, cx).update(cx, |view, cx| {
+            view.scroll_to_most_recent_user_prompt(cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(scroll_top.item_ix, 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                None
+            );
+
+            view.as_active_thread()
+                .map(|active| &active.read(cx).entry_view_state)
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+
+        // Focus
+        cx.focus(&user_message_editor);
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+        });
+
+        // Edit
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        // Cancel
+        user_message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(editor::actions::Cancel), cx);
+        });
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                None
+            );
+        });
+
+        user_message_editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Original message to edit");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_doesnt_send_if_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("", window, cx);
+        });
+
+        let thread = cx.read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .clone()
+        });
+        let entries_before = cx.read(|cx| thread.read(cx).entries().len());
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let entries_after = cx.read(|cx| thread.read(cx).entries().len());
+        assert_eq!(
+            entries_before, entries_after,
+            "No message should be sent when editor is empty"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_regenerate(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                None
+            );
+            assert_eq!(
+                view.as_active_thread()
+                    .unwrap()
+                    .read(cx)
+                    .thread
+                    .read(cx)
+                    .entries()
+                    .len(),
+                2
+            );
+
+            view.as_active_thread()
+                .map(|active| &active.read(cx).entry_view_state)
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+
+        // Focus
+        cx.focus(&user_message_editor);
+
+        // Edit
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        // Send
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("New Response".into()),
+        )]);
+
+        user_message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(Chat), cx);
+        });
+
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                None
+            );
+
+            let entries = view
+                .as_active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .entries();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(
+                entries[0].to_markdown(cx),
+                "## User\n\nEdited message content\n\n"
+            );
+            assert_eq!(
+                entries[1].to_markdown(cx),
+                "## Assistant\n\nNew Response\n\n"
+            );
+
+            let entry_view_state = view
+                .as_active_thread()
+                .map(|active| &active.read(cx).entry_view_state)
+                .unwrap();
+            let new_editor = entry_view_state.read_with(cx, |state, _cx| {
+                assert!(!state.entry(1).unwrap().has_content());
+                state.entry(0).unwrap().message_editor().unwrap().clone()
+            });
+
+            assert_eq!(new_editor.read(cx).text(cx), "Edited message content");
+        })
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_while_generating(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
+            let thread = view.as_active_thread().unwrap().read(cx).thread.read(cx);
+            assert_eq!(thread.entries().len(), 1);
+
+            let editor = view
+                .as_active_thread()
+                .map(|active| &active.read(cx).entry_view_state)
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone();
+
+            (editor, thread.session_id().clone())
+        });
+
+        // Focus
+        cx.focus(&user_message_editor);
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+        });
+
+        // Edit
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+        });
+
+        // Finish streaming response
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("Response".into())),
+                cx,
+            );
+            connection.end_turn(session_id, acp::StopReason::EndTurn);
+        });
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Should still be editing
+        cx.update(|window, cx| {
+            assert!(user_message_editor.focus_handle(cx).is_focused(window));
+            assert_eq!(
+                thread_view
+                    .read(cx)
+                    .as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+            assert_eq!(
+                user_message_editor.read(cx).text(cx),
+                "Edited message content"
+            );
+        });
+    }
+
+    struct GeneratingThreadSetup {
+        thread_view: Entity<AcpServerView>,
+        thread: Entity<AcpThread>,
+        message_editor: Entity<MessageEditor>,
+    }
+
+    async fn setup_generating_thread(
+        cx: &mut TestAppContext,
+    ) -> (GeneratingThreadSetup, &mut VisualTestContext) {
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
+            let thread = view
+                .as_active_thread()
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .thread
+                .clone();
+            (thread.clone(), thread.read(cx).session_id().clone())
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Response chunk".into(),
+                )),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+
+        (
+            GeneratingThreadSetup {
+                thread_view,
+                thread,
+                message_editor,
+            },
+            cx,
+        )
+    }
+
+    #[gpui::test]
+    async fn test_escape_cancels_generation_from_conversation_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (setup, cx) = setup_generating_thread(cx).await;
+
+        let focus_handle = setup
+            .thread_view
+            .read_with(cx, |view, _cx| view.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+        });
+
+        setup.thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        setup.thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_escape_cancels_generation_from_editor_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (setup, cx) = setup_generating_thread(cx).await;
+
+        let editor_focus_handle = setup
+            .message_editor
+            .read_with(cx, |editor, cx| editor.focus_handle(cx));
+        cx.update(|window, cx| {
+            window.focus(&editor_focus_handle, cx);
+        });
+
+        setup.message_editor.update_in(cx, |_, window, cx| {
+            window.dispatch_action(editor::actions::Cancel.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        setup.thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_escape_when_idle_is_noop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let thread = thread_view.read_with(cx, |view, cx| {
+            view.as_active_thread().unwrap().read(cx).thread.clone()
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+        });
+
+        let focus_handle = thread_view.read_with(cx, |view, _cx| view.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+        });
+
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.status(), ThreadStatus::Idle);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_interrupt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Message 1", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
+            let thread = view.as_active_thread().unwrap().read(cx).thread.clone();
+
+            (thread.clone(), thread.read(cx).session_id().clone())
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Message 1 resp".into(),
+                )),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc::indoc! {"
+                        ## User
+
+                        Message 1
+
+                        ## Assistant
+
+                        Message 1 resp
+
+                    "}
+            )
+        });
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Message 2", window, cx);
+        });
+        active_thread(&thread_view, cx)
+            .update_in(cx, |view, window, cx| view.interrupt_and_send(window, cx));
+
+        cx.update(|_, cx| {
+            // Simulate a response sent after beginning to cancel
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("onse".into())),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Last Message 1 response should appear before Message 2
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc::indoc! {"
+                        ## User
+
+                        Message 1
+
+                        ## Assistant
+
+                        Message 1 response
+
+                        ## User
+
+                        Message 2
+
+                    "}
+            )
+        });
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Message 2 response".into(),
+                )),
+                cx,
+            );
+            connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc::indoc! {"
+                        ## User
+
+                        Message 1
+
+                        ## Assistant
+
+                        Message 1 response
+
+                        ## User
+
+                        Message 2
+
+                        ## Assistant
+
+                        Message 2 response
+
+                    "}
+            )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_insert_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx)
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
+            thread_view
+                .as_active_thread()
+                .map(|active| &active.read(cx).entry_view_state)
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .entry(0)
+                .expect("Should have at least one entry")
+                .message_editor()
+                .expect("Should have message editor")
+                .clone()
+        });
+
+        cx.focus(&user_message_editor);
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+        });
+
+        // Ensure to edit the focused message before proceeding otherwise, since
+        // its content is not different from what was sent, focus will be lost.
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit with ", window, cx)
+        });
+
+        // Create a simple buffer with some text so we can create a selection
+        // that will then be added to the message being edited.
+        let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
+            (thread_view.workspace.clone(), thread_view.project.clone())
+        });
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("let a = 10 + 10;", None, false, cx)
+        });
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
+                    });
+
+                    editor
+                });
+                workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
+            })
+            .unwrap();
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                Some(0)
+            );
+            view.insert_selections(window, cx);
+        });
+
+        user_message_editor.read_with(cx, |editor, cx| {
+            let text = editor.editor().read(cx).text(cx);
+            let expected_text = String::from("Original message to edit with selection ");
+
+            assert_eq!(text, expected_text);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_insert_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Can you review this snippet ", window, cx)
+        });
+
+        // Create a simple buffer with some text so we can create a selection
+        // that will then be added to the message being edited.
+        let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
+            (thread_view.workspace.clone(), thread_view.project.clone())
+        });
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("let a = 10 + 10;", None, false, cx)
+        });
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([MultiBufferOffset(8)..MultiBufferOffset(15)]);
+                    });
+
+                    editor
+                });
+                workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
+            })
+            .unwrap();
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert_eq!(
+                view.as_active_thread()
+                    .and_then(|active| active.read(cx).editing_message),
+                None
+            );
+            view.insert_selections(window, cx);
+        });
+
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+            let expected_txt = String::from("Can you review this snippet selection ");
+
+            assert_eq!(text, expected_txt);
+        })
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("terminal-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
+            .kind(acp::ToolKind::Edit);
+
+        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
+            .build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications to avoid popup windows
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run cargo build", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify the tool call is in WaitingForConfirmation state with the expected options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            // Verify it's waiting for confirmation
+            assert!(
+                matches!(
+                    tool_call.status,
+                    acp_thread::ToolCallStatus::WaitingForConfirmation { .. }
+                ),
+                "Expected WaitingForConfirmation status, got {:?}",
+                tool_call.status
+            );
+
+            // Verify the options count (granularity options only, no separate Deny option)
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let PermissionOptions::Dropdown(choices) = options else {
+                    panic!("Expected dropdown permission options");
+                };
+
+                assert_eq!(
+                    choices.len(),
+                    3,
+                    "Expected 3 permission options (granularity only)"
+                );
+
+                // Verify specific button labels (now using neutral names)
+                let labels: Vec<&str> = choices
+                    .iter()
+                    .map(|choice| choice.allow.name.as_ref())
+                    .collect();
+                assert!(
+                    labels.contains(&"Always for terminal"),
+                    "Missing 'Always for terminal' option"
+                );
+                assert!(
+                    labels.contains(&"Always for `cargo` commands"),
+                    "Missing pattern option"
+                );
+                assert!(
+                    labels.contains(&"Only this time"),
+                    "Missing 'Only this time' option"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_edit_file_with_path_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("edit-file-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
+            .kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edit the main file", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify the options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let PermissionOptions::Dropdown(choices) = options else {
+                    panic!("Expected dropdown permission options");
+                };
+
+                let labels: Vec<&str> = choices
+                    .iter()
+                    .map(|choice| choice.allow.name.as_ref())
+                    .collect();
+                assert!(
+                    labels.contains(&"Always for edit file"),
+                    "Missing 'Always for edit file' option"
+                );
+                assert!(
+                    labels.contains(&"Always for `src/`"),
+                    "Missing path pattern option"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_fetch_with_domain_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("fetch-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Fetch `https://docs.rs/gpui`")
+            .kind(acp::ToolKind::Fetch);
+
+        let permission_options =
+            ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Fetch the docs", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify the options
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let PermissionOptions::Dropdown(choices) = options else {
+                    panic!("Expected dropdown permission options");
+                };
+
+                let labels: Vec<&str> = choices
+                    .iter()
+                    .map(|choice| choice.allow.name.as_ref())
+                    .collect();
+                assert!(
+                    labels.contains(&"Always for fetch"),
+                    "Missing 'Always for fetch' option"
+                );
+                assert!(
+                    labels.contains(&"Always for `docs.rs`"),
+                    "Missing domain pattern option"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_permission_buttons_without_pattern(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("terminal-no-pattern-1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `./deploy.sh --production`")
+            .kind(acp::ToolKind::Edit);
+
+        // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
+        let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+            .build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // Disable notifications
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run the deploy script", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify only 2 options (no pattern button when command doesn't match pattern)
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+
+            let tool_call = thread.entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(call) = entry {
+                    Some(call)
+                } else {
+                    None
+                }
+            });
+
+            assert!(tool_call.is_some(), "Expected a tool call entry");
+            let tool_call = tool_call.unwrap();
+
+            if let acp_thread::ToolCallStatus::WaitingForConfirmation { options, .. } =
+                &tool_call.status
+            {
+                let PermissionOptions::Dropdown(choices) = options else {
+                    panic!("Expected dropdown permission options");
+                };
+
+                assert_eq!(
+                    choices.len(),
+                    2,
+                    "Expected 2 permission options (no pattern option)"
+                );
+
+                let labels: Vec<&str> = choices
+                    .iter()
+                    .map(|choice| choice.allow.name.as_ref())
+                    .collect();
+                assert!(
+                    labels.contains(&"Always for terminal"),
+                    "Missing 'Always for terminal' option"
+                );
+                assert!(
+                    labels.contains(&"Only this time"),
+                    "Missing 'Only this time' option"
+                );
+                // Should NOT contain a pattern option
+                assert!(
+                    !labels.iter().any(|l| l.contains("commands")),
+                    "Should not have pattern option"
+                );
+            } else {
+                panic!("Expected WaitingForConfirmation status");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_authorize_tool_call_action_triggers_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("action-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `cargo test`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "cargo test").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Run tests", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify tool call is waiting for confirmation
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_some(),
+                "Expected a tool call waiting for confirmation"
+            );
+        });
+
+        // Dispatch the AuthorizeToolCall action (simulating dropdown menu selection)
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    tool_call_id: "action-test-1".to_string(),
+                    option_id: "allow".to_string(),
+                    option_kind: "AllowOnce".to_string(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call is no longer waiting for confirmation (was authorized)
+        thread_view.read_with(cx, |thread_view, cx| {
+                let thread = thread_view.as_active_thread().expect("Thread should exist").read(cx).thread.clone();
+                let thread = thread.read(cx);
+                let tool_call = thread.first_tool_awaiting_confirmation();
+                assert!(
+                    tool_call.is_none(),
+                    "Tool call should no longer be waiting for confirmation after AuthorizeToolCall action"
+                );
+            });
+    }
+
+    #[gpui::test]
+    async fn test_authorize_tool_call_action_with_pattern_option(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("pattern-action-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Install dependencies", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Find the pattern option ID
+        let pattern_option = match &permission_options {
+            PermissionOptions::Dropdown(choices) => choices
+                .iter()
+                .find(|choice| {
+                    choice
+                        .allow
+                        .option_id
+                        .0
+                        .starts_with("always_allow_pattern:")
+                })
+                .map(|choice| &choice.allow)
+                .expect("Should have a pattern option for npm command"),
+            _ => panic!("Expected dropdown permission options"),
+        };
+
+        // Dispatch action with the pattern option (simulating "Always allow `npm` commands")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::AuthorizeToolCall {
+                    tool_call_id: "pattern-action-test-1".to_string(),
+                    option_id: pattern_option.option_id.0.to_string(),
+                    option_kind: "AllowAlways".to_string(),
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was authorized
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be authorized after selecting pattern option"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_granularity_selection_updates_state(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "cargo build").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Build the project", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Verify default granularity is the last option (index 2 = "Only this time")
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.as_active_thread().unwrap();
+            let selected = state
+                .read(cx)
+                .selected_permission_granularity
+                .get(&tool_call_id);
+            assert!(
+                selected.is_none(),
+                "Should have no selection initially (defaults to last)"
+            );
+        });
+
+        // Select the first option (index 0 = "Always for terminal")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::SelectPermissionGranularity {
+                    tool_call_id: "granularity-test-1".to_string(),
+                    index: 0,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify the selection was updated
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.as_active_thread().unwrap();
+            let selected = state
+                .read(cx)
+                .selected_permission_granularity
+                .get(&tool_call_id);
+            assert_eq!(selected, Some(&0), "Should have selected index 0");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_allow_button_uses_selected_granularity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("allow-granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+
+        // Verify we have the expected options
+        let PermissionOptions::Dropdown(choices) = &permission_options else {
+            panic!("Expected dropdown permission options");
+        };
+
+        assert_eq!(choices.len(), 3);
+        assert!(
+            choices[0]
+                .allow
+                .option_id
+                .0
+                .contains("always_allow:terminal")
+        );
+        assert!(
+            choices[1]
+                .allow
+                .option_id
+                .0
+                .contains("always_allow_pattern:terminal")
+        );
+        assert_eq!(choices[2].allow.option_id.0.as_ref(), "allow");
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Install dependencies", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Select the pattern option (index 1 = "Always for `npm` commands")
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::SelectPermissionGranularity {
+                    tool_call_id: "allow-granularity-test-1".to_string(),
+                    index: 1,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Simulate clicking the Allow button by dispatching AllowOnce action
+        // which should use the selected granularity
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| {
+            view.allow_once(&AllowOnce, window, cx)
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was authorized
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be authorized after Allow with pattern granularity"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deny_button_uses_selected_granularity(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("deny-granularity-test-1");
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `git push`").kind(acp::ToolKind::Edit);
+
+        let permission_options =
+            ToolPermissionContext::new("terminal", "git push").build_permission_options();
+
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options.clone(),
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Push changes", window, cx);
+        });
+
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        // Use default granularity (last option = "Only this time")
+        // Simulate clicking the Deny button
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| {
+            view.reject_once(&RejectOnce, window, cx)
+        });
+
+        cx.run_until_parked();
+
+        // Verify tool call was rejected (no longer waiting for confirmation)
+        thread_view.read_with(cx, |thread_view, cx| {
+            let thread = thread_view
+                .as_active_thread()
+                .expect("Thread should exist")
+                .read(cx)
+                .thread
+                .clone();
+            let thread = thread.read(cx);
+            let tool_call = thread.first_tool_awaiting_confirmation();
+            assert!(
+                tool_call.is_none(),
+                "Tool call should be rejected after Deny"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_option_id_transformation_for_allow() {
+        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
+            .build_permission_options();
+
+        let PermissionOptions::Dropdown(choices) = permission_options else {
+            panic!("Expected dropdown permission options");
+        };
+
+        let allow_ids: Vec<String> = choices
+            .iter()
+            .map(|choice| choice.allow.option_id.0.to_string())
+            .collect();
+
+        assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
+        assert!(allow_ids.contains(&"allow".to_string()));
+        assert!(
+            allow_ids
+                .iter()
+                .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+            "Missing allow pattern option"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_option_id_transformation_for_deny() {
+        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
+            .build_permission_options();
+
+        let PermissionOptions::Dropdown(choices) = permission_options else {
+            panic!("Expected dropdown permission options");
+        };
+
+        let deny_ids: Vec<String> = choices
+            .iter()
+            .map(|choice| choice.deny.option_id.0.to_string())
+            .collect();
+
+        assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
+        assert!(deny_ids.contains(&"deny".to_string()));
+        assert!(
+            deny_ids
+                .iter()
+                .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+            "Missing deny pattern option"
+        );
+    }
 }
