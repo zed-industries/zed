@@ -13266,6 +13266,6 @@ mod tests {
 
         let k = line_height / result;
         assert!(k - k.round() < 0.0000001); // approximately integer
-        assert!((k.round() as u32).is_multiple_of(2)); 
+        assert!((k.round() as u32).is_multiple_of(2));
     }
 }
