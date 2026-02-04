@@ -1095,7 +1095,7 @@
   // Options:
   // - "off": Do not request semantic tokens from language servers.
   // - "combined": Use LSP semantic tokens together with tree-sitter highlighting as base.
-  // - "full": Use LSP semantic tokens exclusively to highlight the text.
+  // - "full": Use LSP semantic tokens exclusively to highlight the text, tree-sitter syntax highlighting is off.
   //
   // May require language server restart to properly apply.
   "semantic_tokens": "off",
@@ -2254,10 +2254,6 @@
     // ]
     //
     // Default rules are viewable via the "zed: show default semantic token rules" action.
-    // See the VSCode docs [1] and the LSP Spec [2] for more information.
-    //
-    // [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
-    // [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
     "semantic_token_rules": [],
   },
   // Jupyter settings

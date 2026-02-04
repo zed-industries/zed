@@ -189,7 +189,7 @@ impl VsCodeSettings {
             git_panel: self.git_panel_settings_content(),
             global_lsp_settings: skip_default(GlobalLspSettingsContent {
                 semantic_token_rules: self.semantic_token_rules(),
-                ..Default::default()
+                ..GlobalLspSettingsContent::default()
             }),
             helix_mode: None,
             image_viewer: None,

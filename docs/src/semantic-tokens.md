@@ -40,18 +40,10 @@ You can configure this globally or per-language:
 
 ## Customizing Token Colors
 
-Semantic tokens are styled using rules that map LSP token types and modifiers to theme styles or custom colors. Zed provides sensible defaults, but you can customize these in two ways:
+Semantic tokens are styled using rules that map LSP token types and modifiers to theme styles or custom colors. Zed provides sensible defaults, but you can customize these in your settings.json: add rules under `global_lsp_settings.semantic_token_rules` key.
 
-1. **In your settings.json** — Add rules under `global_lsp_settings.semantic_token_rules`
-2. **In a dedicated file** — Create `~/.config/zed/semantic_token_rules.json`
-
-### Rule Priority
-
-Rules are matched in order, and the first matching rule wins. User-defined rules take precedence over defaults:
-
-1. Rules in `~/.config/zed/semantic_token_rules.json` (highest priority)
-2. Rules in `settings.json` under `global_lsp_settings.semantic_token_rules`
-3. Zed's built-in default rules (lowest priority)
+Rules are matched in order, and the first matching rule wins.
+User-defined rules take precedence over defaults.
 
 ### Rule Structure
 
@@ -144,27 +136,6 @@ To disable highlighting for a specific token type, add an empty rule that matche
 
 Since user rules are prepended to defaults and the first match wins, this empty rule prevents any styling from being applied to comment tokens.
 
-## Using a Dedicated Rules File
-
-For more extensive customization, create `~/.config/zed/semantic_token_rules.json`:
-
-```json [semantic_token_rules]
-[
-  {
-    "token_type": "variable",
-    "token_modifiers": ["readonly"],
-    "style": ["constant"],
-    "font_style": "italic"
-  },
-  {
-    "token_type": "parameter",
-    "foreground_color": "#e06c75"
-  }
-]
-```
-
-This file is automatically watched for changes—edits take effect immediately without restarting Zed.
-
 ## Default Rules
 
 Zed's default semantic token rules map standard LSP token types to common theme styles. For example:
@@ -174,7 +145,7 @@ Zed's default semantic token rules map standard LSP token types to common theme 
 - `class` → `type.class`, `class`, or `type` style (first found)
 - `comment` with `documentation` modifier → `comment.documentation` or `comment.doc` style
 
-The full default configuration is defined in Zed's source at `assets/settings/default_semantic_token_rules.json`.
+The full default configuration can be shown in Zed with the `zed: show default semantic token rules` command.
 
 ## Standard Token Types
 

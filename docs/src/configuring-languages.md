@@ -108,7 +108,6 @@ Zed simplifies language server management for users:
 1. Automatic Download: When you open a file with a matching file type, Zed automatically downloads the appropriate language server. Zed may prompt you to install an extension for known file types.
 
 2. Storage Location:
-
    - macOS: `~/Library/Application Support/Zed/languages`
    - Linux: `$XDG_DATA_HOME/zed/languages`, `$FLATPAK_XDG_DATA_HOME/zed/languages`, or `$HOME/.local/share/zed/languages`
 
@@ -421,7 +420,7 @@ Semantic tokens provide richer syntax highlighting by using type and scope infor
 - `"combined"` — LSP semantic tokens overlaid on tree-sitter
 - `"full"` — LSP semantic tokens replace tree-sitter entirely
 
-You can customize token colors and styles through `global_lsp_settings.semantic_token_rules` in your settings or via a dedicated `~/.config/zed/semantic_token_rules.json` file.
+You can customize token colors and styles through `global_lsp_settings.semantic_token_rules` in your settings.
 
 → [Semantic Tokens documentation](./semantic-tokens.md)
 

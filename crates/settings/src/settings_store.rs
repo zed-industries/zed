@@ -285,8 +285,6 @@ impl SettingsStore {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         let mut default_settings: SettingsContent =
             SettingsContent::parse_json_with_comments(default_settings).unwrap();
-
-        // Merge default semantic token rules from the separate file
         if let Ok(semantic_token_rules) =
             crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
         {
