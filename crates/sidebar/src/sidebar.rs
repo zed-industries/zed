@@ -733,8 +733,10 @@ impl Render for Sidebar {
                             .tooltip(|_window, cx| {
                                 Tooltip::for_action("New Workspace", &NewWorkspaceInWindow, cx)
                             })
-                            .on_click(cx.listener(|_this, _, window, cx| {
-                                window.dispatch_action(NewWorkspaceInWindow.boxed_clone(), cx);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.multi_workspace.update(cx, |multi_workspace, cx| {
+                                    multi_workspace.create_workspace(window, cx);
+                                });
                             })),
                     ),
             )
