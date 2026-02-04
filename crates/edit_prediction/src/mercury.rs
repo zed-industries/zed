@@ -4,6 +4,7 @@ use crate::{
     prediction::EditPredictionResult, zeta1::compute_edits,
 };
 use anyhow::{Context as _, Result};
+use edit_prediction_types::EditPredictionDismissReason;
 use futures::AsyncReadExt as _;
 use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
@@ -11,7 +12,7 @@ use gpui::{
 };
 use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
-use semver::Version;
+use release_channel::AppVersion;
 use serde::Serialize;
 use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
 
@@ -348,46 +349,37 @@ struct FeedbackRequest {
 
 pub(crate) fn edit_prediction_accepted(
     prediction_id: EditPredictionId,
-    app_version: Version,
     http_client: Arc<dyn HttpClient>,
     cx: &App,
 ) {
-    send_feedback(
-        prediction_id,
-        MercuryUserAction::Accept,
-        app_version,
-        http_client,
-        cx,
-    );
+    send_feedback(prediction_id, MercuryUserAction::Accept, http_client, cx);
 }
 
 pub(crate) fn edit_prediction_rejected(
     prediction_id: EditPredictionId,
     was_shown: bool,
-    explicit: bool,
-    app_version: Version,
+    dismiss_reason: EditPredictionDismissReason,
     http_client: Arc<dyn HttpClient>,
     cx: &App,
 ) {
     if !was_shown {
         return;
     }
-    let action = if explicit {
-        MercuryUserAction::Reject
-    } else {
-        MercuryUserAction::Ignore
+    let action = match dismiss_reason {
+        EditPredictionDismissReason::Rejected => MercuryUserAction::Reject,
+        EditPredictionDismissReason::Ignored => MercuryUserAction::Ignore,
     };
-    send_feedback(prediction_id, action, app_version, http_client, cx);
+    send_feedback(prediction_id, action, http_client, cx);
 }
 
 fn send_feedback(
     prediction_id: EditPredictionId,
     action: MercuryUserAction,
-    app_version: Version,
     http_client: Arc<dyn HttpClient>,
     cx: &App,
 ) {
     let request_id = prediction_id.0;
+    let app_version = AppVersion::global(cx);
     cx.background_spawn(async move {
         if !request_id.starts_with("cmpl-") {
             log::warn!(
