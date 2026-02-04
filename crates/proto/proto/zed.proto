@@ -464,9 +464,13 @@ message Envelope {
         DownloadFileResponse download_file_response = 416;
         CreateFileForPeer create_file_for_peer = 417;
 
-        SpawnKernel spawn_kernel = 418;
-        SpawnKernelResponse spawn_kernel_response = 419;
-        KillKernel kill_kernel = 420;
+        SemanticTokens semantic_tokens = 418;
+        SemanticTokensResponse semantic_tokens_response = 419;
+        RefreshSemanticTokens refresh_semantic_tokens = 420;
+
+        SpawnKernel spawn_kernel = 421;
+        SpawnKernelResponse spawn_kernel_response = 422;
+        KillKernel kill_kernel = 423; // current max
     }
 
     reserved 87 to 88;

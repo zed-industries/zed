@@ -1,5 +1,7 @@
 use collections::HashMap;
 
+use crate::reorder_patch::{Patch, PatchLine};
+
 pub type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
 
@@ -382,6 +384,89 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
     ClassificationMetrics::from_counts(&expected_lines, &actual_lines)
 }
 
+/// Returns whether the patch contains any isolated whitespace-only changes.
+///
+/// A whitespace-only change is an added or deleted line whose content is empty or
+/// contains only whitespace. It is "isolated" when it is not adjacent to any
+/// substantive (non-whitespace) change within the same contiguous change group.
+pub fn has_isolated_whitespace_changes(patch_str: &str) -> bool {
+    let patch = Patch::parse_unified_diff(patch_str);
+
+    for hunk in &patch.hunks {
+        let lines = &hunk.lines;
+        for (i, line) in lines.iter().enumerate() {
+            let content = match line {
+                PatchLine::Addition(s) | PatchLine::Deletion(s) => s.as_str(),
+                _ => continue,
+            };
+
+            if !content.trim().is_empty() {
+                continue;
+            }
+
+            if is_whitespace_change_isolated(lines, i) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_whitespace_change_isolated(lines: &[PatchLine], index: usize) -> bool {
+    // Look backward for a non-whitespace change before hitting a context line
+    for line in lines[..index].iter().rev() {
+        match line {
+            PatchLine::Addition(s) | PatchLine::Deletion(s) => {
+                if !s.trim().is_empty() {
+                    return false;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    // Look forward for a non-whitespace change before hitting a context line
+    for line in &lines[index + 1..] {
+        match line {
+            PatchLine::Addition(s) | PatchLine::Deletion(s) => {
+                if !s.trim().is_empty() {
+                    return false;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    true
+}
+
+/// A simple proxy for whether the prediction respects editable region.
+pub fn is_editable_region_correct(actual_patch: &str) -> bool {
+    // A typical sign of a wrong editable region: a bunch of lines deletion
+    // at the beginning or end of the patch.
+    let patch = Patch::parse_unified_diff(actual_patch);
+    if patch.hunks.is_empty() {
+        return true;
+    }
+
+    let hunk = &patch.hunks[0];
+    let mut deletions_at_start = 0;
+
+    for line in hunk.lines.iter() {
+        match line {
+            PatchLine::Deletion(_) => deletions_at_start += 1,
+            _ => break,
+        }
+    }
+
+    if deletions_at_start >= 3 {
+        return false;
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod test_optimization {
     use super::*;
@@ -530,6 +615,7 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -725,5 +811,96 @@ index abc123..def456 100644
         assert_eq!(metrics.true_positives, 0);
         assert_eq!(metrics.false_positives, 0);
         assert_eq!(metrics.false_negatives, 0);
+    }
+
+    #[test]
+    fn test_is_editable_region_correct() {
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            -context
+            -removed
+            -from the beginning of the file
+            import sys
+            +sys.exit(0)
+
+            "};
+        assert!(!is_editable_region_correct(patch));
+
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            "};
+        assert!(is_editable_region_correct(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_purely_whitespace_patch() {
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_adjacent_to_real_change() {
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+            +    let x = 1;
+                 println!(\"hello\");
+             }
+        "};
+        assert!(!has_isolated_whitespace_changes(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_no_whitespace_changes() {
+        let patch = indoc! {"
+            @@ -1,3 +1,3 @@
+             fn main() {
+            -    println!(\"hello\");
+            +    println!(\"world\");
+             }
+        "};
+        assert!(!has_isolated_whitespace_changes(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion() {
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_mixed_groups() {
+        let patch = indoc! {"
+            @@ -1,7 +1,8 @@
+             fn main() {
+            +
+                 let x = 1;
+            -    let y = 2;
+            +    let y = 3;
+
+            +
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_empty_patch() {
+        let patch = "";
+        assert!(!has_isolated_whitespace_changes(patch));
     }
 }

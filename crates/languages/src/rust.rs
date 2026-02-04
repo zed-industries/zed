@@ -13,7 +13,7 @@ use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
-use settings::Settings as _;
+use settings::{SemanticTokenRules, Settings as _};
 use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
@@ -31,7 +31,16 @@ use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
+use crate::LanguageDir;
 use crate::language_settings::language_settings;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = LanguageDir::get("rust/semantic_token_rules.json")
+        .expect("missing rust/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse rust semantic_token_rules.json")
+}
 
 pub struct RustLspAdapter;
 

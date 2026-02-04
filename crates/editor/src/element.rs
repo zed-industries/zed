@@ -2,14 +2,14 @@ use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
     CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
     ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
-    DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
-    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
-    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
-    HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
-    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
+    JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
+    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -27,7 +27,6 @@ use crate::{
         POPOVER_RIGHT_OFFSET, hover_at,
     },
     inlay_hint_settings,
-    items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
     scroll::{
         ActiveScrollbarState, Autoscroll, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState,
@@ -49,8 +48,8 @@ use gpui::{
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
     TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
-    linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba, size,
-    solid_background, transparent_black,
+    linear_gradient, outline, pattern_slash, point, px, quad, relative, size, solid_background,
+    transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -498,6 +497,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
+        register_action(editor, window, Editor::toggle_semantic_highlights);
         register_action(editor, window, Editor::toggle_edit_predictions);
         if editor.read(cx).diagnostics_enabled() {
             register_action(editor, window, Editor::toggle_diagnostics);
@@ -1991,13 +1991,13 @@ impl EditorElement {
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
                 ||
                 // Buffer Search Results
-                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
+                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
                 ||
                 // Selected Text Occurrences
-                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights(HighlightKey::SelectedTextHighlight))
                 ||
                 // Selected Symbol Occurrences
-                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights(HighlightKey::DocumentHighlightRead) || editor.has_background_highlights(HighlightKey::DocumentHighlightWrite)))
                 ||
                 // Diagnostics
                 (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot().has_diagnostics())
@@ -3785,7 +3785,9 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
+            let use_tree_sitter = !snapshot.semantic_tokens_enabled
+                || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
+            let chunks = snapshot.highlighted_chunks(rows.clone(), use_tree_sitter, style);
             LineWithInvisibles::from_chunks(
                 chunks,
                 style,
@@ -4005,7 +4007,11 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
+                .bg(pattern_slash(
+                    cx.theme().colors().panel_background,
+                    8.0,
+                    8.0,
+                ))
                 .into_any(),
         };
 
@@ -6052,7 +6058,12 @@ impl EditorElement {
         }
     }
 
-    fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_gutter_diff_hunks(
+        layout: &mut EditorLayout,
+        split_side: Option<SplitSide>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -6079,37 +6090,37 @@ impl EditorElement {
                         status,
                         display_row_range,
                         ..
-                    } => hitbox.as_ref().map(|hunk_hitbox| match status.kind {
-                        DiffHunkStatusKind::Added => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_added,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Modified => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_modified,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_deleted,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Deleted => (
-                            Bounds::new(
-                                point(
-                                    hunk_hitbox.origin.x - hunk_hitbox.size.width,
-                                    hunk_hitbox.origin.y,
+                    } => hitbox.as_ref().map(|hunk_hitbox| {
+                        let color = match split_side {
+                            Some(SplitSide::Left) => cx.theme().colors().version_control_deleted,
+                            Some(SplitSide::Right) => cx.theme().colors().version_control_added,
+                            None => match status.kind {
+                                DiffHunkStatusKind::Added => {
+                                    cx.theme().colors().version_control_added
+                                }
+                                DiffHunkStatusKind::Modified => {
+                                    cx.theme().colors().version_control_modified
+                                }
+                                DiffHunkStatusKind::Deleted => {
+                                    cx.theme().colors().version_control_deleted
+                                }
+                            },
+                        };
+                        match status.kind {
+                            DiffHunkStatusKind::Deleted if display_row_range.is_empty() => (
+                                Bounds::new(
+                                    point(
+                                        hunk_hitbox.origin.x - hunk_hitbox.size.width,
+                                        hunk_hitbox.origin.y,
+                                    ),
+                                    size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
                                 ),
-                                size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
+                                color,
+                                Corners::all(1. * line_height),
+                                *status,
                             ),
-                            cx.theme().colors().version_control_deleted,
-                            Corners::all(1. * line_height),
-                            *status,
-                        ),
+                            _ => (hunk_hitbox.bounds, color, Corners::all(px(0.)), *status),
+                        }
                     }),
                 };
 
@@ -6295,8 +6306,8 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter && self.split_side.is_none() {
-            Self::paint_gutter_diff_hunks(layout, window, cx)
+        if show_git_gutter {
+            Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -6981,15 +6992,13 @@ impl EditorElement {
                                 background_highlights.iter()
                             {
                                 let is_search_highlights = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<BufferSearchHighlights>());
-                                let is_text_highlights = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<SelectedTextHighlight>());
+                                    == HighlightKey::BufferSearchHighlights;
+                                let is_text_highlights =
+                                    *background_highlight_id == HighlightKey::SelectedTextHighlight;
                                 let is_symbol_occurrences = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<DocumentHighlightRead>())
+                                    == HighlightKey::DocumentHighlightRead
                                     || *background_highlight_id
-                                        == HighlightKey::Type(
-                                            TypeId::of::<DocumentHighlightWrite>(),
-                                        );
+                                        == HighlightKey::DocumentHighlightWrite;
                                 if (is_search_highlights && scrollbar_settings.search_results)
                                     || (is_text_highlights && scrollbar_settings.selected_text)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
@@ -10712,24 +10721,25 @@ impl Element for EditorElement {
 
                     let mode = snapshot.mode.clone();
 
-                    let (diff_hunk_controls, diff_hunk_control_bounds) = if is_read_only {
-                        (vec![], vec![])
-                    } else {
-                        self.layout_diff_hunk_controls(
-                            start_row..end_row,
-                            &row_infos,
-                            &text_hitbox,
-                            newest_selection_head,
-                            line_height,
-                            right_margin,
-                            scroll_pixel_position,
-                            &display_hunks,
-                            &highlighted_rows,
-                            self.editor.clone(),
-                            window,
-                            cx,
-                        )
-                    };
+                    let (diff_hunk_controls, diff_hunk_control_bounds) =
+                        if is_read_only && !self.editor.read(cx).delegate_stage_and_restore {
+                            (vec![], vec![])
+                        } else {
+                            self.layout_diff_hunk_controls(
+                                start_row..end_row,
+                                &row_infos,
+                                &text_hitbox,
+                                newest_selection_head,
+                                line_height,
+                                right_margin,
+                                scroll_pixel_position,
+                                &display_hunks,
+                                &highlighted_rows,
+                                self.editor.clone(),
+                                window,
+                                cx,
+                            )
+                        };
 
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
@@ -11704,7 +11714,9 @@ pub fn layout_line(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
+    let use_tree_sitter =
+        !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
+    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), use_tree_sitter, style);
     LineWithInvisibles::from_chunks(
         chunks,
         style,

@@ -17614,15 +17614,13 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        struct Type1;
-        struct Type2;
-
         let buffer = editor.buffer.read(cx).snapshot(cx);
 
         let anchor_range =
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
-        editor.highlight_background::<Type1>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(0),
             &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -17632,7 +17630,8 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |_, _| Hsla::red(),
             cx,
         );
-        editor.highlight_background::<Type2>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(1),
             &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -23927,10 +23926,10 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 
     let selection_range = Point::new(1, 0)..Point::new(2, 0);
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        enum TestHighlight {}
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
-        editor.highlight_text::<TestHighlight>(
+        editor.highlight_text(
+            HighlightKey::Editor,
             vec![highlight_range.clone()],
             HighlightStyle::color(Hsla::green()),
             cx,
@@ -24856,7 +24855,8 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -24934,7 +24934,8 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _window, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -27546,7 +27547,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    let ensure_result_id = |expected: Option<SharedString>, cx: &mut TestAppContext| {
+    let ensure_result_id = |expected_result_id: Option<SharedString>, cx: &mut TestAppContext| {
         project.update(cx, |project, cx| {
             let buffer_id = editor
                 .read(cx)
@@ -27560,7 +27561,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .lsp_store()
                 .read(cx)
                 .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
-            assert_eq!(expected, buffer_result_id);
+            assert_eq!(expected_result_id, buffer_result_id);
         });
     };
 
@@ -28361,7 +28362,8 @@ let result = variable * 2;",
             .map(|range| range.clone().to_anchors(&buffer_snapshot))
             .collect();
 
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &anchor_ranges,
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -30563,7 +30565,7 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
     cx.draw(
         gpui::point(px(0.), px(-10000.)),
         gpui::size(px(500.), px(3000.)),
-        |_, _| editor.clone(),
+        |_, _| editor.clone().into_any_element(),
     );
 
     // If we get here without hanging, the test passes
