@@ -4006,10 +4006,14 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .bg(checkerboard(
-                    cx.theme().colors().panel_background,
-                    Self::checkerboard_size(line_height.into(), 20.0 * window.scale_factor()),
-                ))
+                .bg(checkerboard(cx.theme().colors().panel_background, {
+                    let target_size = 16.0;
+                    let scale = window.scale_factor();
+                    Self::checkerboard_size(
+                        f32::from(line_height) * scale,
+                        target_size * scale,
+                    )
+                }))
                 .into_any(),
         };
 
