@@ -16,7 +16,7 @@ Zed integrates AI throughout the editor: agentic coding, inline transformations,
 
 - [Agent Panel](./agent-panel.md): Chat with AI agents that can read, write, and run code in your project.
 
-- [Rules](./rules.md): Define project-specific instructions for AI behavior.
+- [Rules](./rules.md): Define specific instructions for AI behavior.
 
 - [Tools](./tools.md): The built-in capabilities agents use: file operations, terminal commands, web search.
 
