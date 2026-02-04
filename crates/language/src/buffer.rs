@@ -576,7 +576,7 @@ pub struct Chunk<'a> {
     pub tabs: u128,
     /// Bitmap of character indices in this chunk
     pub chars: u128,
-    /// Bitmap of character indices in this chunk
+    /// Bitmap of newline indices in this chunk
     pub newlines: u128,
     /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,

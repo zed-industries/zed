@@ -1361,7 +1361,7 @@ pub struct Chunk<'a> {
     pub tabs: u128,
     /// Bitmap of character locations in chunk
     pub chars: u128,
-    /// Bitmap of character locations in chunk
+    /// Bitmap of newline locations in chunk
     pub newlines: u128,
 }
 
