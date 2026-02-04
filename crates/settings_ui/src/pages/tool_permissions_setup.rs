@@ -1,4 +1,4 @@
-use agent::ToolPermissionDecision;
+use agent::{HARDCODED_SECURITY_RULES, ToolPermissionDecision};
 use agent_settings::AgentSettings;
 use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
@@ -260,6 +260,9 @@ pub(crate) fn render_tool_config_page(
                         .color(Color::Muted),
                 ),
         )
+        .when(tool_id == "terminal", |this| {
+            this.child(render_hardcoded_security_banner(cx))
+        })
         .child(render_verification_section(tool_id, window, cx))
         .child(
             v_flex()
@@ -295,6 +298,42 @@ pub(crate) fn render_tool_config_page(
                     &rules.always_confirm,
                     cx,
                 )),
+        )
+        .into_any_element()
+}
+
+fn render_hardcoded_security_banner(cx: &mut Context<SettingsWindow>) -> AnyElement {
+    let pattern_labels = HARDCODED_SECURITY_RULES.terminal_deny.iter().map(|rule| {
+        h_flex()
+            .gap_1()
+            .child(
+                Icon::new(IconName::Dash)
+                    .color(Color::Hidden)
+                    .size(IconSize::Small),
+            )
+            .child(
+                Label::new(rule.pattern.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .buffer_font(cx),
+            )
+    });
+
+    v_flex()
+        .mt_3()
+        .child(
+            Banner::new().child(
+                v_flex()
+                    .py_1()
+                    .gap_1()
+                    .child(
+                        Label::new(
+                            "The following patterns are always blocked and cannot be overridden:",
+                        )
+                        .size(LabelSize::Small),
+                    )
+                    .children(pattern_labels),
+            ),
         )
         .into_any_element()
 }
