@@ -972,9 +972,7 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if cx.has_flag::<AcpBetaFeatureFlag>()
-        && let Some(opts) = config_options
-    {
+    if let Some(opts) = config_options {
         return (None, None, Some(Rc::new(RefCell::new(opts))));
     }
 
