@@ -581,7 +581,7 @@ impl DisplayMap {
                                 priority: 0,
                             };
                             log::debug!(
-                                "Creating a matching companion block: {block:#?} => {new_block:#?}"
+                                "Inserting matching companion custom block: {block:#?} => {new_block:#?}"
                             );
                             new_block
                         });
@@ -595,11 +595,6 @@ impl DisplayMap {
                             .zip(their_custom_blocks.into_iter())
                         {
                             companion.update(cx, |companion, _| {
-                                log::debug!(
-                                    "self.entity_id != companion.rhs_display_map_id : {:?} != {:?}",
-                                    self.entity_id,
-                                    companion.rhs_display_map_id
-                                );
                                 companion.add_custom_block_mapping(
                                     their_custom_block.id,
                                     my_custom_block,
