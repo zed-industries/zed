@@ -746,6 +746,7 @@ mod test_support {
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                    multiplier: None,
                 })),
             }
         }

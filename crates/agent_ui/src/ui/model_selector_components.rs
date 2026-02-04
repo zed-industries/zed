@@ -153,7 +153,7 @@ impl RenderOnce for ModelSelectorListItem {
                     .child(Label::new(self.title).truncate()),
             )
             .end_slot(div().pr_3().when_some(self.multiplier, |this, multiplier| {
-                this.child(Label::new(format!("{:.1}x", multiplier)).color(Color::Muted))
+                this.child(Label::new(format!("{:.2}x", multiplier)).color(Color::Muted))
             }))
             .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
                 |this, handle_click| {

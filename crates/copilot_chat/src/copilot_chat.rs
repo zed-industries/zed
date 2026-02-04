@@ -1709,4 +1709,49 @@ mod tests {
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
     }
+
+    #[test]
+    fn test_user_stats_deserialize() {
+        let json = r#"{
+            "copilot_plan": "business",
+            "quota_reset_date": "2024-03-01T00:00:00Z",
+            "quota_snapshots": {
+                "chat": {
+                    "entitlement": 100.0,
+                    "overage_count": 0.0,
+                    "overage_permitted": false,
+                    "percent_remaining": 45.5,
+                    "quota_id": "chat_quota",
+                    "quota_remaining": 45.5,
+                    "remaining": 45.5,
+                    "unlimited": false
+                }
+            }
+        }"#;
+
+        let stats: CopilotUserStats = serde_json::from_str(json).unwrap();
+        let chat = stats.chat_stats().unwrap();
+
+        assert_eq!(chat.percent_remaining, 45.5);
+        assert_eq!(chat.percent_used(), 54.5); // 100 - 45.5
+        assert!(!chat.is_unlimited());
+    }
+
+    #[test]
+    fn test_unlimited_quota() {
+        let snapshot = CopilotQuotaSnapshot {
+            entitlement: 0.0,
+            overage_count: 0.0,
+            overage_permitted: true,
+            percent_remaining: 100.0,
+            quota_id: "test".to_string(),
+            quota_remaining: 0.0,
+            remaining: 0.0,
+            unlimited: true,
+            timestamp_utc: None,
+        };
+
+        assert_eq!(snapshot.percent_used(), 0.0);
+        assert!(snapshot.is_unlimited());
+    }
 }

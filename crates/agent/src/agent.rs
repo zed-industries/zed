@@ -1750,6 +1750,7 @@ mod internal_tests {
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
+                    multiplier: None,
                 }]
             )])
         );
