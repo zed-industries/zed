@@ -288,6 +288,7 @@ pub struct BlockContext<'a, 'b> {
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: BlockId,
+    pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
 }
@@ -1669,7 +1670,7 @@ impl BlockMapWriter<'_> {
                         div()
                             .id(cx.block_id)
                             .size_full()
-                            .h(Pixels::from(cx.line_height * height as f32))
+                            .h(Pixels::from(cx.line_height * cx.height as f32))
                             .bg(pattern_slash(white(), 8.0, 8.0))
                             .into_any()
                     }),

@@ -3914,6 +3914,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
+                        height: custom.height.unwrap_or(1),
                         selected,
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,

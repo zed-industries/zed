@@ -574,7 +574,7 @@ impl DisplayMap {
                                     div()
                                         .id(cx.block_id)
                                         .size_full()
-                                        .h(Pixels::from(cx.line_height * height as f32))
+                                        .h(Pixels::from(cx.line_height * cx.height as f32))
                                         .bg(pattern_slash(white(), 8.0, 8.0))
                                         .into_any()
                                 }),
