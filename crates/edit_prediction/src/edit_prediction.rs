@@ -56,6 +56,7 @@ pub mod cursor_excerpt;
 pub mod example_spec;
 mod license_detection;
 pub mod mercury;
+mod mercury_feedback;
 pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
@@ -149,6 +150,7 @@ pub struct EditPredictionStore {
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
     custom_predict_edits_url: Option<Arc<Url>>,
+    app_version: Version,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -311,6 +313,7 @@ impl ProjectState {
                     this.reject_prediction(
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
+                        false,
                         false,
                     );
                 })
@@ -612,6 +615,8 @@ impl EditPredictionStore {
         })
         .detach();
 
+        let app_version = AppVersion::global(cx);
+
         let this = Self {
             projects: HashMap::default(),
             client,
@@ -645,6 +650,7 @@ impl EditPredictionStore {
                 Ok(custom_url) => Url::parse(&custom_url).log_err().map(Into::into),
                 Err(_) => None,
             },
+            app_version,
         };
 
         this
@@ -1214,7 +1220,15 @@ impl EditPredictionStore {
             EditPredictionModel::Sweep => {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
-            EditPredictionModel::Mercury | EditPredictionModel::Ollama => {}
+            EditPredictionModel::Mercury => {
+                mercury_feedback::send_mercury_feedback(
+                    current_prediction.prediction.id.to_string(),
+                    mercury_feedback::MercuryUserAction::Accept,
+                    self.app_version.clone(),
+                    self.client.http_client(),
+                );
+            }
+            EditPredictionModel::Ollama => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
@@ -1284,11 +1298,12 @@ impl EditPredictionStore {
         &mut self,
         reason: EditPredictionRejectReason,
         project: &Entity<Project>,
+        explicit: bool,
     ) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
-                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown);
+                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown, explicit);
             }
         };
     }
@@ -1347,6 +1362,7 @@ impl EditPredictionStore {
         prediction_id: EditPredictionId,
         reason: EditPredictionRejectReason,
         was_shown: bool,
+        explicit: bool,
     ) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
@@ -1354,9 +1370,25 @@ impl EditPredictionStore {
                     return;
                 }
             }
-            EditPredictionModel::Sweep
-            | EditPredictionModel::Mercury
-            | EditPredictionModel::Ollama => return,
+            EditPredictionModel::Sweep | EditPredictionModel::Ollama => return,
+            EditPredictionModel::Mercury => {
+                // Only track if the prediction was shown to the user
+                if was_shown {
+                    // Use explicit flag: true = user pressed Esc (reject), false = implicit dismissal (ignore)
+                    let action = if explicit {
+                        mercury_feedback::MercuryUserAction::Reject
+                    } else {
+                        mercury_feedback::MercuryUserAction::Ignore
+                    };
+                    mercury_feedback::send_mercury_feedback(
+                        prediction_id.to_string(),
+                        action,
+                        self.app_version.clone(),
+                        self.client.http_client(),
+                    );
+                }
+                return;
+            }
         }
 
         self.reject_predictions_tx
@@ -1614,6 +1646,7 @@ impl EditPredictionStore {
                                     this.reject_current_prediction(
                                         EditPredictionRejectReason::Replaced,
                                         &project,
+                                        false,
                                     );
 
                                     Some(new_prediction)
@@ -1621,6 +1654,7 @@ impl EditPredictionStore {
                                     this.reject_prediction(
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
+                                        false,
                                         false,
                                     );
                                     None
@@ -1630,7 +1664,7 @@ impl EditPredictionStore {
                             }
                         }
                         Err(reject_reason) => {
-                            this.reject_prediction(prediction_result.id, reject_reason, false);
+                            this.reject_prediction(prediction_result.id, reject_reason, false, false);
                             None
                         }
                     }

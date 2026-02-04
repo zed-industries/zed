@@ -169,7 +169,13 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
 
     fn discard(&mut self, cx: &mut Context<Self>) {
         self.store.update(cx, |store, _cx| {
-            store.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project);
+            store.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project, false);
+        });
+    }
+
+    fn discard_explicit(&mut self, cx: &mut Context<Self>) {
+        self.store.update(cx, |store, _cx| {
+            store.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project, true);
         });
     }
 
@@ -207,6 +213,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 store.reject_current_prediction(
                     EditPredictionRejectReason::InterpolatedEmpty,
                     &self.project,
+                    false,
                 );
                 return None;
             };

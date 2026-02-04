@@ -8086,7 +8086,11 @@ impl Editor {
         }
 
         if let Some(provider) = self.edit_prediction_provider() {
-            provider.discard(cx);
+            if should_report_edit_prediction_event {
+                provider.discard_explicit(cx);
+            } else {
+                provider.discard(cx);
+            }
         }
 
         self.take_active_edit_prediction(cx)

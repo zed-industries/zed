@@ -179,6 +179,9 @@ pub trait EditPredictionDelegate: 'static + Sized {
     );
     fn accept(&mut self, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
+    fn discard_explicit(&mut self, cx: &mut Context<Self>) {
+        self.discard(cx);
+    }
     fn did_show(&mut self, _display_type: SuggestionDisplayType, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
@@ -215,6 +218,7 @@ pub trait EditPredictionDelegateHandle {
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
     fn accept(&self, cx: &mut App);
     fn discard(&self, cx: &mut App);
+    fn discard_explicit(&self, cx: &mut App);
     fn suggest(
         &self,
         buffer: &Entity<Buffer>,
@@ -294,6 +298,10 @@ where
 
     fn discard(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.discard(cx))
+    }
+
+    fn discard_explicit(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.discard_explicit(cx))
     }
 
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App) {
