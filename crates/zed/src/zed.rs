@@ -363,7 +363,7 @@ pub fn initialize_workspace(
         };
         let multi_workspace_handle = cx.entity();
         let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
-        multi_workspace.register_sidebar(sidebar, cx);
+        multi_workspace.register_sidebar(sidebar, window, cx);
     })
     .detach();
 

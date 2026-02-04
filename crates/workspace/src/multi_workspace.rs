@@ -1,7 +1,7 @@
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, ManagedView, MouseButton,
-    Pixels, Render, Subscription, Window, actions, deferred, px,
+    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, Focusable, ManagedView,
+    MouseButton, Pixels, Render, Subscription, Window, actions, deferred, px,
 };
 use project::Project;
 use ui::prelude::*;
@@ -31,7 +31,7 @@ pub enum SidebarEvent {
     Close,
 }
 
-pub trait Sidebar: EventEmitter<SidebarEvent> + Render + Sized {
+pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
 }
@@ -39,6 +39,7 @@ pub trait Sidebar: EventEmitter<SidebarEvent> + Render + Sized {
 pub trait SidebarHandle: 'static + Send + Sync {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn focus(&self, window: &mut Window, cx: &mut App);
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
 }
@@ -59,6 +60,11 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
         self.update(cx, |this, cx| this.set_width(width, cx))
+    }
+
+    fn focus(&self, window: &mut Window, cx: &mut App) {
+        let handle = self.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
     }
 
     fn to_any(&self) -> AnyView {
@@ -89,14 +95,19 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
-        let subscription = cx.subscribe(&sidebar, |this, _, event, cx| match event {
-            SidebarEvent::Open => this.toggle_sidebar(cx),
-            SidebarEvent::Close => {
-                this.sidebar_open = false;
-                cx.notify();
-            }
-        });
+    pub fn register_sidebar<T: Sidebar>(
+        &mut self,
+        sidebar: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let subscription =
+            cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
+                SidebarEvent::Open => this.toggle_sidebar(window, cx),
+                SidebarEvent::Close => {
+                    this.close_sidebar(window, cx);
+                }
+            });
         self.sidebar = Some(Box::new(sidebar));
         self._sidebar_subscription = Some(subscription);
     }
@@ -113,11 +124,26 @@ impl MultiWorkspace {
         cx.has_flag::<AgentV2FeatureFlag>()
     }
 
-    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.multi_workspace_enabled(cx) {
             return;
         }
-        self.sidebar_open = !self.sidebar_open;
+
+        if self.sidebar_open {
+            self.close_sidebar(window, cx);
+        } else {
+            self.sidebar_open = true;
+            if let Some(sidebar) = &self.sidebar {
+                sidebar.focus(window, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_open = false;
+        let pane = self.workspace().read(cx).active_pane().clone();
+        window.focus(&pane.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -267,6 +293,25 @@ impl MultiWorkspace {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
         Self::new(workspace, cx)
     }
+
+    pub fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+        let app_state = self.workspace().read(cx).app_state().clone();
+        let project = Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags::default(),
+            cx,
+        );
+        let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+        self.activate(new_workspace, cx);
+    }
 }
 
 impl Render for MultiWorkspace {
@@ -324,26 +369,11 @@ impl Render for MultiWorkspace {
 
         client_side_decorations(
             h_flex()
+                .key_context("Workspace")
                 .size_full()
                 .on_action(
                     cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
-                        if !this.multi_workspace_enabled(cx) {
-                            return;
-                        }
-                        let app_state = this.workspace().read(cx).app_state().clone();
-                        let project = Project::local(
-                            app_state.client.clone(),
-                            app_state.node_runtime.clone(),
-                            app_state.user_store.clone(),
-                            app_state.languages.clone(),
-                            app_state.fs.clone(),
-                            None,
-                            project::LocalProjectFlags::default(),
-                            cx,
-                        );
-                        let new_workspace =
-                            cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-                        this.activate(new_workspace, cx);
+                        this.create_workspace(window, cx);
                     }),
                 )
                 .on_action(cx.listener(
@@ -357,8 +387,8 @@ impl Render for MultiWorkspace {
                     },
                 ))
                 .on_action(cx.listener(
-                    |this: &mut Self, _: &ToggleWorkspaceSidebar, _window, cx| {
-                        this.toggle_sidebar(cx);
+                    |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
+                        this.toggle_sidebar(window, cx);
                     },
                 ))
                 .when(

@@ -1,7 +1,7 @@
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Task,
-    Window, px,
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render,
+    SharedString, Subscription, Task, Window, px,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -335,6 +335,12 @@ impl WorkspaceSidebar for Sidebar {
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
         self.width = width.unwrap_or(DEFAULT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
         cx.notify();
+    }
+}
+
+impl Focusable for Sidebar {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.read(cx).focus_handle(cx)
     }
 }
 
