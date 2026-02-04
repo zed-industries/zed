@@ -279,18 +279,21 @@ impl AcpServerView {
         })
         .detach();
 
+        let workspace_for_state = workspace.clone();
+        let project_for_state = project.clone();
+
         Self {
             agent: agent.clone(),
             agent_server_store,
-            workspace: workspace.clone(),
-            project: project.clone(),
+            workspace,
+            project,
             thread_store,
             prompt_store,
             server_state: Self::initial_state(
                 agent.clone(),
                 resume_thread,
-                workspace.clone(),
-                project.clone(),
+                workspace_for_state,
+                project_for_state,
                 prompt_capabilities,
                 available_commands,
                 initial_content,
@@ -3696,7 +3699,7 @@ pub(crate) mod tests {
 
         let focus_handle = setup
             .thread_view
-            .read_with(cx, |view, cx| view.focus_handle(cx).clone());
+            .read_with(cx, |view, cx| view.focus_handle(cx));
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
         });
