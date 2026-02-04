@@ -692,7 +692,13 @@ impl TitleBar {
                     Tooltip::for_action("Open Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                    if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
+                        handle
+                            .update(cx, |multi_workspace, window, cx| {
+                                multi_workspace.toggle_sidebar(window, cx);
+                            })
+                            .log_err();
+                    }
                 })
                 .into_any_element(),
         )

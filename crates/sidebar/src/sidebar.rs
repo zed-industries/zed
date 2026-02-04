@@ -423,7 +423,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
             SidebarEntry::WorkspaceThread(thread_entry) => {
                 let target_index = thread_entry.index;
                 self.multi_workspace.update(cx, |multi_workspace, cx| {
-                    multi_workspace.activate_index(target_index, cx);
+                    multi_workspace.activate_index(target_index, window, cx);
                 });
             }
             SidebarEntry::RecentProject(project_entry) => {

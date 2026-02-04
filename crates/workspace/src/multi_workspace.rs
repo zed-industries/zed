@@ -187,31 +187,38 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn activate_index(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn activate_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         debug_assert!(
             index < self.workspaces.len(),
             "workspace index out of bounds"
         );
         self.active_workspace_index = index;
+        self.focus_active_workspace(window, cx);
         cx.notify();
     }
 
-    pub fn activate_next_workspace(&mut self, cx: &mut Context<Self>) {
+    pub fn activate_next_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspaces.len() > 1 {
             let next_index = (self.active_workspace_index + 1) % self.workspaces.len();
-            self.activate_index(next_index, cx);
+            self.activate_index(next_index, window, cx);
         }
     }
 
-    pub fn activate_previous_workspace(&mut self, cx: &mut Context<Self>) {
+    pub fn activate_previous_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspaces.len() > 1 {
             let prev_index = if self.active_workspace_index == 0 {
                 self.workspaces.len() - 1
             } else {
                 self.active_workspace_index - 1
             };
-            self.activate_index(prev_index, cx);
+            self.activate_index(prev_index, window, cx);
         }
+    }
+
+    fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
+        let pane = self.workspace().read(cx).active_pane().clone();
+        let focus_handle = pane.read(cx).focus_handle(cx).clone();
+        window.focus(&focus_handle, cx);
     }
 
     pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
@@ -311,6 +318,7 @@ impl MultiWorkspace {
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
         self.activate(new_workspace, cx);
+        self.focus_active_workspace(window, cx);
     }
 }
 
@@ -376,14 +384,14 @@ impl Render for MultiWorkspace {
                         this.create_workspace(window, cx);
                     }),
                 )
+                .on_action(
+                    cx.listener(|this: &mut Self, _: &NextWorkspaceInWindow, window, cx| {
+                        this.activate_next_workspace(window, cx);
+                    }),
+                )
                 .on_action(cx.listener(
-                    |this: &mut Self, _: &NextWorkspaceInWindow, _window, cx| {
-                        this.activate_next_workspace(cx);
-                    },
-                ))
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &PreviousWorkspaceInWindow, _window, cx| {
-                        this.activate_previous_workspace(cx);
+                    |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
+                        this.activate_previous_workspace(window, cx);
                     },
                 ))
                 .on_action(cx.listener(
