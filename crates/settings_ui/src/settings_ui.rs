@@ -3301,6 +3301,7 @@ impl SettingsWindow {
             .child(
                 div()
                     .flex_1()
+                    .min_h_0()
                     .size_full()
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
