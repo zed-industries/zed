@@ -74,6 +74,8 @@ pub async fn run_scoring(
         reversal_ratio: 0.0,
         cursor_distance: None,
         cursor_exact_match: None,
+        wrong_editable_region: None,
+        has_isolated_whitespace_changes: false,
     };
 
     let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
@@ -140,16 +142,6 @@ pub async fn run_scoring(
         let disbalance_before = metrics::braces_disbalance(&original_text);
         let disbalance_after = metrics::braces_disbalance(&actual_text);
         let braces_disbalance = disbalance_after.saturating_sub(disbalance_before);
-        if braces_disbalance > 0 {
-            std::fs::write(
-                "/tmp/unbalanced-count.before",
-                disbalance_before.to_string(),
-            )
-            .ok();
-            std::fs::write("/tmp/unbalanced-count.after", disbalance_after.to_string()).ok();
-            std::fs::write("/tmp/unbalanced-text.before", &original_text).ok();
-            std::fs::write("/tmp/unbalanced-text.after", &actual_text).ok();
-        }
 
         // Compute exact lines match against best matching expected patch
         let best_exact_lines = expected_patches_with_cursors
@@ -169,6 +161,13 @@ pub async fn run_scoring(
         let (cursor_distance, cursor_exact_match) =
             compute_cursor_metrics(best_expected_cursor, prediction.actual_cursor_offset);
 
+        // Compute approximation of editable region correctness
+        let wrong_editable_region = Some(!metrics::is_editable_region_correct(&actual_patch));
+
+        // Check for isolated whitespace changes
+        let has_isolated_whitespace_changes =
+            metrics::has_isolated_whitespace_changes(&actual_patch);
+
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
             braces_disbalance,
@@ -178,6 +177,8 @@ pub async fn run_scoring(
             reversal_ratio,
             cursor_distance,
             cursor_exact_match,
+            wrong_editable_region,
+            has_isolated_whitespace_changes,
         });
     }
 
@@ -209,13 +210,13 @@ fn compute_cursor_metrics(
 pub fn print_report(examples: &[Example]) {
     use crate::metrics::ClassificationMetrics;
 
-    const LINE_WIDTH: usize = 94;
+    const LINE_WIDTH: usize = 101;
     let separator = "─".repeat(LINE_WIDTH);
 
     println!("{}", separator);
     println!(
-        "{:<40} {:>8} {:>5} {:>7} {:>7} {:>7} {:>7} {:>6}",
-        "Example", "DeltaChrF", "Brace", "F1", "Revert", "QaRev", "QaConf", "Cursor"
+        "{:<40} {:>8} {:>5} {:>7} {:>7} {:>7} {:>7} {:>6} {:>5}",
+        "Example", "DeltaChrF", "Brace", "F1", "Revert", "QaRev", "QaConf", "Cursor", "WrgER"
     );
     println!("{}", separator);
 
@@ -232,6 +233,9 @@ pub fn print_report(examples: &[Example]) {
     let mut cursor_total: usize = 0;
     let mut cursor_distance_sum: usize = 0;
     let mut cursor_distance_count: usize = 0;
+    let mut wrong_editable_region_count: usize = 0;
+    let mut wrong_editable_region_total: usize = 0;
+    let mut isolated_whitespace_count: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -252,6 +256,13 @@ pub fn print_report(examples: &[Example]) {
                 .map(|v| format!("{}", v))
                 .unwrap_or("-".to_string());
 
+            // Format wrong editable region metric
+            let wrong_er_str = match score.wrong_editable_region {
+                Some(true) => "✗",
+                Some(false) => "",
+                None => "",
+            };
+
             // Format cursor metric
             let cursor_str = match (score.cursor_exact_match, score.cursor_distance) {
                 (Some(true), _) => "✓".to_string(),
@@ -261,7 +272,7 @@ pub fn print_report(examples: &[Example]) {
             };
 
             println!(
-                "{:<40} {:>8.2} {:>5} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6}",
+                "{:<40} {:>8.2} {:>5} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6} {:>5}",
                 truncate_name(&example.spec.name, 40),
                 score.delta_chr_f,
                 score.braces_disbalance,
@@ -269,7 +280,8 @@ pub fn print_report(examples: &[Example]) {
                 score.reversal_ratio * 100.0,
                 qa_reverts_str,
                 qa_conf_str,
-                cursor_str
+                cursor_str,
+                wrong_er_str
             );
 
             all_delta_chr_f_scores.push(score.delta_chr_f);
@@ -292,6 +304,19 @@ pub fn print_report(examples: &[Example]) {
                     qa_confidence_sum += conf as u64;
                     qa_confidence_count += 1;
                 }
+            }
+
+            // Accumulate wrong editable region metrics
+            if let Some(wrong) = score.wrong_editable_region {
+                wrong_editable_region_total += 1;
+                if wrong {
+                    wrong_editable_region_count += 1;
+                }
+            }
+
+            // Accumulate isolated whitespace metrics
+            if score.has_isolated_whitespace_changes {
+                isolated_whitespace_count += 1;
             }
 
             // Accumulate cursor metrics
@@ -341,6 +366,24 @@ pub fn print_report(examples: &[Example]) {
         } else {
             "-".to_string()
         };
+        let wrong_er_str = if wrong_editable_region_total > 0 {
+            format!(
+                "{:.2}%",
+                wrong_editable_region_count as f32 / wrong_editable_region_total as f32 * 100.0
+            )
+        } else {
+            "-".to_string()
+        };
+        let isolated_ws_str = if total_scores > 0 {
+            format!(
+                "{}/{} ({:.1}%)",
+                isolated_whitespace_count,
+                total_scores,
+                isolated_whitespace_count as f32 / total_scores as f32 * 100.0
+            )
+        } else {
+            "-".to_string()
+        };
         let avg_cursor_distance = if cursor_distance_count > 0 {
             Some(cursor_distance_sum as f32 / cursor_distance_count as f32)
         } else {
@@ -348,7 +391,7 @@ pub fn print_report(examples: &[Example]) {
         };
 
         println!(
-            "{:<40} {:>8.2} {:>5.1} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6}",
+            "{:<40} {:>8.2} {:>5.1} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6} {:>5}",
             "TOTAL / AVERAGE",
             avg_delta_chr_f,
             braces_disbalance_avg,
@@ -356,7 +399,8 @@ pub fn print_report(examples: &[Example]) {
             avg_reversal_ratio * 100.0,
             qa_reverts_str,
             qa_conf_str,
-            cursor_str
+            cursor_str,
+            wrong_er_str
         );
         println!("{}", separator);
 
@@ -369,6 +413,11 @@ pub fn print_report(examples: &[Example]) {
                 cursor_exact_matches as f32 / cursor_total as f32 * 100.0,
                 avg_dist
             );
+        }
+
+        // Print isolated whitespace metrics
+        if total_scores > 0 {
+            println!("Isolated whitespace changes: {}", isolated_ws_str);
         }
     }
 
@@ -405,6 +454,9 @@ pub struct SummaryJson {
     pub cursor_avg_distance: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_total_evaluated: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrong_editable_region_rate: Option<f32>,
+    pub isolated_whitespace_rate: Option<f32>,
 }
 
 pub fn compute_summary(examples: &[Example]) -> SummaryJson {
@@ -423,6 +475,9 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut cursor_total: usize = 0;
     let mut cursor_distance_sum: usize = 0;
     let mut cursor_distance_count: usize = 0;
+    let mut wrong_editable_region_count: usize = 0;
+    let mut wrong_editable_region_total: usize = 0;
+    let mut isolated_whitespace_count: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -446,6 +501,19 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
                     qa_confidence_sum += conf as u64;
                     qa_confidence_count += 1;
                 }
+            }
+
+            // Accumulate wrong editable region metrics
+            if let Some(wrong) = score.wrong_editable_region {
+                wrong_editable_region_total += 1;
+                if wrong {
+                    wrong_editable_region_count += 1;
+                }
+            }
+
+            // Accumulate isolated whitespace metrics
+            if score.has_isolated_whitespace_changes {
+                isolated_whitespace_count += 1;
             }
 
             // Accumulate cursor metrics
@@ -510,6 +578,18 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         None
     };
 
+    let wrong_editable_region_rate = if wrong_editable_region_total > 0 {
+        Some(wrong_editable_region_count as f32 / wrong_editable_region_total as f32)
+    } else {
+        None
+    };
+
+    let isolated_whitespace_rate = if total_scores > 0 {
+        Some(isolated_whitespace_count as f32 / total_scores as f32)
+    } else {
+        None
+    };
+
     SummaryJson {
         total_examples: total_scores,
         avg_delta_chr_f,
@@ -526,6 +606,8 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         cursor_exact_match_rate,
         cursor_avg_distance,
         cursor_total_evaluated,
+        wrong_editable_region_rate,
+        isolated_whitespace_rate,
     }
 }
 

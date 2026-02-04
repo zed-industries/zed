@@ -288,6 +288,13 @@ impl ProjectDiff {
                 window,
                 cx,
             );
+            match branch_diff.read(cx).diff_base() {
+                DiffBase::Head => {}
+                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
+                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                    cx,
+                ),
+            }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.disable_diagnostics(cx);
                 editor.set_show_diff_review_button(true, cx);
@@ -303,10 +310,6 @@ impl ProjectDiff {
                             branch_diff: branch_diff.clone(),
                         });
                         editor.start_temporary_diff_override();
-                        editor.set_render_diff_hunk_controls(
-                            Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                            cx,
-                        );
                     }
                 }
             });

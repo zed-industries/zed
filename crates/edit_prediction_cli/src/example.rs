@@ -116,6 +116,9 @@ pub struct ExampleScore {
     pub cursor_distance: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_exact_match: Option<bool>,
+    pub wrong_editable_region: Option<bool>,
+    #[serde(default)]
+    pub has_isolated_whitespace_changes: bool,
 }
 
 impl Example {

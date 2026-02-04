@@ -249,7 +249,9 @@ Zed currently supports links to the hosted versions of
 
 ### Self-Hosted Instances
 
-For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
+Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed.
+
+However, if your self-hosted Git instance URL doesn't contain identifying keywords, you can manually configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
 
 ```json [settings]
 {
@@ -263,7 +265,9 @@ For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hos
 }
 ```
 
-Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` field is optional and used for display purposes.
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+
+You can configure multiple custom providers if you work with several self-hosted instances.
 
 ### Permalinks
 

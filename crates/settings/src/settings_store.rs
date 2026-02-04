@@ -33,8 +33,8 @@ use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, UserSettingsContentExt,
-    VsCodeSettings, WorktreeId,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
+    UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
         UserSettingsContent, merge_from::MergeFrom,
@@ -150,6 +150,8 @@ pub struct SettingsStore {
 
     extension_settings: Option<Box<SettingsContent>>,
     server_settings: Option<Box<SettingsContent>>,
+
+    language_semantic_token_rules: HashMap<SharedString, SemanticTokenRules>,
 
     merged_settings: Rc<SettingsContent>,
 
@@ -272,11 +274,30 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
+        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
+    }
+
+    pub fn new_with_semantic_tokens(
+        cx: &mut App,
+        default_settings: &str,
+        default_semantic_tokens: &str,
+    ) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: Rc<SettingsContent> =
-            SettingsContent::parse_json_with_comments(default_settings)
-                .unwrap()
-                .into();
+        let mut default_settings: SettingsContent =
+            SettingsContent::parse_json_with_comments(default_settings).unwrap();
+        if let Ok(semantic_token_rules) =
+            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
+        {
+            let global_lsp = default_settings
+                .global_lsp_settings
+                .get_or_insert_with(Default::default);
+            let existing_rules = global_lsp
+                .semantic_token_rules
+                .get_or_insert_with(Default::default);
+            existing_rules.rules.extend(semantic_token_rules.rules);
+        }
+
+        let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
@@ -284,6 +305,7 @@ impl SettingsStore {
             server_settings: None,
             user_settings: None,
             extension_settings: None,
+            language_semantic_token_rules: HashMap::default(),
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
@@ -840,6 +862,29 @@ impl SettingsStore {
 
         self.recompute_values(None, cx);
         Ok(())
+    }
+
+    /// Sets language-specific semantic token rules.
+    ///
+    /// These rules are registered by language modules (e.g. the Rust language module)
+    /// and are stored separately from the global rules. They are only applied to
+    /// buffers of the matching language by the `SemanticTokenStylizer`.
+    ///
+    /// These should be registered before any `SemanticTokenStylizer` instances are
+    /// created (typically during `languages::init`), as existing cached stylizers
+    /// are not automatically invalidated.
+    pub fn set_language_semantic_token_rules(
+        &mut self,
+        language: SharedString,
+        rules: SemanticTokenRules,
+    ) {
+        self.language_semantic_token_rules.insert(language, rules);
+    }
+
+    /// Returns the language-specific semantic token rules for the given language,
+    /// if any have been registered.
+    pub fn language_semantic_token_rules(&self, language: &str) -> Option<&SemanticTokenRules> {
+        self.language_semantic_token_rules.get(language)
     }
 
     /// Add or remove a set of local settings via a JSON string.
