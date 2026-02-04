@@ -699,13 +699,13 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
                         menu.entry("Confirm", None, move |_, cx| {
-                            set_global_default_mode(ToolPermissionMode::Confirm, cx);
+                            set_global_default_permission(ToolPermissionMode::Confirm, cx);
                         })
                         .entry("Allow", None, move |_, cx| {
-                            set_global_default_mode(ToolPermissionMode::Allow, cx);
+                            set_global_default_permission(ToolPermissionMode::Allow, cx);
                         })
                         .entry("Deny", None, move |_, cx| {
-                            set_global_default_mode(ToolPermissionMode::Deny, cx);
+                            set_global_default_permission(ToolPermissionMode::Deny, cx);
                         })
                     }))
                 })
@@ -906,7 +906,7 @@ fn delete_pattern(tool_name: &str, rule_type: RuleType, pattern: &str, cx: &mut 
     });
 }
 
-fn set_global_default_mode(mode: ToolPermissionMode, cx: &mut App) {
+fn set_global_default_permission(mode: ToolPermissionMode, cx: &mut App) {
     SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
         settings
             .agent
