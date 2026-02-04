@@ -451,7 +451,7 @@ impl HighlightsTreeView {
             .child(Label::new(entry.range_display.clone()).color(Color::Default))
             .child(
                 Label::new(entry.category.label())
-                    .size(LabelSize::XSmall)
+                    .size(LabelSize::Small)
                     .color(Color::Muted),
             )
             .text_bg(if selected {
@@ -473,7 +473,7 @@ impl HighlightsTreeView {
             .border_color(colors.border_variant)
             .child(
                 Label::new(label.clone())
-                    .size(LabelSize::XSmall)
+                    .size(LabelSize::Small)
                     .color(Color::Muted),
             )
     }
@@ -1016,7 +1016,7 @@ fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
         parts.join(" ")
     };
 
-    preview.child(Label::new(label_text).size(LabelSize::XSmall))
+    preview.child(Label::new(label_text).size(LabelSize::Small))
 }
 
 fn format_hsla_as_hex(color: Hsla) -> String {
