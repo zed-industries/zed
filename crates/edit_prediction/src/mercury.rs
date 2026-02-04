@@ -381,14 +381,6 @@ fn send_feedback(
     let request_id = prediction_id.0;
     let app_version = AppVersion::global(cx);
     cx.background_spawn(async move {
-        if !request_id.starts_with("cmpl-") {
-            log::warn!(
-                "Mercury feedback: invalid request_id '{}' - must start with 'cmpl-'",
-                request_id
-            );
-            return anyhow::Ok(());
-        }
-
         let body = FeedbackRequest {
             request_id,
             provider_name: "zed",
