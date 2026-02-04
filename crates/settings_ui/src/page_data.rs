@@ -7,7 +7,7 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::render_edit_prediction_setup_page,
+    pages::{render_edit_prediction_setup_page, render_tool_permissions_setup_page},
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -6869,7 +6869,7 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
+    fn agent_configuration_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6893,6 +6893,15 @@ fn ai_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Configure Tool Rules".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.tool_permissions"),
+                description: Some("Set up regex patterns to auto-allow, auto-deny, or always prompt for specific tool inputs.".into()),
+                in_json: true,
+                files: USER,
+                render: render_tool_permissions_setup_page,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
