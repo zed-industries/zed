@@ -119,7 +119,7 @@
   {
     "token_type": "parameter",
     "token_modifiers": [],
-    "style": ["parameter"],
+    "style": ["variable"],
   },
   {
     "token_type": "variable",
@@ -154,7 +154,7 @@
   {
     "token_type": "decorator",
     "token_modifiers": [],
-    "style": ["function.decorator", "function.annotation"],
+    "style": ["function.decorator", "function.annotation", "attribute"],
   },
   // Declarations in the docs, but in practice, also references
   {

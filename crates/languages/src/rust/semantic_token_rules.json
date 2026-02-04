@@ -1,67 +1,154 @@
 [
   {
-    "token_type": "lifetime",
-    "token_modifiers": [],
-    "style": ["symbol", "type.parameter", "type"]
+    "token_type": "angle",
+    "style": ["punctuation.bracket"]
   },
   {
-    "token_type": "builtinType",
-    "token_modifiers": [],
-    "style": ["type.builtin", "type"]
-  },
-  {
-    "token_type": "selfKeyword",
-    "token_modifiers": [],
-    "style": ["variable.special", "keyword"]
-  },
-  {
-    "token_type": "selfTypeKeyword",
-    "token_modifiers": [],
-    "style": ["type.builtin", "type"]
-  },
-  {
-    "token_type": "boolean",
-    "token_modifiers": [],
-    "style": ["boolean", "constant.builtin"]
-  },
-  {
-    "token_type": "formatSpecifier",
-    "token_modifiers": [],
-    "style": ["string.special", "punctuation.special"]
-  },
-  {
-    "token_type": "escapeSequence",
-    "token_modifiers": [],
-    "style": ["string.escape", "constant.character.escape"]
+    "token_type": "arithmetic",
+    "style": ["punctuation"]
   },
   {
     "token_type": "attribute",
-    "token_modifiers": [],
-    "style": ["attribute", "function.decorator", "function.annotation"]
+    "style": ["attribute", "decorator"]
   },
   {
-    "token_type": "derive",
-    "token_modifiers": [],
-    "style": ["attribute", "function.macro"]
+    "token_type": "attributeBracket",
+    "style": ["punctuation.bracket"]
   },
   {
-    "token_type": "deriveHelper",
-    "token_modifiers": [],
-    "style": ["attribute", "function.macro"]
+    "token_type": "bitwise",
+    "style": ["operator"]
   },
   {
-    "token_type": "union",
-    "token_modifiers": [],
-    "style": ["type.union", "type"]
+    "token_type": "boolean",
+    "style": ["boolean"]
   },
   {
-    "token_type": "unresolvedReference",
-    "token_modifiers": [],
-    "style": ["variable"]
+    "token_type": "brace",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "bracket",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "builtinAttribute",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "builtinType",
+    "style": ["type"]
+  },
+  {
+    "token_type": "character",
+    "style": ["text.literal"]
+  },
+  {
+    "token_type": "colon",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "comma",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "comparison",
+    "style": ["operator"]
   },
   {
     "token_type": "constParameter",
-    "token_modifiers": [],
     "style": ["constant"]
+  },
+  {
+    "token_type": "const",
+    "style": ["constant"]
+  },
+  {
+    "token_type": "derive",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "deriveHelper",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "dot",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "escapeSequence",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "formatSpecifier",
+    "style": ["string.special"]
+  },
+  {
+    "token_type": "invalidEscapeSequence",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "label",
+    "style": ["lifetime"]
+  },
+  {
+    "token_type": "lifetime",
+    "style": ["lifetime"]
+  },
+  {
+    "token_type": "logical",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "macroBang",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "parenthesis",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "procMacro",
+    "style": ["function"]
+  },
+  {
+    "token_type": "punctuation",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "operator",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "selfKeyword",
+    "style": ["variable.special"]
+  },
+  {
+    "token_type": "selfTypeKeyword",
+    "style": ["type"]
+  },
+  {
+    "token_type": "semicolon",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "static",
+    "style": ["constant"]
+  },
+  {
+    "token_type": "toolModule",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "typeAlias",
+    "style": ["type"]
+  },
+  {
+    "token_type": "union",
+    "style": ["type"]
+  },
+  {
+    "token_type": "unresolvedReference",
+    "style": ["variable"]
   }
 ]
