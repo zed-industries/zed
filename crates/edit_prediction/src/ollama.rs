@@ -3,7 +3,7 @@ use crate::{
     prediction::EditPredictionResult,
     zeta1::{
         self, MAX_CONTEXT_TOKENS as ZETA_MAX_CONTEXT_TOKENS,
-        MAX_EVENT_TOKENS as ZETA_MAX_EVENT_TOKENS,
+        MAX_EVENT_TOKENS as ZETA_MAX_EVENT_TOKENS, MAX_REWRITE_TOKENS as ZETA_MAX_REWRITE_TOKENS,
     },
 };
 use anyhow::{Context as _, Result};
@@ -136,7 +136,7 @@ impl Ollama {
                     cursor_point,
                     &path_str,
                     &snapshot,
-                    max_output_tokens as usize,
+                    ZETA_MAX_REWRITE_TOKENS,
                     ZETA_MAX_CONTEXT_TOKENS,
                 );
                 let input_events = zeta1::prompt_for_events(&events, ZETA_MAX_EVENT_TOKENS);
