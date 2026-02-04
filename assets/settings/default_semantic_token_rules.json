@@ -1,7 +1,8 @@
-// Default semantic token rules for Zed.
+// Default semantic token rules for Zed (read-only).
 //
 // These rules map LSP semantic token types to syntax theme styles.
-// User-defined rules in settings.json are prepended to this list and take precedence.
+// To customize, add rules to "semantic_token_rules" in your settings.json.
+// User-defined rules are prepended to these defaults and take precedence.
 //
 // Each rule has the following properties:
 // - `token_type`: The LSP semantic token type to match. If omitted, matches all types.

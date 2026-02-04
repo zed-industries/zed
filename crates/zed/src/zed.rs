@@ -123,8 +123,8 @@ actions!(
         OpenTasks,
         /// Opens debug tasks configuration.
         OpenDebugTasks,
-        /// Opens semantic token rules configuration.
-        OpenSemanticTokenRules,
+        /// Shows the default semantic token rules (read-only).
+        ShowDefaultSemanticTokenRules,
         /// Resets the application database.
         ResetDatabase,
         /// Shows all hidden windows.
@@ -244,11 +244,13 @@ pub fn init(cx: &mut App) {
             );
         });
     })
-    .on_action(|_: &OpenSemanticTokenRules, cx| {
-        with_active_or_new_workspace(cx, |_, window, cx| {
-            open_settings_file(
-                paths::semantic_token_rules_file(),
-                || settings::default_semantic_token_rules().as_ref().into(),
+    .on_action(|_: &ShowDefaultSemanticTokenRules, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_semantic_token_rules(),
+                "Default Semantic Token Rules",
+                "JSONC",
                 window,
                 cx,
             );
