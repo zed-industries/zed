@@ -399,7 +399,9 @@ impl NotebookEditor {
             let display_name = match &spec {
                 KernelSpecification::Jupyter(s) => s.kernelspec.display_name.clone(),
                 KernelSpecification::PythonEnv(s) => s.kernelspec.display_name.clone(),
-                KernelSpecification::Remote(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::JupyterServer(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::SshRemote(s) => s.kernelspec.display_name.clone(),
+                KernelSpecification::WslRemote(s) => s.kernelspec.display_name.clone(),
             };
 
             let kernelspec_json = serde_json::json!({
