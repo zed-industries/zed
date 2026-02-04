@@ -22,8 +22,8 @@ pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, EditorconfigEvent, InvalidSettingsError, LocalSettingsKind,
-    LocalSettingsPath, RegisterSetting, Settings, SettingsLocation, SettingsStore,
-    parse_json_with_comments, watch_config_file,
+    LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
+    SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -125,6 +125,9 @@ pub struct GlobalLspSettings {
     /// Default: `true`
     pub button: bool,
     pub notifications: LspNotificationSettings,
+
+    /// Rules for highlighting semantic tokens.
+    pub semantic_token_rules: SemanticTokenRules,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -636,6 +639,14 @@ impl Settings for ProjectSettings {
                         .unwrap()
                         .dismiss_timeout_ms,
                 },
+                semantic_token_rules: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .semantic_token_rules
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
             },
             dap: project
                 .dap

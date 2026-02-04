@@ -42,6 +42,12 @@ impl SyntaxTheme {
             .unwrap_or_default()
     }
 
+    pub fn get_opt(&self, name: &str) -> Option<HighlightStyle> {
+        self.highlights
+            .iter()
+            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
+    }
+
     pub fn color(&self, name: &str) -> Hsla {
         self.get(name).color.unwrap_or_default()
     }
