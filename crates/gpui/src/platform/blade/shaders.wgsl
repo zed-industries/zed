@@ -495,18 +495,14 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
         case 3u: {
             // checkerboard
             let size = background.gradient_angle_or_pattern_height;
+            let relative_position = position - bounds.origin;
             
-            let x_index = floor(position.x / size);
-            let y_index = floor(position.y / size);
+            let x_index = floor(relative_position.x / size);
+            let y_index = floor(relative_position.y / size);
             let should_be_colored = (x_index + y_index) % 2.0;
             
             background_color = solid_color;
             background_color.a *= saturate(should_be_colored);
-            // if should_be_colored == 0.0 {
-            //     background_color = solid_color;
-            // } else {
-            //     background_color = vec4(255.0, 0.0, 0.0, 255.0);
-            // }
         }
     }
 

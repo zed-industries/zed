@@ -40,7 +40,17 @@ use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
-    Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, rgb, rgba, size, solid_background, transparent_black
+    Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
+    Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, FontWeight,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
+    linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, rgb,
+    rgba, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -51,6 +61,7 @@ use multi_buffer::{
 };
 
 use edit_prediction_types::EditPredictionGranularity;
+use ordered_float::Float;
 use project::{
     DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -3997,7 +4008,8 @@ impl EditorElement {
                 .h((*height as f32) * line_height)
                 .bg(checkerboard(
                     cx.theme().colors().panel_background,
-                    f32::from(line_height) / 4.0,
+                    // 20.0
+                    Self::checkerboard_size(line_height.into(), 20.0),
                 ))
                 .into_any(),
         };
@@ -4058,6 +4070,24 @@ impl EditorElement {
         }
 
         Some((element, final_size, row, x_offset))
+    }
+
+    /// The checkerboard pattern height must be an even factor of the line
+    /// height, so that two consecutive spacer blocks can render contiguously
+    /// without an obvious break in the pattern.
+    fn checkerboard_size(line_height: f32, target_height: f32) -> f32 {
+        let k_approx = line_height / (2.0 * target_height);
+        let k_floor = (k_approx.floor() as u32).max(1);
+        let k_ceil = (k_approx.ceil() as u32).max(1);
+
+        let size_floor = line_height / (2 * k_floor) as f32;
+        let size_ceil = line_height / (2 * k_ceil) as f32;
+
+        if (size_floor - target_height).abs() <= (size_ceil - target_height).abs() {
+            size_floor
+        } else {
+            size_ceil
+        }
     }
 
     fn render_buffer_header(
@@ -12109,6 +12139,7 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
+    use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
 
@@ -13209,5 +13240,33 @@ mod tests {
             assert_eq!(out[2].color, text_color);
             assert_eq!(out[3].color, adjusted_bg1);
         }
+    }
+
+    #[test]
+    fn test_checkerboard_size() {
+        // line height is smaller than target height, so we just return half the line height
+        assert_eq!(EditorElement::checkerboard_size(10.0, 20.0), 5.0);
+        
+        // line height is exactly half the target height, perfect match
+        assert_eq!(EditorElement::checkerboard_size(20.0, 10.0), 10.0);
+        
+        // line height is close to half the target height
+        assert_eq!(EditorElement::checkerboard_size(20.0, 9.0), 10.0);
+        
+        // line height is close to 1/4 the target height
+        assert_eq!(EditorElement::checkerboard_size(20.0, 4.8), 5.0);
+    }
+    
+    #[gpui::test(iterations = 100)]
+    fn test_random_checkerboard_size(mut rng: StdRng) {
+        let line_height = rng.next_u32() as f32;
+        let target_height = rng.next_u32() as f32;
+        
+        let result = EditorElement::checkerboard_size(line_height, target_height);
+        
+        let k = line_height / result;
+        assert!(k - k.round() < 0.0000001);  // approximately integer
+        assert!((k.round() as u32) % 2 == 0);  // even
+        
     }
 }
