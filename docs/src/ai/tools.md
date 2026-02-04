@@ -1,6 +1,6 @@
 # Tools
 
-Zed's built-in agent has access to a variety of tools that allow it to interact with your codebase and perform tasks.
+Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
 
 ## Read & Search Tools
 
