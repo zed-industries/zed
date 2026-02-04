@@ -655,6 +655,13 @@
     },
   },
   {
+    "context": "WorkspaceSidebar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
+    },
+  },
+  {
     "context": "ApplicationMenu",
     "use_key_equivalents": true,
     "bindings": {

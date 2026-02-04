@@ -162,7 +162,7 @@ impl Render for TitleBar {
 
         children.push(
             h_flex()
-                .gap_1()
+                .gap_0p5()
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
@@ -689,7 +689,7 @@ impl TitleBar {
             IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
-                    Tooltip::for_action("Toggle Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
+                    Tooltip::for_action("Open Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
                 })
                 .on_click(|_, window, cx| {
                     window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);

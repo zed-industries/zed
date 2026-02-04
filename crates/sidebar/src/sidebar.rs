@@ -606,6 +606,7 @@ impl Render for Sidebar {
 
         v_flex()
             .id("workspace-sidebar")
+            .key_context("WorkspaceSidebar")
             .font(ui_font)
             .h_full()
             .w(self.width)
@@ -618,6 +619,7 @@ impl Render for Sidebar {
                     .h(titlebar_height)
                     .w_full()
                     .mt_px()
+                    .pb_px()
                     .pr_2()
                     .when(cfg!(target_os = "macos"), |this| {
                         this.pl(px(TRAFFIC_LIGHT_PADDING))
@@ -638,7 +640,9 @@ impl Render for Sidebar {
                     .child(
                         IconButton::new("new-workspace", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("New Workspace"))
+                            .tooltip(|_window, cx| {
+                                Tooltip::for_action("New Workspace", &NewWorkspaceInWindow, cx)
+                            })
                             .on_click(cx.listener(|_this, _, window, cx| {
                                 window.dispatch_action(NewWorkspaceInWindow.boxed_clone(), cx);
                             })),
