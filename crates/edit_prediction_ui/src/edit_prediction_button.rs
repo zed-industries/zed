@@ -487,22 +487,11 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("edit-prediction")
-                    .when(user.is_some(), |popover_menu| {
+                    .map(|popover_menu| {
                         let this = this.clone();
-
                         popover_menu.menu(move |window, cx| {
                             this.update(cx, |this, cx| {
                                 this.build_edit_prediction_context_menu(provider, window, cx)
-                            })
-                            .ok()
-                        })
-                    })
-                    .when(user.is_none(), |popover_menu| {
-                        let this = this.clone();
-
-                        popover_menu.menu(move |window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.build_zeta_upsell_context_menu(window, cx)
                             })
                             .ok()
                         })
@@ -1028,7 +1017,55 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, window, cx| {
-            if let Some(usage) = self
+            let user = self.user_store.read(cx).current_user();
+
+            let needs_sign_in = user.is_none()
+                && matches!(
+                    provider,
+                    EditPredictionProvider::None | EditPredictionProvider::Zed
+                );
+
+            if needs_sign_in {
+                menu = menu
+                    .custom_row(move |_window, cx| {
+                        let description = indoc! {
+                            "You get 2,000 accepted suggestions at every keystroke for free, \
+                            powered by Zeta, our open-source, open-data model"
+                        };
+
+                        v_flex()
+                            .max_w_64()
+                            .h(rems_from_px(148.))
+                            .child(render_zeta_tab_animation(cx))
+                            .child(Label::new("Edit Prediction"))
+                            .child(
+                                Label::new(description)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                    .separator()
+                    .entry("Sign In & Start Using", None, |window, cx| {
+                        let client = Client::global(cx);
+                        window
+                            .spawn(cx, async move |cx| {
+                                client
+                                    .sign_in_with_optional_connect(true, &cx)
+                                    .await
+                                    .log_err();
+                            })
+                            .detach();
+                    })
+                    .link(
+                        "Learn More",
+                        OpenBrowser {
+                            url: zed_urls::edit_prediction_docs(cx),
+                        }
+                        .boxed_clone(),
+                    )
+                    .separator();
+            } else if let Some(usage) = self
                 .edit_prediction_provider
                 .as_ref()
                 .and_then(|provider| provider.usage(cx))
@@ -1110,8 +1147,9 @@ impl EditPredictionButton {
                     .separator();
             }
 
-            menu = self.build_language_settings_menu(menu, window, cx);
-
+            if !needs_sign_in {
+                menu = self.build_language_settings_menu(menu, window, cx);
+            }
             menu = self.add_provider_switching_section(menu, provider, cx);
             menu = menu.separator().item(
                 ContextMenuEntry::new("Configure Providers")
@@ -1128,55 +1166,6 @@ impl EditPredictionButton {
                         );
                     }),
             );
-
-            menu
-        })
-    }
-
-    fn build_zeta_upsell_context_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |mut menu, _window, cx| {
-            menu = menu
-                .custom_row(move |_window, cx| {
-                    let description = indoc! {
-                        "You get 2,000 accepted suggestions at every keystroke for free, \
-                        powered by Zeta, our open-source, open-data model"
-                    };
-
-                    v_flex()
-                        .max_w_64()
-                        .h(rems_from_px(148.))
-                        .child(render_zeta_tab_animation(cx))
-                        .child(Label::new("Edit Prediction"))
-                        .child(
-                            Label::new(description)
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .into_any_element()
-                })
-                .separator()
-                .entry("Sign In & Start Using", None, |window, cx| {
-                    let client = Client::global(cx);
-                    window
-                        .spawn(cx, async move |cx| {
-                            client
-                                .sign_in_with_optional_connect(true, &cx)
-                                .await
-                                .log_err();
-                        })
-                        .detach();
-                })
-                .link(
-                    "Learn More",
-                    OpenBrowser {
-                        url: zed_urls::edit_prediction_docs(cx),
-                    }
-                    .boxed_clone(),
-                );
 
             menu
         })
