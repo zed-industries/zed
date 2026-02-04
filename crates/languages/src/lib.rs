@@ -367,9 +367,9 @@ fn register_language(
     cx: &mut App,
 ) {
     let config = load_config(name);
-    if let Some(rules) = semantic_token_rules {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.set_language_semantic_token_rules(SharedString::from(name), rules, cx);
+    if let Some(rules) = &semantic_token_rules {
+        SettingsStore::update_global(cx, |store, _| {
+            store.set_language_semantic_token_rules(SharedString::from(name), rules.clone());
         });
     }
     for adapter in adapters {

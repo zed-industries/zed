@@ -144,12 +144,22 @@ impl Editor {
                         },
                     }
 
+                    let language_name = editor
+                        .buffer()
+                        .read(cx)
+                        .buffer(buffer_id)
+                        .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
+
                     editor.display_map.update(cx, |display_map, cx| {
                         project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
                             let mut token_highlights = Vec::new();
                             let mut interner = HighlightStyleInterner::default();
                             for (server_id, server_tokens) in tokens {
-                                let Some(stylizer) = lsp_store.get_or_create_token_stylizer(server_id, cx)
+                                let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
+                                    server_id,
+                                    language_name.as_ref(),
+                                    cx,
+                                )
                                 else {
                                     continue;
                                 };

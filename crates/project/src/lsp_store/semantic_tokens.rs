@@ -8,12 +8,12 @@ use futures::{
     FutureExt as _,
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
 use itertools::Itertools;
-use language::Buffer;
+use language::{Buffer, LanguageName};
 use lsp::{AdapterServerCapabilities, LSP_REQUEST_TIMEOUT, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
-use settings::{SemanticTokenRule, Settings as _};
+use settings::{SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore};
 use smol::future::yield_now;
 use text::{Anchor, Bias, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
@@ -322,6 +322,7 @@ impl LspStore {
     pub fn get_or_create_token_stylizer(
         &mut self,
         server_id: LanguageServerId,
+        language: Option<&LanguageName>,
         cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
         let stylizer = match self.semantic_token_stylizers.entry(server_id) {
@@ -340,7 +341,10 @@ impl LspStore {
                         opts,
                     ) => &opts.semantic_tokens_options.legend,
                 };
-                let stylizer = SemanticTokenStylizer::new(server_id, legend, cx);
+                let language_rules = language.and_then(|language| {
+                    SettingsStore::global(cx).language_semantic_token_rules(language.as_ref())
+                });
+                let stylizer = SemanticTokenStylizer::new(server_id, legend, language_rules, cx);
                 v.insert(stylizer)
             }
         };
@@ -374,7 +378,12 @@ pub struct SemanticTokenStylizer {
 }
 
 impl SemanticTokenStylizer {
-    pub fn new(server_id: LanguageServerId, legend: &lsp::SemanticTokensLegend, cx: &App) -> Self {
+    pub fn new(
+        server_id: LanguageServerId,
+        legend: &lsp::SemanticTokensLegend,
+        language_rules: Option<&SemanticTokenRules>,
+        cx: &App,
+    ) -> Self {
         let token_types: HashMap<TokenType, SharedString> = legend
             .token_types
             .iter()
@@ -393,22 +402,24 @@ impl SemanticTokenStylizer {
             .map(|(i, modifier)| (SharedString::from(modifier.as_str().to_string()), 1 << i))
             .collect();
 
-        let rules = &ProjectSettings::get_global(cx)
+        let global_rules = &ProjectSettings::get_global(cx)
             .global_lsp_settings
             .semantic_token_rules;
 
         let rules_by_token_type = token_types
             .iter()
             .map(|(index, token_type_name)| {
-                let matching_rules: Vec<SemanticTokenRule> = rules
+                let filter = |rule: &&SemanticTokenRule| {
+                    rule.token_type
+                        .as_ref()
+                        .is_none_or(|rule_token_type| rule_token_type == token_type_name.as_ref())
+                };
+                let matching_rules: Vec<SemanticTokenRule> = global_rules
                     .rules
                     .iter()
+                    .chain(language_rules.into_iter().flat_map(|lr| &lr.rules))
                     .rev()
-                    .filter(|rule| {
-                        rule.token_type.as_ref().is_none_or(|rule_token_type| {
-                            rule_token_type == token_type_name.as_ref()
-                        })
-                    })
+                    .filter(filter)
                     .cloned()
                     .collect();
                 (*index, matching_rules)

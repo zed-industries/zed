@@ -269,14 +269,20 @@ impl HighlightsTreeView {
             }
 
             project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-                for (_, (tokens, interner)) in display_map.all_semantic_token_highlights() {
+                for (buffer_id, (tokens, interner)) in display_map.all_semantic_token_highlights() {
+                    let language_name = multi_buffer
+                        .read(cx)
+                        .buffer(*buffer_id)
+                        .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
                         let range = token.range.start.into()..token.range.end.into();
                         let (range_display, sort_key) =
                             format_anchor_range(&range, &multi_buffer_snapshot);
-                        let Some(stylizer) =
-                            lsp_store.get_or_create_token_stylizer(token.server_id, cx)
-                        else {
+                        let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
+                            token.server_id,
+                            language_name.as_ref(),
+                            cx,
+                        ) else {
                             continue;
                         };
                         entries.push(HighlightEntry {

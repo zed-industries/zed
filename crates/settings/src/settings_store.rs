@@ -871,21 +871,24 @@ impl SettingsStore {
     /// Sets language-specific semantic token rules.
     ///
     /// These rules are registered by language modules (e.g. the Rust language module)
-    /// and are merged into the effective settings between the defaults and user
-    /// customizations. They are prepended to the default rules, giving them higher
-    /// priority than generic defaults but lower priority than user settings.
+    /// and are stored separately from the global rules. They are only applied to
+    /// buffers of the matching language by the `SemanticTokenStylizer`.
     ///
-    /// If the user provides a `semantic_token_rules.json` file, it replaces the
-    /// defaults and language-specific rules entirely. User `settings.json`
-    /// customizations are always merged on top with the highest priority.
+    /// These should be registered before any `SemanticTokenStylizer` instances are
+    /// created (typically during `languages::init`), as existing cached stylizers
+    /// are not automatically invalidated.
     pub fn set_language_semantic_token_rules(
         &mut self,
         language: SharedString,
         rules: SemanticTokenRules,
-        cx: &mut App,
     ) {
         self.language_semantic_token_rules.insert(language, rules);
-        self.recompute_values(None, cx);
+    }
+
+    /// Returns the language-specific semantic token rules for the given language,
+    /// if any have been registered.
+    pub fn language_semantic_token_rules(&self, language: &str) -> Option<&SemanticTokenRules> {
+        self.language_semantic_token_rules.get(language)
     }
 
     /// Sets the user semantic token rules from `~/.config/zed/semantic_token_rules.json`.
@@ -1179,21 +1182,6 @@ impl SettingsStore {
 
         if changed_local_path.is_none() {
             let mut merged = self.default_settings.as_ref().clone();
-            // Merge language-specific semantic token rules (e.g. from the Rust module)
-            // as additional defaults with higher priority than the generic defaults.
-            if !self.language_semantic_token_rules.is_empty() {
-                let global_lsp = merged
-                    .global_lsp_settings
-                    .get_or_insert_with(GlobalLspSettingsContent::default);
-                let existing_rules = global_lsp
-                    .semantic_token_rules
-                    .get_or_insert_with(Default::default);
-                for rules in self.language_semantic_token_rules.values() {
-                    existing_rules
-                        .rules
-                        .splice(0..0, rules.rules.iter().cloned());
-                }
-            }
             // If user has a semantic_token_rules.json file, use it as the base layer
             // instead of the bundled defaults. settings.json customizations will be
             // merged on top of this.
