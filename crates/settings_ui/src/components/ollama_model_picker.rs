@@ -59,13 +59,17 @@ impl OllamaModelPickerDelegate {
         }
     }
 
-    fn fetch_ollama_models(cx: &App) -> Vec<SharedString> {
+    fn fetch_ollama_models(cx: &mut App) -> Vec<SharedString> {
         let ollama_provider_id = LanguageModelProviderId::new("ollama");
 
         let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&ollama_provider_id)
         else {
             return Vec::new();
         };
+
+        // Re-fetch models in case ollama has been started or updated since
+        // Zed was launched.
+        provider.authenticate(cx).detach_and_log_err(cx);
 
         let mut models: Vec<SharedString> = provider
             .provided_models(cx)
