@@ -250,16 +250,7 @@ fn convert_token(
     token_type: TokenType,
     modifiers: u32,
 ) -> Option<HighlightStyle> {
-    let Some(rules) = stylizer.rules_for_token(token_type) else {
-        if let Some(name) = stylizer.token_type_name(token_type) {
-            log::error!(
-                "no semantic token highlight rule for token type {:?}: {:?}",
-                name.as_ref(),
-                modifiers
-            );
-        }
-        return None;
-    };
+    let rules = stylizer.rules_for_token(token_type)?;
     let matching = rules.iter().filter(|rule| {
         rule.token_modifiers
             .iter()
@@ -344,16 +335,7 @@ fn convert_token(
         );
     }
 
-    if empty {
-        log::error!(
-            "no semantic token highlight rule matched for token type {:?} with modifiers {:?}",
-            stylizer.token_type_name(token_type),
-            modifiers
-        );
-        None
-    } else {
-        Some(highlight)
-    }
+    if empty { None } else { Some(highlight) }
 }
 
 #[cfg(test)]
