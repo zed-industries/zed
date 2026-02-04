@@ -9179,6 +9179,7 @@ dependencies = [
  "semver",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "tree-sitter",
  "ui",
