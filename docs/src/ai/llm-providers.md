@@ -89,7 +89,7 @@ To do this:
 
 #### Authentication via Bedrock API Key
 
-Amazon Bedrock also supports [API Keys](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html), which provide a simpler authentication method without requiring AWS credentials.
+Amazon Bedrock also supports [API Keys](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html), which authenticate directly without requiring IAM users or named profiles.
 
 1. Create an API Key in the [Amazon Bedrock Console](https://console.aws.amazon.com/bedrock/)
 2. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section

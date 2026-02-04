@@ -49,11 +49,11 @@ The checkpoint button appears even if you interrupt the thread midway through an
 
 ### Context Menu {#context-menu}
 
-Right-click anywhere in the thread view to access a context menu with common actions: opening the thread as Markdown, scrolling to the top or bottom of the conversation, and other thread operations.
+Right-click anywhere in the thread view to open the thread as Markdown, scroll to the top or bottom, or copy content.
 
 ### Navigating the Thread {#navigating-the-thread}
 
-In long conversations, use the scroll button at the bottom of the panel to jump directly to your most recent prompt. This is useful when reviewing agent output and wanting to return to where you left off.
+In long conversations, use the scroll button at the bottom of the panel to jump to your most recent prompt.
 
 ### Navigating History {#navigating-history}
 
@@ -148,7 +148,7 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
 
-To quickly switch between profiles without opening the modal, use {#kb agent::CycleProfile} to cycle through them.
+Use {#kb agent::CycleProfile} to switch between profiles without opening the modal.
 
 #### Custom Profiles {#custom-profiles}
 

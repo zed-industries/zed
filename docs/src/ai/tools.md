@@ -66,11 +66,11 @@ Edits files by replacing specific text with new content.
 
 ### `restore_file_from_disk`
 
-Discards unsaved changes in a buffer by reloading the file from disk. When the agent encounters a file with unsaved modifications, it can use this tool to restore the buffer to match the saved version before making edits.
+Reloads a file from disk, discarding any unsaved changes in the buffer.
 
 ### `save_file`
 
-Writes a buffer's current contents to disk. When the agent needs to edit a file that has unsaved changes, it can save those changes first rather than discarding them. This preserves your work while allowing the agent to proceed with its modifications.
+Saves a buffer's current contents to disk, preserving unsaved changes before the agent modifies the file.
 
 ### `move_path`
 
