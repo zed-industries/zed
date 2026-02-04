@@ -5,7 +5,7 @@ use super::{
 
 use language::Point;
 use multi_buffer::MultiBufferSnapshot;
-use std::{cmp, mem, num::NonZeroU32, ops::Range};
+use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
@@ -700,6 +700,8 @@ impl<'a> Iterator for TabChunks<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
+
     use super::*;
     use crate::{
         MultiBuffer,
