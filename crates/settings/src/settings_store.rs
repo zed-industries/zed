@@ -1032,7 +1032,13 @@ impl SettingsStore {
                         properties_object.insert(
                             "initialization_options".to_string(),
                             serde_json::json!({
-                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}")
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}/initialization_options")
+                            }),
+                        );
+                        properties_object.insert(
+                            "settings".to_string(),
+                            serde_json::json!({
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}/settings")
                             }),
                         );
                     }
@@ -2352,7 +2358,23 @@ mod tests {
             .as_str()
             .unwrap();
 
-        assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
+        assert_eq!(
+            init_options_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/initialization_options"
+        );
+
+        let settings_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/settings/$ref")
+            .expect("settings should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(
+            settings_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/settings"
+        );
     }
 
     #[gpui::test]
@@ -2387,7 +2409,23 @@ mod tests {
             .as_str()
             .unwrap();
 
-        assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
+        assert_eq!(
+            init_options_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/initialization_options"
+        );
+
+        let settings_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/settings/$ref")
+            .expect("settings should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(
+            settings_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/settings"
+        );
     }
 
     #[gpui::test]
