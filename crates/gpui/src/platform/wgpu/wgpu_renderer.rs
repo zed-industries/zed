@@ -1,7 +1,7 @@
 use super::{WgpuAtlas, WgpuContext};
 use crate::{
-    Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch, ScaledPixels, Scene, Size,
-    get_gamma_correction_ratios, Background,
+    Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch, ScaledPixels, Scene,
+    Size, get_gamma_correction_ratios,
 };
 use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -124,9 +124,11 @@ impl WgpuRenderer {
         window: &W,
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
-        let window_handle = window.window_handle()
+        let window_handle = window
+            .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
-        let display_handle = window.display_handle()
+        let display_handle = window
+            .display_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
 
         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
@@ -138,7 +140,9 @@ impl WgpuRenderer {
         // lifetime of this renderer. In practice, the RawWindow struct is created
         // from the native window handles and the surface is dropped before the window.
         let surface = unsafe {
-            context.instance.create_surface_unsafe(target)
+            context
+                .instance
+                .create_surface_unsafe(target)
                 .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
         };
 
@@ -272,31 +276,36 @@ impl WgpuRenderer {
             }],
         });
 
-        let globals_with_gamma = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("globals_with_gamma_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(std::mem::size_of::<GlobalParams>() as u64),
+        let globals_with_gamma =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("globals_with_gamma_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(
+                                std::mem::size_of::<GlobalParams>() as u64
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(std::mem::size_of::<GammaParams>() as u64),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(
+                                std::mem::size_of::<GammaParams>() as u64
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         let storage_buffer_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
             binding,
@@ -319,10 +328,11 @@ impl WgpuRenderer {
             entries: &[storage_buffer_entry(0)],
         });
 
-        let path_rasterization = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("path_rasterization_layout"),
-            entries: &[storage_buffer_entry(0)],
-        });
+        let path_rasterization =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("path_rasterization_layout"),
+                entries: &[storage_buffer_entry(0)],
+            });
 
         let paths = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("paths_layout"),
@@ -384,7 +394,9 @@ impl WgpuRenderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(std::mem::size_of::<SurfaceParams>() as u64),
+                        min_binding_size: NonZeroU64::new(
+                            std::mem::size_of::<SurfaceParams>() as u64
+                        ),
                     },
                     count: None,
                 },
@@ -445,7 +457,9 @@ impl WgpuRenderer {
         });
 
         let blend_mode = match alpha_mode {
-            wgpu::CompositeAlphaMode::PreMultiplied => wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            wgpu::CompositeAlphaMode::PreMultiplied => {
+                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING
+            }
             _ => wgpu::BlendState::ALPHA_BLENDING,
         };
 
@@ -721,12 +735,13 @@ impl WgpuRenderer {
             self.surface_config.height = height.max(1);
             self.surface.configure(&self.device, &self.surface_config);
 
-            let (path_intermediate_texture, path_intermediate_view) = Self::create_path_intermediate(
-                &self.device,
-                self.surface_config.format,
-                self.surface_config.width,
-                self.surface_config.height,
-            );
+            let (path_intermediate_texture, path_intermediate_view) =
+                Self::create_path_intermediate(
+                    &self.device,
+                    self.surface_config.format,
+                    self.surface_config.width,
+                    self.surface_config.height,
+                );
             self.path_intermediate_texture = path_intermediate_texture;
             self.path_intermediate_view = path_intermediate_view;
 
@@ -811,21 +826,26 @@ impl WgpuRenderer {
                 return;
             }
         };
-        let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let globals = GlobalParams {
             viewport_size: [
                 self.surface_config.width as f32,
                 self.surface_config.height as f32,
             ],
-            premultiplied_alpha: if self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied {
+            premultiplied_alpha: if self.surface_config.alpha_mode
+                == wgpu::CompositeAlphaMode::PreMultiplied
+            {
                 1
             } else {
                 0
             },
             pad: 0,
         };
-        self.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        self.queue
+            .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
 
         let gamma_params = GammaParams {
             gamma_ratios: self.rendering_params.gamma_ratios,
@@ -833,7 +853,8 @@ impl WgpuRenderer {
             subpixel_enhanced_contrast: self.rendering_params.subpixel_enhanced_contrast,
             _pad: [0.0; 2],
         };
-        self.queue.write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&gamma_params));
+        self.queue
+            .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&gamma_params));
 
         let globals_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals_bind_group"),
@@ -844,24 +865,27 @@ impl WgpuRenderer {
             }],
         });
 
-        let globals_with_gamma_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals_with_gamma_bind_group"),
-            layout: &self.bind_group_layouts.globals_with_gamma,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.globals_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.gamma_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let globals_with_gamma_bind_group =
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("globals_with_gamma_bind_group"),
+                layout: &self.bind_group_layouts.globals_with_gamma,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.globals_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.gamma_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("main_encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("main_encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -881,7 +905,8 @@ impl WgpuRenderer {
 
             for batch in scene.batches() {
                 match batch {
-                    PrimitiveBatch::Quads(quads) => {
+                    PrimitiveBatch::Quads(range) => {
+                        let quads = &scene.quads[range];
                         let data = unsafe {
                             std::slice::from_raw_parts(
                                 quads.as_ptr() as *const u8,
@@ -889,20 +914,22 @@ impl WgpuRenderer {
                             )
                         };
                         let buffer = self.create_storage_buffer(data);
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("quads_bind_group"),
-                            layout: &self.bind_group_layouts.quads,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: buffer.as_entire_binding(),
-                            }],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("quads_bind_group"),
+                                layout: &self.bind_group_layouts.quads,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: buffer.as_entire_binding(),
+                                }],
+                            });
                         pass.set_pipeline(&self.pipelines.quads);
                         pass.set_bind_group(0, &globals_bind_group, &[]);
                         pass.set_bind_group(1, &bind_group, &[]);
                         pass.draw(0..4, 0..quads.len() as u32);
                     }
-                    PrimitiveBatch::Shadows(shadows) => {
+                    PrimitiveBatch::Shadows(range) => {
+                        let shadows = &scene.shadows[range];
                         let data = unsafe {
                             std::slice::from_raw_parts(
                                 shadows.as_ptr() as *const u8,
@@ -910,20 +937,22 @@ impl WgpuRenderer {
                             )
                         };
                         let buffer = self.create_storage_buffer(data);
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("shadows_bind_group"),
-                            layout: &self.bind_group_layouts.shadows,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: buffer.as_entire_binding(),
-                            }],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("shadows_bind_group"),
+                                layout: &self.bind_group_layouts.shadows,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: buffer.as_entire_binding(),
+                                }],
+                            });
                         pass.set_pipeline(&self.pipelines.shadows);
                         pass.set_bind_group(0, &globals_bind_group, &[]);
                         pass.set_bind_group(1, &bind_group, &[]);
                         pass.draw(0..4, 0..shadows.len() as u32);
                     }
-                    PrimitiveBatch::Paths(paths) => {
+                    PrimitiveBatch::Paths(range) => {
+                        let paths = &scene.paths[range];
                         if paths.is_empty() {
                             continue;
                         }
@@ -948,15 +977,21 @@ impl WgpuRenderer {
                         });
 
                         let first_path = &paths[0];
-                        let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order) {
-                            paths.iter().map(|p| PathSprite { bounds: p.clipped_bounds() }).collect()
-                        } else {
-                            let mut bounds = first_path.clipped_bounds();
-                            for path in paths.iter().skip(1) {
-                                bounds = bounds.union(&path.clipped_bounds());
-                            }
-                            vec![PathSprite { bounds }]
-                        };
+                        let sprites: Vec<PathSprite> =
+                            if paths.last().map(|p| &p.order) == Some(&first_path.order) {
+                                paths
+                                    .iter()
+                                    .map(|p| PathSprite {
+                                        bounds: p.clipped_bounds(),
+                                    })
+                                    .collect()
+                            } else {
+                                let mut bounds = first_path.clipped_bounds();
+                                for path in paths.iter().skip(1) {
+                                    bounds = bounds.union(&path.clipped_bounds());
+                                }
+                                vec![PathSprite { bounds }]
+                            };
 
                         let sprite_data = unsafe {
                             std::slice::from_raw_parts(
@@ -966,31 +1001,37 @@ impl WgpuRenderer {
                         };
                         let sprite_buffer = self.create_storage_buffer(sprite_data);
 
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("paths_bind_group"),
-                            layout: &self.bind_group_layouts.paths,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: sprite_buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::TextureView(&self.path_intermediate_view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
-                                },
-                            ],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("paths_bind_group"),
+                                layout: &self.bind_group_layouts.paths,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: sprite_buffer.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            &self.path_intermediate_view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::Sampler(
+                                            &self.atlas_sampler,
+                                        ),
+                                    },
+                                ],
+                            });
 
                         pass.set_pipeline(&self.pipelines.paths);
                         pass.set_bind_group(0, &globals_bind_group, &[]);
                         pass.set_bind_group(1, &bind_group, &[]);
                         pass.draw(0..4, 0..sprites.len() as u32);
                     }
-                    PrimitiveBatch::Underlines(underlines) => {
+                    PrimitiveBatch::Underlines(range) => {
+                        let underlines = &scene.underlines[range];
                         let data = unsafe {
                             std::slice::from_raw_parts(
                                 underlines.as_ptr() as *const u8,
@@ -998,20 +1039,22 @@ impl WgpuRenderer {
                             )
                         };
                         let buffer = self.create_storage_buffer(data);
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("underlines_bind_group"),
-                            layout: &self.bind_group_layouts.underlines,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: buffer.as_entire_binding(),
-                            }],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("underlines_bind_group"),
+                                layout: &self.bind_group_layouts.underlines,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: buffer.as_entire_binding(),
+                                }],
+                            });
                         pass.set_pipeline(&self.pipelines.underlines);
                         pass.set_bind_group(0, &globals_bind_group, &[]);
                         pass.set_bind_group(1, &bind_group, &[]);
                         pass.draw(0..4, 0..underlines.len() as u32);
                     }
-                    PrimitiveBatch::MonochromeSprites { texture_id, sprites } => {
+                    PrimitiveBatch::MonochromeSprites { texture_id, range } => {
+                        let sprites = &scene.monochrome_sprites[range];
                         let tex_info = self.atlas.get_texture_info(texture_id);
                         let data = unsafe {
                             std::slice::from_raw_parts(
@@ -1020,30 +1063,36 @@ impl WgpuRenderer {
                             )
                         };
                         let buffer = self.create_storage_buffer(data);
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("mono_sprites_bind_group"),
-                            layout: &self.bind_group_layouts.sprites,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::TextureView(&tex_info.view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
-                                },
-                            ],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("mono_sprites_bind_group"),
+                                layout: &self.bind_group_layouts.sprites,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: buffer.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            &tex_info.view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::Sampler(
+                                            &self.atlas_sampler,
+                                        ),
+                                    },
+                                ],
+                            });
                         pass.set_pipeline(&self.pipelines.mono_sprites);
                         pass.set_bind_group(0, &globals_with_gamma_bind_group, &[]);
                         pass.set_bind_group(1, &bind_group, &[]);
                         pass.draw(0..4, 0..sprites.len() as u32);
                     }
-                    PrimitiveBatch::SubpixelSprites { texture_id, sprites } => {
+                    PrimitiveBatch::SubpixelSprites { texture_id, range } => {
+                        let sprites = &scene.subpixel_sprites[range];
                         let tex_info = self.atlas.get_texture_info(texture_id);
                         let data = unsafe {
                             std::slice::from_raw_parts(
@@ -1052,40 +1101,57 @@ impl WgpuRenderer {
                             )
                         };
                         let buffer = self.create_storage_buffer(data);
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("subpixel_sprites_bind_group"),
-                            layout: &self.bind_group_layouts.sprites,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::TextureView(&tex_info.view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
-                                },
-                            ],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("subpixel_sprites_bind_group"),
+                                layout: &self.bind_group_layouts.sprites,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: buffer.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            &tex_info.view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::Sampler(
+                                            &self.atlas_sampler,
+                                        ),
+                                    },
+                                ],
+                            });
 
                         if let Some(ref pipeline) = self.pipelines.subpixel_sprites {
                             let subpixel_gamma = GammaParams {
                                 gamma_ratios: self.rendering_params.gamma_ratios,
-                                grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
-                                subpixel_enhanced_contrast: self.rendering_params.subpixel_enhanced_contrast,
+                                grayscale_enhanced_contrast: self
+                                    .rendering_params
+                                    .grayscale_enhanced_contrast,
+                                subpixel_enhanced_contrast: self
+                                    .rendering_params
+                                    .subpixel_enhanced_contrast,
                                 _pad: [0.0; 2],
                             };
-                            self.queue.write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&subpixel_gamma));
+                            self.queue.write_buffer(
+                                &self.gamma_buffer,
+                                0,
+                                bytemuck::bytes_of(&subpixel_gamma),
+                            );
 
                             pass.set_pipeline(pipeline);
                             pass.set_bind_group(0, &globals_with_gamma_bind_group, &[]);
                             pass.set_bind_group(1, &bind_group, &[]);
                             pass.draw(0..4, 0..sprites.len() as u32);
 
-                            self.queue.write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&gamma_params));
+                            self.queue.write_buffer(
+                                &self.gamma_buffer,
+                                0,
+                                bytemuck::bytes_of(&gamma_params),
+                            );
                         } else {
                             pass.set_pipeline(&self.pipelines.mono_sprites);
                             pass.set_bind_group(0, &globals_with_gamma_bind_group, &[]);
@@ -1093,7 +1159,8 @@ impl WgpuRenderer {
                             pass.draw(0..4, 0..sprites.len() as u32);
                         }
                     }
-                    PrimitiveBatch::PolychromeSprites { texture_id, sprites } => {
+                    PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                        let sprites = &scene.polychrome_sprites[range];
                         let tex_info = self.atlas.get_texture_info(texture_id);
                         let data = unsafe {
                             std::slice::from_raw_parts(
@@ -1102,24 +1169,29 @@ impl WgpuRenderer {
                             )
                         };
                         let buffer = self.create_storage_buffer(data);
-                        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("poly_sprites_bind_group"),
-                            layout: &self.bind_group_layouts.sprites,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::TextureView(&tex_info.view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
-                                },
-                            ],
-                        });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("poly_sprites_bind_group"),
+                                layout: &self.bind_group_layouts.sprites,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: buffer.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            &tex_info.view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::Sampler(
+                                            &self.atlas_sampler,
+                                        ),
+                                    },
+                                ],
+                            });
                         pass.set_pipeline(&self.pipelines.poly_sprites);
                         pass.set_bind_group(0, &globals_bind_group, &[]);
                         pass.set_bind_group(1, &bind_group, &[]);
@@ -1137,7 +1209,11 @@ impl WgpuRenderer {
         frame.present();
     }
 
-    fn draw_paths_to_intermediate(&self, encoder: &mut wgpu::CommandEncoder, paths: &[Path<ScaledPixels>]) {
+    fn draw_paths_to_intermediate(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        paths: &[Path<ScaledPixels>],
+    ) {
         let mut vertices = Vec::new();
         for path in paths {
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
@@ -1174,7 +1250,8 @@ impl WgpuRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.queue.write_buffer(&globals_buffer, 0, bytemuck::bytes_of(&globals));
+        self.queue
+            .write_buffer(&globals_buffer, 0, bytemuck::bytes_of(&globals));
 
         let globals_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("path_globals_bind_group"),
@@ -1239,12 +1316,16 @@ impl RenderingParameters {
     fn from_env(adapter: &wgpu::Adapter) -> Self {
         use std::env;
 
-        let sample_count_mask = adapter.get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
+        let sample_count_mask = adapter
+            .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
             .flags
-            .sample_count_supported(4) as u32 * 4
-            | adapter.get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
+            .sample_count_supported(4) as u32
+            * 4
+            | adapter
+                .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
                 .flags
-                .sample_count_supported(2) as u32 * 2
+                .sample_count_supported(2) as u32
+                * 2
             | 1;
 
         let path_sample_count = env::var("ZED_PATH_SAMPLE_COUNT")

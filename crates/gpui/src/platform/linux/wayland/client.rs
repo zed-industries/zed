@@ -82,10 +82,6 @@ use crate::{
     ScrollWheelEvent, Size, TouchPhase, WindowParams, point, profiler, px, size,
 };
 use crate::{
-    RunnableVariant, TaskTiming,
-    platform::{PlatformWindow, wgpu::WgpuContext},
-};
-use crate::{
     SharedString,
     platform::linux::{
         LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
@@ -98,6 +94,10 @@ use crate::{
         },
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+};
+use crate::{
+    TaskTiming,
+    platform::{PlatformWindow, wgpu::WgpuContext},
 };
 
 /// Used to convert evdev scancode to xkb scancode
