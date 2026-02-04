@@ -1236,11 +1236,11 @@ float4 fill_color(Background background,
     case 3: {
         // checkerboard
         float size = background.gradient_angle_or_pattern_height;
-        float2 relative_position = position - bounds.origin;
+        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
         
         float x_index = floor(relative_position.x / size);
         float y_index = floor(relative_position.y / size);
-        float should_be_colored = (x_index + y_index) % 2.0;
+        float should_be_colored = fmod(x_index + y_index, 2.0);
         
         color = solid_color;
         color.a *= saturate(should_be_colored);

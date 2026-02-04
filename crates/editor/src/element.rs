@@ -4008,7 +4008,7 @@ impl EditorElement {
                 .h((*height as f32) * line_height)
                 .bg(checkerboard(
                     cx.theme().colors().panel_background,
-                    Self::checkerboard_size(line_height.into(), 20.0),
+                    Self::checkerboard_size(line_height.into(), 20.0 * window.scale_factor()),
                 ))
                 .into_any(),
         };
@@ -13245,27 +13245,26 @@ mod tests {
     fn test_checkerboard_size() {
         // line height is smaller than target height, so we just return half the line height
         assert_eq!(EditorElement::checkerboard_size(10.0, 20.0), 5.0);
-        
+
         // line height is exactly half the target height, perfect match
         assert_eq!(EditorElement::checkerboard_size(20.0, 10.0), 10.0);
-        
+
         // line height is close to half the target height
         assert_eq!(EditorElement::checkerboard_size(20.0, 9.0), 10.0);
-        
+
         // line height is close to 1/4 the target height
         assert_eq!(EditorElement::checkerboard_size(20.0, 4.8), 5.0);
     }
-    
+
     #[gpui::test(iterations = 100)]
     fn test_random_checkerboard_size(mut rng: StdRng) {
         let line_height = rng.next_u32() as f32;
         let target_height = rng.next_u32() as f32;
-        
+
         let result = EditorElement::checkerboard_size(line_height, target_height);
-        
+
         let k = line_height / result;
-        assert!(k - k.round() < 0.0000001);  // approximately integer
-        assert!((k.round() as u32) % 2 == 0);  // even
-        
+        assert!(k - k.round() < 0.0000001); // approximately integer
+        assert!((k.round() as u32) % 2 == 0); // even
     }
 }
