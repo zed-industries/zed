@@ -1295,8 +1295,16 @@ impl Window {
             Box::new(move || {
                 handle
                     .update(&mut cx, |_, window, _cx| {
-                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                        // WM_NCHITTEST comes from the non-client area; use the current cursor position.
+                        let position = window.platform_window.mouse_position();
+                        let hit_test = window.rendered_frame.hit_test(position);
+                        for id in &hit_test.ids {
+                            if let Some((area, _)) = window
+                                .rendered_frame
+                                .window_control_hitboxes
+                                .iter()
+                                .find(|(_, hitbox)| hitbox.id == *id)
+                            {
                                 return Some(*area);
                             }
                         }
