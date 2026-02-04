@@ -387,7 +387,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 // Check if this looks like a Rust binary (Cargo build output)
                 if let Some(program) = config_obj.get("program").and_then(|p| p.as_str()) {
                     let path_str = program.replace('\\', "/");
-                    if path_str.contains("/target/debug/") || path_str.contains("/target/release/") {
+                    if path_str.contains("/target/debug/") || path_str.contains("/target/release/")
+                    {
                         config_obj.insert("sourceLanguages".to_owned(), json!(["rust"]));
                     }
                 }
