@@ -1,7 +1,7 @@
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render,
-    SharedString, Subscription, Task, WeakEntity, Window, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render, SharedString,
+    Subscription, Task, WeakEntity, Window, px,
 };
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
@@ -490,8 +490,15 @@ impl PickerDelegate for WorkspacePickerDelegate {
                                 .size(IconSize::XSmall),
                         )
                         .child(title)
-                        .tooltip(move |_, cx| {
-                            Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
+                        .when(!full_path.is_empty(), |item| {
+                            item.tooltip(move |_, cx| {
+                                Tooltip::with_meta(
+                                    worktree_label.clone(),
+                                    None,
+                                    full_path.clone(),
+                                    cx,
+                                )
+                            })
                         })
                         .into_any_element(),
                 )
