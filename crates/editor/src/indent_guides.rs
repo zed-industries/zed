@@ -85,7 +85,7 @@ impl Editor {
                     snapshot,
                 )
             })
-            .unwrap_or(true)
+            .unwrap_or(state.cursor_row != cursor_row)
         {
             state.dirty = true;
         } else {

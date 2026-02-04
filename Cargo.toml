@@ -791,6 +791,7 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Media",
 ]
 
 [patch.crates-io]
