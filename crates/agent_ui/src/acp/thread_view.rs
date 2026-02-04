@@ -5920,7 +5920,6 @@ impl AcpServerView {
                                     )
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .tooltip({
-                                        let full_path = full_path.clone();
                                         move |_, cx| {
                                             Tooltip::with_meta(
                                                 "Go to File",
