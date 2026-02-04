@@ -25,6 +25,8 @@ reqwest_client.workspace = true
 rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
+snippet_provider.workspace = true
 theme.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true

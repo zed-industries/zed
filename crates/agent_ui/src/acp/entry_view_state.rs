@@ -1,5 +1,7 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
+use super::thread_history::AcpThreadHistory;
+use crate::user_slash_command::{CommandLoadError, UserSlashCommand};
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
@@ -23,11 +25,14 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
-    history_store: Entity<ThreadStore>,
+    thread_store: Option<Entity<ThreadStore>>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+    cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+    cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
     agent_name: SharedString,
 }
 
@@ -35,20 +40,26 @@ impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        history_store: Entity<ThreadStore>,
+        thread_store: Option<Entity<ThreadStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
+        cached_user_commands: Rc<RefCell<HashMap<String, UserSlashCommand>>>,
+        cached_user_command_errors: Rc<RefCell<Vec<CommandLoadError>>>,
         agent_name: SharedString,
     ) -> Self {
         Self {
             workspace,
             project,
-            history_store,
+            thread_store,
+            history,
             prompt_store,
             entries: Vec::new(),
             prompt_capabilities,
             available_commands,
+            cached_user_commands,
+            cached_user_command_errors,
             agent_name,
         }
     }
@@ -82,13 +93,16 @@ impl EntryViewState {
                     }
                 } else {
                     let message_editor = cx.new(|cx| {
-                        let mut editor = MessageEditor::new(
+                        let mut editor = MessageEditor::new_with_cache(
                             self.workspace.clone(),
                             self.project.clone(),
-                            self.history_store.clone(),
+                            self.thread_store.clone(),
+                            self.history.clone(),
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
+                            self.cached_user_commands.clone(),
+                            self.cached_user_command_errors.clone(),
                             self.agent_name.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
@@ -396,10 +410,10 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, rc::Rc};
+    use std::path::Path;
+    use std::rc::Rc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::ThreadStore;
     use agent_client_protocol as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
@@ -451,14 +465,19 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let history_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = None;
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
-                history_store,
+                thread_store,
+                history.downgrade(),
                 None,
+                Default::default(),
+                Default::default(),
                 Default::default(),
                 Default::default(),
                 "Test Agent".into(),
@@ -469,7 +488,7 @@ mod tests {
             view_state.sync_entry(0, &thread, window, cx)
         });
 
-        let diff = thread.read_with(cx, |thread, _cx| {
+        let diff = thread.read_with(cx, |thread, _| {
             thread
                 .entries()
                 .get(0)

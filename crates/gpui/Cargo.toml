@@ -162,7 +162,6 @@ objc2-metal = { version = "0.3", optional = true }
 mach2.workspace = true
 #TODO: replace with "objc2"
 metal.workspace = true
-flume = "0.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
@@ -172,7 +171,6 @@ scap = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
-flume = "0.11"
 oo7 = { version = "0.5.0", default-features = false, features = [
     "async-std",
     "native_crypto",
@@ -238,7 +236,6 @@ xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881
 x11-clipboard = { version = "0.9.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-flume = "0.11"
 rand.workspace = true
 windows.workspace = true
 windows-core.workspace = true

@@ -40,7 +40,7 @@ use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
-    ToggleMarksView, ToggleRegistersView, Vim,
+    ToggleMarksView, ToggleRegistersView, Vim, VimSettings,
     motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
         JoinLines,
@@ -88,6 +88,7 @@ pub enum VimOption {
     Number(bool),
     RelativeNumber(bool),
     IgnoreCase(bool),
+    GDefault(bool),
 }
 
 impl VimOption {
@@ -134,6 +135,10 @@ impl VimOption {
             (None, VimOption::IgnoreCase(false)),
             (Some("ic"), VimOption::IgnoreCase(true)),
             (Some("noic"), VimOption::IgnoreCase(false)),
+            (None, VimOption::GDefault(true)),
+            (Some("gd"), VimOption::GDefault(true)),
+            (None, VimOption::GDefault(false)),
+            (Some("nogd"), VimOption::GDefault(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -160,6 +165,11 @@ impl VimOption {
             "noignorecase" => Some(Self::IgnoreCase(false)),
             "noic" => Some(Self::IgnoreCase(false)),
 
+            "gdefault" => Some(Self::GDefault(true)),
+            "gd" => Some(Self::GDefault(true)),
+            "nogdefault" => Some(Self::GDefault(false)),
+            "nogd" => Some(Self::GDefault(false)),
+
             _ => None,
         }
     }
@@ -174,6 +184,8 @@ impl VimOption {
             VimOption::RelativeNumber(false) => "norelativenumber",
             VimOption::IgnoreCase(true) => "ignorecase",
             VimOption::IgnoreCase(false) => "noignorecase",
+            VimOption::GDefault(true) => "gdefault",
+            VimOption::GDefault(false) => "nogdefault",
         }
     }
 }
@@ -271,7 +283,6 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
     Vim::action(editor, cx, |vim, action: &VimSet, _, cx| {
         for option in action.options.iter() {
             vim.update_editor(cx, |_, editor, cx| match option {
@@ -294,6 +305,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     SettingsStore::update(cx, |store, _| {
                         store.override_global(settings);
                     });
+                }
+                VimOption::GDefault(enabled) => {
+                    let mut settings = VimSettings::get_global(cx).clone();
+                    settings.gdefault = *enabled;
+
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    })
                 }
             });
         }
@@ -1020,6 +1039,7 @@ impl VimCommand {
         self
     }
 
+    /// Set argument handler. Trailing whitespace in arguments will be preserved.
     fn args(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1028,6 +1048,8 @@ impl VimCommand {
         self
     }
 
+    /// Set argument handler. Trailing whitespace in arguments will be trimmed.
+    /// Supports filename autocompletion.
     fn filename(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1139,11 +1161,11 @@ impl VimCommand {
         let has_bang = rest.starts_with('!');
         let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
-            rest.strip_prefix('!')?.trim().to_string()
+            rest.strip_prefix('!')?.trim_start().to_string()
         } else if rest.is_empty() {
             "".into()
         } else {
-            rest.strip_prefix(' ')?.trim().to_string()
+            rest.strip_prefix(' ')?.trim_start().to_string()
         };
         Some(ParsedQuery {
             args,
@@ -1163,8 +1185,8 @@ impl VimCommand {
             has_bang,
             has_space: _,
         } = self.get_parsed_query(query.to_string())?;
-        let action = if has_bang && self.bang_action.is_some() {
-            self.bang_action.as_ref().unwrap().boxed_clone()
+        let action = if has_bang && let Some(bang_action) = self.bang_action.as_ref() {
+            bang_action.boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
             action.boxed_clone()
         } else if let Some(action_name) = self.action_name {
@@ -1173,10 +1195,13 @@ impl VimCommand {
             return None;
         };
 
+        // If the command does not accept args and we have args, we should do no
+        // action.
         let action = if args.is_empty() {
             action
+        } else if self.has_filename {
+            self.args.as_ref()?(action, args.trim().into())?
         } else {
-            // if command does not accept args and we have args then we should do no action
             self.args.as_ref()?(action, args)?
         };
 
@@ -1812,7 +1837,7 @@ pub fn command_interceptor(
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
     let has_trailing_space = query.ends_with(" ");
-    let mut query = query.as_str().trim();
+    let mut query = query.as_str().trim_start();
 
     let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
         .then(|| {
@@ -2330,7 +2355,7 @@ impl Vim {
             let start = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
                 .range(
                     &snapshot,
@@ -3192,6 +3217,25 @@ mod test {
 
         cx.shared_state().await.assert_eq(indoc! {"
             ˇThe quick
+            brown fox
+            jumps over
+            the lazy dog
+        "});
+
+        cx.set_shared_state(indoc! {"
+            ˇquick
+            brown fox
+            jumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": n o r m space I T h e space")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            Theˇ quick
             brown fox
             jumps over
             the lazy dog

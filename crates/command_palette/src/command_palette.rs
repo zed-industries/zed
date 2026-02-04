@@ -771,6 +771,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_command_palette(cx: &mut TestAppContext) {
+        persistence::COMMAND_PALETTE_HISTORY
+            .clear_all()
+            .await
+            .unwrap();
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =

@@ -40,13 +40,13 @@ impl EventEmitter<Event> for LogStore {}
 pub struct LogStore {
     on_headless_host: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
-    pub copilot_log_subscription: Option<lsp::Subscription>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String)>,
 }
 
 struct ProjectState {
     _subscriptions: [Subscription; 2],
+    copilot_log_subscription: Option<lsp::Subscription>,
 }
 
 pub trait Message: AsRef<str> {
@@ -220,7 +220,7 @@ impl LogStore {
         let log_store = Self {
             projects: HashMap::default(),
             language_servers: HashMap::default(),
-            copilot_log_subscription: None,
+
             on_headless_host,
             io_tx,
         };
@@ -350,6 +350,7 @@ impl LogStore {
                         }
                     }),
                 ],
+                copilot_log_subscription: None,
             },
         );
     }
@@ -712,5 +713,13 @@ impl LogStore {
                 self.disable_rpc_trace_for_language_server(server_id);
             }
         }
+    }
+    pub fn copilot_state_for_project(
+        &mut self,
+        project: &WeakEntity<Project>,
+    ) -> Option<&mut Option<lsp::Subscription>> {
+        self.projects
+            .get_mut(project)
+            .map(|project| &mut project.copilot_log_subscription)
     }
 }

@@ -105,6 +105,9 @@ pub trait Scheduler: Send + Sync {
         priority: Priority,
     );
 
+    /// Spawn a closure on a dedicated realtime thread for audio processing.
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
+
     /// Schedule a background task with default (medium) priority.
     fn schedule_background(&self, runnable: Runnable<RunnableMeta>) {
         self.schedule_background_with_priority(runnable, Priority::default());

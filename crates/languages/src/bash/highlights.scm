@@ -11,26 +11,29 @@
 (variable_name) @variable
 
 [
+  "export"
+  "function"
+  "unset"
+  "local"
+  "declare"
+] @keyword
+
+[
   "case"
   "do"
   "done"
   "elif"
   "else"
   "esac"
-  "export"
   "fi"
   "for"
-  "function"
   "if"
   "in"
   "select"
   "then"
-  "unset"
   "until"
   "while"
-  "local"
-  "declare"
-] @keyword
+] @keyword.control
 
 (comment) @comment
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::interpolate_edits;
+use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
 use zeta_prompt::ZetaPromptInput;
@@ -37,6 +37,7 @@ impl EditPredictionResult {
         edited_buffer: &Entity<Buffer>,
         edited_buffer_snapshot: &BufferSnapshot,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+        cursor_position: Option<PredictedCursorPosition>,
         buffer_snapshotted_at: Instant,
         response_received_at: Instant,
         inputs: ZetaPromptInput,
@@ -71,6 +72,7 @@ impl EditPredictionResult {
             prediction: Ok(EditPrediction {
                 id,
                 edits,
+                cursor_position,
                 snapshot,
                 edit_preview,
                 inputs,
@@ -86,6 +88,7 @@ impl EditPredictionResult {
 pub struct EditPrediction {
     pub id: EditPredictionId,
     pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+    pub cursor_position: Option<PredictedCursorPosition>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     pub buffer: Entity<Buffer>,
@@ -143,16 +146,18 @@ mod tests {
         let prediction = EditPrediction {
             id: EditPredictionId("prediction-1".into()),
             edits,
+            cursor_position: None,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
             inputs: ZetaPromptInput {
                 events: vec![],
-                related_files: vec![].into(),
+                related_files: vec![],
                 cursor_path: Path::new("path.txt").into(),
                 cursor_offset_in_excerpt: 0,
                 cursor_excerpt: "".into(),
                 editable_range_in_excerpt: 0..0,
+                excerpt_start_row: None,
             },
             buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),

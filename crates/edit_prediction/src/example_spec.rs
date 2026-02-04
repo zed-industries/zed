@@ -1,9 +1,16 @@
+use crate::udiff::DiffLine;
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc};
+use telemetry_events::EditPredictionRating;
 
 pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
+
+/// Maximum cursor file size to capture (64KB).
+/// Files larger than this will not have their content captured,
+/// falling back to git-based loading.
+pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -21,6 +28,95 @@ pub struct ExampleSpec {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patches: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected_patch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_prompt_input: Option<CapturedPromptInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<TelemetrySource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub human_feedback: Vec<HumanFeedback>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<EditPredictionRating>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct HumanFeedback {
+    pub message: String,
+}
+
+/// Metadata for examples sourced from production telemetry (rejected predictions).
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct TelemetrySource {
+    pub request_id: String,
+    pub device_id: String,
+    pub time: String,
+    pub rejection_reason: String,
+    pub was_shown: bool,
+}
+
+/// All data needed to run format_prompt without loading the project.
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedPromptInput {
+    pub cursor_file_content: String,
+    pub cursor_offset: usize,
+    pub cursor_row: u32,
+    pub cursor_column: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_start_row: Option<u32>,
+    pub events: Vec<CapturedEvent>,
+    pub related_files: Vec<CapturedRelatedFile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedEvent {
+    pub path: Arc<Path>,
+    pub old_path: Arc<Path>,
+    pub diff: String,
+    pub predicted: bool,
+    pub in_open_source_repo: bool,
+}
+
+impl CapturedEvent {
+    pub fn to_event(&self) -> zeta_prompt::Event {
+        zeta_prompt::Event::BufferChange {
+            path: self.path.clone(),
+            old_path: self.old_path.clone(),
+            diff: self.diff.clone(),
+            predicted: self.predicted,
+            in_open_source_repo: self.in_open_source_repo,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedRelatedFile {
+    pub path: Arc<Path>,
+    pub max_row: u32,
+    pub excerpts: Vec<CapturedRelatedExcerpt>,
+}
+
+impl CapturedRelatedFile {
+    pub fn to_related_file(&self) -> zeta_prompt::RelatedFile {
+        zeta_prompt::RelatedFile {
+            path: self.path.clone(),
+            max_row: self.max_row,
+            excerpts: self
+                .excerpts
+                .iter()
+                .map(|e| zeta_prompt::RelatedExcerpt {
+                    row_range: e.row_range.clone(),
+                    text: e.text.clone().into(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CapturedRelatedExcerpt {
+    pub row_range: Range<u32>,
+    pub text: String,
 }
 
 const REASONING_HEADING: &str = "Reasoning";
@@ -28,7 +124,7 @@ const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
+const REJECTED_PATCH_HEADING: &str = "Rejected Patch";
 
 #[derive(Serialize, Deserialize)]
 struct FrontMatter<'a> {
@@ -136,6 +232,18 @@ impl ExampleSpec {
             markdown.push('\n');
         }
 
+        if let Some(rejected_patch) = &self.rejected_patch {
+            _ = writeln!(markdown, "## {}", REJECTED_PATCH_HEADING);
+            markdown.push('\n');
+            _ = writeln!(markdown, "```diff");
+            markdown.push_str(rejected_patch);
+            if !markdown.ends_with('\n') {
+                markdown.push('\n');
+            }
+            _ = writeln!(markdown, "```");
+            markdown.push('\n');
+        }
+
         markdown
     }
 
@@ -154,6 +262,11 @@ impl ExampleSpec {
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
+            rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
 
         if let Some(rest) = input.strip_prefix("+++\n")
@@ -177,8 +290,8 @@ impl ExampleSpec {
             UncommittedDiff,
             EditHistory,
             CursorPosition,
-            ExpectedExcerpts,
             ExpectedPatch,
+            RejectedPatch,
             Other,
         }
 
@@ -202,8 +315,8 @@ impl ExampleSpec {
                         Section::CursorPosition
                     } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
                         Section::ExpectedPatch
-                    } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
-                        Section::ExpectedExcerpts
+                    } else if title.eq_ignore_ascii_case(REJECTED_PATCH_HEADING) {
+                        Section::RejectedPatch
                     } else {
                         Section::Other
                     };
@@ -244,11 +357,11 @@ impl ExampleSpec {
                             spec.cursor_path = Path::new(block_info).into();
                             spec.cursor_position = mem::take(&mut text);
                         }
-                        Section::ExpectedExcerpts => {
-                            mem::take(&mut text);
-                        }
                         Section::ExpectedPatch => {
                             spec.expected_patches.push(mem::take(&mut text));
+                        }
+                        Section::RejectedPatch => {
+                            spec.rejected_patch = Some(mem::take(&mut text));
                         }
                         Section::Start | Section::Other => {}
                     }
@@ -379,6 +492,123 @@ impl ExampleSpec {
 
         self.cursor_position = result;
     }
+
+    /// Returns all of the possible expected patches for this example, each with an optional
+    /// cursor offset.
+    ///
+    /// The cursor offset is an offset within the new text (after applying the patch), relative
+    /// to the start of the hunk.
+    ///
+    /// In the serialized representation of this example, the cursor position is represented
+    /// using a comment line in the diff, beginning with `#`, and containing a `[CURSOR_POSITION]`
+    /// marker with the same format as the [`Self::cursor_excerpt`].
+    pub fn expected_patches_with_cursor_positions(&self) -> Vec<(String, Option<usize>)> {
+        self.expected_patches
+            .iter()
+            .map(|patch| {
+                let mut clean_patch = String::new();
+                let mut cursor_offset: Option<usize> = None;
+                let mut line_start_offset = 0usize;
+                let mut prev_line_start_offset = 0usize;
+
+                for line in patch.lines() {
+                    let diff_line = DiffLine::parse(line);
+
+                    match &diff_line {
+                        DiffLine::Garbage(content)
+                            if content.starts_with('#')
+                                && content.contains(CURSOR_POSITION_MARKER) =>
+                        {
+                            let caret_column = if let Some(caret_pos) = content.find('^') {
+                                caret_pos
+                            } else if let Some(_) = content.find('<') {
+                                0
+                            } else {
+                                continue;
+                            };
+                            let cursor_column = caret_column.saturating_sub('#'.len_utf8());
+                            cursor_offset = Some(prev_line_start_offset + cursor_column);
+                        }
+                        _ => {
+                            if !clean_patch.is_empty() {
+                                clean_patch.push('\n');
+                            }
+                            clean_patch.push_str(line);
+
+                            match diff_line {
+                                DiffLine::Addition(content) | DiffLine::Context(content) => {
+                                    prev_line_start_offset = line_start_offset;
+                                    line_start_offset += content.len() + 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                if patch.ends_with('\n') && !clean_patch.is_empty() {
+                    clean_patch.push('\n');
+                }
+
+                (clean_patch, cursor_offset)
+            })
+            .collect()
+    }
+
+    pub fn set_expected_patches_with_cursor_positions(
+        &mut self,
+        patches: Vec<(String, Option<usize>)>,
+    ) {
+        self.expected_patches = patches
+            .into_iter()
+            .map(|(patch, cursor_offset)| {
+                let Some(cursor_offset) = cursor_offset else {
+                    return patch;
+                };
+
+                let mut result = String::new();
+                let mut line_start_offset = 0usize;
+
+                for line in patch.lines() {
+                    if !result.is_empty() {
+                        result.push('\n');
+                    }
+                    result.push_str(line);
+
+                    match DiffLine::parse(line) {
+                        DiffLine::Addition(content) => {
+                            let line_end_offset = line_start_offset + content.len();
+
+                            if cursor_offset >= line_start_offset
+                                && cursor_offset <= line_end_offset
+                            {
+                                let cursor_column = cursor_offset - line_start_offset;
+
+                                result.push('\n');
+                                result.push('#');
+                                for _ in 0..cursor_column {
+                                    result.push(' ');
+                                }
+                                write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
+                            }
+
+                            line_start_offset = line_end_offset + 1;
+                        }
+                        DiffLine::Context(content) => {
+                            line_start_offset += content.len() + 1;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if patch.ends_with('\n') {
+                    result.push('\n');
+                }
+
+                result
+            })
+            .collect();
+    }
 }
 
 #[cfg(test)]
@@ -399,6 +629,11 @@ mod tests {
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
+            rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
 
         // Cursor before `42`
@@ -531,6 +766,11 @@ mod tests {
             cursor_position: String::new(),
             edit_history: String::new(),
             expected_patches: Vec::new(),
+            rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
 
         // Cursor before `42` using inline marker
@@ -584,5 +824,77 @@ mod tests {
             spec.cursor_excerpt().unwrap(),
             (expected_excerpt.to_string(), expected_offset)
         );
+    }
+
+    #[test]
+    fn test_expected_patches_with_cursor_positions() {
+        let mut spec = ExampleSpec {
+            name: String::new(),
+            repository_url: String::new(),
+            revision: String::new(),
+            tags: Vec::new(),
+            reasoning: None,
+            uncommitted_diff: String::new(),
+            cursor_path: Path::new("test.rs").into(),
+            cursor_position: String::new(),
+            edit_history: String::new(),
+            expected_patches: Vec::new(),
+            rejected_patch: None,
+            captured_prompt_input: None,
+            telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
+        };
+
+        let new_content = indoc! {r#"
+            // prints a greeting
+            fn main() {
+                println!("hello, {}", );
+                let x = 42;
+            }
+        "#};
+        let cursor_offset = new_content.find(");").unwrap();
+
+        let clean_patch = indoc! {r#"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,3 +1,4 @@
+            +// prints a greeting
+             fn main() {
+            -    println!("hi");
+            +    println!("hello, {}", );
+                 let x = 42;
+             }
+        "#}
+        .to_string();
+
+        let encoded_patch = indoc! {r#"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,3 +1,4 @@
+            +// prints a greeting
+             fn main() {
+            -    println!("hi");
+            +    println!("hello, {}", );
+            #                          ^[CURSOR_POSITION]
+                 let x = 42;
+             }
+        "#}
+        .to_string();
+
+        spec.set_expected_patches_with_cursor_positions(vec![(
+            clean_patch.clone(),
+            Some(cursor_offset),
+        )]);
+        assert_eq!(spec.expected_patches, vec![encoded_patch]);
+
+        let results = spec.expected_patches_with_cursor_positions();
+        assert_eq!(results, vec![(clean_patch.clone(), Some(cursor_offset))]);
+
+        spec.set_expected_patches_with_cursor_positions(vec![(clean_patch.clone(), None)]);
+        assert_eq!(spec.expected_patches, vec![clean_patch.clone()]);
+
+        let results = spec.expected_patches_with_cursor_positions();
+        assert_eq!(results, vec![(clean_patch, None)]);
     }
 }

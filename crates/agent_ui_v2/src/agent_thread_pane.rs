@@ -1,8 +1,9 @@
-use agent::{DbThreadMetadata, NativeAgentServer, ThreadStore};
+use acp_thread::AgentSessionInfo;
+use agent::{NativeAgentServer, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
-use agent_ui::acp::AcpThreadView;
+use agent_ui::acp::{AcpServerView, AcpThreadHistory};
 use fs::Fs;
 use gpui::{
     Entity, EventEmitter, Focusable, Pixels, SharedString, Subscription, WeakEntity, prelude::*,
@@ -50,7 +51,7 @@ impl EventEmitter<MinimizePane> for AgentThreadPane {}
 impl EventEmitter<ClosePane> for AgentThreadPane {}
 
 struct ActiveThreadView {
-    view: Entity<AcpThreadView>,
+    view: Entity<AcpServerView>,
     thread_id: acp::SessionId,
     _notify: Subscription,
 }
@@ -61,10 +62,15 @@ pub struct AgentThreadPane {
     width: Option<Pixels>,
     thread_view: Option<ActiveThreadView>,
     workspace: WeakEntity<Workspace>,
+    history: Entity<AcpThreadHistory>,
 }
 
 impl AgentThreadPane {
-    pub fn new(workspace: WeakEntity<Workspace>, cx: &mut ui::Context<Self>) -> Self {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        history: Entity<AcpThreadHistory>,
+        cx: &mut ui::Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         Self {
             focus_handle,
@@ -72,6 +78,7 @@ impl AgentThreadPane {
             width: None,
             thread_view: None,
             workspace,
+            history,
         }
     }
 
@@ -89,7 +96,7 @@ impl AgentThreadPane {
 
     pub fn open_thread(
         &mut self,
-        entry: DbThreadMetadata,
+        entry: AgentSessionInfo,
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -98,21 +105,22 @@ impl AgentThreadPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread_id = entry.id.clone();
+        let thread_id = entry.session_id.clone();
         let resume_thread = Some(entry);
 
         let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
 
+        let history = self.history.clone();
         let thread_view = cx.new(|cx| {
-            AcpThreadView::new(
+            AcpServerView::new(
                 agent,
                 resume_thread,
                 None,
                 workspace,
                 project,
-                thread_store,
+                Some(thread_store),
                 prompt_store,
-                true,
+                history,
                 window,
                 cx,
             )
@@ -134,8 +142,8 @@ impl AgentThreadPane {
     fn title(&self, cx: &App) -> SharedString {
         if let Some(active_thread_view) = &self.thread_view {
             let thread_view = active_thread_view.view.read(cx);
-            if let Some(thread) = thread_view.thread() {
-                let title = thread.read(cx).title();
+            if let Some(ready) = thread_view.as_active_thread() {
+                let title = ready.thread.read(cx).title();
                 if !title.is_empty() {
                     return title;
                 }

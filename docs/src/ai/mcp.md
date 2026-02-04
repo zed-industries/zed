@@ -4,7 +4,10 @@ Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to inter
 
 > The Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.
 
-Check out the [Anthropic news post](https://www.anthropic.com/news/model-context-protocol) and the [Zed blog post](https://zed.dev/blog/mcp) for a general intro to MCP.
+## Supported Features
+
+Zed currently supports MCP's [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and [Prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) features.
+We welcome contributions that help advance Zed's MCP feature coverage (Discovery, Sampling, Elicitation, etc).
 
 ## Installing MCP Servers
 

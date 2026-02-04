@@ -16,6 +16,7 @@ use project::{
     ToolchainStore, WorktreeId,
     agent_server_store::AgentServerStore,
     buffer_store::{BufferStore, BufferStoreEvent},
+    context_server_store::ContextServerStore,
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
     image_store::ImageId,
@@ -24,7 +25,7 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::WorktreeStore,
+    worktree_store::{WorktreeIdCounter, WorktreeStore},
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -54,6 +55,7 @@ pub struct HeadlessProject {
     pub dap_store: Entity<DapStore>,
     pub breakpoint_store: Entity<BreakpointStore>,
     pub agent_server_store: Entity<AgentServerStore>,
+    pub context_server_store: Entity<ContextServerStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -96,7 +98,7 @@ impl HeadlessProject {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
-            let mut store = WorktreeStore::local(true, fs.clone());
+            let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
             store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
@@ -193,6 +195,7 @@ impl HeadlessProject {
                 fs.clone(),
                 worktree_store.clone(),
                 task_store.clone(),
+                true,
                 cx,
             );
             observer.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
@@ -232,6 +235,13 @@ impl HeadlessProject {
             agent_server_store
         });
 
+        let context_server_store = cx.new(|cx| {
+            let mut context_server_store =
+                ContextServerStore::local(worktree_store.clone(), None, true, cx);
+            context_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
+            context_server_store
+        });
+
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
         language_extension::init(
             language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
@@ -267,6 +277,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &git_store);
         session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &agent_server_store);
+        session.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &context_server_store);
 
         session.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
@@ -286,6 +297,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
+        session.add_entity_request_handler(Self::handle_download_file_by_path);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -311,6 +323,7 @@ impl HeadlessProject {
         BreakpointStore::init(&session);
         GitStore::init(&session);
         AgentServerStore::init_headless(&session);
+        ContextServerStore::init_headless(&session);
 
         HeadlessProject {
             next_entry_id: Default::default(),
@@ -324,6 +337,7 @@ impl HeadlessProject {
             dap_store,
             breakpoint_store,
             agent_server_store,
+            context_server_store,
             languages,
             extensions,
             git_store,
@@ -469,7 +483,12 @@ impl HeadlessProject {
                 }
             }
         };
-
+        let next_worktree_id = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .update(cx, |worktree_store, _| worktree_store.next_worktree_id())
+            })
+            .await?;
         let worktree = this
             .read_with(&cx.clone(), |this, _| {
                 Worktree::local(
@@ -478,6 +497,7 @@ impl HeadlessProject {
                     this.fs.clone(),
                     this.next_entry_id.clone(),
                     true,
+                    next_worktree_id,
                     &mut cx,
                 )
             })
@@ -668,6 +688,98 @@ impl HeadlessProject {
         Ok(proto::Ack {})
     }
 
+    pub async fn handle_download_file_by_path(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::DownloadFileByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::DownloadFileResponse> {
+        log::debug!(
+            "handle_download_file_by_path: received request: {:?}",
+            message.payload
+        );
+
+        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
+        let project_id = message.payload.project_id;
+        let file_id = message.payload.file_id;
+        log::debug!(
+            "handle_download_file_by_path: worktree_id={:?}, path={:?}, file_id={}",
+            worktree_id,
+            path,
+            file_id
+        );
+        use proto::create_file_for_peer::Variant;
+
+        let (worktree_store, session): (Entity<WorktreeStore>, AnyProtoClient) = this
+            .read_with(&cx, |this, _| {
+                (this.worktree_store.clone(), this.session.clone())
+            });
+
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))
+            .context("worktree not found")?;
+
+        let download_task = worktree.update(&mut cx, |worktree: &mut Worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        });
+
+        let downloaded_file = download_task.await?;
+        let content = downloaded_file.content;
+        let file = downloaded_file.file;
+        log::debug!(
+            "handle_download_file_by_path: file loaded, content_size={}",
+            content.len()
+        );
+
+        let proto_file = worktree.read_with(&cx, |_worktree: &Worktree, cx| file.to_proto(cx));
+        log::debug!(
+            "handle_download_file_by_path: using client-provided file_id={}",
+            file_id
+        );
+
+        let state = proto::FileState {
+            id: file_id,
+            file: Some(proto_file),
+            content_size: content.len() as u64,
+        };
+
+        log::debug!("handle_download_file_by_path: sending State message");
+        session.send(proto::CreateFileForPeer {
+            project_id,
+            peer_id: Some(REMOTE_SERVER_PEER_ID),
+            variant: Some(Variant::State(state)),
+        })?;
+
+        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+        let num_chunks = content.len().div_ceil(CHUNK_SIZE);
+        log::debug!(
+            "handle_download_file_by_path: sending {} chunks",
+            num_chunks
+        );
+        for (i, chunk) in content.chunks(CHUNK_SIZE).enumerate() {
+            log::trace!(
+                "handle_download_file_by_path: sending chunk {}/{}, size={}",
+                i + 1,
+                num_chunks,
+                chunk.len()
+            );
+            session.send(proto::CreateFileForPeer {
+                project_id,
+                peer_id: Some(REMOTE_SERVER_PEER_ID),
+                variant: Some(Variant::Chunk(proto::FileChunk {
+                    file_id,
+                    data: chunk.to_vec(),
+                })),
+            })?;
+        }
+
+        log::debug!(
+            "handle_download_file_by_path: returning file_id={}",
+            file_id
+        );
+        Ok(proto::DownloadFileResponse { file_id })
+    }
+
     pub async fn handle_open_new_buffer(
         this: Entity<Self>,
         _message: TypedEnvelope<proto::OpenNewBuffer>,
@@ -675,9 +787,9 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
-            let buffer = this
-                .buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(true, cx));
+            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.create_buffer(None, true, cx)
+            });
             (buffer_store, buffer)
         });
 
@@ -741,7 +853,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path,
+                        path,
                     },
                     cx,
                 )

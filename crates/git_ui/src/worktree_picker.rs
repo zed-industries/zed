@@ -15,18 +15,14 @@ use project::{
     git_store::Repository,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
-use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
+use remote_connection::{RemoteConnectionModal, connect};
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 
 actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
-
-pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(open);
-}
 
 pub fn open(
     workspace: &mut Workspace,
@@ -41,11 +37,22 @@ pub fn open(
     })
 }
 
+pub fn create_embedded(
+    repository: Option<Entity<Repository>>,
+    workspace: WeakEntity<Workspace>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<WorktreeList>,
+) -> WorktreeList {
+    WorktreeList::new_embedded(repository, workspace, width, window, cx)
+}
+
 pub struct WorktreeList {
     width: Rems,
     pub picker: Entity<Picker<WorktreeListDelegate>>,
     picker_focus_handle: FocusHandle,
-    _subscription: Subscription,
+    _subscription: Option<Subscription>,
+    embedded: bool,
 }
 
 impl WorktreeList {
@@ -53,6 +60,21 @@ impl WorktreeList {
         repository: Option<Entity<Repository>>,
         workspace: WeakEntity<Workspace>,
         width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(repository, workspace, width, false, window, cx);
+        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        }));
+        this
+    }
+
+    fn new_inner(
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        width: Rems,
+        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -90,25 +112,40 @@ impl WorktreeList {
         .detach_and_log_err(cx);
 
         let delegate = WorktreeListDelegate::new(workspace, repository, window, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
-        });
-
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
         });
 
         Self {
             picker,
             picker_focus_handle,
             width,
-            _subscription,
+            _subscription: None,
+            embedded,
         }
     }
 
-    fn handle_modifiers_changed(
+    fn new_embedded(
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(repository, workspace, width, true, window, cx);
+        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        }));
+        this
+    }
+
+    pub fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
         _: &mut Window,
@@ -118,7 +155,7 @@ impl WorktreeList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
-    fn handle_new_worktree(
+    pub fn handle_new_worktree(
         &mut self,
         replace_current_window: bool,
         window: &mut Window,
@@ -167,10 +204,12 @@ impl Render for WorktreeList {
                 this.handle_new_worktree(true, w, cx)
             }))
             .child(self.picker.clone())
-            .on_mouse_down_out({
-                cx.listener(move |this, _, window, cx| {
-                    this.picker.update(cx, |this, cx| {
-                        this.cancel(&Default::default(), window, cx);
+            .when(!self.embedded, |el| {
+                el.on_mouse_down_out({
+                    cx.listener(move |this, _, window, cx| {
+                        this.picker.update(cx, |this, cx| {
+                            this.cancel(&Default::default(), window, cx);
+                        })
                     })
                 })
             })

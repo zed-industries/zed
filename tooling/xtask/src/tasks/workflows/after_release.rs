@@ -51,8 +51,7 @@ fn rebuild_releases_page() -> NamedJob {
     }
 
     fn redeploy_zed_dev() -> Step<Run> {
-        named::bash("npm exec --yes -- vercel@37 --token=\"$VERCEL_TOKEN\" --scope zed-industries redeploy https://zed.dev")
-            .add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
+        named::bash("./script/redeploy-vercel").add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
     }
 
     named::job(
@@ -60,6 +59,7 @@ fn rebuild_releases_page() -> NamedJob {
             .runs_on(runners::LINUX_SMALL)
             .with_repository_owner_guard()
             .add_step(refresh_cloud_releases())
+            .add_step(checkout_repo())
             .add_step(redeploy_zed_dev()),
     )
 }

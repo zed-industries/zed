@@ -585,20 +585,13 @@ impl<V: 'static> Entity<V> {
             tx.try_send(()).ok();
         });
 
-        let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(5)
-        } else {
-            Duration::from_secs(1)
-        };
-
         cx.executor().advance_clock(advance_clock_by);
 
         async move {
-            let notification = crate::util::smol_timeout(duration, rx.recv())
+            rx.recv()
                 .await
-                .expect("next notification timed out");
+                .expect("entity dropped while test was waiting for its next notification");
             drop(subscription);
-            notification.expect("entity dropped while test was waiting for its next notification")
         }
     }
 }
@@ -638,29 +631,25 @@ impl<V> Entity<V> {
         let handle = self.downgrade();
 
         async move {
-            crate::util::smol_timeout(Duration::from_secs(1), async move {
-                loop {
-                    {
-                        let cx = cx.borrow();
-                        let cx = &*cx;
-                        if predicate(
-                            handle
-                                .upgrade()
-                                .expect("view dropped with pending condition")
-                                .read(cx),
-                            cx,
-                        ) {
-                            break;
-                        }
+            loop {
+                {
+                    let cx = cx.borrow();
+                    let cx = &*cx;
+                    if predicate(
+                        handle
+                            .upgrade()
+                            .expect("view dropped with pending condition")
+                            .read(cx),
+                        cx,
+                    ) {
+                        break;
                     }
-
-                    rx.recv()
-                        .await
-                        .expect("view dropped with pending condition");
                 }
-            })
-            .await
-            .expect("condition timed out");
+
+                rx.recv()
+                    .await
+                    .expect("view dropped with pending condition");
+            }
             drop(subscriptions);
         }
     }

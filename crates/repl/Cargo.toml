@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [lib]
 path = "src/repl.rs"
 doctest = false
@@ -33,7 +36,7 @@ jupyter-websocket-client.workspace = true
 jupyter-protocol.workspace = true
 language.workspace = true
 log.workspace = true
-markdown_preview.workspace = true
+markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 nbformat.workspace = true

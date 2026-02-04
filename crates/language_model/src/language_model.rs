@@ -13,7 +13,7 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
-use cloud_llm_client::{CompletionMode, CompletionRequestStatus, UsageLimit};
+use cloud_llm_client::CompletionRequestStatus;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -77,11 +77,6 @@ pub enum LanguageModelCompletionEvent {
         position: usize,
     },
     Started,
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -115,12 +110,10 @@ impl LanguageModelCompletionEvent {
                 Ok(LanguageModelCompletionEvent::Queued { position })
             }
             CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
-            CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
-            }
-            CompletionRequestStatus::ToolUseLimitReached => {
-                Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
-            }
+            CompletionRequestStatus::UsageUpdated { .. }
+            | CompletionRequestStatus::ToolUseLimitReached => Err(
+                LanguageModelCompletionError::Other(anyhow!("Unexpected status: {status:?}")),
+            ),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -598,6 +591,11 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// Whether this model supports extended thinking.
+    fn supports_thinking(&self) -> bool {
+        false
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 
@@ -607,13 +605,14 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports choosing which tool to use.
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
-    /// Returns whether this model supports "burn mode";
-    fn supports_burn_mode(&self) -> bool {
+    /// Returns whether this model or provider supports streaming tool calls;
+    fn supports_streaming_tools(&self) -> bool {
         false
     }
 
-    /// Returns whether this model or provider supports streaming tool calls;
-    fn supports_streaming_tools(&self) -> bool {
+    /// Returns whether this model/provider reports accurate split input/output token counts.
+    /// When true, the UI may show separate input/output token indicators.
+    fn supports_split_token_display(&self) -> bool {
         false
     }
 
@@ -622,10 +621,6 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> u64;
-    /// Returns the maximum token count for this model in burn mode (If `supports_burn_mode` is `false` this returns `None`)
-    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
-        None
-    }
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }
@@ -683,8 +678,6 @@ pub trait LanguageModel: Send + Sync {
                             match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
-                                Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
@@ -758,18 +751,6 @@ pub trait LanguageModel: Send + Sync {
         unimplemented!()
     }
 }
-
-pub trait LanguageModelExt: LanguageModel {
-    fn max_token_count_for_mode(&self, mode: CompletionMode) -> u64 {
-        match mode {
-            CompletionMode::Normal => self.max_token_count(),
-            CompletionMode::Max => self
-                .max_token_count_in_burn_mode()
-                .unwrap_or_else(|| self.max_token_count()),
-        }
-    }
-}
-impl LanguageModelExt for dyn LanguageModel {}
 
 impl std::fmt::Debug for dyn LanguageModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
