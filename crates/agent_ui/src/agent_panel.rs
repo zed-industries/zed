@@ -158,7 +158,7 @@ pub fn init(cx: &mut App) {
                             thread_view
                                 .read(cx)
                                 .as_active_thread()
-                                .map(|r| r.thread.clone())
+                                .map(|r| r.read(cx).thread.clone())
                         });
 
                     if let Some(thread) = thread {
@@ -916,12 +916,18 @@ impl AgentPanel {
     }
 
     fn expand_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread_view) = self.active_thread_view() {
-            thread_view.update(cx, |view, cx| {
-                view.expand_message_editor(&ExpandMessageEditor, window, cx);
-                view.focus_handle(cx).focus(window, cx);
-            });
-        }
+        let Some(thread_view) = self.active_thread_view() else {
+            return;
+        };
+
+        let Some(active_thread) = thread_view.read(cx).as_active_thread() else {
+            return;
+        };
+
+        active_thread.update(cx, |active_thread, cx| {
+            active_thread.expand_message_editor(&ExpandMessageEditor, window, cx);
+            active_thread.focus_handle(cx).focus(window, cx);
+        })
     }
 
     fn history_kind_for_selected_agent(&self, cx: &App) -> Option<HistoryKind> {
@@ -1185,22 +1191,15 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        match &self.active_view {
-            ActiveView::AgentThread { thread_view } => {
-                thread_view
-                    .update(cx, |thread_view, cx| {
-                        thread_view.open_thread_as_markdown(workspace, window, cx)
-                    })
+        if let Some(workspace) = self.workspace.upgrade()
+            && let Some(thread_view) = self.active_thread_view()
+            && let Some(active_thread) = thread_view.read(cx).as_active_thread()
+        {
+            active_thread.update(cx, |thread, cx| {
+                thread
+                    .open_thread_as_markdown(workspace, window, cx)
                     .detach_and_log_err(cx);
-            }
-            ActiveView::Uninitialized
-            | ActiveView::TextThread { .. }
-            | ActiveView::History { .. }
-            | ActiveView::Configuration => {}
+            });
         }
     }
 
@@ -1421,7 +1420,7 @@ impl AgentPanel {
             ActiveView::AgentThread { thread_view, .. } => thread_view
                 .read(cx)
                 .as_active_thread()
-                .map(|r| r.thread.clone()),
+                .map(|r| r.read(cx).thread.clone()),
             _ => None,
         }
     }
@@ -1849,7 +1848,7 @@ impl AgentPanel {
                 if let Some(title_editor) = thread_view
                     .read(cx)
                     .as_active_thread()
-                    .and_then(|ready| ready.title_editor.clone())
+                    .and_then(|r| r.read(cx).title_editor.clone())
                 {
                     let container = div()
                         .w_full()

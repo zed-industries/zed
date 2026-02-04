@@ -124,6 +124,8 @@ actions!(
         OpenTasks,
         /// Opens debug tasks configuration.
         OpenDebugTasks,
+        /// Shows the default semantic token rules (read-only).
+        ShowDefaultSemanticTokenRules,
         /// Resets the application database.
         ResetDatabase,
         /// Shows all hidden windows.
@@ -238,6 +240,18 @@ pub fn init(cx: &mut App) {
             open_settings_file(
                 paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    })
+    .on_action(|_: &ShowDefaultSemanticTokenRules, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_semantic_token_rules(),
+                "Default Semantic Token Rules",
+                "JSONC",
                 window,
                 cx,
             );
@@ -1281,6 +1295,10 @@ fn initialize_pane(
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner =
                 cx.new(|inner_cx| MigrationBanner::new(workspace_handle.clone(), inner_cx));
+            toolbar.add_item(migration_banner, window, cx);
+            let highlights_tree_item =
+                cx.new(|_| language_tools::HighlightsTreeToolbarItemView::new());
+            toolbar.add_item(highlights_tree_item, window, cx);
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
@@ -4906,6 +4924,7 @@ mod tests {
                 "git_panel",
                 "git_picker",
                 "go_to_line",
+                "highlights_tree_view",
                 "icon_theme_selector",
                 "image_viewer",
                 "inline_assistant",

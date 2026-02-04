@@ -13,9 +13,9 @@ const CURRENT_ACTION_RUN_URL: &str =
     "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
 
 pub(crate) fn release() -> Workflow {
-    let macos_tests = run_tests::run_platform_tests(Platform::Mac);
-    let linux_tests = run_tests::run_platform_tests(Platform::Linux);
-    let windows_tests = run_tests::run_platform_tests(Platform::Windows);
+    let macos_tests = run_tests::run_platform_tests_no_filter(Platform::Mac);
+    let linux_tests = run_tests::run_platform_tests_no_filter(Platform::Linux);
+    let windows_tests = run_tests::run_platform_tests_no_filter(Platform::Windows);
     let macos_clippy = run_tests::clippy(Platform::Mac);
     let linux_clippy = run_tests::clippy(Platform::Linux);
     let windows_clippy = run_tests::clippy(Platform::Windows);

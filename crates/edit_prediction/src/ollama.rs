@@ -110,7 +110,6 @@ impl Ollama {
         let Some(model) = settings.model.clone() else {
             return Task::ready(Ok(None));
         };
-        let max_output_tokens = settings.max_output_tokens;
         let api_url = settings.api_url.clone();
 
         log::debug!("Ollama: Requesting completion (model: {})", model);
@@ -127,7 +126,18 @@ impl Ollama {
 
         let is_zeta = is_zeta_model(&model);
 
+        // Zeta generates more tokens than FIM models. Ideally, we'd use MAX_REWRITE_TOKENS,
+        // but this might be too slow for local deployments. So we make it configurable,
+        // but we also have this hardcoded multiplier for now.
+        let max_output_tokens = if is_zeta {
+            settings.max_output_tokens * 4
+        } else {
+            settings.max_output_tokens
+        };
+
         let result = cx.background_spawn(async move {
+            let zeta_editable_region_tokens = max_output_tokens as usize;
+
             // For zeta models, use the dedicated zeta1 functions which handle their own
             // range computation with the correct token limits.
             let (prompt, stop_tokens, editable_range_override, inputs) = if is_zeta {
@@ -136,7 +146,7 @@ impl Ollama {
                     cursor_point,
                     &path_str,
                     &snapshot,
-                    max_output_tokens as usize,
+                    zeta_editable_region_tokens,
                     ZETA_MAX_CONTEXT_TOKENS,
                 );
                 let input_events = zeta1::prompt_for_events(&events, ZETA_MAX_EVENT_TOKENS);

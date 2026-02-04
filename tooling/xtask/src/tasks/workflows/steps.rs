@@ -22,6 +22,23 @@ impl Nextest {
         }
         self.into()
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(r#" -E "{filter_expr}""#));
+        }
+        self
+    }
+
+    pub(crate) fn with_changed_packages_filter(mut self, orchestrate_job: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(
+                r#"${{{{ needs.{orchestrate_job}.outputs.changed_packages && format(' -E "{{0}}"', needs.{orchestrate_job}.outputs.changed_packages) || '' }}}}"#
+            ));
+        }
+        self
+    }
 }
 
 impl From<Nextest> for Step<Run> {
