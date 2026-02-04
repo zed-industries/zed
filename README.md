@@ -5,6 +5,8 @@
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
+> **Experiment**: This fork includes an experiment for developing IDE tooling optimized for AI models. See [MODEL_EXPERIMENT_OVERVIEW.md](./MODEL_EXPERIMENT_OVERVIEW.md) for details.
+
 ---
 
 ### Installation
@@ -20,6 +22,14 @@ Other platforms are not yet available:
 - [Building Zed for macOS](./docs/src/development/macos.md)
 - [Building Zed for Linux](./docs/src/development/linux.md)
 - [Building Zed for Windows](./docs/src/development/windows.md)
+
+### Model API Integration
+
+For AI/LLM model integration during the build phase:
+
+- [MODEL_API_RULES.md](./MODEL_API_RULES.md) - Complete API contract and rules
+- [MODEL_API_QUICK_REF.md](./MODEL_API_QUICK_REF.md) - Quick reference guide
+- [docs/MODEL_BUILD_INTEGRATION.md](./docs/MODEL_BUILD_INTEGRATION.md) - Implementation guide
 
 ### Contributing
 
