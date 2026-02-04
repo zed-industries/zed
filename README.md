@@ -7,6 +7,8 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 > **Experiment**: This fork includes an experiment for developing IDE tooling optimized for AI models. See [MODEL_EXPERIMENT_OVERVIEW.md](./MODEL_EXPERIMENT_OVERVIEW.md) for details.
 
+> **Branch Strategy**: This repository uses `home` as the default branch, kept separate from upstream Zed updates. See [BRANCH_STRATEGY.md](./BRANCH_STRATEGY.md) for details on managing this fork.
+
 ---
 
 ### Installation
