@@ -32,6 +32,7 @@ use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
 use crate::language_settings::language_settings;
+use project::lsp_store::language_server_settings;
 
 pub struct RustLspAdapter;
 
@@ -240,6 +241,54 @@ impl ManifestProvider for CargoManifestProvider {
         }
 
         outermost_cargo_toml
+    }
+}
+
+fn set_experimental_capabilities(params: &mut InitializeParams, enable_lsp_tasks: bool) {
+    let mut experimental = json!({
+        "commands": {
+            "commands": [
+                "rust-analyzer.showReferences",
+            ]
+        }
+    });
+
+    if enable_lsp_tasks {
+        merge_json_value_into(
+            json!({
+                "runnables": {
+                    "kinds": [ "cargo", "shell" ],
+                },
+            }),
+            &mut experimental,
+        );
+    }
+
+    if let Some(original_experimental) = &mut params.capabilities.experimental {
+        merge_json_value_into(experimental, original_experimental);
+    } else {
+        params.capabilities.experimental = Some(experimental);
+    }
+}
+
+fn set_initialization_options(params: &mut InitializeParams) {
+    let lens_config = json!({
+        "lens": {
+            "enable": true,
+            "implementations": { "enable": true },
+            "references": {
+                "adt": { "enable": true },
+                "enumVariant": { "enable": true },
+                "method": { "enable": true },
+                "trait": { "enable": true }
+            }
+        }
+    });
+
+    if let Some(init_options) = &mut params.initialization_options {
+        merge_json_value_into(lens_config, init_options);
+    } else {
+        params.initialization_options = Some(lens_config);
     }
 }
 
@@ -608,20 +657,49 @@ impl LspAdapter for RustLspAdapter {
             .lsp
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
-        if enable_lsp_tasks {
-            let experimental = json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            });
-            if let Some(original_experimental) = &mut original.capabilities.experimental {
-                merge_json_value_into(experimental, original_experimental);
-            } else {
-                original.capabilities.experimental = Some(experimental);
-            }
-        }
+
+        set_experimental_capabilities(&mut original, enable_lsp_tasks);
+        set_initialization_options(&mut original);
 
         Ok(original)
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        _: Option<lsp::Uri>,
+        cx: &mut AsyncApp,
+    ) -> Result<serde_json::Value> {
+        let user_settings = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        });
+
+        let mut default_config = serde_json::json!({
+            "lens": {
+                "enable": true,
+                "forceCustomCommands": false,
+                "run": { "enable": true },
+                "debug": { "enable": true },
+                "implementations": { "enable": true },
+                "references": {
+                    "adt": { "enable": true },
+                    "enumVariant": { "enable": true },
+                    "method": { "enable": true },
+                    "trait": { "enable": true }
+                }
+            }
+        });
+
+        if let Some(override_settings) = user_settings {
+            merge_json_value_into(override_settings, &mut default_config);
+        }
+
+        let config = serde_json::json!({
+            "rust-analyzer": default_config
+        });
+        Ok(config)
     }
 }
 

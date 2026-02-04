@@ -825,6 +825,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles code lens display.
+        ToggleCodeLens,
         /// Toggles inline values display.
         ToggleInlineValues,
         /// Toggles inline diagnostics display.

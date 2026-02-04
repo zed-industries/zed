@@ -4195,11 +4195,11 @@ impl Project {
                     range
                         .start
                         .cmp(&code_lens_action.range.start, &snapshot)
-                        .is_ge()
+                        .is_le()
                         && range
                             .end
                             .cmp(&code_lens_action.range.end, &snapshot)
-                            .is_le()
+                            .is_ge()
                 });
             }
             Ok(code_lens_actions)

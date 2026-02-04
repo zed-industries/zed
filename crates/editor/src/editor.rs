@@ -16,6 +16,7 @@ pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
+mod code_lens;
 pub mod display_map;
 mod editor_settings;
 mod element;
@@ -1330,6 +1331,7 @@ pub struct Editor {
     post_scroll_update: Task<()>,
     refresh_colors_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
+    code_lens_cache: code_lens::CodeLensCache,
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
@@ -2113,7 +2115,7 @@ impl Editor {
                 window,
                 |editor, _, event, window, cx| match event {
                     project::Event::RefreshCodeLens => {
-                        // we always query lens with actions, without storing them, always refreshing them
+                        editor.refresh_code_lenses(window, cx);
                     }
                     project::Event::RefreshInlayHints {
                         server_id,
@@ -2170,6 +2172,7 @@ impl Editor {
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
+                            editor.refresh_code_lenses(window, cx);
                         }
                     }
 
@@ -2519,6 +2522,9 @@ impl Editor {
             colors: None,
             refresh_colors_task: Task::ready(()),
             inlay_hints: None,
+            code_lens_cache: code_lens::CodeLensCache::new(
+                EditorSettings::get_global(cx).code_lens.enabled,
+            ),
             next_color_inlay_id: 0,
             post_scroll_update: Task::ready(()),
             linked_edit_ranges: Default::default(),
@@ -2605,6 +2611,7 @@ impl Editor {
                                         cx,
                                     );
                                     editor.colorize_brackets(false, cx);
+                                    editor.refresh_code_lenses(window, cx);
                                 })
                                 .ok();
                         });

@@ -803,13 +803,15 @@ calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
+debug = 1
 incremental = true
-codegen-units = 16
+codegen-units = 256
 
 # mirror configuration for crates compiled for the build platform
 # (without this cargo will compile ~400 crates twice)
 [profile.dev.build-override]
-codegen-units = 16
+debug = 1
+codegen-units = 256
 
 [profile.dev.package]
 # proc-macros start

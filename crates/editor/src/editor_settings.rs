@@ -59,6 +59,7 @@ pub struct EditorSettings {
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
+    pub code_lens: CodeLens,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -71,6 +72,12 @@ pub struct Jupyter {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct StickyScroll {
     pub enabled: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CodeLens {
+    pub enabled: bool,
+    pub debounce: DelayMs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,6 +206,7 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let code_lens = editor.code_lens.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -289,6 +297,10 @@ impl Settings for EditorSettings {
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
+            code_lens: CodeLens {
+                enabled: code_lens.enabled.unwrap(),
+                debounce: code_lens.debounce.unwrap(),
+            },
         }
     }
 }
