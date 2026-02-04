@@ -31,7 +31,6 @@ fuzzy.workspace = true
 gpui.workspace = true
 heck.workspace = true
 itertools.workspace = true
-language_model.workspace = true
 language_models.workspace = true
 language.workspace = true
 log.workspace = true

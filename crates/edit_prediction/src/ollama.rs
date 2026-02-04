@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, Task, http_client};
+use gpui::{App, AppContext as _, Entity, SharedString, Task, http_client};
 use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToOffset, ToPoint as _,
     language_settings::all_language_settings,
@@ -51,11 +51,32 @@ struct OllamaGenerateResponse {
     response: String,
 }
 
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
+
 pub fn is_available(cx: &App) -> bool {
-    let ollama_provider_id = LanguageModelProviderId::new("ollama");
     LanguageModelRegistry::read_global(cx)
-        .provider(&ollama_provider_id)
+        .provider(&PROVIDER_ID)
         .is_some_and(|provider| provider.is_authenticated(cx))
+}
+
+pub fn ensure_authenticated(cx: &mut App) {
+    if let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&PROVIDER_ID) {
+        provider.authenticate(cx).detach_and_log_err(cx);
+    }
+}
+
+pub fn fetch_models(cx: &mut App) -> Vec<SharedString> {
+    let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&PROVIDER_ID) else {
+        return Vec::new();
+    };
+    provider.authenticate(cx).detach_and_log_err(cx);
+    let mut models: Vec<SharedString> = provider
+        .provided_models(cx)
+        .into_iter()
+        .map(|model| SharedString::from(model.id().0.to_string()))
+        .collect();
+    models.sort();
+    models
 }
 
 /// Output from the Ollama HTTP request, containing all data needed to create the prediction result.
