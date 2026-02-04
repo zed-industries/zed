@@ -1643,23 +1643,18 @@ impl BlockMapWriter<'_> {
                 ..
             }) = self.companion.as_deref_mut()
             {
-                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, rgba};
+                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
                 let my_anchor = block.placement.start();
                 let my_point = my_anchor.to_point(buffer);
-                let their_point = companion
-                    .convert_rows_to_companion(
-                        *their_entity_id,
-                        their_snapshot.buffer_snapshot(),
-                        buffer,
-                        (Bound::Included(my_point), Bound::Included(my_point)),
-                    )
-                    .first()
-                    .unwrap()
-                    .boundaries
-                    .first()
-                    .unwrap()
-                    .1
-                    .start;
+                let their_patches = companion.convert_rows_to_companion(
+                    *their_entity_id,
+                    their_snapshot.buffer_snapshot(),
+                    buffer,
+                    (Bound::Included(my_point), Bound::Included(my_point)),
+                );
+                let their_excerpt = their_patches.first().unwrap();
+                let their_range = their_excerpt.patch.edit_for_old_position(my_point).new;
+                let their_point = their_range.start;
                 let anchor = their_snapshot.buffer_snapshot().anchor_before(their_point);
                 let height = new_block.height.unwrap_or(1);
                 let their_new_block = BlockProperties {
@@ -1671,7 +1666,12 @@ impl BlockMapWriter<'_> {
                             .id(cx.block_id)
                             .w_full()
                             .h(Pixels::from(cx.line_height * cx.height as f32))
-                            .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
+                            .bg(pattern_slash(white(), 8.0, 8.0))
+                            // .bg(pattern_slash(
+                            //     cx.theme().colors().panel_background,
+                            //     8.0,
+                            //     8.0,
+                            // ))
                             .into_any()
                     }),
                     priority: 0,

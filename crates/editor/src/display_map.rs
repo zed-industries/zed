@@ -535,7 +535,7 @@ impl DisplayMap {
                     // Sync existing custom blocks to the companion
                     if self.entity_id != companion.read(cx).rhs_display_map_id {
                         use gpui::{
-                            Element, InteractiveElement, Styled, div, pattern_slash, rgba,
+                            Element, InteractiveElement, Styled, div, pattern_slash, white,
                         };
                         let buffer_snapshot = snapshot.buffer_snapshot();
                         let their_custom_blocks: Vec<_> = dm
@@ -551,18 +551,12 @@ impl DisplayMap {
                                 their_anchor.to_point(companion_snapshot.buffer_snapshot());
                             let my_point = companion
                                 .read(cx)
-                                .convert_rows_from_companion(
+                                .convert_point_from_companion(
                                     self.entity_id,
                                     buffer_snapshot,
                                     companion_snapshot.buffer_snapshot(),
-                                    (Bound::Included(their_point), Bound::Included(their_point)),
+                                    their_point,
                                 )
-                                .first()
-                                .unwrap()
-                                .boundaries
-                                .first()
-                                .unwrap()
-                                .1
                                 .start;
                             let anchor = buffer_snapshot.anchor_before(my_point);
                             let height = block.height.unwrap_or(1);
@@ -575,7 +569,8 @@ impl DisplayMap {
                                         .id(cx.block_id)
                                         .w_full()
                                         .h(Pixels::from(cx.line_height * cx.height as f32))
-                                        .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
+                                        .bg(pattern_slash(white(), 8.0, 8.0))
+                                        // .bg(pattern_slash(cx.theme().colors().panel_background, 8.0, 8.0))
                                         .into_any()
                                 }),
                                 priority: 0,
