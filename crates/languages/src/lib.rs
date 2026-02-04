@@ -369,7 +369,7 @@ fn register_language(
     let config = load_config(name);
     if let Some(rules) = &semantic_token_rules {
         SettingsStore::update_global(cx, |store, _| {
-            store.set_language_semantic_token_rules(SharedString::from(name), rules.clone());
+            store.set_language_semantic_token_rules(config.name.0.clone(), rules.clone());
         });
     }
     for adapter in adapters {

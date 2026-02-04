@@ -325,7 +325,10 @@ impl LspStore {
         language: Option<&LanguageName>,
         cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
-        let stylizer = match self.semantic_token_stylizers.entry(server_id) {
+        let stylizer = match self
+            .semantic_token_stylizers
+            .entry((server_id, language.cloned()))
+        {
             hash_map::Entry::Occupied(o) => o.into_mut(),
             hash_map::Entry::Vacant(v) => {
                 let tokens_provider = self

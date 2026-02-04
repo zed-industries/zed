@@ -2149,10 +2149,7 @@ impl Editor {
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
                         editor.update_semantic_tokens(None, None, cx);
-                        editor.refresh_inlay_hints(
-                            InlayHintRefreshReason::ServerRemoved(*server_id),
-                            cx,
-                        );
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {

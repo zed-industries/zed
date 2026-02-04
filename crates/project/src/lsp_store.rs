@@ -3845,7 +3845,8 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
-    semantic_token_stylizers: HashMap<LanguageServerId, SemanticTokenStylizer>,
+    semantic_token_stylizers:
+        HashMap<(LanguageServerId, Option<LanguageName>), SemanticTokenStylizer>,
     semantic_token_rules: SemanticTokenRules,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
@@ -12450,7 +12451,8 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
-        self.semantic_token_stylizers.remove(&for_server);
+        self.semantic_token_stylizers
+            .retain(|&(id, _), _| id != for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
         }
