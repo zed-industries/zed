@@ -353,7 +353,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             })
             .add_step(steps::checkout_repo())
             .when(platform == Platform::Mac, |job| {
-                job.add_step(steps::check_macos_environment())
+                job.add_step(steps::setup_macos_developer_mode())
             })
             .add_step(steps::setup_cargo_config(platform))
             .when(

@@ -149,19 +149,19 @@ pub fn cache_nix_store_macos() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("path", "~/nix-cache"))
 }
 
-pub fn check_macos_environment() -> Step<Run> {
+pub fn setup_macos_developer_mode() -> Step<Run> {
     named::bash(indoc::indoc! {r#"
-        echo "=== Gatekeeper Status ==="
+        echo "=== Gatekeeper Status (before) ==="
+        spctl --status || true
+
+        echo "=== Disabling Gatekeeper to avoid slowing down nextest ==="
+        sudo spctl --master-disable
+
+        echo "=== Gatekeeper Status (after) ==="
         spctl --status || true
 
         echo "=== System Integrity Protection ==="
         csrutil status || true
-
-        echo "=== Xcode Version ==="
-        xcodebuild -version || true
-
-        echo "=== Available Disk Space ==="
-        df -h /
 
         echo "=== macOS Version ==="
         sw_vers

@@ -245,19 +245,19 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::check_macos_environment
+    - name: steps::setup_macos_developer_mode
       run: |
-        echo "=== Gatekeeper Status ==="
+        echo "=== Gatekeeper Status (before) ==="
+        spctl --status || true
+
+        echo "=== Disabling Gatekeeper to avoid slowing down nextest ==="
+        sudo spctl --master-disable
+
+        echo "=== Gatekeeper Status (after) ==="
         spctl --status || true
 
         echo "=== System Integrity Protection ==="
         csrutil status || true
-
-        echo "=== Xcode Version ==="
-        xcodebuild -version || true
-
-        echo "=== Available Disk Space ==="
-        df -h /
 
         echo "=== macOS Version ==="
         sw_vers
