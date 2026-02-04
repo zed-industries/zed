@@ -469,7 +469,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _lsp_symbol: &Symbol,
+        _symbol: &Symbol,
         _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
