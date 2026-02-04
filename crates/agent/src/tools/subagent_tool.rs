@@ -7,7 +7,6 @@ use futures::{FutureExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolUseId;
 use project::Project;
-use prompt_store::ProjectContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
@@ -20,8 +19,8 @@ use util::ResultExt;
 use watch;
 
 use crate::{
-    AgentTool, AnyAgentTool, ContextServerRegistry, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH,
-    SubagentContext, Templates, Thread, ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
+    AgentTool, AnyAgentTool, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext, Thread,
+    ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
 };
 
 /// When a subagent's remaining context window falls below this fraction (25%),
@@ -87,57 +86,38 @@ pub struct SubagentToolInput {
 /// Tool that spawns a subagent thread to work on a task.
 pub struct SubagentTool {
     parent_thread: WeakEntity<Thread>,
-    project: Entity<Project>,
-    project_context: Entity<ProjectContext>,
-    context_server_registry: Entity<ContextServerRegistry>,
-    templates: Arc<Templates>,
     current_depth: u8,
-    /// The tools available to the parent thread, captured before SubagentTool was added.
-    /// Subagents inherit from this set (or a subset via `allowed_tools` in the config).
-    /// This is captured early so subagents don't get the subagent tool themselves.
-    parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
 }
 
 impl SubagentTool {
-    pub fn new(
-        parent_thread: WeakEntity<Thread>,
-        project: Entity<Project>,
-        project_context: Entity<ProjectContext>,
-        context_server_registry: Entity<ContextServerRegistry>,
-        templates: Arc<Templates>,
-        current_depth: u8,
-        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-    ) -> Self {
+    pub fn new(parent_thread: WeakEntity<Thread>, current_depth: u8) -> Self {
         Self {
             parent_thread,
-            project,
-            project_context,
-            context_server_registry,
-            templates,
             current_depth,
-            parent_tools,
         }
     }
 
-    pub fn validate_allowed_tools(&self, allowed_tools: &Option<Vec<String>>) -> Result<()> {
-        let Some(tools) = allowed_tools else {
+    pub fn validate_allowed_tools(
+        &self,
+        allowed_tools: &Option<Vec<String>>,
+        cx: &App,
+    ) -> Result<()> {
+        let Some(allowed_tools) = allowed_tools else {
             return Ok(());
         };
 
-        let invalid_tools: Vec<&str> = tools
-            .iter()
-            .filter(|tool| !self.parent_tools.contains_key(tool.as_str()))
-            .map(|s| s.as_str())
-            .collect();
+        let invalid_tools: Vec<_> = self.parent_thread.read_with(cx, |thread, _cx| {
+            allowed_tools
+                .iter()
+                .filter(|tool| !thread.tools.contains_key(tool.as_str()))
+                .map(|s| format!("'{s}'"))
+                .collect()
+        })?;
 
         if !invalid_tools.is_empty() {
             return Err(anyhow!(
                 "The following tools do not exist: {}",
-                invalid_tools
-                    .iter()
-                    .map(|t| format!("'{}'", t))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                invalid_tools.join(", ")
             ));
         }
 
@@ -180,18 +160,19 @@ impl AgentTool for SubagentTool {
             )));
         }
 
-        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools) {
+        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
             return Task::ready(Err(e));
         }
 
-        let Some(parent_thread) = self.parent_thread.upgrade() else {
+        let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
             return Task::ready(Err(anyhow!(
                 "Parent thread no longer exists (subagent depth={})",
                 self.current_depth + 1
             )));
         };
+        let parent_thread = parent_thread_entity.read(cx);
 
-        let running_count = parent_thread.read(cx).running_subagent_count();
+        let running_count = parent_thread.running_subagent_count();
         if running_count >= MAX_PARALLEL_SUBAGENTS {
             return Task::ready(Err(anyhow!(
                 "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
@@ -199,17 +180,17 @@ impl AgentTool for SubagentTool {
             )));
         }
 
-        let parent_model = parent_thread.read(cx).model().cloned();
+        let parent_model = parent_thread.model().cloned();
         let Some(model) = parent_model else {
             return Task::ready(Err(anyhow!("No model configured")));
         };
 
-        let parent_thread_id = parent_thread.read(cx).id().clone();
-        let project = self.project.clone();
-        let project_context = self.project_context.clone();
-        let context_server_registry = self.context_server_registry.clone();
-        let templates = self.templates.clone();
-        let parent_tools = self.parent_tools.clone();
+        let parent_thread_id = parent_thread.id().clone();
+        let project = parent_thread.project.clone();
+        let project_context = parent_thread.project_context().clone();
+        let context_server_registry = parent_thread.context_server_registry.clone();
+        let templates = parent_thread.templates.clone();
+        let parent_tools = parent_thread.tools.clone();
         let current_depth = self.current_depth;
         let parent_thread_weak = self.parent_thread.clone();
 

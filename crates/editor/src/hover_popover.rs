@@ -1,6 +1,6 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, Hover,
+    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
@@ -217,7 +217,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
 
-    editor.clear_background_highlights::<HoverState>(cx);
+    editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
     if did_hide {
         cx.notify();
@@ -513,10 +513,11 @@ fn show_hover(
 
             this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
-                    editor.clear_background_highlights::<HoverState>(cx);
+                    editor.clear_background_highlights(HighlightKey::HoverState, cx);
                 } else {
                     // Highlight the selected symbol using a background highlight
-                    editor.highlight_background::<HoverState>(
+                    editor.highlight_background(
+                        HighlightKey::HoverState,
                         &hover_highlights,
                         |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
