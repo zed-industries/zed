@@ -1,25 +1,27 @@
-mod acp;
+pub mod acp;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
+mod agent_registry_ui;
 mod buffer_codegen;
+mod completion_provider;
 mod context;
-mod context_picker;
 mod context_server_configuration;
-mod context_store;
-mod context_strip;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod message_editor;
+mod mention_set;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
+mod text_thread_history;
 mod ui;
+mod user_slash_command;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -28,23 +30,27 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::FeatureFlagAppExt as _;
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
-use gpui::{Action, App, Entity, SharedString, actions};
-use language::LanguageRegistry;
+use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use language::{
+    LanguageRegistry,
+    language_settings::{AllLanguageSettings, EditPredictionProvider},
+};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
-use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
+use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
+use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
@@ -55,24 +61,22 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
-        /// Toggles the context picker interface for adding files, symbols, or other context.
-        ToggleContextPicker,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
-        /// Deletes the recently opened thread from history.
-        DeleteRecentlyOpenThread,
         /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
-        /// Removes all added context from the current conversation.
-        RemoveAllContext,
+        /// Cycles through favorited models in the ACP model selector.
+        CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Removes all thread history.
+        RemoveHistory,
         /// Opens the conversation history view.
         OpenHistory,
         /// Adds a context server to the configuration.
@@ -93,14 +97,14 @@ actions!(
         FocusLeft,
         /// Moves focus right in the interface.
         FocusRight,
-        /// Removes the currently focused context item.
-        RemoveFocusedContext,
-        /// Accepts the suggested context item.
-        AcceptSuggestedContext,
         /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
         OpenAgentDiff,
+        /// Copies the current thread to the clipboard as JSON for debugging.
+        CopyThreadToClipboard,
+        /// Loads a thread from the clipboard JSON for debugging.
+        LoadThreadFromClipboard,
         /// Keeps the current suggestion or change.
         Keep,
         /// Rejects the current suggestion or change.
@@ -121,14 +125,52 @@ actions!(
         ResetTrialUpsell,
         /// Resets the trial end upsell notification.
         ResetTrialEndUpsell,
+        /// Opens the "Add Context" menu in the message editor.
+        OpenAddContextMenu,
         /// Continues the current thread.
         ContinueThread,
-        /// Continues the thread with burn mode enabled.
-        ContinueWithBurnMode,
-        /// Toggles burn mode for faster responses.
-        ToggleBurnMode,
+        /// Interrupts the current generation and sends the message immediately.
+        SendImmediately,
+        /// Sends the next queued message immediately.
+        SendNextQueuedMessage,
+        /// Removes the first message from the queue (the next one to be sent).
+        RemoveFirstQueuedMessage,
+        /// Edits the first message in the queue (the next one to be sent).
+        EditFirstQueuedMessage,
+        /// Clears all messages from the queue.
+        ClearMessageQueue,
+        /// Opens the permission granularity dropdown for the current tool call.
+        OpenPermissionDropdown,
+        /// Toggles thinking mode for models that support extended thinking.
+        ToggleThinkingMode,
     ]
 );
+
+/// Action to authorize a tool call with a specific permission option.
+/// This is used by the permission granularity dropdown to authorize tool calls.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeToolCall {
+    /// The tool call ID to authorize.
+    pub tool_call_id: String,
+    /// The permission option ID to use.
+    pub option_id: String,
+    /// The kind of permission option (serialized as string).
+    pub option_kind: String,
+}
+
+/// Action to select a permission granularity option from the dropdown.
+/// This updates the selected granularity without triggering authorization.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct SelectPermissionGranularity {
+    /// The tool call ID for which to select the granularity.
+    pub tool_call_id: String,
+    /// The index of the selected granularity option.
+    pub index: usize,
+}
 
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -160,46 +202,29 @@ pub enum ExternalAgent {
     ClaudeCode,
     Codex,
     NativeAgent,
-    Custom {
-        name: SharedString,
-        command: AgentServerCommand,
-    },
-}
-
-fn placeholder_command() -> AgentServerCommand {
-    AgentServerCommand {
-        path: "/placeholder".into(),
-        args: vec![],
-        env: None,
-    }
+    Custom { name: SharedString },
 }
 
 impl ExternalAgent {
-    pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
-        match server.telemetry_id() {
-            "gemini-cli" => Some(Self::Gemini),
-            "claude-code" => Some(Self::ClaudeCode),
-            "codex" => Some(Self::Codex),
-            "zed" => Some(Self::NativeAgent),
-            _ => None,
-        }
-    }
-
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
-        history: Entity<agent::HistoryStore>,
+        thread_store: Entity<agent::ThreadStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
-            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, command: _ } => {
-                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
-            }
+            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
+            Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
+}
+
+/// Content to initialize new external agent with.
+pub enum ExternalAgentInitialContent {
+    ThreadSummary(acp_thread::AgentSessionInfo),
+    Text(String),
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
@@ -232,11 +257,6 @@ impl ModelUsageContext {
             }
         }
     }
-
-    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.configured_model(cx)
-            .map(|configured_model| configured_model.model)
-    }
 }
 
 /// Initializes the `agent` crate.
@@ -248,9 +268,8 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    AgentSettings::register(cx);
-
-    assistant_text_thread::init(client.clone(), cx);
+    agent::ThreadStore::init_global(cx);
+    assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -263,15 +282,38 @@ pub fn init(
     TextThreadEditor::init(cx);
 
     register_slash_commands(cx);
-    inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
-    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
+    inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
+    })
+    .detach();
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            move |workspace: &mut Workspace,
+                  _: &zed_actions::AcpRegistry,
+                  window: &mut Window,
+                  cx: &mut Context<Workspace>| {
+                let existing = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<AgentRegistryPage>());
+
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                } else {
+                    let registry_page = AgentRegistryPage::new(workspace, window, cx);
+                    workspace.add_item_to_active_pane(
+                        Box::new(registry_page),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                }
+            },
+        );
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
@@ -285,56 +327,96 @@ pub fn init(
         update_command_palette_filter(app_cx);
     })
     .detach();
+
+    cx.on_flags_ready(|_, cx| {
+        update_command_palette_filter(cx);
+    })
+    .detach();
 }
 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+    let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let agent_v2_enabled = cx.has_flag::<AgentV2FeatureFlag>();
+    let edit_prediction_provider = AllLanguageSettings::get_global(cx)
+        .edit_predictions
+        .provider;
+
     CommandPaletteFilter::update_global(cx, |filter, _| {
+        use editor::actions::{
+            AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
+            NextEditPrediction, PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+        };
+        let edit_prediction_actions = [
+            TypeId::of::<AcceptEditPrediction>(),
+            TypeId::of::<AcceptNextWordEditPrediction>(),
+            TypeId::of::<AcceptNextLineEditPrediction>(),
+            TypeId::of::<AcceptEditPrediction>(),
+            TypeId::of::<ShowEditPrediction>(),
+            TypeId::of::<NextEditPrediction>(),
+            TypeId::of::<PreviousEditPrediction>(),
+            TypeId::of::<ToggleEditPrediction>(),
+        ];
+
         if disable_ai {
             filter.hide_namespace("agent");
+            filter.hide_namespace("agents");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
             filter.hide_namespace("supermaven");
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
-            use editor::actions::{
-                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
-            };
-            let edit_prediction_actions = [
-                TypeId::of::<AcceptEditPrediction>(),
-                TypeId::of::<AcceptPartialEditPrediction>(),
-                TypeId::of::<ShowEditPrediction>(),
-                TypeId::of::<NextEditPrediction>(),
-                TypeId::of::<PreviousEditPrediction>(),
-                TypeId::of::<ToggleEditPrediction>(),
-            ];
             filter.hide_action_types(&edit_prediction_actions);
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         } else {
-            filter.show_namespace("agent");
+            if agent_enabled {
+                filter.show_namespace("agent");
+                filter.show_namespace("agents");
+            } else {
+                filter.hide_namespace("agent");
+                filter.hide_namespace("agents");
+            }
+
             filter.show_namespace("assistant");
-            filter.show_namespace("copilot");
+
+            match edit_prediction_provider {
+                EditPredictionProvider::None => {
+                    filter.hide_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.hide_action_types(&edit_prediction_actions);
+                }
+                EditPredictionProvider::Copilot => {
+                    filter.show_namespace("edit_prediction");
+                    filter.show_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+                EditPredictionProvider::Supermaven => {
+                    filter.show_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.show_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Codestral
+                | EditPredictionProvider::Ollama
+                | EditPredictionProvider::Sweep
+                | EditPredictionProvider::Mercury
+                | EditPredictionProvider::Experimental(_) => {
+                    filter.show_namespace("edit_prediction");
+                    filter.hide_namespace("copilot");
+                    filter.hide_namespace("supermaven");
+                    filter.show_action_types(edit_prediction_actions.iter());
+                }
+            }
+
             filter.show_namespace("zed_predict_onboarding");
-
-            filter.show_namespace("edit_prediction");
-
-            use editor::actions::{
-                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
-                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
-            };
-            let edit_prediction_actions = [
-                TypeId::of::<AcceptEditPrediction>(),
-                TypeId::of::<AcceptPartialEditPrediction>(),
-                TypeId::of::<ShowEditPrediction>(),
-                TypeId::of::<NextEditPrediction>(),
-                TypeId::of::<PreviousEditPrediction>(),
-                TypeId::of::<ToggleEditPrediction>(),
-            ];
-            filter.show_action_types(edit_prediction_actions.iter());
-
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+            if !agent_v2_enabled {
+                filter.hide_action_types(&[TypeId::of::<zed_actions::agent::ToggleAgentPane>()]);
+            }
         }
     });
 }
@@ -349,7 +431,8 @@ fn init_language_model_settings(cx: &mut App) {
         |_, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+            | language_model::Event::RemovedProvider(_)
+            | language_model::Event::ProvidersChanged => {
                 update_active_language_model_from_settings(cx);
             }
             _ => {}
@@ -422,4 +505,143 @@ fn register_slash_commands(cx: &mut App) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_settings::{AgentProfileId, AgentSettings};
+    use command_palette_hooks::CommandPaletteFilter;
+    use editor::actions::AcceptEditPrediction;
+    use gpui::{BorrowAppContext, TestAppContext, px};
+    use project::DisableAiSettings;
+    use settings::{
+        DefaultAgentView, DockPosition, DockSide, NotifyWhenAgentWaiting, Settings, SettingsStore,
+    };
+
+    #[gpui::test]
+    fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
+        // Init settings
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            command_palette_hooks::init(cx);
+            AgentSettings::register(cx);
+            DisableAiSettings::register(cx);
+            AllLanguageSettings::register(cx);
+        });
+
+        let agent_settings = AgentSettings {
+            enabled: true,
+            button: true,
+            dock: DockPosition::Right,
+            agents_panel_dock: DockSide::Left,
+            default_width: px(300.),
+            default_height: px(600.),
+            default_model: None,
+            inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: false,
+            commit_message_model: None,
+            thread_summary_model: None,
+            inline_alternatives: vec![],
+            favorite_models: vec![],
+            default_profile: AgentProfileId::default(),
+            default_view: DefaultAgentView::Thread,
+            profiles: Default::default(),
+            always_allow_tool_actions: false,
+            notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
+            play_sound_when_agent_done: false,
+            single_file_review: false,
+            model_parameters: vec![],
+            enable_feedback: false,
+            expand_edit_card: true,
+            expand_terminal_card: true,
+            cancel_generation_on_terminal_stop: true,
+            use_modifier_to_send: true,
+            message_editor_min_lines: 1,
+            tool_permissions: Default::default(),
+            show_turn_stats: false,
+        };
+
+        cx.update(|cx| {
+            AgentSettings::override_global(agent_settings.clone(), cx);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
+
+            // Initial update
+            update_command_palette_filter(cx);
+        });
+
+        // Assert visible
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                !filter.is_hidden(&NewThread),
+                "NewThread should be visible by default"
+            );
+        });
+
+        // Disable agent
+        cx.update(|cx| {
+            let mut new_settings = agent_settings.clone();
+            new_settings.enabled = false;
+            AgentSettings::override_global(new_settings, cx);
+
+            // Trigger update
+            update_command_palette_filter(cx);
+        });
+
+        // Assert hidden
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&NewThread),
+                "NewThread should be hidden when agent is disabled"
+            );
+        });
+
+        // Test EditPredictionProvider
+        // Enable EditPredictionProvider::Copilot
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert(Default::default())
+                        .provider = Some(EditPredictionProvider::Copilot);
+                });
+            });
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                !filter.is_hidden(&AcceptEditPrediction),
+                "EditPrediction should be visible when provider is Copilot"
+            );
+        });
+
+        // Disable EditPredictionProvider (None)
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert(Default::default())
+                        .provider = Some(EditPredictionProvider::None);
+                });
+            });
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&AcceptEditPrediction),
+                "EditPrediction should be hidden when provider is None"
+            );
+        });
+    }
 }

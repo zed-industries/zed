@@ -1210,10 +1210,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        (
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
-            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
-        )
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
     });
 
     let b_path = ProjectPath {
@@ -1342,7 +1339,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
 
     // When workspace has an active item, sort items which are closer to that item
@@ -1430,7 +1427,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
 
     // Open and close panels, getting their history items afterwards.
@@ -1598,7 +1595,7 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
         assert_eq!(file_label.highlight_indices(), &[0, 1, 2]);
         assert_eq!(
             path_label.text(),
-            format!("test{}", PathStyle::local().separator())
+            format!("test{}", PathStyle::local().primary_separator())
         );
         assert_eq!(path_label.highlight_indices(), &[] as &[usize]);
     });
@@ -1650,7 +1647,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1,);
 
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -1674,14 +1671,12 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
             "External file should get opened in a new worktree"
         );
 
-        WorktreeId::from_usize(
-            worktrees
-                .into_iter()
-                .find(|worktree| worktree.entity_id().as_u64() as usize != worktree_id.to_usize())
-                .expect("New worktree should have a different id")
-                .entity_id()
-                .as_u64() as usize,
-        )
+        worktrees
+            .into_iter()
+            .find(|worktree| worktree.read(cx).id() != worktree_id)
+            .expect("New worktree should have a different id")
+            .read(cx)
+            .id()
     });
     cx.dispatch_action(workspace::CloseActiveItem {
         save_intent: None,
@@ -1807,7 +1802,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1,);
 
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
 
     // generate some history to select from
@@ -3206,11 +3201,8 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
         super::init(cx);
         editor::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         state
     })
 }
@@ -3454,4 +3446,100 @@ async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "file1.txt");
     });
+}
+
+#[gpui::test]
+async fn test_clear_navigation_history(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": "// First file",
+                    "second.rs": "// Second file",
+                    "third.rs": "// Third file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));
+
+    // Open some files to generate navigation history
+    open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+    open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+    let history_before_clear =
+        open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+
+    assert_eq!(
+        history_before_clear.len(),
+        2,
+        "Should have history items before clearing"
+    );
+
+    // Verify that file finder shows history items
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("fir");
+    picker.update(cx, |finder, _| {
+        let matches = collect_search_matches(finder);
+        assert!(
+            !matches.history.is_empty(),
+            "File finder should show history items before clearing"
+        );
+    });
+    workspace.update_in(cx, |_, window, cx| {
+        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+    });
+
+    // Verify navigation state before clear
+    workspace.update(cx, |workspace, cx| {
+        let pane = workspace.active_pane();
+        pane.read(cx).can_navigate_backward()
+    });
+
+    // Clear navigation history
+    cx.dispatch_action(workspace::ClearNavigationHistory);
+
+    // Verify that navigation is disabled immediately after clear
+    workspace.update(cx, |workspace, cx| {
+        let pane = workspace.active_pane();
+        assert!(
+            !pane.read(cx).can_navigate_backward(),
+            "Should not be able to navigate backward after clearing history"
+        );
+        assert!(
+            !pane.read(cx).can_navigate_forward(),
+            "Should not be able to navigate forward after clearing history"
+        );
+    });
+
+    // Verify that file finder no longer shows history items
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("fir");
+    picker.update(cx, |finder, _| {
+        let matches = collect_search_matches(finder);
+        assert!(
+            matches.history.is_empty(),
+            "File finder should not show history items after clearing"
+        );
+    });
+    workspace.update_in(cx, |_, window, cx| {
+        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+    });
+
+    // Verify history is empty by opening a new file
+    // (this should not show any previous history)
+    let history_after_clear =
+        open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+    assert_eq!(
+        history_after_clear.len(),
+        0,
+        "Should have no history items after clearing"
+    );
 }

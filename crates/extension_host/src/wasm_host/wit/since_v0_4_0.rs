@@ -2,13 +2,13 @@ use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::{KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate};
 use gpui::BackgroundExecutor;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
 use super::latest;
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 4, 0);
+pub const MIN_VERSION: Version = Version::new(0, 4, 0);
 
 wasmtime::component::bindgen!({
     async: true,

@@ -1,14 +1,13 @@
+use crate::Oid;
 use crate::commit::get_messages;
 use crate::repository::RepoPath;
-use crate::{GitRemote, Oid};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
-use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::{ops::Range, path::Path};
-use text::Rope;
+use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
@@ -19,15 +18,6 @@ pub use git2 as libgit;
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
-    pub remote_url: Option<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ParsedCommitMessage {
-    pub message: SharedString,
-    pub permalink: Option<url::Url>,
-    pub pull_request: Option<crate::hosting_provider::PullRequest>,
-    pub remote: Option<GitRemote>,
 }
 
 impl Blame {
@@ -36,9 +26,10 @@ impl Blame {
         working_directory: &Path,
         path: &RepoPath,
         content: &Rope,
-        remote_url: Option<String>,
+        line_ending: LineEnding,
     ) -> Result<Self> {
-        let output = run_git_blame(git_binary, working_directory, path, content).await?;
+        let output =
+            run_git_blame(git_binary, working_directory, path, content, line_ending).await?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -53,11 +44,7 @@ impl Blame {
             .await
             .context("failed to get commit messages")?;
 
-        Ok(Self {
-            entries,
-            messages,
-            remote_url,
-        })
+        Ok(Self { entries, messages })
     }
 }
 
@@ -69,27 +56,31 @@ async fn run_git_blame(
     working_directory: &Path,
     path: &RepoPath,
     contents: &Rope,
+    line_ending: LineEnding,
 ) -> Result<String> {
-    let mut child = util::command::new_smol_command(git_binary)
-        .current_dir(working_directory)
-        .arg("blame")
-        .arg("--incremental")
-        .arg("-w")
-        .arg("--contents")
-        .arg("-")
-        .arg(path.as_unix_str())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("starting git blame process")?;
+    let mut child = {
+        let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
+        let _enter = span.enter();
+        util::command::new_smol_command(git_binary)
+            .current_dir(working_directory)
+            .arg("blame")
+            .arg("--incremental")
+            .arg("--contents")
+            .arg("-")
+            .arg(path.as_unix_str())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("starting git blame process")?
+    };
 
     let stdin = child
         .stdin
         .as_mut()
         .context("failed to get pipe to stdin of git blame command")?;
 
-    for chunk in contents.chunks() {
+    for chunk in text::chunks_with_line_ending(contents, line_ending) {
         stdin.write_all(chunk.as_bytes()).await?;
     }
     stdin.flush().await?;

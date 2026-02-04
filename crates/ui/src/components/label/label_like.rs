@@ -56,7 +56,7 @@ pub trait LabelCommon {
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
 
-    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    /// Truncates overflowing text with an ellipsis (`…`) at the end if needed.
     fn truncate(self) -> Self;
 
     /// Sets the label to render as a single line.
@@ -88,6 +88,7 @@ pub struct LabelLike {
     underline: bool,
     single_line: bool,
     truncate: bool,
+    truncate_start: bool,
 }
 
 impl Default for LabelLike {
@@ -113,6 +114,7 @@ impl LabelLike {
             underline: false,
             single_line: false,
             truncate: false,
+            truncate_start: false,
         }
     }
 }
@@ -126,6 +128,12 @@ impl LabelLike {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    /// Truncates overflowing text with an ellipsis (`…`) at the start if needed.
+    pub fn truncate_start(mut self) -> Self {
+        self.truncate_start = true;
+        self
+    }
 }
 
 impl LabelCommon for LabelLike {
@@ -169,7 +177,7 @@ impl LabelCommon for LabelLike {
         self
     }
 
-    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    /// Truncates overflowing text with an ellipsis (`…`) at the end if needed.
     fn truncate(mut self) -> Self {
         self.truncate = true;
         self
@@ -223,11 +231,9 @@ impl RenderOnce for LabelLike {
             })
             .when(self.italic, |this| this.italic())
             .when(self.underline, |mut this| {
-                this.text_style()
-                    .get_or_insert_with(Default::default)
-                    .underline = Some(UnderlineStyle {
+                this.text_style().underline = Some(UnderlineStyle {
                     thickness: px(1.),
-                    color: None,
+                    color: Some(cx.theme().colors().text_muted.opacity(0.4)),
                     wavy: false,
                 });
                 this
@@ -235,7 +241,16 @@ impl RenderOnce for LabelLike {
             .when(self.strikethrough, |this| this.line_through())
             .when(self.single_line, |this| this.whitespace_nowrap())
             .when(self.truncate, |this| {
-                this.overflow_x_hidden().text_ellipsis()
+                this.min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+            })
+            .when(self.truncate_start, |this| {
+                this.min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_start()
             })
             .text_color(color)
             .font_weight(

@@ -20,10 +20,9 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 
 ## Preprocessor
 
-We have a custom mdbook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
+We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
-If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]
-` from the `book.toml`.:
+If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]` from the `book.toml`.
 
 ## Images and videos
 
@@ -34,7 +33,7 @@ Putting binary assets such as images in the Git repository will bloat the reposi
 ## Internal notes:
 
 - We have a Cloudflare router called `docs-proxy` that intercepts requests to `zed.dev/docs` and forwards them to the "docs" Cloudflare Pages project.
-- CI uploads a new version to the Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.
+- The CI uploads a new version to the Cloudflare Pages project from `.github/workflows/deploy_docs.yml` on every push to `main`.
 
 ### Table of Contents
 
@@ -46,15 +45,15 @@ Since all this preprocessor does is generate the static assets, we don't need to
 
 When referencing keybindings or actions, use the following formats:
 
-### Keybindings:
+### Keybindings
 
 `{#kb scope::Action}` - e.g., `{#kb zed::OpenSettings}`.
 
-This will output a code element like: `<code>Cmd+,|Ctrl+,</code>`. We then use a client-side plugin to show the actual keybinding based on the user's platform.
+This will output a code element like: `<code>Cmd + , | Ctrl + ,</code>`. We then use a client-side plugin to show the actual keybinding based on the user's platform.
 
 By using the action name, we can ensure that the keybinding is always up-to-date rather than hardcoding the keybinding.
 
-### Actions:
+### Actions
 
 `{#action scope::Action}` - e.g., `{#action zed::OpenSettings}`.
 
@@ -62,19 +61,20 @@ This will render a human-readable version of the action name, e.g., "zed: open s
 
 ### Creating New Templates
 
-Templates are just functions that modify the source of the docs pages (usually with a regex match & replace). You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
+Templates are functions that modify the source of the docs pages (usually with a regex match and replace).
+You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
 
 ### References
 
-- Template Trait: crates/docs_preprocessor/src/templates.rs
-- Example template: crates/docs_preprocessor/src/templates/keybinding.rs
-- Client-side plugins: docs/theme/plugins.js
+- Template Trait: `crates/docs_preprocessor/src/templates.rs`
+- Example template: `crates/docs_preprocessor/src/templates/keybinding.rs`
+- Client-side plugins: `docs/theme/plugins.js`
 
 ## Postprocessor
 
-A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, to add support for page-specific title and meta description values.
+A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific title and `meta` tag description values.
 
-An example of the syntax can be found in `git.md`, as well as below
+An example of the syntax can be found in `git.md`, as well as below:
 
 ```md
 ---
@@ -85,7 +85,7 @@ description: A page-specific description
 # Editor
 ```
 
-The above will be transformed into (with non-relevant tags removed)
+The above code will be transformed into (with non-relevant tags removed):
 
 ```html
 <head>
@@ -97,15 +97,16 @@ The above will be transformed into (with non-relevant tags removed)
 </body>
 ```
 
-If no front-matter is provided, or If one or both keys aren't provided, the title and description will be set based on the `default-title` and `default-description` keys in `book.toml` respectively.
+If no front matter is provided, or if one or both keys aren't provided, the `title` and `description` will be set based on the `default-title` and `default-description` keys in `book.toml` respectively.
 
 ### Implementation details
 
-Unfortunately, `mdbook` does not support post-processing like it does pre-processing, and only supports defining one description to put in the meta tag per book rather than per file. So in order to apply post-processing (necessary to modify the html head tags) the global book description is set to a marker value `#description#` and the html renderer is replaced with a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front-matter if there is one.
+Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the `meta` tag per book rather than per file.
+So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
 
 ### Known limitations
 
-The front-matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full yaml parsing.
+The front matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full YAML parsing.
 
 - Double quotes and multi-line values are not supported, i.e. Keys and values must be entirely on the same line, with no double quotes around the value.
 
@@ -119,7 +120,7 @@ title: Some
 ---
 ```
 
-And neither will:
+neither this:
 
 ```md
 ---
@@ -127,6 +128,5 @@ title: "Some title"
 ---
 ```
 
-- The front-matter must be at the top of the file, with only white-space preceding it
-
-- The contents of the title and description will not be html-escaped. They should be simple ascii text with no unicode or emoji characters
+- The front matter must be at the top of the file, with only white-space preceding it.
+- The contents of the `title` and `description` will not be HTML escaped. They should be simple ASCII text with no unicode or emoji characters.

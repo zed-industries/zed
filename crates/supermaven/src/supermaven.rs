@@ -1,7 +1,7 @@
 mod messages;
-mod supermaven_completion_provider;
+mod supermaven_edit_prediction_delegate;
 
-pub use supermaven_completion_provider::*;
+pub use supermaven_edit_prediction_delegate::*;
 
 use anyhow::{Context as _, Result};
 #[allow(unused_imports)]
@@ -290,31 +290,6 @@ impl SupermavenAgent {
             .context("failed to get stdout for process")?;
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-
-        cx.spawn({
-            let client = client.clone();
-            let outgoing_tx = outgoing_tx.clone();
-            async move |this, cx| {
-                let mut status = client.status();
-                while let Some(status) = status.next().await {
-                    if status.is_connected() {
-                        let api_key = client.request(proto::GetSupermavenApiKey {}).await?.api_key;
-                        outgoing_tx
-                            .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
-                            .ok();
-                        this.update(cx, |this, cx| {
-                            if let Supermaven::Spawned(this) = this {
-                                this.account_status = AccountStatus::Ready;
-                                cx.notify();
-                            }
-                        })?;
-                        break;
-                    }
-                }
-                anyhow::Ok(())
-            }
-        })
-        .detach();
 
         Ok(Self {
             _process: process,

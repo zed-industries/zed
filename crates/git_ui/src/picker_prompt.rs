@@ -220,7 +220,7 @@ impl PickerDelegate for PickerPromptDelegate {
         let shortened_option = util::truncate_and_trailoff(&hit.string, self.max_match_length);
 
         Some(
-            ListItem::new(SharedString::from(format!("picker-prompt-menu-{ix}")))
+            ListItem::new(format!("picker-prompt-menu-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

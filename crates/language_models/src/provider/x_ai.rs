@@ -1,26 +1,24 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::BTreeMap;
-use futures::{FutureExt, StreamExt, future, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, Role,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    Role, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ElevationIndex, List, Tooltip, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
-use util::{ResultExt, truncate_and_trailoff};
+use util::ResultExt;
 use x_ai::{Model, XAI_API_URL};
-use zed_env_vars::{EnvVar, env_var};
-
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
@@ -56,12 +54,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = XAiLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -70,17 +64,13 @@ impl XAiLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    &API_KEY_ENV_VAR,
-                    |this| &mut this.api_key_state,
-                    cx,
-                );
+                this.api_key_state
+                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
                 cx.notify();
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
             }
         });
 
@@ -128,8 +118,8 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiXAi
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiXAi)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -208,25 +198,32 @@ impl XAiLanguageModel {
         &self,
         request: open_ai::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = XAiLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
+            let provider = PROVIDER_NAME;
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request =
-                open_ai::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = open_ai::stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -383,10 +380,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -418,7 +412,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -431,7 +425,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -445,6 +439,16 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
+        let configured_card_label = if env_var_set {
+            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
+        } else {
+            let api_url = XAiLanguageModelProvider::api_url(cx);
+            if api_url == XAI_API_URL {
+                "API key configured".to_string()
+            } else {
+                format!("API key configured for {}", api_url)
+            }
+        };
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
@@ -452,19 +456,19 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with xAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("xAI console"),
-                            Some("https://console.x.ai/team/default/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the agent",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("xAI console", "https://console.x.ai/team/default/api-keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(format!(
-                        "You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
                     ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -474,44 +478,15 @@ impl Render for ConfigurationView {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
-                .into_any()
+                .into_any_element()
         } else {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-                        } else {
-                            let api_url = XAiLanguageModelProvider::api_url(cx);
-                            if api_url == XAI_API_URL {
-                                "API key configured".to_string()
-                            } else {
-                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
-                            }
-                        })),
-                )
-                .child(
-                    Button::new("reset-api-key", "Reset API Key")
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .layer(ElevationIndex::ModalSurface)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
-                )
-                .into_any()
+            ConfiguredApiCard::new(configured_card_label)
+                .disabled(env_var_set)
+                .when(env_var_set, |this| {
+                    this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
+                })
+                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+                .into_any_element()
         };
 
         if self.load_credentials_task.is_some() {

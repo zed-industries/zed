@@ -36,6 +36,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
     *CACHED
 }
 
+// Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
@@ -153,6 +154,12 @@ pub fn temp_dir() -> &'static PathBuf {
 
         home_dir().join(".cache").join("zed")
     })
+}
+
+/// Returns the path to the hang traces directory.
+pub fn hang_traces_dir() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGS_DIR.get_or_init(|| data_dir().join("hang_traces"))
 }
 
 /// Returns the path to the logs directory.
@@ -402,6 +409,12 @@ pub fn remote_servers_dir() -> &'static PathBuf {
     REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
 }
 
+/// Returns the path to the directory where the devcontainer CLI is installed.
+pub fn devcontainer_dir() -> &'static PathBuf {
+    static DEVCONTAINER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
+}
+
 /// Returns the relative path to a `.zed` folder within a project.
 pub fn local_settings_folder_name() -> &'static str {
     ".zed"
@@ -460,8 +473,12 @@ pub fn user_ssh_config_file() -> PathBuf {
     home_dir().join(".ssh/config")
 }
 
-pub fn global_ssh_config_file() -> &'static Path {
-    Path::new("/etc/ssh/ssh_config")
+pub fn global_ssh_config_file() -> Option<&'static Path> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(Path::new("/etc/ssh/ssh_config"))
+    }
 }
 
 /// Returns candidate paths for the vscode user settings file
@@ -486,8 +503,10 @@ fn vscode_user_data_paths() -> Vec<PathBuf> {
     // https://github.com/microsoft/vscode/blob/23e7148cdb6d8a27f0109ff77e5b1e019f8da051/src/vs/platform/environment/node/userDataPath.ts#L45
     const VSCODE_PRODUCT_NAMES: &[&str] = &[
         "Code",
+        "Code - Insiders",
         "Code - OSS",
         "VSCodium",
+        "VSCodium - Insiders",
         "Code Dev",
         "Code - OSS Dev",
         "code-oss-dev",

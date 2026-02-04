@@ -8,8 +8,8 @@
       "cmd-shift-i": "agent::ToggleFocus",
       "cmd-l": "agent::ToggleFocus",
       "cmd-shift-l": "agent::ToggleFocus",
-      "cmd-shift-j": "agent::OpenSettings"
-    }
+      "cmd-shift-j": "agent::OpenSettings",
+    },
   },
   {
     "context": "Editor && mode == full",
@@ -20,19 +20,19 @@
       "cmd-shift-l": "agent::AddSelectionToThread", // In cursor uses "Ask" mode
       "cmd-l": "agent::AddSelectionToThread", // In cursor uses "Agent" mode
       "cmd-k": "assistant::InlineAssist",
-      "cmd-shift-k": "assistant::InsertIntoEditor"
-    }
+      "cmd-shift-k": "assistant::InsertIntoEditor",
+    },
   },
   {
-    "context": "InlineAssistEditor",
+    "context": "InlineAssistant > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-backspace": "editor::Cancel",
-      "cmd-enter": "menu::Confirm"
+      "cmd-enter": "menu::Confirm",
       // "alt-enter": // Quick Question
       // "cmd-shift-enter": // Full File Context
       // "cmd-shift-k": // Toggle input focus (editor <> inline assist)
-    }
+    },
   },
   {
     "context": "AgentPanel || ContextEditor || (MessageEditor > Editor)",
@@ -48,7 +48,7 @@
       "cmd-shift-backspace": "editor::Cancel",
       "cmd-r": "agent::NewThread",
       "cmd-shift-v": "editor::Paste",
-      "cmd-shift-k": "assistant::InsertIntoEditor"
+      "cmd-shift-k": "assistant::InsertIntoEditor",
       // "escape": "agent::ToggleFocus"
       ///// Enable when Zed supports multiple thread tabs
       // "cmd-t": // new thread tab
@@ -57,28 +57,29 @@
       ///// Enable if Zed adds support for keyboard navigation of thread elements
       // "tab": // cycle to next message
       // "shift-tab": // cycle to previous message
-    }
+    },
   },
   {
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "agent::KeepAll",
-      "cmd-backspace": "agent::RejectAll"
-    }
+      "cmd-backspace": "agent::RejectAll",
+    },
   },
   {
     "context": "Editor && mode == full && edit_prediction",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-right": "editor::AcceptPartialEditPrediction"
-    }
+      "cmd-right": "editor::AcceptNextWordEditPrediction",
+      "cmd-down": "editor::AcceptNextLineEditPrediction",
+    },
   },
   {
     "context": "Terminal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-k": "assistant::InlineAssist"
-    }
-  }
+      "cmd-k": "assistant::InlineAssist",
+    },
+  },
 ]

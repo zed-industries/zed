@@ -22,7 +22,6 @@ use language_model::{
 };
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
-use project::Project;
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
@@ -50,8 +49,6 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
     let text_thread = cx.new(|cx| {
         TextThread::local(
             registry,
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -189,8 +186,6 @@ fn test_message_splitting(cx: &mut App) {
     let text_thread = cx.new(|cx| {
         TextThread::local(
             registry.clone(),
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -294,8 +289,6 @@ fn test_messages_for_offsets(cx: &mut App) {
     let text_thread = cx.new(|cx| {
         TextThread::local(
             registry,
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -405,8 +398,6 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     let text_thread = cx.new(|cx| {
         TextThread::local(
             registry.clone(),
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -677,8 +668,6 @@ async fn test_serialization(cx: &mut TestAppContext) {
     let text_thread = cx.new(|cx| {
         TextThread::local(
             registry.clone(),
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -724,8 +713,6 @@ async fn test_serialization(cx: &mut TestAppContext) {
             registry.clone(),
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
-            None,
-            None,
             cx,
         )
     });
@@ -780,8 +767,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 registry.clone(),
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
-                None,
-                None,
                 cx,
             )
         });
@@ -881,10 +866,9 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     let num_sections = rng.random_range(0..=3);
                     let mut section_start = 0;
                     for _ in 0..num_sections {
-                        let mut section_end = rng.random_range(section_start..=output_text.len());
-                        while !output_text.is_char_boundary(section_end) {
-                            section_end += 1;
-                        }
+                        let section_end = output_text.floor_char_boundary(
+                            rng.random_range(section_start..=output_text.len()),
+                        );
                         events.push(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Ai,
                             label: "section".into(),
@@ -1042,8 +1026,6 @@ fn test_mark_cache_anchors(cx: &mut App) {
     let text_thread = cx.new(|cx| {
         TextThread::local(
             registry,
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -1369,8 +1351,6 @@ fn setup_context_editor_with_fake_model(
     let context = cx.new(|cx| {
         TextThread::local(
             registry,
-            None,
-            None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
             cx,
@@ -1411,9 +1391,6 @@ fn init_test(cx: &mut App) {
     prompt_store::init(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    language::init(cx);
-    agent_settings::init(cx);
-    Project::init_settings(cx);
 }
 
 #[derive(Clone)]

@@ -150,9 +150,9 @@ pub trait WithScrollbar: Sized {
     // }
 
     #[track_caller]
-    fn vertical_scrollbar_for<ScrollHandle: ScrollableHandle>(
+    fn vertical_scrollbar_for<ScrollHandle: ScrollableHandle + Clone>(
         self,
-        scroll_handle: ScrollHandle,
+        scroll_handle: &ScrollHandle,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output {
@@ -441,7 +441,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn tracked_scroll_handle<TrackedHandle: ScrollableHandle>(
         self,
-        tracked_scroll_handle: TrackedHandle,
+        tracked_scroll_handle: &TrackedHandle,
     ) -> Scrollbars<TrackedHandle> {
         let Self {
             id,
@@ -454,7 +454,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         } = self;
 
         Scrollbars {
-            scrollable_handle: Handle::Tracked(tracked_scroll_handle),
+            scrollable_handle: Handle::Tracked(tracked_scroll_handle.clone()),
             id,
             tracked_entity: tracked_entity_id,
             visibility,
@@ -968,7 +968,7 @@ impl ScrollableHandle for ScrollHandle {
     }
 }
 
-pub trait ScrollableHandle: 'static + Any + Sized {
+pub trait ScrollableHandle: 'static + Any + Sized + Clone {
     fn max_offset(&self) -> Size<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;

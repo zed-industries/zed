@@ -1,11 +1,18 @@
+pub mod batches;
+pub mod responses;
+
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    http::{HeaderMap, HeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
+use thiserror::Error;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -77,11 +84,18 @@ pub enum Model {
     O4Mini,
     #[serde(rename = "gpt-5")]
     Five,
+    #[serde(rename = "gpt-5-codex")]
+    FiveCodex,
     #[serde(rename = "gpt-5-mini")]
     FiveMini,
     #[serde(rename = "gpt-5-nano")]
     FiveNano,
-
+    #[serde(rename = "gpt-5.1")]
+    FivePointOne,
+    #[serde(rename = "gpt-5.2")]
+    FivePointTwo,
+    #[serde(rename = "gpt-5.2-codex")]
+    FivePointTwoCodex,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -91,7 +105,13 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
         reasoning_effort: Option<ReasoningEffort>,
+        #[serde(default = "default_supports_chat_completions")]
+        supports_chat_completions: bool,
     },
+}
+
+const fn default_supports_chat_completions() -> bool {
+    true
 }
 
 impl Model {
@@ -115,8 +135,12 @@ impl Model {
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
             "gpt-5" => Ok(Self::Five),
+            "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
+            "gpt-5.1" => Ok(Self::FivePointOne),
+            "gpt-5.2" => Ok(Self::FivePointTwo),
+            "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -136,8 +160,12 @@ impl Model {
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
+            Self::FivePointOne => "gpt-5.1",
+            Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom { name, .. } => name,
         }
     }
@@ -157,8 +185,12 @@ impl Model {
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
+            Self::FivePointOne => "gpt-5.1",
+            Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -180,8 +212,12 @@ impl Model {
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
             Self::Five => 272_000,
+            Self::FiveCodex => 272_000,
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
+            Self::FivePointOne => 400_000,
+            Self::FivePointTwo => 400_000,
+            Self::FivePointTwoCodex => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -204,8 +240,12 @@ impl Model {
             Self::O3 => Some(100_000),
             Self::O4Mini => Some(100_000),
             Self::Five => Some(128_000),
+            Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
+            Self::FivePointOne => Some(128_000),
+            Self::FivePointTwo => Some(128_000),
+            Self::FivePointTwoCodex => Some(128_000),
         }
     }
 
@@ -215,6 +255,17 @@ impl Model {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
             _ => None,
+        }
+    }
+
+    pub fn supports_chat_completions(&self) -> bool {
+        match self {
+            Self::Custom {
+                supports_chat_completions,
+                ..
+            } => *supports_chat_completions,
+            Self::FiveCodex | Self::FivePointTwoCodex => false,
+            _ => true,
         }
     }
 
@@ -232,7 +283,11 @@ impl Model {
             | Self::FourPointOneMini
             | Self::FourPointOneNano
             | Self::Five
+            | Self::FiveCodex
             | Self::FiveMini
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointTwoCodex
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
@@ -255,7 +310,8 @@ pub struct Request {
     pub max_completion_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
-    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     /// Whether to enable parallel function calling during tool use.
@@ -293,7 +349,7 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
@@ -366,23 +422,40 @@ pub struct ImageUrl {
     pub detail: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Response {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<Choice>,
+    pub usage: Usage,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Choice {
+    pub index: u32,
+    pub message: RequestMessage,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -391,6 +464,8 @@ pub struct ResponseMessageDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -410,7 +485,7 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -424,8 +499,21 @@ pub struct ChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
+#[derive(Error, Debug)]
+pub enum RequestError {
+    #[error("HTTP response error from {provider}'s API: status {status_code} - {body:?}")]
+    HttpResponseError {
+        provider: String,
+        status_code: StatusCode,
+        body: String,
+        headers: HeaderMap<HeaderValue>,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-pub struct OpenAiError {
+pub struct ResponseStreamError {
     message: String,
 }
 
@@ -433,7 +521,7 @@ pub struct OpenAiError {
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: OpenAiError },
+    Err { error: ResponseStreamError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -442,12 +530,12 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
-pub async fn stream_completion(
+pub async fn non_streaming_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
+) -> Result<Response, RequestError> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -455,7 +543,59 @@ pub async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        serde_json::from_str(&body).map_err(|e| RequestError::Other(e.into()))
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: "openai".to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
+pub async fn stream_completion(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
+    let uri = format!("{api_url}/chat/completions");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -491,27 +631,18 @@ pub async fn stream_completion(
             .boxed())
     } else {
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
 
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "API request to {} failed: {}",
-                api_url,
-                response.error.message,
-            )),
-
-            _ => anyhow::bail!(
-                "API request to {} failed with status {}: {}",
-                api_url,
-                response.status(),
-                body,
-            ),
-        }
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
     }
 }
 

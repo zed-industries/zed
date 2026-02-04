@@ -1,7 +1,7 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings, Inlay,
+    DisplayPoint, EditorSettings, Inlay, MultiBufferOffset,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
     display_map::DisplayRow,
     test::{
@@ -156,7 +156,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor is at the first diagnostic
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(3), 8)..DisplayPoint::new(DisplayRow(3), 8)]
         );
     });
@@ -232,7 +234,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     // Cursor keeps its position.
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.display_ranges(cx),
+            editor
+                .selections
+                .display_ranges(&editor.display_snapshot(cx)),
             [DisplayPoint::new(DisplayRow(8), 8)..DisplayPoint::new(DisplayRow(8), 8)]
         );
     });
@@ -769,7 +773,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
+        diagnostics.update_stale_excerpts(window, cx)
     });
 
     log::info!("constructing reference diagnostics view");
@@ -874,7 +878,8 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
                     if !snapshot.buffer_snapshot().is_empty() {
-                        let position = rng.random_range(0..snapshot.buffer_snapshot().len());
+                        let position = rng
+                            .random_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len());
                         let position = snapshot.buffer_snapshot().clip_offset(position, Bias::Left);
                         log::info!(
                             "adding inlay at {position}/{}: {:?}",
@@ -968,7 +973,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
     log::info!("updating mutated diagnostics view");
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
-        diagnostics.update_stale_excerpts(RetainExcerpts::No, window, cx)
+        diagnostics.update_stale_excerpts(window, cx)
     });
 
     cx.executor()
@@ -2017,10 +2022,6 @@ fn init_test(cx: &mut TestAppContext) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);
-        language::init(cx);
-        client::init_settings(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         crate::init(cx);
         editor::init(cx);
     });

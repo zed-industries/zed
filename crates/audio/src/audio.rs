@@ -48,7 +48,6 @@ pub const LEGACY_CHANNEL_COUNT: NonZero<u16> = nz!(2);
 pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
-    AudioSettings::register(cx);
     LIVE_SETTINGS.initialize(cx);
 }
 
@@ -304,9 +303,9 @@ pub struct VoipParts {
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 impl VoipParts {
     pub fn new(cx: &AsyncApp) -> anyhow::Result<Self> {
-        let (apm, replays) = cx.try_read_default_global::<Audio, _>(|audio, _| {
+        let (apm, replays) = cx.read_default_global::<Audio, _>(|audio, _| {
             (Arc::clone(&audio.echo_canceller), audio.replays.clone())
-        })?;
+        });
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |settings| settings.legacy_audio_compatible)
                 .unwrap_or(true);

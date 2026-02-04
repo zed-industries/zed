@@ -23,6 +23,9 @@ zstd.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
 [lints]
 workspace = true
 

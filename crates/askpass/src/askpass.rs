@@ -73,24 +73,27 @@ impl AskPassDelegate {
 
 pub struct AskPassSession {
     #[cfg(target_os = "windows")]
-    secret: std::sync::Arc<OnceLock<EncryptedPassword>>,
+    secret: std::sync::Arc<std::sync::Mutex<Option<EncryptedPassword>>>,
     askpass_task: PasswordProxy,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
+    executor: BackgroundExecutor,
 }
 
-#[cfg(not(target_os = "windows"))]
-const ASKPASS_SCRIPT_NAME: &str = "askpass.sh";
-#[cfg(target_os = "windows")]
-const ASKPASS_SCRIPT_NAME: &str = "askpass.ps1";
+const ASKPASS_SCRIPT_NAME: &str = if cfg!(target_os = "windows") {
+    "askpass.ps1"
+} else {
+    "askpass.sh"
+};
 
 impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
     #[must_use]
-    pub async fn new(executor: &BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
+    pub async fn new(executor: BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
         #[cfg(target_os = "windows")]
-        let secret = std::sync::Arc::new(OnceLock::new());
+        let secret = std::sync::Arc::new(std::sync::Mutex::new(None));
+
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
 
         let askpass_opened_tx = Arc::new(Mutex::new(Some(askpass_opened_tx)));
@@ -98,11 +101,11 @@ impl AskPassSession {
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let kill_tx = Arc::new(Mutex::new(Some(askpass_kill_master_tx)));
 
-        #[cfg(target_os = "windows")]
-        let askpass_secret = secret.clone();
         let get_password = {
             let executor = executor.clone();
 
+            #[cfg(target_os = "windows")]
+            let askpass_secret = secret.clone();
             move |prompt| {
                 let prompt = delegate.ask_password(prompt);
                 let kill_tx = kill_tx.clone();
@@ -116,7 +119,7 @@ impl AskPassSession {
                     if let Some(password) = prompt.await {
                         #[cfg(target_os = "windows")]
                         {
-                            _ = askpass_secret.set(password.clone());
+                            askpass_secret.lock().unwrap().replace(password.clone());
                         }
                         ControlFlow::Continue(Ok(password))
                     } else {
@@ -137,6 +140,7 @@ impl AskPassSession {
             askpass_task,
             askpass_kill_master_rx: Some(askpass_kill_master_rx),
             askpass_opened_rx: Some(askpass_opened_rx),
+            executor,
         })
     }
 
@@ -152,6 +156,7 @@ impl AskPassSession {
             .askpass_kill_master_rx
             .take()
             .expect("Only call run once");
+        let executor = self.executor.clone();
 
         select_biased! {
             _ = askpass_opened_rx.fuse() => {
@@ -160,7 +165,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
+            _ = futures::FutureExt::fuse(executor.timer(connection_timeout)) => {
                 AskPassResult::Timedout
             }
         }
@@ -169,7 +174,7 @@ impl AskPassSession {
     /// This will return the password that was last set by the askpass script.
     #[cfg(target_os = "windows")]
     pub fn get_password(&self) -> Option<EncryptedPassword> {
-        self.secret.get().cloned()
+        self.secret.lock().ok()?.clone()
     }
 
     pub fn script_path(&self) -> impl AsRef<OsStr> {
@@ -205,13 +210,9 @@ impl PasswordProxy {
         } else {
             ShellKind::Posix
         };
-        let askpass_program = ASKPASS_PROGRAM
-            .get_or_init(|| current_exec)
-            .try_shell_safe(shell_kind)
-            .context("Failed to shell-escape Askpass program path.")?
-            .to_string();
+        let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
         // Create an askpass script that communicates back to this process.
-        let askpass_script = generate_askpass_script(&askpass_program, &askpass_socket);
+        let askpass_script = generate_askpass_script(shell_kind, askpass_program, &askpass_socket)?;
         let _task = executor.spawn(async move {
             maybe!(async move {
                 let listener =
@@ -253,10 +254,15 @@ impl PasswordProxy {
         fs::write(&askpass_script_path, askpass_script)
             .await
             .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
-        make_file_executable(&askpass_script_path).await?;
+        make_file_executable(&askpass_script_path)
+            .await
+            .with_context(|| {
+                format!("marking askpass script executable at {askpass_script_path:?}")
+            })?;
+        // todo(shell): There might be no powershell on the system
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
-            "powershell.exe -ExecutionPolicy Bypass -File {}",
+            "powershell.exe -ExecutionPolicy Bypass -File \"{}\"",
             askpass_script_path.display()
         );
 
@@ -334,23 +340,51 @@ pub fn set_askpass_program(path: std::path::PathBuf) {
 
 #[inline]
 #[cfg(not(target_os = "windows"))]
-fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
-    format!(
+fn generate_askpass_script(
+    shell_kind: ShellKind,
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+    let print_args = "printf '%s\\0' \"$@\"";
+    let shebang = "#!/bin/sh";
+    Ok(format!(
         "{shebang}\n{print_args} | {askpass_program} --askpass={askpass_socket} 2> /dev/null \n",
-        askpass_socket = askpass_socket.display(),
-        print_args = "printf '%s\\0' \"$@\"",
-        shebang = "#!/bin/sh",
-    )
+    ))
 }
 
 #[inline]
 #[cfg(target_os = "windows")]
-fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
-    format!(
+fn generate_askpass_script(
+    shell_kind: ShellKind,
+    askpass_program: &std::path::Path,
+    askpass_socket: &std::path::Path,
+) -> Result<String> {
+    let askpass_program = shell_kind.prepend_command_prefix(
+        askpass_program
+            .to_str()
+            .context("Askpass program is on a non-utf8 path")?,
+    );
+    let askpass_program = shell_kind
+        .try_quote_prefix_aware(&askpass_program)
+        .context("Failed to shell-escape Askpass program path")?;
+    let askpass_socket = askpass_socket
+        .try_shell_safe(shell_kind)
+        .context("Failed to shell-escape Askpass socket path")?;
+    Ok(format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & {askpass_program} --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | {askpass_program} --askpass={askpass_socket} 2> $null
         "#,
-        askpass_socket = askpass_socket.display(),
-    )
+    ))
 }

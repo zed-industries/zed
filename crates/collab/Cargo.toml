@@ -17,6 +17,14 @@ name = "collab"
 sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 test-support = ["sqlite"]
 
+[lib]
+test = false
+
+[[test]]
+name = "collab_tests"
+required-features = ["test-support"]
+path = "tests/integration/collab_tests.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -44,13 +52,11 @@ prometheus = "0.14"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
-reqwest_client.workspace = true
 rpc.workspace = true
 scrypt = "0.11"
 # sea-orm and sea-orm-macros versions must match exactly.
 sea-orm = { version = "=1.1.10", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 sea-orm-macros = "=1.1.10"
-semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -58,7 +64,6 @@ sha2.workspace = true
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 strum.workspace = true
 subtle.workspace = true
-supermaven_api.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 time.workspace = true
@@ -66,13 +71,16 @@ tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
-tracing = "0.1.40"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+agent = { workspace = true, features = ["test-support"] }
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
+agent_ui = { workspace = true, features = ["test-support"] }
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 async-trait.workspace = true
@@ -81,6 +89,7 @@ buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
 channel.workspace = true
 client = { workspace = true, features = ["test-support"] }
+collab = { workspace = true, features = ["test-support"] }
 collab_ui = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 command_palette_hooks.workspace = true
@@ -112,7 +121,7 @@ notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 prompt_store.workspace = true
-recent_projects.workspace = true
+recent_projects = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
@@ -125,8 +134,10 @@ smol.workspace = true
 sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+zed_actions.workspace = true
 zlog.workspace = true

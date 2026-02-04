@@ -197,7 +197,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let mut selection = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
@@ -273,7 +273,7 @@ impl Vim {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange>(
                 &ranges,
-                |theme| theme.colors().editor_document_highlight_read_background,
+                |_, theme| theme.colors().editor_document_highlight_read_background,
                 cx,
             );
         }

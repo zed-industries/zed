@@ -155,6 +155,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Swift](https://github.com/zed-extensions/swift)
 - [Templ](https://github.com/makifdb/zed-templ)
 - [Tmux](https://github.com/dangh/zed-tmux)
+- [Tree-sitter Query](https://github.com/vitallium/zed-tree-sitter-query)
 - [Twig](https://github.com/YussufSassi/zed-twig)
 - [Typst](https://github.com/WeetHet/typst.zed)
 - [Unison](https://github.com/zetashift/unison-zed)

@@ -15,10 +15,16 @@ use project::{Project, ProjectPath, Toolchains, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
+use gpui::Context;
 use jupyter_protocol::JupyterKernelspec;
 use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
 use util::rel_path::RelPath;
+
+pub trait KernelSession: Sized {
+    fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>);
+    fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>);
+}
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
@@ -81,7 +87,7 @@ pub fn python_env_kernel_specifications(
     worktree_id: WorktreeId,
     cx: &mut App,
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
-    let python_language = LanguageName::new("Python");
+    let python_language = LanguageName::new_static("Python");
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,
@@ -213,6 +219,13 @@ impl From<&Kernel> for KernelStatus {
             Kernel::RunningKernel(kernel) => match kernel.execution_state() {
                 ExecutionState::Idle => KernelStatus::Idle,
                 ExecutionState::Busy => KernelStatus::Busy,
+                ExecutionState::Unknown => KernelStatus::Error,
+                ExecutionState::Starting => KernelStatus::Starting,
+                ExecutionState::Restarting => KernelStatus::Restarting,
+                ExecutionState::Terminating => KernelStatus::ShuttingDown,
+                ExecutionState::AutoRestarting => KernelStatus::Restarting,
+                ExecutionState::Dead => KernelStatus::Error,
+                ExecutionState::Other(_) => KernelStatus::Error,
             },
             Kernel::StartingKernel(_) => KernelStatus::Starting,
             Kernel::ErroredLaunch(_) => KernelStatus::Error,

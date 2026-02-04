@@ -15,12 +15,14 @@ const SEPARATOR_MARKER: &str = "=======";
 const REPLACE_MARKER: &str = ">>>>>>> REPLACE";
 const SONNET_PARAMETER_INVOKE_1: &str = "</parameter>\n</invoke>";
 const SONNET_PARAMETER_INVOKE_2: &str = "</parameter></invoke>";
-const END_TAGS: [&str; 5] = [
+const SONNET_PARAMETER_INVOKE_3: &str = "</parameter>";
+const END_TAGS: [&str; 6] = [
     OLD_TEXT_END_TAG,
     NEW_TEXT_END_TAG,
     EDITS_END_TAG,
-    SONNET_PARAMETER_INVOKE_1, // Remove this after switching to streaming tool call
+    SONNET_PARAMETER_INVOKE_1, // Remove these after switching to streaming tool call
     SONNET_PARAMETER_INVOKE_2,
+    SONNET_PARAMETER_INVOKE_3,
 ];
 
 #[derive(Debug)]
@@ -567,21 +569,29 @@ mod tests {
             parse_random_chunks(
                 indoc! {"
                     <old_text>some text</old_text><new_text>updated text</parameter></invoke>
+                    <old_text>more text</old_text><new_text>upd</parameter></new_text>
                 "},
                 &mut parser,
                 &mut rng
             ),
-            vec![Edit {
-                old_text: "some text".to_string(),
-                new_text: "updated text".to_string(),
-                line_hint: None,
-            },]
+            vec![
+                Edit {
+                    old_text: "some text".to_string(),
+                    new_text: "updated text".to_string(),
+                    line_hint: None,
+                },
+                Edit {
+                    old_text: "more text".to_string(),
+                    new_text: "upd".to_string(),
+                    line_hint: None,
+                },
+            ]
         );
         assert_eq!(
             parser.finish(),
             EditParserMetrics {
-                tags: 2,
-                mismatched_tags: 1
+                tags: 4,
+                mismatched_tags: 2
             }
         );
     }

@@ -252,6 +252,7 @@ pub struct Style {
     pub box_shadow: Vec<BoxShadow>,
 
     /// The text style of this element
+    #[refineable]
     pub text: TextStyleRefinement,
 
     /// The mouse cursor style shown when the mouse pointer is over an element.
@@ -263,6 +264,10 @@ pub struct Style {
     /// The grid columns of this element
     /// Equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<u16>,
+
+    /// The grid columns with min-content minimum sizing.
+    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
+    pub grid_cols_min_content: Option<u16>,
 
     /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
@@ -329,9 +334,13 @@ pub enum WhiteSpace {
 /// How to truncate text that overflows the width of the element
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TextOverflow {
-    /// Truncate the text when it doesn't fit, and represent this truncation by displaying the
-    /// provided string.
+    /// Truncate the text at the end when it doesn't fit, and represent this truncation by
+    /// displaying the provided string (e.g., "very long te…").
     Truncate(SharedString),
+    /// Truncate the text at the start when it doesn't fit, and represent this truncation by
+    /// displaying the provided string at the beginning (e.g., "…ong text here").
+    /// Typically more adequate for file paths where the end is more important than the beginning.
+    TruncateStart(SharedString),
 }
 
 /// How to align text within the element
@@ -657,23 +666,31 @@ impl Style {
             let border_widths = self.border_widths.to_pixels(rem_size);
             let max_border_width = border_widths.max();
             let max_corner_radius = corner_radii.max();
+            let zero_size = Size {
+                width: Pixels::ZERO,
+                height: Pixels::ZERO,
+            };
 
-            let top_bounds = Bounds::from_corners(
+            let mut top_bounds = Bounds::from_corners(
                 bounds.origin,
                 bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
             );
-            let bottom_bounds = Bounds::from_corners(
+            top_bounds.size = top_bounds.size.max(&zero_size);
+            let mut bottom_bounds = Bounds::from_corners(
                 bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
                 bounds.bottom_right(),
             );
-            let left_bounds = Bounds::from_corners(
+            bottom_bounds.size = bottom_bounds.size.max(&zero_size);
+            let mut left_bounds = Bounds::from_corners(
                 top_bounds.bottom_left(),
                 bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
             );
-            let right_bounds = Bounds::from_corners(
+            left_bounds.size = left_bounds.size.max(&zero_size);
+            let mut right_bounds = Bounds::from_corners(
                 top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
                 bottom_bounds.top_right(),
             );
+            right_bounds.size = right_bounds.size.max(&zero_size);
 
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
@@ -771,6 +788,7 @@ impl Default for Style {
             opacity: None,
             grid_rows: None,
             grid_cols: None,
+            grid_cols_min_content: None,
             grid_location: None,
 
             #[cfg(debug_assertions)]
@@ -1467,6 +1485,23 @@ mod tests {
                     }
                 )
             ]
+        );
+    }
+
+    #[perf]
+    fn test_text_style_refinement() {
+        let mut style = Style::default();
+        style.refine(&StyleRefinement::default().text_size(px(20.0)));
+        style.refine(&StyleRefinement::default().font_weight(FontWeight::SEMIBOLD));
+
+        assert_eq!(
+            Some(AbsoluteLength::from(px(20.0))),
+            style.text_style().unwrap().font_size
+        );
+
+        assert_eq!(
+            Some(FontWeight::SEMIBOLD),
+            style.text_style().unwrap().font_weight
         );
     }
 }

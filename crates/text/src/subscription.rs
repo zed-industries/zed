@@ -6,36 +6,55 @@ use std::{
 };
 
 #[derive(Default)]
-pub struct Topic(Mutex<Vec<Weak<Mutex<Patch<usize>>>>>);
+pub struct Topic<T>(Mutex<Vec<Weak<Mutex<Patch<T>>>>>);
 
-pub struct Subscription(Arc<Mutex<Patch<usize>>>);
+pub struct Subscription<T>(Arc<Mutex<Patch<T>>>);
 
-impl Topic {
-    pub fn subscribe(&mut self) -> Subscription {
+impl<T: Default, TDelta> Topic<T>
+where
+    T: 'static
+        + Copy
+        + Ord
+        + std::ops::Sub<T, Output = TDelta>
+        + std::ops::Add<TDelta, Output = T>
+        + std::ops::AddAssign<TDelta>
+        + Default,
+    TDelta: Ord + Copy,
+{
+    pub fn subscribe(&mut self) -> Subscription<T> {
         let subscription = Subscription(Default::default());
         self.0.get_mut().push(Arc::downgrade(&subscription.0));
         subscription
     }
 
-    pub fn publish(&self, edits: impl Clone + IntoIterator<Item = Edit<usize>>) {
+    pub fn publish(&self, edits: impl Clone + IntoIterator<Item = Edit<T>>) {
         publish(&mut self.0.lock(), edits);
     }
 
-    pub fn publish_mut(&mut self, edits: impl Clone + IntoIterator<Item = Edit<usize>>) {
+    pub fn publish_mut(&mut self, edits: impl Clone + IntoIterator<Item = Edit<T>>) {
         publish(self.0.get_mut(), edits);
     }
 }
 
-impl Subscription {
-    pub fn consume(&self) -> Patch<usize> {
+impl<T: Default> Subscription<T> {
+    pub fn consume(&self) -> Patch<T> {
         mem::take(&mut *self.0.lock())
     }
 }
 
-fn publish(
-    subscriptions: &mut Vec<Weak<Mutex<Patch<usize>>>>,
-    edits: impl Clone + IntoIterator<Item = Edit<usize>>,
-) {
+fn publish<T, TDelta>(
+    subscriptions: &mut Vec<Weak<Mutex<Patch<T>>>>,
+    edits: impl Clone + IntoIterator<Item = Edit<T>>,
+) where
+    T: 'static
+        + Copy
+        + Ord
+        + std::ops::Sub<T, Output = TDelta>
+        + std::ops::Add<TDelta, Output = T>
+        + std::ops::AddAssign<TDelta>
+        + Default,
+    TDelta: Ord + Copy,
+{
     subscriptions.retain(|subscription| {
         if let Some(subscription) = subscription.upgrade() {
             let mut patch = subscription.lock();

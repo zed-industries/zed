@@ -5,7 +5,7 @@
 
 ## Using Zed's built-in debugger
 
-While the Zed project is open you can open the `New Process Modal` and select the `Debug` tab. There you can see to debug configurations to debug Zed with, one for GDB and one for LLDB. Select the configuration you want and Zed will build and launch the binary.
+While the Zed project is open you can open the `New Process Modal` and select the `Debug` tab. There you can see two debug configurations to debug Zed with, one for GDB and one for LLDB. Select the configuration you want and Zed will build and launch the binary.
 
 Please note, GDB isn't supported on arm Macbooks
 

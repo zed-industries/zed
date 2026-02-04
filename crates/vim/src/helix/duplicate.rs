@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use editor::{DisplayPoint, display_map::DisplaySnapshot};
+use editor::{DisplayPoint, MultiBufferOffset, display_map::DisplaySnapshot};
 use gpui::Context;
 use text::Bias;
 use ui::Window;
@@ -111,7 +111,7 @@ fn find_next_valid_duplicate_space(
 fn display_point_range_to_offset_range(
     range: &Range<DisplayPoint>,
     map: &DisplaySnapshot,
-) -> Range<usize> {
+) -> Range<MultiBufferOffset> {
     range.start.to_offset(map, Bias::Left)..range.end.to_offset(map, Bias::Right)
 }
 

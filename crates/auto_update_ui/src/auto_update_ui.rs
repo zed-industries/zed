@@ -1,13 +1,13 @@
-use auto_update::AutoUpdater;
+use auto_update::{AutoUpdater, release_notes_url};
 use editor::{Editor, MultiBuffer};
 use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
-use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::Workspace;
+use workspace::notifications::ErrorMessagePrompt;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::notifications::{NotificationId, show_app_notification};
 
@@ -39,6 +39,28 @@ struct ReleaseNotesBody {
     release_notes: String,
 }
 
+fn notify_release_notes_failed_to_show(
+    workspace: &mut Workspace,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    struct ViewReleaseNotesError;
+    workspace.show_notification(
+        NotificationId::unique::<ViewReleaseNotesError>(),
+        cx,
+        |cx| {
+            cx.new(move |cx| {
+                let url = release_notes_url(cx);
+                let mut prompt = ErrorMessagePrompt::new("Couldn't load release notes", cx);
+                if let Some(url) = url {
+                    prompt = prompt.with_link_button("View in Browser".to_string(), url);
+                }
+                prompt
+            })
+        },
+    );
+}
+
 fn view_release_notes_locally(
     workspace: &mut Workspace,
     window: &mut Window,
@@ -46,14 +68,13 @@ fn view_release_notes_locally(
 ) {
     let release_channel = ReleaseChannel::global(cx);
 
-    let url = match release_channel {
-        ReleaseChannel::Nightly => Some("https://github.com/zed-industries/zed/commits/nightly/"),
-        ReleaseChannel::Dev => Some("https://github.com/zed-industries/zed/commits/main/"),
-        _ => None,
-    };
-
-    if let Some(url) = url {
-        cx.open_url(url);
+    if matches!(
+        release_channel,
+        ReleaseChannel::Nightly | ReleaseChannel::Dev
+    ) {
+        if let Some(url) = release_notes_url(cx) {
+            cx.open_url(&url);
+        }
         return;
     }
 
@@ -71,63 +92,71 @@ fn view_release_notes_locally(
         .languages
         .language_for_name("Markdown");
 
-    workspace
-        .with_local_workspace(window, cx, move |_, window, cx| {
-            cx.spawn_in(window, async move |workspace, cx| {
-                let markdown = markdown.await.log_err();
-                let response = client.get(&url, Default::default(), true).await;
-                let Some(mut response) = response.log_err() else {
-                    return;
-                };
+    cx.spawn_in(window, async move |workspace, cx| {
+        let markdown = markdown.await.log_err();
+        let response = client.get(&url, Default::default(), true).await;
+        let Some(mut response) = response.log_err() else {
+            workspace
+                .update_in(cx, notify_release_notes_failed_to_show)
+                .log_err();
+            return;
+        };
 
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await.ok();
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await.ok();
 
-                let body: serde_json::Result<ReleaseNotesBody> =
-                    serde_json::from_slice(body.as_slice());
+        let body: serde_json::Result<ReleaseNotesBody> = serde_json::from_slice(body.as_slice());
 
-                if let Ok(body) = body {
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, false, cx)
-                            });
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, body.release_notes)], None, cx)
-                            });
-                            let language_registry = project.read(cx).languages().clone();
+        let res: Option<()> = maybe!(async {
+            let body = body.ok()?;
+            let project = workspace
+                .read_with(cx, |workspace, _| workspace.project().clone())
+                .ok()?;
+            let (language_registry, buffer) = project.update(cx, |project, cx| {
+                (
+                    project.languages().clone(),
+                    project.create_buffer(markdown, false, cx),
+                )
+            });
+            let buffer = buffer.await.ok()?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..0, body.release_notes)], None, cx)
+            });
 
-                            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-                            let editor = cx.new(|cx| {
-                                Editor::for_multibuffer(buffer, Some(project), window, cx)
-                            });
-                            let workspace_handle = workspace.weak_handle();
-                            let markdown_preview: Entity<MarkdownPreviewView> =
-                                MarkdownPreviewView::new(
-                                    MarkdownPreviewMode::Default,
-                                    editor,
-                                    workspace_handle,
-                                    language_registry,
-                                    window,
-                                    cx,
-                                );
-                            workspace.add_item_to_active_pane(
-                                Box::new(markdown_preview),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        })
-                        .log_err();
-                }
-            })
-            .detach();
+            let ws_handle = workspace.clone();
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let editor =
+                        cx.new(|cx| Editor::for_multibuffer(buffer, Some(project), window, cx));
+                    let markdown_preview: Entity<MarkdownPreviewView> = MarkdownPreviewView::new(
+                        MarkdownPreviewMode::Default,
+                        editor,
+                        ws_handle,
+                        language_registry,
+                        window,
+                        cx,
+                    );
+                    workspace.add_item_to_active_pane(
+                        Box::new(markdown_preview),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                    cx.notify();
+                })
+                .ok()
         })
-        .detach();
+        .await;
+        if res.is_none() {
+            workspace
+                .update_in(cx, notify_release_notes_failed_to_show)
+                .log_err();
+        }
+    })
+    .detach();
 }
 
 /// Shows a notification across all workspaces if an update was previously automatically installed
@@ -148,7 +177,9 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
             cx.update(|cx| {
-                let version = updater.read(cx).current_version();
+                let mut version = updater.read(cx).current_version();
+                version.build = semver::BuildMetadata::EMPTY;
+                version.pre = semver::Prerelease::EMPTY;
                 let app_name = ReleaseChannel::global(cx).display_name();
                 show_app_notification(
                     NotificationId::unique::<UpdateNotification>(),
@@ -177,8 +208,8 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                     updater
                         .set_should_show_update_notification(false, cx)
                         .detach_and_log_err(cx);
-                })
-            })?;
+                });
+            });
         }
         anyhow::Ok(())
     })

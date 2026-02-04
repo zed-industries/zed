@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, StatusStyle};
+use settings::{RegisterSetting, Settings, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -14,7 +14,7 @@ pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, RegisterSetting)]
 pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
@@ -24,6 +24,7 @@ pub struct GitPanelSettings {
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
+    pub tree_view: bool,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -56,6 +57,7 @@ impl Settings for GitPanelSettings {
             fallback_branch_name: git_panel.fallback_branch_name.unwrap(),
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
+            tree_view: git_panel.tree_view.unwrap(),
         }
     }
 }

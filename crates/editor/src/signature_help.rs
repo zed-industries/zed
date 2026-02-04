@@ -1,15 +1,16 @@
 use crate::actions::ShowSignatureHelp;
 use crate::hover_popover::open_markdown_url;
-use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
+use crate::{BufferOffset, Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
     App, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
 use markdown::{Markdown, MarkdownElement};
-use multi_buffer::{Anchor, ToOffset};
+use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
+use std::time::Duration;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
@@ -82,7 +83,9 @@ impl Editor {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
         }
-        let newest_selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
+        let newest_selection = self
+            .selections
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
         let head = newest_selection.head();
 
         if !newest_selection.is_empty() && head != newest_selection.tail() {
@@ -92,14 +95,19 @@ impl Editor {
         }
 
         let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let bracket_range = |position: usize| match (position, position + 1) {
-            (0, b) if b <= buffer_snapshot.len() => 0..b,
-            (0, b) => 0..b - 1,
-            (a, b) if b <= buffer_snapshot.len() => a - 1..b,
-            (a, b) => a - 1..b - 1,
+        let bracket_range = |position: MultiBufferOffset| {
+            let range = match (position, position + 1usize) {
+                (MultiBufferOffset(0), b) if b <= buffer_snapshot.len() => MultiBufferOffset(0)..b,
+                (MultiBufferOffset(0), b) => MultiBufferOffset(0)..b - 1,
+                (a, b) if b <= buffer_snapshot.len() => a - 1..b,
+                (a, b) => a - 1..b - 1,
+            };
+            let start = buffer_snapshot.clip_offset(range.start, text::Bias::Left);
+            let end = buffer_snapshot.clip_offset(range.end, text::Bias::Right);
+            start..end
         };
         let not_quote_like_brackets =
-            |buffer: &BufferSnapshot, start: Range<usize>, end: Range<usize>| {
+            |buffer: &BufferSnapshot, start: Range<BufferOffset>, end: Range<BufferOffset>| {
                 let text_start = buffer.text_for_range(start).collect::<String>();
                 let text_end = buffer.text_for_range(end).collect::<String>();
                 QUOTE_PAIRS
@@ -159,9 +167,26 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_signature_help_impl(false, window, cx);
+    }
+
+    pub(super) fn show_signature_help_auto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_signature_help_impl(true, window, cx);
+    }
+
+    fn show_signature_help_impl(
+        &mut self,
+        use_delay: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_rename.is_some() || self.has_visible_completions_menu() {
             return;
         }
+
+        // If there's an already running signature
+        // help task, this will drop it.
+        self.signature_help_state.task = None;
 
         let position = self.selections.newest_anchor().head();
         let Some((buffer, buffer_position)) =
@@ -172,14 +197,27 @@ impl Editor {
         let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
-        let task = lsp_store.update(cx, |lsp_store, cx| {
+        let lsp_task = lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
 
+        let signature_help_delay_ms = if use_delay {
+            EditorSettings::get_global(cx).hover_popover_delay.0
+        } else {
+            0
+        };
+
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
-                let signature_help = task.await;
+                if signature_help_delay_ms > 0 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(signature_help_delay_ms))
+                        .await;
+                }
+
+                let signature_help = lsp_task.await;
+
                 editor
                     .update(cx, |editor, cx| {
                         let Some(mut signature_help) =
@@ -389,7 +427,7 @@ impl SignatureHelpPopover {
                             )
                     }),
             )
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx);
 
         let controls = if self.signatures.len() > 1 {
             let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)

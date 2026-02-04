@@ -75,6 +75,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("vue", &["vue"]),
     ("wgsl", &["wgsl"]),
     ("wit", &["wit"]),
+    ("xml", &["xml"]),
     ("zig", &["zig"]),
 ];
 

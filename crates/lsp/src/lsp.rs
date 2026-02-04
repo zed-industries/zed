@@ -25,6 +25,7 @@ use smol::{
 };
 
 use std::{
+    any::TypeId,
     collections::BTreeSet,
     ffi::{OsStr, OsString},
     fmt,
@@ -62,7 +63,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -89,6 +90,7 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<String>,
     notification_tx: channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
+    version: Option<SharedString>,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
@@ -199,14 +201,22 @@ pub enum RequestId {
     Str(String),
 }
 
+fn is_unit<T: 'static>(_: &T) -> bool {
+    TypeId::of::<T>() == TypeId::of::<()>()
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
 #[derive(Serialize, Deserialize)]
-pub struct Request<'a, T> {
+pub struct Request<'a, T>
+where
+    T: 'static,
+{
     jsonrpc: &'static str,
     id: RequestId,
     method: &'a str,
+    #[serde(default, skip_serializing_if = "is_unit")]
     params: T,
 }
 
@@ -244,10 +254,14 @@ enum LspResult<T> {
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
 #[derive(Serialize, Deserialize)]
-struct Notification<'a, T> {
+struct Notification<'a, T>
+where
+    T: 'static,
+{
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
+    #[serde(default, skip_serializing_if = "is_unit")]
     params: T,
 }
 
@@ -331,14 +345,13 @@ impl LanguageServer {
         };
         let root_uri = Uri::from_file_path(&working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
-
         log::info!(
-            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: \
+            {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
         );
-
         let mut command = util::command::new_smol_command(&binary.path);
         command
             .current_dir(working_dir)
@@ -348,6 +361,7 @@ impl LanguageServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
         let mut server = command
             .spawn()
             .with_context(|| format!("failed to spawn command {command:?}",))?;
@@ -501,6 +515,7 @@ impl LanguageServer {
             response_handlers,
             io_handlers,
             name: server_name,
+            version: None,
             process_name: binary
                 .path
                 .file_name()
@@ -667,7 +682,7 @@ impl LanguageServer {
 
         #[allow(deprecated)]
         InitializeParams {
-            process_id: None,
+            process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,
@@ -759,10 +774,15 @@ impl LanguageServer {
                                 properties: vec![
                                     "additionalTextEdits".to_string(),
                                     "command".to_string(),
+                                    "detail".to_string(),
                                     "documentation".to_string(),
                                     // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
                                     // "textEdit".to_string(),
                                 ],
+                            }),
+                            deprecated_support: Some(true),
+                            tag_support: Some(TagSupport {
+                                value_set: vec![CompletionItemTag::DEPRECATED],
                             }),
                             insert_replace_support: Some(true),
                             label_details_support: Some(true),
@@ -878,7 +898,9 @@ impl LanguageServer {
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
                     show_message: Some(ShowMessageRequestClientCapabilities {
-                        message_action_item: None,
+                        message_action_item: Some(MessageActionItemCapabilities {
+                            additional_properties_support: Some(true),
+                        }),
                     }),
                     ..WindowClientCapabilities::default()
                 }),
@@ -919,6 +941,7 @@ impl LanguageServer {
                     )
                 })?;
             if let Some(info) = response.server_info {
+                self.version = info.version.map(SharedString::from);
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
@@ -1149,6 +1172,11 @@ impl LanguageServer {
         self.name.clone()
     }
 
+    /// Get the version of the running language server.
+    pub fn version(&self) -> Option<SharedString> {
+        self.version.clone()
+    }
+
     pub fn process_name(&self) -> &str {
         &self.process_name
     }
@@ -1178,6 +1206,11 @@ impl LanguageServer {
     /// Get the id of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
+    }
+
+    /// Get the process ID of the running language server, if available.
+    pub fn process_id(&self) -> Option<u32> {
+        self.server.lock().as_ref().map(|child| child.id())
     }
 
     /// Language server's binary information.
@@ -1731,13 +1764,11 @@ impl FakeLanguageServer {
         T: request::Request,
         T::Result: 'static + Send,
     {
-        self.server.executor.start_waiting();
         self.server.request::<T>(params).await
     }
 
     /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
-        self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 
@@ -1848,7 +1879,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{SemanticVersion, TestAppContext};
+    use gpui::TestAppContext;
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1859,7 +1890,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),

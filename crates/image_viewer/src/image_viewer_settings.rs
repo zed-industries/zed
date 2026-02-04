@@ -1,8 +1,8 @@
 pub use settings::ImageFileSizeUnit;
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
 /// The settings for the image viewer.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, RegisterSetting)]
 pub struct ImageViewerSettings {
     /// The unit to use for displaying image file sizes.
     ///

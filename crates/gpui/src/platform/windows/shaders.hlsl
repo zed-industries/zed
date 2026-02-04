@@ -4,11 +4,16 @@ cbuffer GlobalParams: register(b0) {
     float4 gamma_ratios;
     float2 global_viewport_size;
     float grayscale_enhanced_contrast;
-    uint _pad;
+    float subpixel_enhanced_contrast;
 };
 
 Texture2D<float4> t_sprite: register(t0);
 SamplerState s_sprite: register(s0);
+
+struct SubpixelSpriteFragmentOutput {
+    float4 foreground : SV_Target0;
+    float4 alpha : SV_Target1;
+};
 
 struct Bounds {
     float2 origin;
@@ -1117,6 +1122,20 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
     return float4(input.color.rgb, input.color.a * alpha_corrected);
+}
+
+MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    return monochrome_sprite_vertex(vertex_id, sprite_id);
+}
+
+SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {
+    float3 sample = t_sprite.Sample(s_sprite, input.tile_position).rgb;
+    float3 alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, subpixel_enhanced_contrast, gamma_ratios);
+
+    SubpixelSpriteFragmentOutput output;
+    output.foreground = float4(input.color.rgb, 1.0f);
+    output.alpha = float4(input.color.a * alpha_corrected, 1.0f);
+    return output;
 }
 
 /*

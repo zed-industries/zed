@@ -1,16 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetApiKey {
-    pub api_key: String,
-}
-
 // Outbound messages
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OutboundMessage {
-    SetApiKey(SetApiKey),
     StateUpdate(StateUpdateMessage),
     #[allow(dead_code)]
     UseFreeVersion,

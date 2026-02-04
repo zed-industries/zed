@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-CARGO_ABOUT_VERSION="0.8"
+CARGO_ABOUT_VERSION="0.8.2"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.csv}"
 TEMPLATE_FILE="script/licenses/template.csv.hbs"
 
 if ! cargo about --version | grep "cargo-about $CARGO_ABOUT_VERSION" 2>&1 > /dev/null; then
-  echo "Installing cargo-about@^$CARGO_ABOUT_VERSION..."
-  cargo install "cargo-about@^$CARGO_ABOUT_VERSION"
+  echo "Installing cargo-about@$CARGO_ABOUT_VERSION..."
+  cargo install "cargo-about@$CARGO_ABOUT_VERSION"
 else
-  echo "cargo-about@^$CARGO_ABOUT_VERSION is already installed."
+  echo "cargo-about@$CARGO_ABOUT_VERSION is already installed."
 fi
 
 echo "Generating cargo licenses"

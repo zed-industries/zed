@@ -72,6 +72,12 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         self.0.insert_or_replace(MapEntry { key, value }, ());
     }
 
+    pub fn insert_or_replace(&mut self, key: K, value: V) -> Option<V> {
+        self.0
+            .insert_or_replace(MapEntry { key, value }, ())
+            .map(|it| it.value)
+    }
+
     pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {
         let edits: Vec<_> = iter
             .into_iter()

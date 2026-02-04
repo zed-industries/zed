@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::steps::{NamedJob, named};
+use crate::tasks::workflows::steps::{CommonJobConditions, NamedJob, named};
 
 use super::{runners, steps};
 
@@ -30,21 +30,18 @@ fn danger_job() -> NamedJob {
             // This GitHub token is not used, but the value needs to be here to prevent
             // Danger from throwing an error.
             .add_env(("GITHUB_TOKEN", "not_a_real_token"))
-            // All requests are instead proxied through an instance of
-            // https://github.com/maxdeviant/danger-proxy that allows Danger to securely
-            // authenticate with GitHub while still being able to run on PRs from forks.
+            // All requests are instead proxied through a proxy that allows Danger to securely authenticate with GitHub
+            // while still being able to run on PRs from forks.
             .add_env((
                 "DANGER_GITHUB_API_BASE_URL",
-                "https://danger-proxy.fly.dev/github",
+                "https://danger-proxy.zed.dev/github",
             ))
     }
 
     NamedJob {
         name: "danger".to_string(),
         job: Job::default()
-            .cond(Expression::new(
-                "github.repository_owner == 'zed-industries'",
-            ))
+            .with_repository_owner_guard()
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_pnpm())

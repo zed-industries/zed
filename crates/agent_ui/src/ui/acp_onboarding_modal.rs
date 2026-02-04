@@ -222,8 +222,8 @@ impl Render for AcpOnboardingModal {
                 acp_onboarding_event!("Canceled", trigger = "Action");
                 cx.emit(DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
-                this.focus_handle.focus(window);
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                this.focus_handle.focus(window, cx);
             }))
             .child(illustration)
             .child(

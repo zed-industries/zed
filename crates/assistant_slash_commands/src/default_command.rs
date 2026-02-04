@@ -56,7 +56,7 @@ impl SlashCommand for DefaultSlashCommand {
         let store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
             let store = store.await?;
-            let prompts = store.read_with(cx, |store, _cx| store.default_prompt_metadata())?;
+            let prompts = store.read_with(cx, |store, _cx| store.default_prompt_metadata());
 
             let mut text = String::new();
             text.push('\n');

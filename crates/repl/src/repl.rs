@@ -12,10 +12,9 @@ mod session;
 use std::{sync::Arc, time::Duration};
 
 use async_dispatcher::{Dispatcher, Runnable, set_dispatcher};
-use gpui::{App, PlatformDispatcher};
+use gpui::{App, PlatformDispatcher, Priority, RunnableMeta};
 use project::Fs;
 pub use runtimelib::ExecutionState;
-use settings::Settings as _;
 
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
@@ -31,9 +30,6 @@ pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-    ::editor::init_settings(cx);
-    ReplSettings::register(cx);
     repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }
@@ -48,16 +44,38 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     // just make that consistent so we have this dispatcher ready to go for
     // other crates in Zed.
     impl Dispatcher for ZedDispatcher {
+        #[track_caller]
         fn dispatch(&self, runnable: Runnable) {
-            self.dispatcher.dispatch(runnable, None)
+            use std::sync::{Arc, atomic::AtomicBool};
+            let location = core::panic::Location::caller();
+            let closed = Arc::new(AtomicBool::new(false));
+            let (wrapper, task) = async_task::Builder::new()
+                .metadata(RunnableMeta { location, closed })
+                .spawn(|_| async move { runnable.run() }, {
+                    let dispatcher = self.dispatcher.clone();
+                    move |r| dispatcher.dispatch(r, Priority::default())
+                });
+            wrapper.schedule();
+            task.detach();
         }
 
+        #[track_caller]
         fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
-            self.dispatcher.dispatch_after(duration, runnable);
+            use std::sync::{Arc, atomic::AtomicBool};
+            let location = core::panic::Location::caller();
+            let closed = Arc::new(AtomicBool::new(false));
+            let (wrapper, task) = async_task::Builder::new()
+                .metadata(RunnableMeta { location, closed })
+                .spawn(|_| async move { runnable.run() }, {
+                    let dispatcher = self.dispatcher.clone();
+                    move |r| dispatcher.dispatch_after(duration, r)
+                });
+            wrapper.schedule();
+            task.detach();
         }
     }
 
     ZedDispatcher {
-        dispatcher: cx.background_executor().dispatcher.clone(),
+        dispatcher: cx.background_executor().dispatcher().clone(),
     }
 }

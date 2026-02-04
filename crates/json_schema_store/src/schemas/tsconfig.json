@@ -1466,7 +1466,7 @@
       }
     }
   },
-  "id": "https://json.schemastore.org/tsconfig",
+  "id": "https://www.schemastore.org/tsconfig",
   "title": "JSON schema for the TypeScript compiler's configuration file",
   "type": "object"
 }

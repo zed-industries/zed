@@ -72,7 +72,7 @@ several features:
 - Runnable code detection
 - Selecting classes, functions, etc.
 
-The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers#query-syntax) enable these
+The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
 
 ### Syntax highlighting
@@ -99,6 +99,7 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @comment                 | Captures comments                      |
 | @comment.doc             | Captures documentation comments        |
 | @constant                | Captures constants                     |
+| @constant.builtin        | Captures built-in constants            |
 | @constructor             | Captures constructors                  |
 | @embedded                | Captures embedded content              |
 | @emphasis                | Captures emphasized text               |
@@ -131,8 +132,10 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @text.literal            | Captures literal text                  |
 | @title                   | Captures titles                        |
 | @type                    | Captures types                         |
+| @type.builtin            | Captures built-in types                |
 | @variable                | Captures variables                     |
 | @variable.special        | Captures special variables             |
+| @variable.parameter      | Captures function/method parameters    |
 | @variant                 | Captures variants                      |
 
 ### Bracket matching
@@ -153,6 +156,14 @@ This query identifies opening and closing brackets, braces, and quotation marks.
 | ------- | --------------------------------------------- |
 | @open   | Captures opening brackets, braces, and quotes |
 | @close  | Captures closing brackets, braces, and quotes |
+
+Zed uses these to highlight matching brackets: painting each bracket pair with a different color ("rainbow brackets") and highlighting the brackets if the cursor is inside the bracket pair.
+
+To opt out of rainbow brackets colorization, add the following to the corresponding `brackets.scm` entry:
+
+```scheme
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+```
 
 ### Code outline/structure
 

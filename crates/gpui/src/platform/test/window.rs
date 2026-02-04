@@ -199,6 +199,14 @@ impl PlatformWindow for TestWindow {
         false
     }
 
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        WindowBackgroundAppearance::Opaque
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0.lock().title = Some(title.to_owned());
     }

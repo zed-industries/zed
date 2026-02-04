@@ -4,15 +4,15 @@
     "bindings": {
       "ctrl-shift-f5": "workspace::Reload", // window:reload
       "ctrl-k ctrl-n": "workspace::ActivatePreviousPane", // window:focus-next-pane
-      "ctrl-k ctrl-p": "workspace::ActivateNextPane" // window:focus-previous-pane
-    }
+      "ctrl-k ctrl-p": "workspace::ActivateNextPane", // window:focus-previous-pane
+    },
   },
   {
     "context": "Editor",
     "bindings": {
       "ctrl-k ctrl-u": "editor::ConvertToUpperCase", // editor:upper-case
-      "ctrl-k ctrl-l": "editor::ConvertToLowerCase" // editor:lower-case
-    }
+      "ctrl-k ctrl-l": "editor::ConvertToLowerCase", // editor:lower-case
+    },
   },
   {
     "context": "Editor && mode == full",
@@ -32,8 +32,8 @@
       "ctrl-down": "editor::MoveLineDown", // editor:move-line-down
       "ctrl-\\": "workspace::ToggleLeftDock", // tree-view:toggle
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide", // markdown-preview:toggle
-      "ctrl-r": "outline::Toggle" // symbols-view:toggle-project-symbols
-    }
+      "ctrl-r": "outline::Toggle", // symbols-view:toggle-project-symbols
+    },
   },
   {
     "context": "BufferSearchBar",
@@ -41,8 +41,8 @@
       "f3": ["editor::SelectNext", { "replace_newest": true }], // find-and-replace:find-next
       "shift-f3": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
       "ctrl-f3": "search::SelectNextMatch", // find-and-replace:find-next-selected
-      "ctrl-shift-f3": "search::SelectPreviousMatch" // find-and-replace:find-previous-selected
-    }
+      "ctrl-shift-f3": "search::SelectPreviousMatch", // find-and-replace:find-previous-selected
+    },
   },
   {
     "context": "Workspace",
@@ -50,8 +50,8 @@
       "ctrl-\\": "workspace::ToggleLeftDock", // tree-view:toggle
       "ctrl-k ctrl-b": "workspace::ToggleLeftDock", // tree-view:toggle
       "ctrl-t": "file_finder::Toggle", // fuzzy-finder:toggle-file-finder
-      "ctrl-r": "project_symbols::Toggle" // symbols-view:toggle-project-symbols
-    }
+      "ctrl-r": "project_symbols::Toggle", // symbols-view:toggle-project-symbols
+    },
   },
   {
     "context": "Pane",
@@ -65,8 +65,8 @@
       "ctrl-6": ["pane::ActivateItem", 5], // tree-view:open-selected-entry-in-pane-6
       "ctrl-7": ["pane::ActivateItem", 6], // tree-view:open-selected-entry-in-pane-7
       "ctrl-8": ["pane::ActivateItem", 7], // tree-view:open-selected-entry-in-pane-8
-      "ctrl-9": ["pane::ActivateItem", 8] // tree-view:open-selected-entry-in-pane-9
-    }
+      "ctrl-9": ["pane::ActivateItem", 8], // tree-view:open-selected-entry-in-pane-9
+    },
   },
   {
     "context": "ProjectPanel",
@@ -75,8 +75,8 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "ctrl-x": "project_panel::Cut", // tree-view:cut
       "ctrl-c": "project_panel::Copy", // tree-view:copy
-      "ctrl-v": "project_panel::Paste" // tree-view:paste
-    }
+      "ctrl-v": "project_panel::Paste", // tree-view:paste
+    },
   },
   {
     "context": "ProjectPanel && not_editing",
@@ -90,7 +90,7 @@
       "d": "project_panel::Duplicate", // tree-view:duplicate
       "home": "menu::SelectFirst", // core:move-to-top
       "end": "menu::SelectLast", // core:move-to-bottom
-      "shift-a": "project_panel::NewDirectory" // tree-view:add-folder
-    }
-  }
+      "shift-a": "project_panel::NewDirectory", // tree-view:add-folder
+    },
+  },
 ]

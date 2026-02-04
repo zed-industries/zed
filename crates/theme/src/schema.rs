@@ -1,9 +1,10 @@
 #![allow(missing_docs)]
 
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{HighlightStyle, Hsla};
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::IntoGpui;
 pub use settings::{FontWeightContent, WindowBackgroundContent};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
@@ -63,8 +64,8 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
                         .background_color
                         .as_ref()
                         .and_then(|color| try_parse_color(color).ok()),
-                    font_style: style.font_style.map(FontStyle::from),
-                    font_weight: style.font_weight.map(FontWeight::from),
+                    font_style: style.font_style.map(|s| s.into_gpui()),
+                    font_weight: style.font_weight.map(|w| w.into_gpui()),
                     ..Default::default()
                 },
             )
@@ -287,6 +288,15 @@ pub fn theme_colors_refinement(
         .panel_background
         .as_ref()
         .and_then(|color| try_parse_color(color).ok());
+    let search_match_background = this
+        .search_match_background
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok());
+    let search_active_match_background = this
+        .search_active_match_background
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok())
+        .or(search_match_background);
     ThemeColorsRefinement {
         border,
         border_variant: this
@@ -442,10 +452,8 @@ pub fn theme_colors_refinement(
             .tab_active_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        search_match_background: this
-            .search_match_background
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
+        search_match_background: search_match_background,
+        search_active_match_background: search_active_match_background,
         panel_background,
         panel_focused_border: this
             .panel_focused_border
@@ -744,6 +752,14 @@ pub fn theme_colors_refinement(
             .and_then(|color| try_parse_color(color).ok())
             // Fall back to `conflict`, for backwards compatibility.
             .or(status_colors.ignored),
+        version_control_word_added: this
+            .version_control_word_added
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        version_control_word_deleted: this
+            .version_control_word_deleted
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         #[allow(deprecated)]
         version_control_conflict_marker_ours: this
             .version_control_conflict_marker_ours
@@ -788,8 +804,36 @@ pub fn theme_colors_refinement(
             .vim_helix_select_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        vim_mode_text: this
-            .vim_mode_text
+        vim_normal_foreground: this
+            .vim_normal_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_insert_foreground: this
+            .vim_insert_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_replace_foreground: this
+            .vim_replace_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_foreground: this
+            .vim_visual_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_line_foreground: this
+            .vim_visual_line_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_block_foreground: this
+            .vim_visual_block_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_helix_normal_foreground: this
+            .vim_helix_normal_foreground
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_helix_select_foreground: this
+            .vim_helix_select_foreground
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
     }

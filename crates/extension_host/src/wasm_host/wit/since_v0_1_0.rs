@@ -11,7 +11,7 @@ use gpui::BackgroundExecutor;
 use language::LanguageName;
 use language::{BinaryStatus, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
@@ -23,7 +23,7 @@ use wasmtime::component::{Linker, Resource};
 
 use super::latest;
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
+pub const MIN_VERSION: Version = Version::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -471,7 +471,7 @@ impl ExtensionImports for WasmState {
             }
             .boxed_local()
         })
-        .await?
+        .await
         .to_wasmtime_result()
     }
 

@@ -2,11 +2,13 @@ use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{AppContext, Entity, TestAppContext};
+use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
 use project::agent_server_store::BuiltinAgentServerSettings;
-use project::{FakeFs, Project, agent_server_store::AllAgentServersSettings};
+use project::{FakeFs, Project};
+#[cfg(test)]
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -17,17 +19,11 @@ use util::path;
 pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
 where
     T: AgentServer + 'static,
-    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &mut TestAppContext) -> T,
 {
     let fs = init_test(cx).await as Arc<dyn fs::Fs>;
     let project = Project::test(fs.clone(), [], cx).await;
-    let thread = new_test_thread(
-        server(&fs, &project, cx).await,
-        project.clone(),
-        "/private/tmp",
-        cx,
-    )
-    .await;
+    let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
 
     thread
         .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
@@ -54,7 +50,7 @@ where
 pub async fn test_path_mentions<T, F>(server: F, cx: &mut TestAppContext)
 where
     T: AgentServer + 'static,
-    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &mut TestAppContext) -> T,
 {
     let fs = init_test(cx).await as _;
 
@@ -69,37 +65,14 @@ where
     )
     .expect("failed to write file");
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-    let thread = new_test_thread(
-        server(&fs, &project, cx).await,
-        project.clone(),
-        tempdir.path(),
-        cx,
-    )
-    .await;
+    let thread = new_test_thread(server(&fs, cx).await, project.clone(), tempdir.path(), cx).await;
     thread
         .update(cx, |thread, cx| {
             thread.send(
                 vec![
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: "Read the file ".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                        uri: "foo.rs".into(),
-                        name: "foo.rs".into(),
-                        annotations: None,
-                        description: None,
-                        mime_type: None,
-                        size: None,
-                        title: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: " and tell me what the content of the println! is".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
+                    "Read the file ".into(),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new("foo.rs", "foo.rs")),
+                    " and tell me what the content of the println! is".into(),
                 ],
                 cx,
             )
@@ -135,7 +108,7 @@ where
 pub async fn test_tool_call<T, F>(server: F, cx: &mut TestAppContext)
 where
     T: AgentServer + 'static,
-    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &mut TestAppContext) -> T,
 {
     let fs = init_test(cx).await as _;
 
@@ -144,13 +117,7 @@ where
     std::fs::write(&foo_path, "Lorem ipsum dolor").expect("failed to write file");
 
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-    let thread = new_test_thread(
-        server(&fs, &project, cx).await,
-        project.clone(),
-        "/private/tmp",
-        cx,
-    )
-    .await;
+    let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
 
     thread
         .update(cx, |thread, cx| {
@@ -190,17 +157,11 @@ pub async fn test_tool_call_with_permission<T, F>(
     cx: &mut TestAppContext,
 ) where
     T: AgentServer + 'static,
-    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &mut TestAppContext) -> T,
 {
     let fs = init_test(cx).await as Arc<dyn fs::Fs>;
     let project = Project::test(fs.clone(), [path!("/private/tmp").as_ref()], cx).await;
-    let thread = new_test_thread(
-        server(&fs, &project, cx).await,
-        project.clone(),
-        "/private/tmp",
-        cx,
-    )
-    .await;
+    let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
     let full_turn = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
@@ -291,18 +252,12 @@ pub async fn test_tool_call_with_permission<T, F>(
 pub async fn test_cancel<T, F>(server: F, cx: &mut TestAppContext)
 where
     T: AgentServer + 'static,
-    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &mut TestAppContext) -> T,
 {
     let fs = init_test(cx).await as Arc<dyn fs::Fs>;
 
     let project = Project::test(fs.clone(), [path!("/private/tmp").as_ref()], cx).await;
-    let thread = new_test_thread(
-        server(&fs, &project, cx).await,
-        project.clone(),
-        "/private/tmp",
-        cx,
-    )
-    .await;
+    let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
     let _ = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
@@ -370,17 +325,11 @@ where
 pub async fn test_thread_drop<T, F>(server: F, cx: &mut TestAppContext)
 where
     T: AgentServer + 'static,
-    F: AsyncFn(&Arc<dyn fs::Fs>, &Entity<Project>, &mut TestAppContext) -> T,
+    F: AsyncFn(&Arc<dyn fs::Fs>, &mut TestAppContext) -> T,
 {
     let fs = init_test(cx).await as Arc<dyn fs::Fs>;
     let project = Project::test(fs.clone(), [], cx).await;
-    let thread = new_test_thread(
-        server(&fs, &project, cx).await,
-        project.clone(),
-        "/private/tmp",
-        cx,
-    )
-    .await;
+    let thread = new_test_thread(server(&fs, cx).await, project.clone(), "/private/tmp", cx).await;
 
     thread
         .update(cx, |thread, cx| thread.send_raw("Hello from test!", cx))
@@ -427,7 +376,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
+                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -452,43 +401,28 @@ pub use common_e2e_tests;
 // Helpers
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
-    use settings::Settings;
-
     env_logger::try_init().ok();
 
     cx.update(|cx| {
         let settings_store = settings::SettingsStore::test(cx);
         cx.set_global(settings_store);
-        Project::init_settings(cx);
-        language::init(cx);
         gpui_tokio::init(cx);
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
-        client::init_settings(cx);
         let client = client::Client::production(cx);
-        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), cx);
-        language_models::init(user_store, client, cx);
-        agent_settings::init(cx);
-        AllAgentServersSettings::register(cx);
+        language_model::init(client, cx);
 
         #[cfg(test)]
-        AllAgentServersSettings::override_global(
-            AllAgentServersSettings {
+        project::agent_server_store::AllAgentServersSettings::override_global(
+            project::agent_server_store::AllAgentServersSettings {
                 claude: Some(BuiltinAgentServerSettings {
                     path: Some("claude-code-acp".into()),
-                    args: None,
-                    env: None,
-                    ignore_system_version: None,
-                    default_mode: None,
+                    ..Default::default()
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 codex: Some(BuiltinAgentServerSettings {
                     path: Some("codex-acp".into()),
-                    args: None,
-                    env: None,
-                    ignore_system_version: None,
-                    default_mode: None,
+                    ..Default::default()
                 }),
                 custom: collections::HashMap::default(),
             },
@@ -538,9 +472,7 @@ pub async fn run_until_first_tool_call(
     });
 
     select! {
-        // We have to use a smol timer here because
-        // cx.background_executor().timer isn't real in the test context
-        _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(20))) => {
+        _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(20))) => {
             panic!("Timeout waiting for tool call")
         }
         ix = rx.next().fuse() => {

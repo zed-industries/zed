@@ -43,6 +43,9 @@ actions!(
         /// Opens the settings JSON file.
         #[action(deprecated_aliases = ["zed_actions::OpenSettings"])]
         OpenSettingsFile,
+        /// Opens project-specific settings.
+        #[action(deprecated_aliases = ["zed_actions::OpenProjectSettings"])]
+        OpenProjectSettings,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens the user keymap file.
@@ -65,6 +68,10 @@ actions!(
         OpenLicenses,
         /// Opens the telemetry log.
         OpenTelemetryLog,
+        /// Opens the performance profiler.
+        OpenPerformanceProfiler,
+        /// Opens the onboarding view.
+        OpenOnboarding,
     ]
 );
 
@@ -97,6 +104,12 @@ pub struct Extensions {
     pub id: Option<String>,
 }
 
+/// Opens the ACP registry.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct AcpRegistry;
+
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
@@ -115,7 +128,7 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
-/// Increases the font size in the editor buffer.
+/// Opens the settings editor at a specific path.
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -169,6 +182,19 @@ pub struct ResetAllZoom {
     pub persist: bool,
 }
 
+pub mod editor {
+    use gpui::actions;
+    actions!(
+        editor,
+        [
+            /// Moves cursor up.
+            MoveUp,
+            /// Moves cursor down.
+            MoveDown,
+        ]
+    );
+}
+
 pub mod dev {
     use gpui::actions;
 
@@ -177,6 +203,25 @@ pub mod dev {
         [
             /// Toggles the developer inspector for debugging UI elements.
             ToggleInspector
+        ]
+    );
+}
+
+pub mod remote_debug {
+    use gpui::actions;
+
+    actions!(
+        remote_debug,
+        [
+            /// Simulates a disconnection from the remote server for testing purposes.
+            /// This will trigger the reconnection logic.
+            SimulateDisconnect,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and trigger reconnection.
+            SimulateTimeout,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and attempting a reconnection while having exhausted all attempts.
+            SimulateTimeoutExhausted,
         ]
     );
 }
@@ -210,13 +255,19 @@ pub mod git {
             Switch,
             /// Selects a different repository.
             SelectRepo,
+            /// Filter remotes.
+            FilterRemotes,
+            /// Create a git remote.
+            CreateRemote,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
-            Worktree
+            Worktree,
+            /// Creates a pull request for the current branch.
+            CreatePullRequest
         ]
     );
 }
@@ -245,6 +296,17 @@ pub mod command_palette {
     );
 }
 
+pub mod project_panel {
+    use gpui::actions;
+
+    actions!(
+        project_panel,
+        [
+            /// Toggles focus on the project panel.
+            ToggleFocus
+        ]
+    );
+}
 pub mod feedback {
     use gpui::actions;
 
@@ -291,6 +353,16 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod search {
+    use gpui::actions;
+    actions!(
+        search,
+        [
+            /// Toggles searching in ignored files.
+            ToggleIncludeIgnored
+        ]
+    );
+}
 pub mod settings_profile_selector {
     use gpui::Action;
     use schemars::JsonSchema;
@@ -330,6 +402,10 @@ pub mod agent {
             AddSelectionToThread,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
+            /// Toggles the utility/agent pane open/closed state.
+            ToggleAgentPane,
+            /// Pastes clipboard content without any formatting.
+            PasteRaw,
         ]
     );
 }
@@ -408,6 +484,12 @@ pub struct OpenRemote {
     pub create_new_window: bool,
 }
 
+/// Opens the dev container connection modal.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct OpenDevContainer;
+
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -430,7 +512,7 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
-    /// Spawns a task by the name given.
+    /// Spawns a task by the tag given.
     ByTag {
         task_tag: String,
         #[serde(default)]
@@ -527,6 +609,18 @@ actions!(
     ]
 );
 
+pub mod vim {
+    use gpui::actions;
+
+    actions!(
+        vim,
+        [
+            /// Opens the default keymap file.
+            OpenDefaultKeymap
+        ]
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
@@ -555,5 +649,35 @@ pub mod wsl_actions {
     pub struct OpenWsl {
         #[serde(default)]
         pub create_new_window: bool,
+    }
+}
+
+pub mod preview {
+    pub mod markdown {
+        use gpui::actions;
+
+        actions!(
+            markdown,
+            [
+                /// Opens a markdown preview for the current file.
+                OpenPreview,
+                /// Opens a markdown preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+
+    pub mod svg {
+        use gpui::actions;
+
+        actions!(
+            svg,
+            [
+                /// Opens an SVG preview for the current file.
+                OpenPreview,
+                /// Opens an SVG preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
     }
 }

@@ -4,13 +4,15 @@ use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     fmt,
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
 use ui::{App, IconName, SharedString};
 use url::Url;
-use util::paths::PathStyle;
+use urlencoding::decode;
+use util::{ResultExt, paths::PathStyle};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MentionUri {
@@ -38,6 +40,12 @@ pub enum MentionUri {
         id: PromptId,
         name: String,
     },
+    Diagnostics {
+        #[serde(default = "default_include_errors")]
+        include_errors: bool,
+        #[serde(default)]
+        include_warnings: bool,
+    },
     Selection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         abs_path: Option<PathBuf>,
@@ -46,42 +54,54 @@ pub enum MentionUri {
     Fetch {
         url: Url,
     },
+    TerminalSelection {
+        line_count: u32,
+    },
 }
 
 impl MentionUri {
     pub fn parse(input: &str, path_style: PathStyle) -> Result<Self> {
         fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
-            let range = fragment
-                .strip_prefix("L")
-                .context("Line range must start with \"L\"")?;
-            let (start, end) = range
-                .split_once(":")
-                .context("Line range must use colon as separator")?;
-            let range = start
+            let range = fragment.strip_prefix("L").unwrap_or(fragment);
+
+            let (start, end) = if let Some((start, end)) = range.split_once(":") {
+                (start, end)
+            } else if let Some((start, end)) = range.split_once("-") {
+                // Also handle L10-20 or L10-L20 format
+                (start, end.strip_prefix("L").unwrap_or(end))
+            } else {
+                // Single line number like L1872 - treat as a range of one line
+                (range, range)
+            };
+
+            let start_line = start
                 .parse::<u32>()
                 .context("Parsing line range start")?
                 .checked_sub(1)
-                .context("Line numbers should be 1-based")?
-                ..=end
-                    .parse::<u32>()
-                    .context("Parsing line range end")?
-                    .checked_sub(1)
-                    .context("Line numbers should be 1-based")?;
-            Ok(range)
+                .context("Line numbers should be 1-based")?;
+            let end_line = end
+                .parse::<u32>()
+                .context("Parsing line range end")?
+                .checked_sub(1)
+                .context("Line numbers should be 1-based")?;
+
+            Ok(start_line..=end_line)
         }
 
         let url = url::Url::parse(input)?;
         let path = url.path();
         match url.scheme() {
             "file" => {
-                let path = if path_style.is_windows() {
+                let normalized = if path_style.is_windows() {
                     path.trim_start_matches("/")
                 } else {
                     path
                 };
+                let decoded = decode(normalized).unwrap_or(Cow::Borrowed(normalized));
+                let path = decoded.as_ref();
 
                 if let Some(fragment) = url.fragment() {
-                    let line_range = parse_line_range(fragment)?;
+                    let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
                     if let Some(name) = single_query_param(&url, "symbol")? {
                         Ok(Self::Symbol {
                             name,
@@ -108,7 +128,7 @@ impl MentionUri {
                 if let Some(thread_id) = path.strip_prefix("/agent/thread/") {
                     let name = single_query_param(&url, "name")?.context("Missing thread name")?;
                     Ok(Self::Thread {
-                        id: acp::SessionId(thread_id.into()),
+                        id: acp::SessionId::new(thread_id),
                         name,
                     })
                 } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {
@@ -123,6 +143,20 @@ impl MentionUri {
                     Ok(Self::Rule {
                         id: rule_id.into(),
                         name,
+                    })
+                } else if path == "/agent/diagnostics" {
+                    let mut include_errors = default_include_errors();
+                    let mut include_warnings = false;
+                    for (key, value) in url.query_pairs() {
+                        match key.as_ref() {
+                            "include_warnings" => include_warnings = value == "true",
+                            "include_errors" => include_errors = value == "true",
+                            _ => bail!("invalid query parameter"),
+                        }
+                    }
+                    Ok(Self::Diagnostics {
+                        include_errors,
+                        include_warnings,
                     })
                 } else if path.starts_with("/agent/pasted-image") {
                     Ok(Self::PastedImage)
@@ -168,6 +202,12 @@ impl MentionUri {
                         abs_path: Some(path.into()),
                         line_range,
                     })
+                } else if path.starts_with("/agent/terminal-selection") {
+                    let line_count = single_query_param(&url, "lines")?
+                        .unwrap_or_else(|| "0".to_string())
+                        .parse::<u32>()
+                        .unwrap_or(0);
+                    Ok(Self::TerminalSelection { line_count })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -189,6 +229,14 @@ impl MentionUri {
             MentionUri::Thread { name, .. } => name.clone(),
             MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
+            MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
+            MentionUri::TerminalSelection { line_count } => {
+                if *line_count == 1 {
+                    "Terminal (1 line)".to_string()
+                } else {
+                    format!("Terminal ({} lines)", line_count)
+                }
+            }
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
@@ -210,6 +258,8 @@ impl MentionUri {
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
             MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
+            MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
+            MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
         }
@@ -288,7 +338,28 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/diagnostics");
+                if *include_warnings {
+                    url.query_pairs_mut()
+                        .append_pair("include_warnings", "true");
+                }
+                if !include_errors {
+                    url.query_pairs_mut().append_pair("include_errors", "false");
+                }
+                url
+            }
             MentionUri::Fetch { url } => url.clone(),
+            MentionUri::TerminalSelection { line_count } => {
+                let mut url = Url::parse("zed:///agent/terminal-selection").unwrap();
+                url.query_pairs_mut()
+                    .append_pair("lines", &line_count.to_string());
+                url
+            }
         }
     }
 }
@@ -299,6 +370,10 @@ impl fmt::Display for MentionLink<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[@{}]({})", self.0.name(), self.0.to_uri())
     }
+}
+
+fn default_include_errors() -> bool {
+    true
 }
 
 fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
@@ -407,6 +482,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_file_uri_with_non_ascii() {
+        let file_uri = uri!("file:///path/to/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt");
+        let parsed = MentionUri::parse(file_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new(path!("/path/to/日本語.txt")));
+            }
+            _ => panic!("Expected File variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), file_uri);
+    }
+
+    #[test]
     fn test_parse_untitled_selection_uri() {
         let selection_uri = uri!("zed:///agent/untitled-buffer#L1:10");
         let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
@@ -481,6 +569,40 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_diagnostics_uri() {
+        let uri = "zed:///agent/diagnostics?include_warnings=true";
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                assert!(include_errors);
+                assert!(include_warnings);
+            }
+            _ => panic!("Expected Diagnostics variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), uri);
+    }
+
+    #[test]
+    fn test_parse_diagnostics_uri_warnings_only() {
+        let uri = "zed:///agent/diagnostics?include_warnings=true&include_errors=false";
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                assert!(!include_errors);
+                assert!(include_warnings);
+            }
+            _ => panic!("Expected Diagnostics variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), uri);
+    }
+
+    #[test]
     fn test_invalid_scheme() {
         assert!(MentionUri::parse("ftp://example.com", PathStyle::local()).is_err());
         assert!(MentionUri::parse("ssh://example.com", PathStyle::local()).is_err());
@@ -494,58 +616,71 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_line_range_format() {
-        // Missing L prefix
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#10:20"), PathStyle::local()).is_err()
-        );
-
-        // Missing colon separator
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L1020"), PathStyle::local()).is_err()
-        );
-
-        // Invalid numbers
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L10:abc"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#Labc:20"), PathStyle::local()).is_err()
-        );
+    fn test_single_line_number() {
+        // https://github.com/zed-industries/zed/issues/46114
+        let uri = uri!("file:///path/to/file.rs#L1872");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &1871);
+                assert_eq!(line_range.end(), &1871);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
     }
 
     #[test]
-    fn test_invalid_query_parameters() {
-        // Invalid query parameter name
-        assert!(
-            MentionUri::parse(
-                uri!("file:///path/to/file.rs#L10:20?invalid=test"),
-                PathStyle::local()
-            )
-            .is_err()
-        );
+    fn test_dash_separated_line_range() {
+        let uri = uri!("file:///path/to/file.rs#L10-20");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
 
-        // Too many query parameters
-        assert!(
-            MentionUri::parse(
-                uri!("file:///path/to/file.rs#L10:20?symbol=test&another=param"),
-                PathStyle::local()
-            )
-            .is_err()
-        );
+        // Also test L10-L20 format
+        let uri = uri!("file:///path/to/file.rs#L10-L20");
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &9);
+                assert_eq!(line_range.end(), &19);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
     }
 
     #[test]
-    fn test_zero_based_line_numbers() {
-        // Test that 0-based line numbers are rejected (should be 1-based)
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L0:10"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L1:0"), PathStyle::local()).is_err()
-        );
-        assert!(
-            MentionUri::parse(uri!("file:///path/to/file.rs#L0:0"), PathStyle::local()).is_err()
-        );
+    fn test_parse_terminal_selection_uri() {
+        let terminal_uri = "zed:///agent/terminal-selection?lines=42";
+        let parsed = MentionUri::parse(terminal_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::TerminalSelection { line_count } => {
+                assert_eq!(*line_count, 42);
+            }
+            _ => panic!("Expected TerminalSelection variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), terminal_uri);
+        assert_eq!(parsed.name(), "Terminal (42 lines)");
+
+        // Test single line
+        let single_line_uri = "zed:///agent/terminal-selection?lines=1";
+        let parsed_single = MentionUri::parse(single_line_uri, PathStyle::local()).unwrap();
+        assert_eq!(parsed_single.name(), "Terminal (1 line)");
     }
 }

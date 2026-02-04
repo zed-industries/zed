@@ -215,6 +215,7 @@ impl VsCodeSettings {
             vim: None,
             vim_mode: None,
             workspace: self.workspace_settings_content(),
+            which_key: None,
         }
     }
 
@@ -255,6 +256,7 @@ impl VsCodeSettings {
             excerpt_context_lines: None,
             expand_excerpt_lines: None,
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
+            sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
             gutter: self.gutter_content(),
             hide_mouse: None,
@@ -300,7 +302,14 @@ impl VsCodeSettings {
             use_smartcase_search: self.read_bool("search.smartCase"),
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
+            completion_detail_alignment: None,
         }
+    }
+
+    fn sticky_scroll_content(&self) -> Option<StickyScrollContent> {
+        skip_default(StickyScrollContent {
+            enabled: self.read_bool("editor.stickyScroll.enabled"),
+        })
     }
 
     fn gutter_content(&self) -> Option<GutterContent> {
@@ -383,7 +392,6 @@ impl VsCodeSettings {
     fn project_settings_content(&self) -> ProjectSettingsContent {
         ProjectSettingsContent {
             all_languages: AllLanguageSettingsContent {
-                features: None,
                 edit_predictions: self.edit_predictions_settings_content(),
                 defaults: self.default_language_settings_content(),
                 languages: Default::default(),
@@ -394,6 +402,7 @@ impl VsCodeSettings {
             terminal: None,
             dap: Default::default(),
             context_servers: self.context_servers(),
+            context_server_timeout: None,
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
@@ -422,6 +431,8 @@ impl VsCodeSettings {
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
             extend_comment_on_newline: None,
+            extend_list_on_newline: None,
+            indent_list_on_tab: None,
             format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
                 if b {
                     FormatOnSave::On
@@ -443,6 +454,7 @@ impl VsCodeSettings {
             prettier: None,
             remove_trailing_whitespace_on_save: self.read_bool("editor.trimAutoWhitespace"),
             show_completion_documentation: None,
+            colorize_brackets: self.read_bool("editor.bracketPairColorization.enabled"),
             show_completions_on_input: self.read_bool("editor.suggestOnTriggerCharacters"),
             show_edit_predictions: self.read_bool("editor.inlineSuggest.enabled"),
             show_whitespaces: self.read_enum("editor.renderWhitespace", |s| {
@@ -482,6 +494,7 @@ impl VsCodeSettings {
                         .flat_map(|n| n.as_u64().map(|n| n as usize))
                         .collect()
                 }),
+            word_diff_enabled: None,
         }
     }
 
@@ -560,8 +573,9 @@ impl VsCodeSettings {
             .filter_map(|(k, v)| {
                 Some((
                     k.clone().into(),
-                    ContextServerSettingsContent::Custom {
+                    ContextServerSettingsContent::Stdio {
                         enabled: true,
+                        remote: false,
                         command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()
                             .map(|cmd| ContextServerCommand {
@@ -610,9 +624,13 @@ impl VsCodeSettings {
     fn preview_tabs_settings_content(&self) -> Option<PreviewTabsSettingsContent> {
         skip_default(PreviewTabsSettingsContent {
             enabled: self.read_bool("workbench.editor.enablePreview"),
+            enable_preview_from_project_panel: None,
             enable_preview_from_file_finder: self
                 .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
-            enable_preview_from_code_navigation: self
+            enable_preview_from_multibuffer: None,
+            enable_preview_multibuffer_from_code_navigation: None,
+            enable_preview_file_from_code_navigation: None,
+            enable_keep_preview_on_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
         })
     }
@@ -628,6 +646,7 @@ impl VsCodeSettings {
             show_tab_bar_buttons: self
                 .read_str("workbench.editor.editorActionsLocation")
                 .and_then(|str| if str == "hidden" { Some(false) } else { None }),
+            show_pinned_tabs_in_separate_row: None,
         })
     }
 
@@ -637,6 +656,7 @@ impl VsCodeSettings {
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
+            active_encoding_button: None,
         })
     }
 
@@ -644,6 +664,7 @@ impl VsCodeSettings {
         let mut project_panel_settings = ProjectPanelSettingsContent {
             auto_fold_dirs: self.read_bool("explorer.compactFolders"),
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
+            bold_folder_labels: None,
             button: None,
             default_width: None,
             dock: None,
@@ -657,13 +678,14 @@ impl VsCodeSettings {
             hide_root: None,
             indent_guides: None,
             indent_size: None,
-            open_file_on_paste: None,
             scrollbar: None,
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
+            sort_mode: None,
             starts_open: None,
             sticky_scroll: None,
+            auto_open: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -719,7 +741,9 @@ impl VsCodeSettings {
             font_fallbacks,
             font_family,
             font_features: None,
-            font_size: self.read_f32("terminal.integrated.fontSize"),
+            font_size: self
+                .read_f32("terminal.integrated.fontSize")
+                .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
             line_height: self
@@ -730,6 +754,7 @@ impl VsCodeSettings {
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
             scrollbar: None,
+            scroll_multiplier: None,
             toolbar: None,
         })
     }
@@ -746,7 +771,13 @@ impl VsCodeSettings {
         let env = self
             .read_value(&format!("terminal.integrated.env.{platform}"))
             .and_then(|v| v.as_object())
-            .map(|v| v.iter().map(|(k, v)| (k.clone(), v.to_string())).collect());
+            .map(|v| {
+                v.iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    // zed does not support substitutions, so this can break env vars
+                    .filter(|(_, v)| !v.contains('$'))
+                    .collect()
+            });
 
         ProjectTerminalSettingsContent {
             // TODO: handle arguments
@@ -756,6 +787,8 @@ impl VsCodeSettings {
             working_directory: None,
             env,
             detect_venv: None,
+            path_hyperlink_regexes: None,
+            path_hyperlink_timeout_ms: None,
         }
     }
 
@@ -769,8 +802,8 @@ impl VsCodeSettings {
             ui_font_weight: None,
             buffer_font_family,
             buffer_font_fallbacks,
-            buffer_font_size: self.read_f32("editor.fontSize"),
-            buffer_font_weight: self.read_f32("editor.fontWeight").map(|w| w.into()),
+            buffer_font_size: self.read_f32("editor.fontSize").map(FontSize::from),
+            buffer_font_weight: self.read_f32("editor.fontWeight").map(FontWeightContent),
             buffer_line_height: None,
             buffer_font_features: None,
             agent_ui_font_size: None,
@@ -787,6 +820,7 @@ impl VsCodeSettings {
     fn workspace_settings_content(&self) -> WorkspaceSettingsContent {
         WorkspaceSettingsContent {
             active_pane_modifiers: self.active_pane_modifiers(),
+            text_rendering_mode: None,
             autosave: self.read_enum("files.autoSave", |s| match s {
                 "off" => Some(AutosaveSetting::Off),
                 "afterDelay" => Some(AutosaveSetting::AfterDelay {
@@ -825,6 +859,7 @@ impl VsCodeSettings {
             resize_all_panels_in_dock: None,
             restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
             restore_on_startup: None,
+            window_decorations: None,
             show_call_status_icon: None,
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
             use_system_prompts: None,
@@ -855,7 +890,7 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: crate::Maybe::Unset,
+            project_name: None,
             prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
@@ -877,6 +912,21 @@ impl VsCodeSettings {
                 .filter(|r| !r.is_empty()),
             private_files: None,
             hidden_files: None,
+            read_only_files: self
+                .read_value("files.readonlyExclude")
+                .and_then(|v| v.as_object())
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|(k, v)| {
+                            if v.as_bool().unwrap_or(false) {
+                                Some(k.to_owned())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .filter(|r| !r.is_empty()),
         }
     }
 }

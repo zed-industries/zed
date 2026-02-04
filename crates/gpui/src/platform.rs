@@ -20,6 +20,9 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+mod visual_test;
+
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -39,16 +42,19 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
+    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -76,7 +82,6 @@ pub use keystroke::*;
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
-pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
@@ -87,6 +92,9 @@ pub use linux::layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub use visual_test::VisualTestPlatform;
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -124,9 +132,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(
-        WindowsPlatform::new()
+        WindowsPlatform::new(headless)
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
@@ -246,8 +254,8 @@ pub(crate) trait Platform: 'static {
         &self,
         _menus: Vec<MenuItem>,
         _entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
-        Vec::new()
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
+        Task::ready(Vec::new())
     }
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
@@ -262,12 +270,18 @@ pub(crate) trait Platform: 'static {
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn write_to_primary(&self, item: ClipboardItem);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn write_to_clipboard(&self, item: ClipboardItem);
+
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
-    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn write_to_primary(&self, item: ClipboardItem);
+
+    #[cfg(target_os = "macos")]
+    fn read_from_find_pasteboard(&self) -> Option<ClipboardItem>;
+    #[cfg(target_os = "macos")]
+    fn write_to_find_pasteboard(&self, item: ClipboardItem);
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
@@ -289,6 +303,13 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
+
+    /// Get the visible bounds for this display, excluding taskbar/dock areas.
+    /// This is the usable area where windows can be placed without being obscured.
+    /// Defaults to the full display bounds if not overridden.
+    fn visible_bounds(&self) -> Bounds<Pixels> {
+        self.bounds()
+    }
 
     /// Get the default bounds for this display to place a window
     fn default_bounds(&self) -> Bounds<Pixels> {
@@ -484,6 +505,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
+    fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);
@@ -503,6 +525,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn is_subpixel_rendering_supported(&self) -> bool;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -557,16 +580,33 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
+
+    /// Renders the given scene to a texture and returns the pixel data as an RGBA image.
+    /// This does not present the frame to screen - useful for visual testing where we want
+    /// to capture what would be rendered without displaying it or requiring the window to be visible.
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
+        anyhow::bail!("render_to_image not implemented for this platform")
+    }
 }
+
+/// Type alias for runnables with metadata.
+/// Previously an enum with a single variant, now simplified to a direct type alias.
+#[doc(hidden)]
+pub type RunnableVariant = Runnable<RunnableMeta>;
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
+    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
+    fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
-    fn dispatch_on_main_thread(&self, runnable: Runnable);
-    fn dispatch_after(&self, duration: Duration, runnable: Runnable);
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
+
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -592,6 +632,8 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
+    -> TextRenderingMode;
 }
 
 pub(crate) struct NoopTextSystem;
@@ -712,6 +754,14 @@ impl PlatformTextSystem for NoopTextSystem {
             len: text.len(),
         }
     }
+
+    fn recommended_rendering_mode(
+        &self,
+        _font_id: FontId,
+        _font_size: Pixels,
+    ) -> TextRenderingMode {
+        TextRenderingMode::Grayscale
+    }
 }
 
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
@@ -769,6 +819,8 @@ impl AtlasKey {
             AtlasKey::Glyph(params) => {
                 if params.is_emoji {
                     AtlasTextureKind::Polychrome
+                } else if params.subpixel_rendering {
+                    AtlasTextureKind::Subpixel
                 } else {
                     AtlasTextureKind::Monochrome
                 }
@@ -870,6 +922,7 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
+    Subpixel = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1322,17 +1375,22 @@ pub enum WindowKind {
     /// docks, notifications or wallpapers.
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     LayerShell(layer_shell::LayerShellOptions),
+
+    /// A window that appears on top of its parent window and blocks interaction with it
+    /// until the modal window is closed
+    Dialog,
 }
 
 /// The appearance of the window, as defined by the operating system.
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WindowAppearance {
     /// A light appearance.
     ///
     /// On macOS, this corresponds to the `aqua` appearance.
+    #[default]
     Light,
 
     /// A light appearance with vibrant colors.
@@ -1349,12 +1407,6 @@ pub enum WindowAppearance {
     ///
     /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
-}
-
-impl Default for WindowAppearance {
-    fn default() -> Self {
-        Self::Light
-    }
 }
 
 /// The appearance of the background of the window itself, when there is
@@ -1376,6 +1428,22 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
+    /// The Mica backdrop material, supported on Windows 11.
+    MicaBackdrop,
+    /// The Mica Alt backdrop material, supported on Windows 11.
+    MicaAltBackdrop,
+}
+
+/// The text rendering mode to use for drawing glyphs.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TextRenderingMode {
+    /// Use the platform's default text rendering mode.
+    #[default]
+    PlatformDefault,
+    /// Use subpixel (ClearType-style) text rendering.
+    Subpixel,
+    /// Use grayscale text rendering.
+    Grayscale,
 }
 
 /// The options that can be configured for a file dialog prompt
@@ -1457,9 +1525,10 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     /// The default cursor
+    #[default]
     Arrow,
 
     /// A text input cursor
@@ -1546,12 +1615,6 @@ pub enum CursorStyle {
     None,
 }
 
-impl Default for CursorStyle {
-    fn default() -> Self {
-        Self::Arrow
-    }
-}
-
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
@@ -1565,6 +1628,8 @@ pub enum ClipboardEntry {
     String(ClipboardString),
     /// An image entry
     Image(Image),
+    /// A file entry
+    ExternalPaths(crate::ExternalPaths),
 }
 
 impl ClipboardItem {
@@ -1605,16 +1670,29 @@ impl ClipboardItem {
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
         let mut answer = String::new();
-        let mut any_entries = false;
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
                 answer.push_str(text);
-                any_entries = true;
             }
         }
 
-        if any_entries { Some(answer) } else { None }
+        if answer.is_empty() {
+            for entry in self.entries.iter() {
+                if let ClipboardEntry::ExternalPaths(paths) = entry {
+                    for path in &paths.0 {
+                        use std::fmt::Write as _;
+                        _ = write!(answer, "{}", path.display());
+                    }
+                }
+            }
+        }
+
+        if !answer.is_empty() {
+            Some(answer)
+        } else {
+            None
+        }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.

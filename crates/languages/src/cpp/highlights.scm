@@ -168,6 +168,8 @@ type: (primitive_type) @type.builtin
 [
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"
@@ -197,6 +199,8 @@ type: (primitive_type) @type.builtin
   (char_literal)
   (raw_string_literal)
 ] @string
+
+(escape_sequence) @string.escape
 
 [
   ","

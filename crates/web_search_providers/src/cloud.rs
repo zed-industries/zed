@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use client::Client;
-use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, WebSearchBody, WebSearchResponse};
+use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use http_client::{HttpClient, Method};
-use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
 use web_search::{WebSearchProvider, WebSearchProviderId};
 
 pub struct CloudWebSearchProvider {
@@ -99,11 +99,7 @@ async fn perform_web_search(
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
             return Ok(serde_json::from_str(&body)?);
-        } else if response
-            .headers()
-            .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-            .is_some()
-        {
+        } else if response.needs_llm_token_refresh() {
             token = llm_api_token.refresh(&client).await?;
             retries_remaining -= 1;
         } else {

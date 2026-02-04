@@ -5,21 +5,21 @@ use super::{
 };
 use crate::{
     EditorStyle, GutterDimensions,
-    display_map::{dimensions::RowDelta, wrap_map::WrapRow},
+    display_map::{Companion, dimensions::RowDelta, wrap_map::WrapRow},
 };
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
-    ToOffset, ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferOffset, MultiBufferPoint,
+    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
+    ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -52,7 +52,20 @@ pub struct BlockMapReader<'a> {
     pub snapshot: BlockSnapshot,
 }
 
-pub struct BlockMapWriter<'a>(&'a mut BlockMap);
+pub struct BlockMapWriter<'a> {
+    block_map: &'a mut BlockMap,
+    companion: Option<BlockMapWriterCompanion<'a>>,
+}
+
+struct BlockMapWriterCompanion<'a>(CompanionView<'a>);
+
+impl<'a> Deref for BlockMapWriterCompanion<'a> {
+    type Target = CompanionView<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Clone)]
 pub struct BlockSnapshot {
@@ -63,6 +76,14 @@ pub struct BlockSnapshot {
     pub(super) excerpt_header_height: u32,
 }
 
+impl Deref for BlockSnapshot {
+    type Target = WrapSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.wrap_snapshot
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBlockId(pub usize);
 
@@ -71,6 +92,9 @@ impl From<CustomBlockId> for ElementId {
         val.0.into()
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SpacerId(pub usize);
 
 /// A zero-indexed point in a text buffer consisting of a row and column
 /// adjusted for inserted blocks, wrapped rows, tabs, folds and inlays.
@@ -156,6 +180,7 @@ impl<T> BlockPlacement<T> {
 }
 
 impl BlockPlacement<Anchor> {
+    #[ztracing::instrument(skip_all)]
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         self.start()
             .cmp(other.start(), buffer)
@@ -163,6 +188,7 @@ impl BlockPlacement<Anchor> {
             .then_with(|| self.tie_break().cmp(&other.tie_break()))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
         let buffer_snapshot = wrap_snapshot.buffer_snapshot();
         match self {
@@ -265,6 +291,7 @@ pub enum BlockId {
     ExcerptBoundary(ExcerptId),
     FoldedBuffer(ExcerptId),
     Custom(CustomBlockId),
+    Spacer(SpacerId),
 }
 
 impl From<BlockId> for ElementId {
@@ -275,6 +302,7 @@ impl From<BlockId> for ElementId {
                 ("ExcerptBoundary", EntityId::from(excerpt_id)).into()
             }
             BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
+            BlockId::Spacer(SpacerId(id)) => ("Spacer", id).into(),
         }
     }
 }
@@ -285,6 +313,7 @@ impl std::fmt::Display for BlockId {
             Self::Custom(id) => write!(f, "Block({id:?})"),
             Self::ExcerptBoundary(id) => write!(f, "ExcerptHeader({id:?})"),
             Self::FoldedBuffer(id) => write!(f, "FoldedBuffer({id:?})"),
+            Self::Spacer(id) => write!(f, "Spacer({id:?})"),
         }
     }
 }
@@ -310,6 +339,11 @@ pub enum Block {
         excerpt: ExcerptInfo,
         height: u32,
     },
+    Spacer {
+        id: SpacerId,
+        height: u32,
+        is_below: bool,
+    },
 }
 
 impl Block {
@@ -325,6 +359,7 @@ impl Block {
                 excerpt: next_excerpt,
                 ..
             } => BlockId::ExcerptBoundary(next_excerpt.id),
+            Block::Spacer { id, .. } => BlockId::Spacer(*id),
         }
     }
 
@@ -333,7 +368,8 @@ impl Block {
             Block::Custom(block) => block.height.is_some(),
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => true,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => true,
         }
     }
 
@@ -342,7 +378,8 @@ impl Block {
             Block::Custom(block) => block.height.unwrap_or(0),
             Block::ExcerptBoundary { height, .. }
             | Block::FoldedBuffer { height, .. }
-            | Block::BufferHeader { height, .. } => *height,
+            | Block::BufferHeader { height, .. }
+            | Block::Spacer { height, .. } => *height,
         }
     }
 
@@ -351,7 +388,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => BlockStyle::Sticky,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => BlockStyle::Sticky,
         }
     }
 
@@ -361,6 +399,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { is_below, .. } => !*is_below,
         }
     }
 
@@ -370,6 +409,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -382,6 +422,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { is_below, .. } => *is_below,
         }
     }
 
@@ -391,6 +432,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -400,6 +442,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -409,6 +452,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 }
@@ -435,6 +479,15 @@ impl Debug for Block {
                 .field("excerpt", excerpt)
                 .field("height", height)
                 .finish(),
+            Self::Spacer {
+                id,
+                height,
+                is_below: _,
+            } => f
+                .debug_struct("Spacer")
+                .field("id", id)
+                .field("height", height)
+                .finish(),
         }
     }
 }
@@ -453,6 +506,7 @@ pub struct BlockChunks<'a> {
     input_chunk: Chunk<'a>,
     output_row: BlockRow,
     max_output_row: BlockRow,
+    line_count_overflow: RowDelta,
     masked: bool,
 }
 
@@ -464,7 +518,32 @@ pub struct BlockRows<'a> {
     started: bool,
 }
 
+#[derive(Clone, Copy)]
+pub struct CompanionView<'a> {
+    entity_id: EntityId,
+    wrap_snapshot: &'a WrapSnapshot,
+    wrap_edits: &'a WrapPatch,
+    companion: &'a Companion,
+}
+
+impl<'a> CompanionView<'a> {
+    pub(crate) fn new(
+        entity_id: EntityId,
+        wrap_snapshot: &'a WrapSnapshot,
+        wrap_edits: &'a WrapPatch,
+        companion: &'a Companion,
+    ) -> Self {
+        Self {
+            entity_id,
+            wrap_snapshot,
+            wrap_edits,
+            companion,
+        }
+    }
+}
+
 impl BlockMap {
+    #[ztracing::instrument(skip_all)]
     pub fn new(
         wrap_snapshot: WrapSnapshot,
         buffer_header_height: u32,
@@ -490,12 +569,19 @@ impl BlockMap {
                 old: WrapRow(0)..row_count,
                 new: WrapRow(0)..row_count,
             }]),
+            None,
         );
         map
     }
 
-    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: WrapPatch) -> BlockMapReader<'_> {
-        self.sync(&wrap_snapshot, edits);
+    #[ztracing::instrument(skip_all)]
+    pub(crate) fn read(
+        &self,
+        wrap_snapshot: WrapSnapshot,
+        edits: WrapPatch,
+        companion_view: Option<CompanionView>,
+    ) -> BlockMapReader<'_> {
+        self.sync(&wrap_snapshot, edits, companion_view);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
         BlockMapReader {
             blocks: &self.custom_blocks,
@@ -509,13 +595,28 @@ impl BlockMap {
         }
     }
 
-    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: WrapPatch) -> BlockMapWriter<'_> {
-        self.sync(&wrap_snapshot, edits);
+    #[ztracing::instrument(skip_all)]
+    pub(crate) fn write<'a>(
+        &'a mut self,
+        wrap_snapshot: WrapSnapshot,
+        edits: WrapPatch,
+        companion_view: Option<CompanionView<'a>>,
+    ) -> BlockMapWriter<'a> {
+        self.sync(&wrap_snapshot, edits, companion_view);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
-        BlockMapWriter(self)
+        BlockMapWriter {
+            block_map: self,
+            companion: companion_view.map(BlockMapWriterCompanion),
+        }
     }
 
-    fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: WrapPatch) {
+    #[ztracing::instrument(skip_all, fields(edits = ?edits))]
+    fn sync(
+        &self,
+        wrap_snapshot: &WrapSnapshot,
+        mut edits: WrapPatch,
+        companion_view: Option<CompanionView>,
+    ) {
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
@@ -528,11 +629,90 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1);
+            let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
             }]);
+        }
+
+        // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
+        if let Some(CompanionView {
+            wrap_snapshot: companion_new_snapshot,
+            wrap_edits: companion_edits,
+            companion,
+            entity_id: display_map_id,
+            ..
+        }) = companion_view
+        {
+            let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
+                .clone()
+                .into_inner()
+                .iter()
+                .map(|edit| {
+                    let companion_start = companion_new_snapshot
+                        .to_point(WrapPoint::new(edit.new.start, 0), Bias::Left);
+                    let companion_end = companion_new_snapshot
+                        .to_point(WrapPoint::new(edit.new.end, 0), Bias::Left);
+
+                    let my_start = companion
+                        .convert_point_from_companion(
+                            display_map_id,
+                            wrap_snapshot.buffer_snapshot(),
+                            companion_new_snapshot.buffer_snapshot(),
+                            companion_start,
+                        )
+                        .start;
+                    let my_end = companion
+                        .convert_point_from_companion(
+                            display_map_id,
+                            wrap_snapshot.buffer_snapshot(),
+                            companion_new_snapshot.buffer_snapshot(),
+                            companion_end,
+                        )
+                        .end;
+
+                    let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
+                    let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
+                    // TODO(split-diff) should use trailing_excerpt_update_count for the second case
+                    if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
+                        *my_end.row_mut() += 1;
+                        *my_end.column_mut() = 0;
+                    }
+
+                    // Empty edits won't survive Patch::compose, but we still need to make sure
+                    // we recompute spacers when we get them.
+                    if my_start.row() == my_end.row() {
+                        if my_end.row() <= wrap_snapshot.max_point().row() {
+                            *my_end.row_mut() += 1;
+                            *my_end.column_mut() = 0;
+                        } else if my_start.row() > WrapRow(0) {
+                            *my_start.row_mut() += 1;
+                            *my_start.column_mut() = 0;
+                        }
+                    }
+
+                    WrapEdit {
+                        old: my_start.row()..my_end.row(),
+                        new: my_start.row()..my_end.row(),
+                    }
+                })
+                .collect();
+
+            companion_edits_in_my_space.sort_by_key(|edit| edit.old.start);
+            let mut merged_edits: Vec<WrapEdit> = Vec::new();
+            for edit in companion_edits_in_my_space {
+                if let Some(last) = merged_edits.last_mut() {
+                    if edit.old.start <= last.old.end {
+                        last.old.end = last.old.end.max(edit.old.end);
+                        last.new.end = last.new.end.max(edit.new.end);
+                        continue;
+                    }
+                }
+                merged_edits.push(edit);
+            }
+
+            edits = edits.compose(merged_edits);
         }
 
         let edits = edits.into_inner();
@@ -547,7 +727,15 @@ impl BlockMap {
         let mut blocks_in_edit = Vec::new();
         let mut edits = edits.into_iter().peekable();
 
+        let mut inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
         while let Some(edit) = edits.next() {
+            let span = ztracing::debug_span!("while edits", edit = ?edit);
+            let _enter = span.enter();
+
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
 
@@ -566,7 +754,7 @@ impl BlockMap {
                 new_transforms.push(transform.clone(), ());
                 cursor.next();
 
-                // Preserve below blocks at end of edit
+                // Preserve below blocks at start of edit
                 while let Some(transform) = cursor.item() {
                     if transform.block.as_ref().is_some_and(|b| b.place_below()) {
                         new_transforms.push(transform.clone(), ());
@@ -606,6 +794,8 @@ impl BlockMap {
             let mut old_end = edit.old.end;
             let mut new_end = edit.new.end;
             loop {
+                let span = ztracing::debug_span!("decide where edit ends loop");
+                let _enter = span.enter();
                 // Seek to the transform starting at or after the end of the edit
                 cursor.seek(&old_end, Bias::Left);
                 cursor.next();
@@ -635,7 +825,11 @@ impl BlockMap {
 
             // Discard below blocks at the end of the edit. They'll be reconstructed.
             while let Some(transform) = cursor.item() {
-                if transform.block.as_ref().is_some_and(|b| b.place_below()) {
+                if transform
+                    .block
+                    .as_ref()
+                    .is_some_and(|b| b.place_below() || matches!(b, Block::Spacer { .. }))
+                {
                     cursor.next();
                 } else {
                     break;
@@ -677,6 +871,9 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
+            // + 8 is chosen arbitrarily to cover some multibuffer headers
+            blocks_in_edit
+                .reserve(end_block_ix - start_block_ix + if buffer.is_singleton() { 0 } else { 8 });
 
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
@@ -695,8 +892,31 @@ impl BlockMap {
             blocks_in_edit.extend(self.header_and_footer_blocks(
                 buffer,
                 (start_bound, end_bound),
-                wrap_snapshot,
+                |point, bias| {
+                    wrap_point_cursor
+                        .map(
+                            tab_point_cursor
+                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                        )
+                        .row()
+                },
             ));
+
+            if let Some(CompanionView {
+                wrap_snapshot: companion_snapshot,
+                companion,
+                entity_id: display_map_id,
+                ..
+            }) = companion_view
+            {
+                blocks_in_edit.extend(self.spacer_blocks(
+                    (start_bound, end_bound),
+                    wrap_snapshot,
+                    companion_snapshot,
+                    companion,
+                    display_map_id,
+                ));
+            }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
 
@@ -704,6 +924,10 @@ impl BlockMap {
             // and then insert the block itself.
             let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
+                let span =
+                    ztracing::debug_span!("for block in edits", block_height = block.height());
+                let _enter = span.enter();
+
                 let mut summary = TransformSummary {
                     input_rows: WrapRow(0),
                     output_rows: BlockRow(block.height()),
@@ -727,7 +951,7 @@ impl BlockMap {
                         rows_before_block =
                             (position + RowDelta(1)) - new_transforms.summary().input_rows;
                     }
-                    BlockPlacement::Replace(range) => {
+                    BlockPlacement::Replace(ref range) => {
                         rows_before_block = *range.start() - new_transforms.summary().input_rows;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
                         just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
@@ -753,13 +977,14 @@ impl BlockMap {
         new_transforms.append(cursor.suffix(), ());
         debug_assert_eq!(
             new_transforms.summary().input_rows,
-            wrap_snapshot.max_point().row() + WrapRow(1)
+            wrap_snapshot.max_point().row() + WrapRow(1),
         );
 
         drop(cursor);
         *transforms = new_transforms;
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn replace_blocks(&mut self, mut renderers: HashMap<CustomBlockId, RenderBlock>) {
         for block in &mut self.custom_blocks {
             if let Some(render) = renderers.remove(&block.id) {
@@ -768,11 +993,13 @@ impl BlockMap {
         }
     }
 
+    /// Guarantees that `wrap_row_for` is called with points in increasing order.
+    #[ztracing::instrument(skip_all)]
     fn header_and_footer_blocks<'a, R, T>(
         &'a self,
         buffer: &'a multi_buffer::MultiBufferSnapshot,
         range: R,
-        wrap_snapshot: &'a WrapSnapshot,
+        mut wrap_row_for: impl 'a + FnMut(Point, Bias) -> WrapRow,
     ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
     where
         R: RangeBounds<T>,
@@ -783,9 +1010,7 @@ impl BlockMap {
         std::iter::from_fn(move || {
             loop {
                 let excerpt_boundary = boundaries.next()?;
-                let wrap_row = wrap_snapshot
-                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                    .row();
+                let wrap_row = wrap_row_for(Point::new(excerpt_boundary.row.0, 0), Bias::Left);
 
                 let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
                     (None, next) => Some(next.buffer_id),
@@ -817,16 +1042,13 @@ impl BlockMap {
 
                             boundaries.next();
                         }
-
-                        let wrap_end_row = wrap_snapshot
-                            .make_wrap_point(
-                                Point::new(
-                                    last_excerpt_end_row.0,
-                                    buffer.line_len(last_excerpt_end_row),
-                                ),
-                                Bias::Right,
-                            )
-                            .row();
+                        let wrap_end_row = wrap_row_for(
+                            Point::new(
+                                last_excerpt_end_row.0,
+                                buffer.line_len(last_excerpt_end_row),
+                            ),
+                            Bias::Right,
+                        );
 
                         return Some((
                             BlockPlacement::Replace(wrap_row..=wrap_end_row),
@@ -860,6 +1082,232 @@ impl BlockMap {
         })
     }
 
+    fn spacer_blocks(
+        &self,
+        bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
+        wrap_snapshot: &WrapSnapshot,
+        companion_snapshot: &WrapSnapshot,
+        companion: &Companion,
+        display_map_id: EntityId,
+    ) -> Vec<(BlockPlacement<WrapRow>, Block)> {
+        let our_buffer = wrap_snapshot.buffer_snapshot();
+        let companion_buffer = companion_snapshot.buffer_snapshot();
+
+        let patches = companion.convert_rows_to_companion(
+            display_map_id,
+            companion_buffer,
+            our_buffer,
+            bounds,
+        );
+
+        let mut our_inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut our_fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
+        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
+        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
+        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
+        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
+
+        let mut determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
+            let our_wrap = our_wrap_point_cursor
+                .map(our_tab_point_cursor.map(
+                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
+                ))
+                .row();
+            let companion_wrap = companion_wrap_point_cursor
+                .map(
+                    companion_tab_point_cursor.map(
+                        companion_fold_point_cursor
+                            .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
+                    ),
+                )
+                .row();
+            let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
+
+            let spacer = if new_delta > delta {
+                let height = (new_delta - delta) as u32;
+                Some((our_wrap, height))
+            } else {
+                None
+            };
+            (new_delta, spacer)
+        };
+
+        let mut result = Vec::new();
+
+        for excerpt in patches {
+            let mut source_points = (excerpt.edited_range.start.row..=excerpt.edited_range.end.row)
+                .map(|row| MultiBufferPoint::new(row, 0))
+                .chain(if excerpt.edited_range.end.column > 0 {
+                    Some(excerpt.edited_range.end)
+                } else {
+                    None
+                })
+                .peekable();
+            let last_source_point = if excerpt.edited_range.end.column > 0 {
+                excerpt.edited_range.end
+            } else {
+                MultiBufferPoint::new(excerpt.edited_range.end.row, 0)
+            };
+
+            let Some(first_point) = source_points.peek().copied() else {
+                continue;
+            };
+            let edit_for_first_point = excerpt.patch.edit_for_old_position(first_point);
+
+            // Because we calculate spacers based on differences in wrap row
+            // counts between the RHS and LHS for corresponding buffer points,
+            // we need to calibrate our expectations based on the difference
+            // in counts before the start of the edit. This difference in
+            // counts should have been balanced already by spacers above this
+            // edit, so we only need to insert spacers for when the difference
+            // in counts diverges from that baseline value.
+            let (our_baseline, their_baseline) = if edit_for_first_point.old.start < first_point {
+                // Case 1: We are inside a hunk/group--take the start of the hunk/group on both sides as the baseline.
+                (
+                    edit_for_first_point.old.start,
+                    edit_for_first_point.new.start,
+                )
+            } else if first_point.row > excerpt.source_excerpt_range.start.row {
+                // Case 2: We are not inside a hunk/group--go back by one row to find the baseline.
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let edit_for_prev_point = excerpt.patch.edit_for_old_position(prev_point);
+                (prev_point, edit_for_prev_point.new.end)
+            } else {
+                // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
+                (first_point, edit_for_first_point.new.start)
+            };
+            let our_baseline = wrap_snapshot
+                .make_wrap_point(our_baseline, Bias::Left)
+                .row();
+            let their_baseline = companion_snapshot
+                .make_wrap_point(their_baseline, Bias::Left)
+                .row();
+
+            let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
+
+            // If we started out in the middle of a hunk/group, work up to the end of that group to set up the main loop below.
+            if edit_for_first_point.old.start < first_point {
+                let mut current_boundary = first_point;
+                let current_range = edit_for_first_point.new;
+                while let Some(next_point) = source_points.peek().cloned() {
+                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                    if edit_for_next_point.new.end > current_range.end {
+                        break;
+                    }
+                    source_points.next();
+                    current_boundary = next_point;
+                }
+
+                let (new_delta, spacer) =
+                    determine_spacer(current_boundary, current_range.end, delta);
+
+                delta = new_delta;
+                if let Some((wrap_row, height)) = spacer {
+                    result.push((
+                        BlockPlacement::Above(wrap_row),
+                        Block::Spacer {
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: false,
+                        },
+                    ));
+                }
+            }
+
+            // Main loop: process one hunk/group at a time, possibly inserting spacers before and after.
+            while let Some(source_point) = source_points.next() {
+                let mut current_boundary = source_point;
+                let current_range = excerpt.patch.edit_for_old_position(current_boundary).new;
+
+                // This can only occur at the end of an excerpt.
+                if current_boundary.column > 0 {
+                    debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
+                    break;
+                }
+
+                // Align the two sides at the start of this group.
+                let (delta_at_start, mut spacer_at_start) =
+                    determine_spacer(current_boundary, current_range.start, delta);
+                delta = delta_at_start;
+
+                while let Some(next_point) = source_points.peek().copied() {
+                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                    if edit_for_next_point.new.end > current_range.end {
+                        break;
+                    }
+
+                    if let Some((wrap_row, height)) = spacer_at_start.take() {
+                        result.push((
+                            BlockPlacement::Above(wrap_row),
+                            Block::Spacer {
+                                id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                                height,
+                                is_below: false,
+                            },
+                        ));
+                    }
+
+                    current_boundary = next_point;
+                    source_points.next();
+                }
+
+                // This can only occur at the end of an excerpt.
+                if current_boundary.column > 0 {
+                    debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
+                    break;
+                }
+
+                let (delta_at_end, spacer_at_end) =
+                    determine_spacer(current_boundary, current_range.end, delta);
+                delta = delta_at_end;
+
+                if let Some((wrap_row, mut height)) = spacer_at_start {
+                    if let Some((_, additional_height)) = spacer_at_end {
+                        height += additional_height;
+                    }
+                    result.push((
+                        BlockPlacement::Above(wrap_row),
+                        Block::Spacer {
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: false,
+                        },
+                    ));
+                } else if let Some((wrap_row, height)) = spacer_at_end {
+                    result.push((
+                        BlockPlacement::Above(wrap_row),
+                        Block::Spacer {
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: false,
+                        },
+                    ));
+                }
+            }
+
+            if last_source_point == excerpt.source_excerpt_range.end {
+                let (_new_delta, spacer) =
+                    determine_spacer(last_source_point, excerpt.target_excerpt_range.end, delta);
+                if let Some((wrap_row, height)) = spacer {
+                    result.push((
+                        BlockPlacement::Below(wrap_row),
+                        Block::Spacer {
+                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            height,
+                            is_below: true,
+                        },
+                    ));
+                }
+            }
+        }
+
+        result
+    }
+
+    #[ztracing::instrument(skip_all)]
     fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
         blocks.sort_unstable_by(|(placement_a, block_a), (placement_b, block_b)| {
             placement_a
@@ -893,18 +1341,20 @@ impl BlockMap {
                     ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
                     (
                         Block::ExcerptBoundary { .. } | Block::BufferHeader { .. },
-                        Block::Custom(_),
+                        Block::Spacer { .. } | Block::Custom(_),
                     ) => Ordering::Less,
                     (
-                        Block::Custom(_),
+                        Block::Spacer { .. } | Block::Custom(_),
                         Block::ExcerptBoundary { .. } | Block::BufferHeader { .. },
                     ) => Ordering::Greater,
+                    (Block::Spacer { .. }, Block::Custom(_)) => Ordering::Less,
+                    (Block::Custom(_), Block::Spacer { .. }) => Ordering::Greater,
                     (Block::Custom(block_a), Block::Custom(block_b)) => block_a
                         .priority
                         .cmp(&block_b.priority)
                         .then_with(|| block_a.id.cmp(&block_b.id)),
                     _ => {
-                        unreachable!()
+                        unreachable!("comparing blocks: {block_a:?} vs {block_b:?}")
                     }
                 })
         });
@@ -926,6 +1376,7 @@ impl BlockMap {
     }
 }
 
+#[ztracing::instrument(skip(tree, wrap_snapshot))]
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot: &WrapSnapshot) {
     if rows == RowDelta(0) {
         return;
@@ -996,6 +1447,7 @@ impl DerefMut for BlockMapReader<'_> {
 }
 
 impl BlockMapReader<'_> {
+    #[ztracing::instrument(skip_all)]
     pub fn row_for_block(&self, block_id: CustomBlockId) -> Option<BlockRow> {
         let block = self.blocks.iter().find(|block| block.id == block_id)?;
         let buffer_row = block
@@ -1034,6 +1486,7 @@ impl BlockMapReader<'_> {
 }
 
 impl BlockMapWriter<'_> {
+    #[ztracing::instrument(skip_all)]
     pub fn insert(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
@@ -1041,7 +1494,7 @@ impl BlockMapWriter<'_> {
         let blocks = blocks.into_iter();
         let mut ids = Vec::with_capacity(blocks.size_hint().1.unwrap_or(0));
         let mut edits = Patch::default();
-        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         let mut previous_wrap_row_range: Option<Range<WrapRow>> = None;
@@ -1050,7 +1503,7 @@ impl BlockMapWriter<'_> {
                 debug_assert!(block.height.unwrap() > 0);
             }
 
-            let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
+            let id = CustomBlockId(self.block_map.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
             let start = block.placement.start().to_point(buffer);
@@ -1073,7 +1526,7 @@ impl BlockMapWriter<'_> {
                 (range.start, range.end)
             };
             let block_ix = match self
-                .0
+                .block_map
                 .custom_blocks
                 .binary_search_by(|probe| probe.placement.cmp(&block.placement, buffer))
             {
@@ -1087,8 +1540,10 @@ impl BlockMapWriter<'_> {
                 style: block.style,
                 priority: block.priority,
             });
-            self.0.custom_blocks.insert(block_ix, new_block.clone());
-            self.0.custom_blocks_by_id.insert(id, new_block);
+            self.block_map
+                .custom_blocks
+                .insert(block_ix, new_block.clone());
+            self.block_map.custom_blocks_by_id.insert(id, new_block);
 
             edits = edits.compose([Edit {
                 old: start_row..end_row,
@@ -1096,17 +1551,32 @@ impl BlockMapWriter<'_> {
             }]);
         }
 
-        self.0.sync(wrap_snapshot, edits);
+        let default_patch = Patch::default();
+        self.block_map.sync(
+            wrap_snapshot,
+            edits,
+            self.companion.as_deref().map(
+                |&CompanionView {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
+        );
         ids
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
-        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
 
-        for block in &mut self.0.custom_blocks {
+        for block in &mut self.block_map.custom_blocks {
             if let Some(new_height) = heights.remove(&block.id) {
                 if let BlockPlacement::Replace(_) = &block.placement {
                     debug_assert!(new_height > 0);
@@ -1123,7 +1593,9 @@ impl BlockMapWriter<'_> {
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
-                    self.0.custom_blocks_by_id.insert(block.id, new_block);
+                    self.block_map
+                        .custom_blocks_by_id
+                        .insert(block.id, new_block);
 
                     let start_row = block.placement.start().to_point(buffer).row;
                     let end_row = block.placement.end().to_point(buffer).row;
@@ -1149,16 +1621,31 @@ impl BlockMapWriter<'_> {
             }
         }
 
-        self.0.sync(wrap_snapshot, edits);
+        let default_patch = Patch::default();
+        self.block_map.sync(
+            wrap_snapshot,
+            edits,
+            self.companion.as_deref().map(
+                |&CompanionView {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
+        );
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn remove(&mut self, block_ids: HashSet<CustomBlockId>) {
-        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = &*self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
         let mut previous_wrap_row_range: Option<Range<WrapRow>> = None;
-        self.0.custom_blocks.retain(|block| {
+        self.block_map.custom_blocks.retain(|block| {
             if block_ids.contains(&block.id) {
                 let start = block.placement.start().to_point(buffer);
                 let end = block.placement.end().to_point(buffer);
@@ -1191,18 +1678,33 @@ impl BlockMapWriter<'_> {
                 true
             }
         });
-        self.0
+        self.block_map
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
-        self.0.sync(wrap_snapshot, edits);
+        let default_patch = Patch::default();
+        self.block_map.sync(
+            wrap_snapshot,
+            edits,
+            self.companion.as_deref().map(
+                |&CompanionView {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
+        );
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn remove_intersecting_replace_blocks(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<usize>>,
+        ranges: impl IntoIterator<Item = Range<MultiBufferOffset>>,
         inclusive: bool,
     ) {
-        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow();
         let mut blocks_to_remove = HashSet::default();
         for range in ranges {
             for block in self.blocks_intersecting_buffer_range(range, inclusive) {
@@ -1216,9 +1718,12 @@ impl BlockMapWriter<'_> {
     }
 
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId) {
-        self.0.buffers_with_disabled_headers.insert(buffer_id);
+        self.block_map
+            .buffers_with_disabled_headers
+            .insert(buffer_id);
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn fold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -1228,6 +1733,7 @@ impl BlockMapWriter<'_> {
         self.fold_or_unfold_buffers(true, buffer_ids, multi_buffer, cx);
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn unfold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -1237,6 +1743,7 @@ impl BlockMapWriter<'_> {
         self.fold_or_unfold_buffers(false, buffer_ids, multi_buffer, cx);
     }
 
+    #[ztracing::instrument(skip_all)]
     fn fold_or_unfold_buffers(
         &mut self,
         fold: bool,
@@ -1247,16 +1754,16 @@ impl BlockMapWriter<'_> {
         let mut ranges = Vec::new();
         for buffer_id in buffer_ids {
             if fold {
-                self.0.folded_buffers.insert(buffer_id);
+                self.block_map.folded_buffers.insert(buffer_id);
             } else {
-                self.0.folded_buffers.remove(&buffer_id);
+                self.block_map.folded_buffers.remove(&buffer_id);
             }
             ranges.extend(multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx));
         }
         ranges.sort_unstable_by_key(|range| range.start);
 
         let mut edits = Patch::default();
-        let wrap_snapshot = self.0.wrap_snapshot.borrow().clone();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow().clone();
         for range in ranges {
             let last_edit_row = cmp::min(
                 wrap_snapshot.make_wrap_point(range.end, Bias::Right).row() + WrapRow(1),
@@ -1269,43 +1776,60 @@ impl BlockMapWriter<'_> {
             });
         }
 
-        self.0.sync(&wrap_snapshot, edits);
+        let default_patch = Patch::default();
+        self.block_map.sync(
+            &wrap_snapshot,
+            edits,
+            self.companion.as_deref().map(
+                |&CompanionView {
+                     entity_id,
+                     wrap_snapshot,
+                     companion,
+                     ..
+                 }| {
+                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                },
+            ),
+        );
     }
 
+    #[ztracing::instrument(skip_all)]
     fn blocks_intersecting_buffer_range(
         &self,
-        range: Range<usize>,
+        range: Range<MultiBufferOffset>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
         if range.is_empty() && !inclusive {
             return &[];
         }
-        let wrap_snapshot = self.0.wrap_snapshot.borrow();
+        let wrap_snapshot = self.block_map.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
-        let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+        let start_block_ix = match self.block_map.custom_blocks.binary_search_by(|block| {
             let block_end = block.end().to_offset(buffer);
             block_end.cmp(&range.start).then(Ordering::Greater)
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks[start_block_ix..].binary_search_by(|block| {
-            let block_start = block.start().to_offset(buffer);
-            block_start.cmp(&range.end).then(if inclusive {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            })
-        }) {
-            Ok(ix) | Err(ix) => ix,
-        };
+        let end_block_ix =
+            match self.block_map.custom_blocks[start_block_ix..].binary_search_by(|block| {
+                let block_start = block.start().to_offset(buffer);
+                block_start.cmp(&range.end).then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+            }) {
+                Ok(ix) | Err(ix) => ix,
+            };
 
-        &self.0.custom_blocks[start_block_ix..][..end_block_ix]
+        &self.block_map.custom_blocks[start_block_ix..][..end_block_ix]
     }
 }
 
 impl BlockSnapshot {
     #[cfg(test)]
+    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.chunks(
             BlockRow(0)..self.transforms.summary().output_rows,
@@ -1317,6 +1841,7 @@ impl BlockSnapshot {
         .collect()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<BlockRow>,
@@ -1352,11 +1877,13 @@ impl BlockSnapshot {
             input_chunk: Default::default(),
             transforms: cursor,
             output_row: rows.start,
+            line_count_overflow: RowDelta(0),
             max_output_row,
             masked,
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows<'_> {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&start_row, Bias::Right);
@@ -1378,6 +1905,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn blocks_in_range(
         &self,
         rows: Range<BlockRow>,
@@ -1411,6 +1939,7 @@ impl BlockSnapshot {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn sticky_header_excerpt(&self, position: f64) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(());
@@ -1434,6 +1963,7 @@ impl BlockSnapshot {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
         let buffer = self.wrap_snapshot.buffer_snapshot();
         let wrap_point = match block_id {
@@ -1449,6 +1979,7 @@ impl BlockSnapshot {
             BlockId::FoldedBuffer(excerpt_id) => self
                 .wrap_snapshot
                 .make_wrap_point(buffer.range_for_excerpt(excerpt_id)?.start, Bias::Left),
+            BlockId::Spacer(_) => return None,
         };
         let wrap_row = wrap_point.row();
 
@@ -1470,6 +2001,7 @@ impl BlockSnapshot {
         None
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> BlockPoint {
         let row = self
             .transforms
@@ -1479,10 +2011,12 @@ impl BlockSnapshot {
         BlockPoint::new(row, self.line_len(row))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn longest_row(&self) -> BlockRow {
         self.transforms.summary().longest_row
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&range.start, Bias::Right);
@@ -1534,6 +2068,7 @@ impl BlockSnapshot {
         longest_row
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let (start, _, item) =
             self.transforms
@@ -1553,11 +2088,13 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let (_, _, item) = self.transforms.find::<BlockRow, _>((), &row, Bias::Right);
         item.is_some_and(|t| t.block.is_some())
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
         let (_, _, item) = self.transforms.find::<BlockRow, _>((), &row, Bias::Right);
         let Some(transform) = item else {
@@ -1566,6 +2103,7 @@ impl BlockSnapshot {
         matches!(transform.block, Some(Block::FoldedBuffer { .. }))
     }
 
+    #[ztracing::instrument(skip_all)]
     pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
@@ -1581,6 +2119,7 @@ impl BlockSnapshot {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&BlockRow(point.row), Bias::Right);
@@ -1642,6 +2181,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapRow, BlockRow>, _>(
             (),
@@ -1663,6 +2203,7 @@ impl BlockSnapshot {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
         let (start, end, item) = self.transforms.find::<Dimensions<BlockRow, WrapRow>, _>(
             (),
@@ -1698,6 +2239,7 @@ impl BlockSnapshot {
 
 impl BlockChunks<'_> {
     /// Go to the next transform
+    #[ztracing::instrument(skip_all)]
     fn advance(&mut self) {
         self.input_chunk = Chunk::default();
         self.transforms.next();
@@ -1738,9 +2280,21 @@ pub struct StickyHeaderExcerpt<'a> {
 impl<'a> Iterator for BlockChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row >= self.max_output_row {
             return None;
+        }
+
+        if self.line_count_overflow > RowDelta(0) {
+            let lines = self.line_count_overflow.0.min(u128::BITS);
+            self.line_count_overflow.0 -= lines;
+            self.output_row += RowDelta(lines);
+            return Some(Chunk {
+                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..lines as usize]) },
+                chars: 1u128.unbounded_shl(lines).wrapping_sub(1),
+                ..Default::default()
+            });
         }
 
         let transform = self.transforms.item()?;
@@ -1754,13 +2308,14 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
-            // todo: We need to split the chunk here instead of taking min
-            let line_count = cmp::min(end_in_block - start_in_block, RowDelta(u128::BITS));
-            self.output_row += line_count;
+            let line_count = end_in_block - start_in_block;
+            let lines = RowDelta(line_count.0.min(u128::BITS));
+            self.line_count_overflow = line_count - lines;
+            self.output_row += lines;
 
             return Some(Chunk {
-                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count.0 as usize]) },
-                chars: 1u128.unbounded_shl(line_count.0) - 1,
+                text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..lines.0 as usize]) },
+                chars: 1u128.unbounded_shl(lines.0).wrapping_sub(1),
                 ..Default::default()
             });
         }
@@ -1825,6 +2380,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 impl Iterator for BlockRows<'_> {
     type Item = RowInfo;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
             self.output_row.0 += 1;
@@ -1857,18 +2413,14 @@ impl Iterator for BlockRows<'_> {
         }
 
         let transform = self.transforms.item()?;
-        if let Some(block) = transform.block.as_ref() {
-            if block.is_replacement() && self.transforms.start().0 == self.output_row {
-                if matches!(block, Block::FoldedBuffer { .. }) {
-                    Some(RowInfo::default())
-                } else {
-                    Some(self.input_rows.next().unwrap())
-                }
-            } else {
-                Some(RowInfo::default())
-            }
+        if transform.block.as_ref().is_none_or(|block| {
+            block.is_replacement()
+                && self.transforms.start().0 == self.output_row
+                && matches!(block, Block::FoldedBuffer { .. }).not()
+        }) {
+            self.input_rows.next()
         } else {
-            Some(self.input_rows.next().unwrap())
+            Some(RowInfo::default())
         }
     }
 }
@@ -1931,14 +2483,17 @@ impl DerefMut for BlockContext<'_, '_> {
 }
 
 impl CustomBlock {
+    #[ztracing::instrument(skip_all)]
     pub fn render(&self, cx: &mut BlockContext) -> AnyElement {
         self.render.lock()(cx)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn start(&self) -> Anchor {
         *self.placement.start()
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn end(&self) -> Anchor {
         *self.placement.end()
     }
@@ -1982,9 +2537,13 @@ fn offset_for_row(s: &str, target: RowDelta) -> (RowDelta, usize) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
+        display_map::{
+            Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+        },
+        split::{convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
         test::test_font,
     };
+    use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
     use language::{Buffer, Capability};
@@ -2036,7 +2595,7 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let block_ids = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2061,7 +2620,7 @@ mod tests {
             },
         ]);
 
-        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        let snapshot = block_map.read(wraps_snapshot, Default::default(), None);
         assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
         let blocks = snapshot
@@ -2186,7 +2745,7 @@ mod tests {
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
-        let snapshot = block_map.read(wraps_snapshot, wrap_edits);
+        let snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
@@ -2239,7 +2798,7 @@ mod tests {
         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
 
         let block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
-        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        let snapshot = block_map.read(wraps_snapshot, Default::default(), None);
 
         // Each excerpt has a header above and footer below. Excerpts are also *separated* by a newline.
         assert_eq!(snapshot.text(), "\nBuff\ner 1\n\nBuff\ner 2\n\nBuff\ner 3");
@@ -2274,7 +2833,7 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let block_ids = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2300,59 +2859,64 @@ mod tests {
         ]);
 
         {
-            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
             assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
-            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+            let mut block_map_writer =
+                block_map.write(wraps_snapshot.clone(), Default::default(), None);
 
             let mut new_heights = HashMap::default();
             new_heights.insert(block_ids[0], 2);
             block_map_writer.resize(new_heights);
-            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
 
         {
-            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+            let mut block_map_writer =
+                block_map.write(wraps_snapshot.clone(), Default::default(), None);
 
             let mut new_heights = HashMap::default();
             new_heights.insert(block_ids[0], 1);
             block_map_writer.resize(new_heights);
 
-            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
             assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
 
         {
-            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+            let mut block_map_writer =
+                block_map.write(wraps_snapshot.clone(), Default::default(), None);
 
             let mut new_heights = HashMap::default();
             new_heights.insert(block_ids[0], 0);
             block_map_writer.resize(new_heights);
 
-            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
             assert_eq!(snapshot.text(), "aaa\n\n\nbbb\nccc\nddd\n\n\n");
         }
 
         {
-            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+            let mut block_map_writer =
+                block_map.write(wraps_snapshot.clone(), Default::default(), None);
 
             let mut new_heights = HashMap::default();
             new_heights.insert(block_ids[0], 3);
             block_map_writer.resize(new_heights);
 
-            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+            let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
 
         {
-            let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
+            let mut block_map_writer =
+                block_map.write(wraps_snapshot.clone(), Default::default(), None);
 
             let mut new_heights = HashMap::default();
             new_heights.insert(block_ids[0], 3);
             block_map_writer.resize(new_heights);
 
-            let snapshot = block_map.read(wraps_snapshot, Default::default());
+            let snapshot = block_map.read(wraps_snapshot, Default::default(), None);
             // Same height as before, should remain the same
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
@@ -2374,7 +2938,7 @@ mod tests {
         });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2394,7 +2958,7 @@ mod tests {
 
         // Blocks with an 'above' disposition go above their corresponding buffer line.
         // Blocks with a 'below' disposition go below their corresponding buffer line.
-        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        let snapshot = block_map.read(wraps_snapshot, Default::default(), None);
         assert_eq!(
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
@@ -2418,7 +2982,7 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let replace_block_id = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Replace(
@@ -2430,7 +2994,7 @@ mod tests {
             priority: 0,
         }])[0];
 
-        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default(), None);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
@@ -2444,7 +3008,7 @@ mod tests {
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
-        let blocks_snapshot = block_map.read(wraps_snapshot, wrap_edits);
+        let blocks_snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
@@ -2467,11 +3031,11 @@ mod tests {
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, None);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
         // Blocks inserted right above the start or right below the end of the replaced region are hidden.
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2495,11 +3059,11 @@ mod tests {
                 priority: 0,
             },
         ]);
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
         assert_eq!(blocks_snapshot.text(), "\nline1\n\n\n\n\nline5");
 
         // Ensure blocks inserted *inside* replaced region are hidden.
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2523,13 +3087,13 @@ mod tests {
                 priority: 0,
             },
         ]);
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
         assert_eq!(blocks_snapshot.text(), "\nline1\n\n\n\n\nline5");
 
         // Removing the replace block shows all the hidden blocks again.
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.remove(HashSet::from_iter([replace_block_id]));
-        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default(), None);
         assert_eq!(
             blocks_snapshot.text(),
             "\nline1\n\nline2\n\n\nline 2.1\nline2.2\nline 2.3\nline 2.4\n\nline4\n\nline5"
@@ -2582,7 +3146,7 @@ mod tests {
         let (_, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1);
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
 
         assert_eq!(
             blocks_snapshot.text(),
@@ -2612,7 +3176,7 @@ mod tests {
             ]
         );
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         let excerpt_blocks_2 = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2653,7 +3217,7 @@ mod tests {
             },
         ]);
 
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
         assert_eq!(
             blocks_snapshot.text(),
             "\n\n111\n\n\n\n222\n\n\n333\n\n444\n\n\n\n\n555\n\n666\n"
@@ -2687,7 +3251,7 @@ mod tests {
             ]
         );
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id_1], buffer, cx);
         });
@@ -2698,7 +3262,7 @@ mod tests {
             render: Arc::new(|_| div().into_any()),
             priority: 0,
         }]);
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
         let blocks = blocks_snapshot
             .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
             .collect::<Vec<_>>();
@@ -2755,11 +3319,11 @@ mod tests {
             ]
         );
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id_2], buffer, cx);
         });
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
         let blocks = blocks_snapshot
             .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
             .collect::<Vec<_>>();
@@ -2808,11 +3372,11 @@ mod tests {
             ]
         );
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.unfold_buffers([buffer_id_1], buffer, cx);
         });
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
         let blocks = blocks_snapshot
             .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
             .collect::<Vec<_>>();
@@ -2864,11 +3428,11 @@ mod tests {
             ]
         );
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id_3], buffer, cx);
         });
-        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
         let blocks = blocks_snapshot
             .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
             .collect::<Vec<_>>();
@@ -2927,15 +3491,15 @@ mod tests {
         let (_, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1);
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
 
         assert_eq!(blocks_snapshot.text(), "\n\n111");
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id], buffer, cx);
         });
-        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
         let blocks = blocks_snapshot
             .blocks_in_range(BlockRow(0)..BlockRow(u32::MAX))
             .collect::<Vec<_>>();
@@ -2958,7 +3522,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 60)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.update(init_test);
 
@@ -3025,8 +3589,10 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
-                            let offset =
-                                buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Left);
+                            let offset = buffer.clip_offset(
+                                rng.random_range(MultiBufferOffset(0)..=buffer.len()),
+                                Bias::Left,
+                            );
                             let mut min_height = 0;
                             let placement = match rng.random_range(0..3) {
                                 0 => {
@@ -3042,7 +3608,7 @@ mod tests {
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
 
-                            let height = rng.random_range(min_height..5);
+                            let height = rng.random_range(min_height..512);
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,
@@ -3061,7 +3627,7 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None);
                     let block_ids =
                         block_map.insert(block_properties.iter().map(|props| BlockProperties {
                             placement: props.placement.clone(),
@@ -3099,7 +3665,7 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None);
                     log::info!(
                         "removing {} blocks: {:?}",
                         block_ids_to_remove.len(),
@@ -3120,20 +3686,17 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None);
                     let (unfolded_buffers, folded_buffers) = buffer.read_with(cx, |buffer, _| {
-                        let folded_buffers = block_map
-                            .0
-                            .folded_buffers
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>();
+                        let folded_buffers: Vec<_> =
+                            block_map.block_map.folded_buffers.iter().cloned().collect();
                         let mut unfolded_buffers = buffer.excerpt_buffer_ids();
                         unfolded_buffers.dedup();
                         log::debug!("All buffers {unfolded_buffers:?}");
                         log::debug!("Folded buffers {folded_buffers:?}");
-                        unfolded_buffers
-                            .retain(|buffer_id| !block_map.0.folded_buffers.contains(buffer_id));
+                        unfolded_buffers.retain(|buffer_id| {
+                            !block_map.block_map.folded_buffers.contains(buffer_id)
+                        });
                         (unfolded_buffers, folded_buffers)
                     });
                     let mut folded_count = folded_buffers.len();
@@ -3207,7 +3770,7 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             });
-            let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+            let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, None);
             assert_eq!(
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + RowDelta(1)
@@ -3223,11 +3786,23 @@ mod tests {
                 ))
             }));
 
+            let mut inlay_point_cursor = wraps_snapshot.inlay_point_cursor();
+            let mut tab_point_cursor = wraps_snapshot.tab_point_cursor();
+            let mut fold_point_cursor = wraps_snapshot.fold_point_cursor();
+            let mut wrap_point_cursor = wraps_snapshot.wrap_point_cursor();
+
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
-                0..,
-                &wraps_snapshot,
+                MultiBufferOffset(0)..,
+                |point, bias| {
+                    wrap_point_cursor
+                        .map(
+                            tab_point_cursor
+                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                        )
+                        .row()
+                },
             ));
 
             BlockMap::sort_blocks(&mut expected_blocks);
@@ -3584,7 +4159,7 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let _block_id = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
@@ -3593,10 +4168,10 @@ mod tests {
             priority: 0,
         }])[0];
 
-        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
         assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.remove_intersecting_replace_blocks(
             [buffer_snapshot
                 .anchor_after(Point::new(1, 0))
@@ -3606,7 +4181,7 @@ mod tests {
                     .to_offset(&buffer_snapshot)],
             false,
         );
-        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default(), None);
         assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
     }
 
@@ -3634,7 +4209,7 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(0, 0))),
@@ -3643,15 +4218,15 @@ mod tests {
             priority: 0,
         }]);
 
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
         assert_eq!(blocks_snapshot.text(), "\nline 1\n\nline 2\nline 3");
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id], buffer, cx);
         });
 
-        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
         assert_eq!(blocks_snapshot.text(), "");
     }
 
@@ -3679,7 +4254,7 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(3, 6))),
@@ -3688,16 +4263,245 @@ mod tests {
             priority: 0,
         }]);
 
-        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
         assert_eq!(blocks_snapshot.text(), "\nline 1\nline 2\nline 3\nline 4\n");
 
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         buffer.read_with(cx, |buffer, cx| {
             writer.fold_buffers([buffer_id], buffer, cx);
         });
 
-        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
         assert_eq!(blocks_snapshot.text(), "");
+    }
+
+    #[gpui::test]
+    fn test_companion_spacer_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let base_text = "aaa\nbbb\nccc\nddd\nddd\nddd\neee\n";
+        let main_text = "aaa\nddd\nddd\nddd\nXXX\nYYY\nZZZ\neee\n";
+
+        let rhs_buffer = cx.new(|cx| Buffer::local(main_text, cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).text_snapshot(), cx)
+        });
+        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+
+        let lhs_multibuffer = cx.new(|cx| {
+            let mut mb = MultiBuffer::new(Capability::ReadWrite);
+            mb.push_excerpts(
+                lhs_buffer.clone(),
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                cx,
+            );
+            mb.add_inverted_diff(diff.clone(), cx);
+            mb
+        });
+        let rhs_multibuffer = cx.new(|cx| {
+            let mut mb = MultiBuffer::new(Capability::ReadWrite);
+            mb.push_excerpts(
+                rhs_buffer.clone(),
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                cx,
+            );
+            mb.add_diff(diff.clone(), cx);
+            mb
+        });
+        let subscription =
+            rhs_multibuffer.update(cx, |rhs_multibuffer, _| rhs_multibuffer.subscribe());
+
+        let lhs_excerpt_id =
+            lhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
+        let rhs_excerpt_id =
+            rhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
+
+        let lhs_buffer_snapshot = cx.update(|cx| lhs_multibuffer.read(cx).snapshot(cx));
+        let (mut _lhs_inlay_map, lhs_inlay_snapshot) = InlayMap::new(lhs_buffer_snapshot);
+        let (mut _lhs_fold_map, lhs_fold_snapshot) = FoldMap::new(lhs_inlay_snapshot);
+        let (mut _lhs_tab_map, lhs_tab_snapshot) =
+            TabMap::new(lhs_fold_snapshot, 4.try_into().unwrap());
+        let (_lhs_wrap_map, lhs_wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(lhs_tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let lhs_block_map = BlockMap::new(lhs_wrap_snapshot.clone(), 0, 0);
+
+        let rhs_buffer_snapshot = cx.update(|cx| rhs_multibuffer.read(cx).snapshot(cx));
+        let (mut rhs_inlay_map, rhs_inlay_snapshot) = InlayMap::new(rhs_buffer_snapshot);
+        let (mut rhs_fold_map, rhs_fold_snapshot) = FoldMap::new(rhs_inlay_snapshot);
+        let (mut rhs_tab_map, rhs_tab_snapshot) =
+            TabMap::new(rhs_fold_snapshot, 4.try_into().unwrap());
+        let (_rhs_wrap_map, rhs_wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(rhs_tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let rhs_block_map = BlockMap::new(rhs_wrap_snapshot.clone(), 0, 0);
+
+        let rhs_entity_id = rhs_multibuffer.entity_id();
+
+        let companion = cx.new(|_| {
+            let mut c = Companion::new(
+                rhs_entity_id,
+                Default::default(),
+                convert_rhs_rows_to_lhs,
+                convert_lhs_rows_to_rhs,
+            );
+            c.add_excerpt_mapping(lhs_excerpt_id, rhs_excerpt_id);
+            c
+        });
+
+        let rhs_edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..rhs_wrap_snapshot.max_point().row(),
+            new: WrapRow(0)..rhs_wrap_snapshot.max_point().row(),
+        }]);
+        let lhs_edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..lhs_wrap_snapshot.max_point().row(),
+            new: WrapRow(0)..lhs_wrap_snapshot.max_point().row(),
+        }]);
+
+        let rhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            rhs_block_map.read(
+                rhs_wrap_snapshot.clone(),
+                rhs_edits.clone(),
+                Some(CompanionView::new(
+                    rhs_entity_id,
+                    &lhs_wrap_snapshot,
+                    &lhs_edits,
+                    companion,
+                )),
+            )
+        });
+
+        let lhs_entity_id = lhs_multibuffer.entity_id();
+        let lhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            lhs_block_map.read(
+                lhs_wrap_snapshot.clone(),
+                lhs_edits.clone(),
+                Some(CompanionView::new(
+                    lhs_entity_id,
+                    &rhs_wrap_snapshot,
+                    &rhs_edits,
+                    companion,
+                )),
+            )
+        });
+
+        // LHS:
+        //   aaa
+        // - bbb
+        // - ccc
+        //   ddd
+        //   ddd
+        //   ddd
+        //   <extra line>
+        //   <extra line>
+        //   <extra line>
+        //   *eee
+        //
+        // RHS:
+        //   aaa
+        //   <extra line>
+        //   <extra line>
+        //   ddd
+        //   ddd
+        //   ddd
+        // + XXX
+        // + YYY
+        // + ZZZ
+        //   eee
+
+        assert_eq!(
+            rhs_snapshot.snapshot.text(),
+            "aaa\n\n\nddd\nddd\nddd\nXXX\nYYY\nZZZ\neee\n",
+            "RHS should have 2 spacer lines after 'aaa' to align with LHS's deleted lines"
+        );
+
+        assert_eq!(
+            lhs_snapshot.snapshot.text(),
+            "aaa\nbbb\nccc\nddd\nddd\nddd\n\n\n\neee\n",
+            "LHS should have 3 spacer lines in place of RHS's inserted lines"
+        );
+
+        // LHS:
+        //   aaa
+        // - bbb
+        // - ccc
+        //   ddd
+        //   ddd
+        //   ddd
+        //   <extra line>
+        //   <extra line>
+        //   <extra line>
+        //   eee
+        //
+        // RHS:
+        //   aaa
+        //   <extra line>
+        //   <extra line>
+        //   ddd
+        //   foo
+        //   foo
+        //   foo
+        //   ddd
+        //   ddd
+        // + XXX
+        // + YYY
+        // + ZZZ
+        //   eee
+
+        let rhs_buffer_snapshot = rhs_multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.edit(
+                [(Point::new(2, 0)..Point::new(2, 0), "foo\nfoo\nfoo\n")],
+                None,
+                cx,
+            );
+            multibuffer.snapshot(cx)
+        });
+
+        let (rhs_inlay_snapshot, rhs_inlay_edits) =
+            rhs_inlay_map.sync(rhs_buffer_snapshot, subscription.consume().into_inner());
+        let (rhs_fold_snapshot, rhs_fold_edits) =
+            rhs_fold_map.read(rhs_inlay_snapshot, rhs_inlay_edits);
+        let (rhs_tab_snapshot, rhs_tab_edits) =
+            rhs_tab_map.sync(rhs_fold_snapshot, rhs_fold_edits, 4.try_into().unwrap());
+        let (rhs_wrap_snapshot, rhs_wrap_edits) = _rhs_wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(rhs_tab_snapshot, rhs_tab_edits, cx)
+        });
+
+        let rhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            rhs_block_map.read(
+                rhs_wrap_snapshot.clone(),
+                rhs_wrap_edits.clone(),
+                Some(CompanionView::new(
+                    rhs_entity_id,
+                    &lhs_wrap_snapshot,
+                    &Default::default(),
+                    companion,
+                )),
+            )
+        });
+
+        let lhs_snapshot = companion.read_with(cx, |companion, _cx| {
+            lhs_block_map.read(
+                lhs_wrap_snapshot.clone(),
+                Default::default(),
+                Some(CompanionView::new(
+                    lhs_entity_id,
+                    &rhs_wrap_snapshot,
+                    &rhs_wrap_edits,
+                    companion,
+                )),
+            )
+        });
+
+        assert_eq!(
+            rhs_snapshot.snapshot.text(),
+            "aaa\n\n\nddd\nfoo\nfoo\nfoo\nddd\nddd\nXXX\nYYY\nZZZ\neee\n",
+            "RHS should have the insertion"
+        );
+
+        assert_eq!(
+            lhs_snapshot.snapshot.text(),
+            "aaa\nbbb\nccc\nddd\n\n\n\nddd\nddd\n\n\n\neee\n",
+            "LHS should have 3 more spacer lines to balance the insertion"
+        );
     }
 
     fn init_test(cx: &mut gpui::App) {

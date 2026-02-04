@@ -18,7 +18,9 @@ const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_HEADING_ATTRIBUTES)
     .union(Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS)
     .union(Options::ENABLE_OLD_FOOTNOTES)
-    .union(Options::ENABLE_GFM);
+    .union(Options::ENABLE_GFM)
+    .union(Options::ENABLE_SUPERSCRIPT)
+    .union(Options::ENABLE_SUBSCRIPT);
 
 pub fn parse_markdown(
     text: &str,
@@ -149,6 +151,8 @@ pub fn parse_markdown(
                     pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
                     pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
                     pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
+                    pulldown_cmark::Tag::Superscript => MarkdownTag::Superscript,
+                    pulldown_cmark::Tag::Subscript => MarkdownTag::Subscript,
                     pulldown_cmark::Tag::Image {
                         link_type,
                         dest_url,
@@ -454,6 +458,8 @@ pub enum MarkdownTag {
     Emphasis,
     Strong,
     Strikethrough,
+    Superscript,
+    Subscript,
 
     /// A link.
     Link {
@@ -548,7 +554,8 @@ mod tests {
 
     const UNWANTED_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
         .union(Options::ENABLE_MATH)
-        .union(Options::ENABLE_DEFINITION_LIST);
+        .union(Options::ENABLE_DEFINITION_LIST)
+        .union(Options::ENABLE_WIKILINKS);
 
     #[test]
     fn all_options_considered() {

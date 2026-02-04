@@ -1,9 +1,10 @@
-use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
+use super::ns_string;
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
 use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
-    foundation::{NSDictionary, NSString},
+    foundation::{NSArray, NSDictionary},
 };
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
@@ -35,7 +36,7 @@ impl MacDisplay {
             let screens = NSScreen::screens(nil);
             let screen = cocoa::foundation::NSArray::objectAtIndex(screens, 0);
             let device_description = NSScreen::deviceDescription(screen);
-            let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+            let screen_number_key: id = ns_string("NSScreenNumber");
             let screen_number = device_description.objectForKey_(screen_number_key);
             let screen_number: CGDirectDisplayID = msg_send![screen_number, unsignedIntegerValue];
             Self(screen_number)
@@ -113,5 +114,54 @@ impl PlatformDisplay for MacDisplay {
                 size: size(px(bounds.size.width as f32), px(bounds.size.height as f32)),
             }
         }
+    }
+
+    fn visible_bounds(&self) -> Bounds<Pixels> {
+        unsafe {
+            let dominated_screen = self.get_nsscreen();
+
+            if dominated_screen == nil {
+                return self.bounds();
+            }
+
+            let screen_frame = NSScreen::frame(dominated_screen);
+            let visible_frame = NSScreen::visibleFrame(dominated_screen);
+
+            // Convert from bottom-left origin (AppKit) to top-left origin
+            let origin_y =
+                screen_frame.size.height - visible_frame.origin.y - visible_frame.size.height
+                    + screen_frame.origin.y;
+
+            Bounds {
+                origin: point(
+                    px(visible_frame.origin.x as f32 - screen_frame.origin.x as f32),
+                    px(origin_y as f32),
+                ),
+                size: size(
+                    px(visible_frame.size.width as f32),
+                    px(visible_frame.size.height as f32),
+                ),
+            }
+        }
+    }
+}
+
+impl MacDisplay {
+    /// Find the NSScreen corresponding to this display
+    unsafe fn get_nsscreen(&self) -> id {
+        let screens = unsafe { NSScreen::screens(nil) };
+        let count = unsafe { NSArray::count(screens) };
+        let screen_number_key: id = unsafe { ns_string("NSScreenNumber") };
+
+        for i in 0..count {
+            let screen = unsafe { NSArray::objectAtIndex(screens, i) };
+            let device_description = unsafe { NSScreen::deviceDescription(screen) };
+            let screen_number = unsafe { device_description.objectForKey_(screen_number_key) };
+            let screen_id: CGDirectDisplayID = msg_send![screen_number, unsignedIntegerValue];
+            if screen_id == self.0 {
+                return screen;
+            }
+        }
+        nil
     }
 }

@@ -14,6 +14,7 @@ use gpui::{
 use language::Buffer;
 use text::BufferId;
 use util::ResultExt;
+use ztracing::instrument;
 
 use crate::{
     Project,
@@ -58,21 +59,31 @@ impl BranchDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let git_store = project.read(cx).git_store().clone();
+        let repo = git_store.read(cx).active_repository();
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
-            move |this, _git_store, event, _window, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::StatusesChanged { full_scan: _ },
-                    true,
-                )
-                | GitStoreEvent::ConflictsUpdated => {
+            move |this, _git_store, event, _window, cx| {
+                let should_update = match event {
+                    GitStoreEvent::ActiveRepositoryChanged(new_repo_id) => {
+                        this.repo.is_none() && new_repo_id.is_some()
+                    }
+                    GitStoreEvent::RepositoryUpdated(
+                        event_repo_id,
+                        RepositoryEvent::StatusesChanged,
+                        _,
+                    ) => this
+                        .repo
+                        .as_ref()
+                        .is_some_and(|r| r.read(cx).snapshot().id == *event_repo_id),
+                    GitStoreEvent::ConflictsUpdated => this.repo.is_some(),
+                    _ => false,
+                };
+
+                if should_update {
                     cx.emit(BranchDiffEvent::FileListChanged);
                     *this.update_needed.borrow_mut() = ();
                 }
-                _ => {}
             },
         );
 
@@ -81,7 +92,6 @@ impl BranchDiff {
             let this = cx.weak_entity();
             async |cx| Self::handle_status_updates(this, recv, cx).await
         });
-        let repo = git_store.read(cx).active_repository();
 
         Self {
             diff_base: source,
@@ -109,15 +119,18 @@ impl BranchDiff {
         while recv.next().await.is_some() {
             let Ok(needs_update) = this.update(cx, |this, cx| {
                 let mut needs_update = false;
-                let active_repo = this
-                    .project
-                    .read(cx)
-                    .git_store()
-                    .read(cx)
-                    .active_repository();
-                if active_repo != this.repo {
-                    needs_update = true;
-                    this.repo = active_repo;
+
+                if this.repo.is_none() {
+                    let active_repo = this
+                        .project
+                        .read(cx)
+                        .git_store()
+                        .read(cx)
+                        .active_repository();
+                    if active_repo.is_some() {
+                        this.repo = active_repo;
+                        needs_update = true;
+                    }
                 } else if let Some(repo) = this.repo.as_ref() {
                     repo.update(cx, |repo, _| {
                         if let Some(branch) = &repo.branch
@@ -258,6 +271,7 @@ impl BranchDiff {
         self.repo.as_ref()
     }
 
+    #[instrument(skip_all)]
     pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
         let mut output = Vec::default();
         let Some(repo) = self.repo.clone() else {
@@ -322,6 +336,7 @@ impl BranchDiff {
         output
     }
 
+    #[instrument(skip_all)]
     fn load_buffer(
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
@@ -333,8 +348,6 @@ impl BranchDiff {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let languages = project.update(cx, |project, _cx| project.languages().clone())?;
-
             let changes = if let Some(entry) = branch_diff {
                 let oid = match entry {
                     git::status::TreeDiffStatus::Added { .. } => None,
@@ -344,7 +357,7 @@ impl BranchDiff {
                 project
                     .update(cx, |project, cx| {
                         project.git_store().update(cx, |git_store, cx| {
-                            git_store.open_diff_since(oid, buffer.clone(), repo, languages, cx)
+                            git_store.open_diff_since(oid, buffer.clone(), repo, cx)
                         })
                     })?
                     .await?

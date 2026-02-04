@@ -43,9 +43,6 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         terminal_view::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         command_palette_hooks::init(cx);
-        language::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
         dap_adapters::init(cx);

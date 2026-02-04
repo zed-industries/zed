@@ -1,6 +1,6 @@
-use editor::{Editor, EditorEvent, MultiBufferSnapshot};
+use editor::{Editor, EditorEvent, MBTextSummary, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -55,7 +55,7 @@ impl UserCaretPosition {
             let line_start = Point::new(selection_end.row, 0);
 
             let chars_to_last_position = snapshot
-                .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
+                .text_summary_for_range::<MBTextSummary, _>(line_start..selection_end)
                 .chars as u32;
             (selection_end.row, chars_to_last_position)
         };
@@ -116,7 +116,7 @@ impl CursorPosition {
                                     for selection in editor.selections.all_adjusted(&snapshot) {
                                         let selection_summary = snapshot
                                             .buffer_snapshot()
-                                            .text_summary_for_range::<text::TextSummary, _>(
+                                            .text_summary_for_range::<MBTextSummary, _>(
                                             selection.start..selection.end,
                                         );
                                         cursor_position.selected_count.characters +=
@@ -293,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, RegisterSetting)]
 pub enum LineIndicatorFormat {
     Short,
     Long,

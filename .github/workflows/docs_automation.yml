@@ -1,0 +1,264 @@
+name: Documentation Automation
+
+on:
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'crates/**'
+  #     - 'extensions/**'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to analyze (gets full PR diff)'
+        required: false
+        type: string
+      trigger_sha:
+        description: 'Commit SHA to analyze (ignored if pr_number is set)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+  DROID_MODEL: claude-opus-4-5-20251101
+
+jobs:
+  docs-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Droid CLI
+        id: install-droid
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+          echo "DROID_BIN=${HOME}/.local/bin/droid" >> "$GITHUB_ENV"
+          # Verify installation
+          "${HOME}/.local/bin/droid" --version
+
+      - name: Setup Node.js (for Prettier)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Prettier
+        run: npm install -g prettier
+
+      - name: Get changed files
+        id: changed
+        run: |
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            # Get full PR diff
+            echo "Analyzing PR #${{ inputs.pr_number }}"
+            echo "source=pr" >> "$GITHUB_OUTPUT"
+            echo "ref=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+            gh pr diff "${{ inputs.pr_number }}" --name-only > /tmp/changed_files.txt
+          elif [ -n "${{ inputs.trigger_sha }}" ]; then
+            # Get single commit diff
+            SHA="${{ inputs.trigger_sha }}"
+            echo "Analyzing commit $SHA"
+            echo "source=commit" >> "$GITHUB_OUTPUT"
+            echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+            git diff --name-only "${SHA}^" "$SHA" > /tmp/changed_files.txt
+          else
+            # Default to current commit
+            SHA="${{ github.sha }}"
+            echo "Analyzing commit $SHA"
+            echo "source=commit" >> "$GITHUB_OUTPUT"
+            echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+            git diff --name-only "${SHA}^" "$SHA" > /tmp/changed_files.txt || git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt
+          fi
+
+          echo "Changed files:"
+          cat /tmp/changed_files.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Phase 0: Guardrails are loaded via AGENTS.md in each phase
+
+      # Phase 2: Explore Repository (Read-Only - default)
+      - name: "Phase 2: Explore Repository"
+        id: phase2
+        run: |
+          "$DROID_BIN" exec \
+            -m "$DROID_MODEL" \
+            -f .factory/prompts/docs-automation/phase2-explore.md \
+            > /tmp/phase2-output.txt 2>&1 || true
+          echo "Repository exploration complete"
+          cat /tmp/phase2-output.txt
+
+      # Phase 3: Analyze Changes (Read-Only - default)
+      - name: "Phase 3: Analyze Changes"
+        id: phase3
+        run: |
+          CHANGED_FILES=$(tr '\n' ' ' < /tmp/changed_files.txt)
+          echo "Analyzing changes in: $CHANGED_FILES"
+
+          # Build prompt with context
+          cat > /tmp/phase3-prompt.md << 'EOF'
+          $(cat .factory/prompts/docs-automation/phase3-analyze.md)
+
+          ## Context
+
+          ### Changed Files
+          $CHANGED_FILES
+
+          ### Phase 2 Output
+          $(cat /tmp/phase2-output.txt)
+          EOF
+
+          "$DROID_BIN" exec \
+            -m "$DROID_MODEL" \
+            "$(cat .factory/prompts/docs-automation/phase3-analyze.md)
+
+            Changed files: $CHANGED_FILES" \
+            > /tmp/phase3-output.md 2>&1 || true
+          echo "Change analysis complete"
+          cat /tmp/phase3-output.md
+
+      # Phase 4: Plan Documentation Impact (Read-Only - default)
+      - name: "Phase 4: Plan Documentation Impact"
+        id: phase4
+        run: |
+          "$DROID_BIN" exec \
+            -m "$DROID_MODEL" \
+            -f .factory/prompts/docs-automation/phase4-plan.md \
+            > /tmp/phase4-plan.md 2>&1 || true
+          echo "Documentation plan complete"
+          cat /tmp/phase4-plan.md
+
+          # Check if updates are required
+          if grep -q "NO_UPDATES_REQUIRED" /tmp/phase4-plan.md; then
+            echo "updates_required=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "updates_required=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Phase 5: Apply Plan (Write-Enabled with --auto medium)
+      - name: "Phase 5: Apply Documentation Plan"
+        id: phase5
+        if: steps.phase4.outputs.updates_required == 'true'
+        run: |
+          "$DROID_BIN" exec \
+            -m "$DROID_MODEL" \
+            --auto medium \
+            -f .factory/prompts/docs-automation/phase5-apply.md \
+            > /tmp/phase5-report.md 2>&1 || true
+          echo "Documentation updates applied"
+          cat /tmp/phase5-report.md
+
+      # Phase 5b: Format with Prettier
+      - name: "Phase 5b: Format with Prettier"
+        id: phase5b
+        if: steps.phase4.outputs.updates_required == 'true'
+        run: |
+          echo "Formatting documentation with Prettier..."
+          cd docs && prettier --write src/
+
+          echo "Verifying Prettier formatting passes..."
+          cd docs && prettier --check src/
+
+          echo "Prettier formatting complete"
+
+      # Phase 6: Summarize Changes (Read-Only - default)
+      - name: "Phase 6: Summarize Changes"
+        id: phase6
+        if: steps.phase4.outputs.updates_required == 'true'
+        run: |
+          # Get git diff of docs
+          git diff docs/src/ > /tmp/docs-diff.txt || true
+
+          "$DROID_BIN" exec \
+            -m "$DROID_MODEL" \
+            -f .factory/prompts/docs-automation/phase6-summarize.md \
+            > /tmp/phase6-summary.md 2>&1 || true
+          echo "Summary generated"
+          cat /tmp/phase6-summary.md
+
+      # Phase 7: Commit and Open PR
+      - name: "Phase 7: Create PR"
+        id: phase7
+        if: steps.phase4.outputs.updates_required == 'true'
+        run: |
+          # Check if there are actual changes
+          if git diff --quiet docs/src/; then
+            echo "No documentation changes detected"
+            exit 0
+          fi
+
+          # Configure git
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+          # Daily batch branch - one branch per day, multiple commits accumulate
+          BRANCH_NAME="docs/auto-update-$(date +%Y-%m-%d)"
+
+          # Stash local changes from phase 5
+          git stash push -m "docs-automation-changes" -- docs/src/
+
+          # Check if branch already exists on remote
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME" > /dev/null 2>&1; then
+            echo "Branch $BRANCH_NAME exists, checking out and updating..."
+            git fetch origin "$BRANCH_NAME"
+            git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
+          else
+            echo "Creating new branch $BRANCH_NAME..."
+            git checkout -b "$BRANCH_NAME"
+          fi
+
+          # Apply stashed changes
+          git stash pop || true
+
+          # Stage and commit
+          git add docs/src/
+          SUMMARY=$(head -50 < /tmp/phase6-summary.md)
+          git commit -m "docs: auto-update documentation
+
+          ${SUMMARY}
+
+          Triggered by: ${{ steps.changed.outputs.source }} ${{ steps.changed.outputs.ref }}
+
+          Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+
+          # Push
+          git push -u origin "$BRANCH_NAME"
+
+          # Check if PR already exists for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number' || echo "")
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR #$EXISTING_PR already exists for branch $BRANCH_NAME, updated with new commit"
+          else
+            # Create new PR
+            gh pr create \
+              --title "docs: automated documentation update ($(date +%Y-%m-%d))" \
+              --body-file /tmp/phase6-summary.md \
+              --base main || true
+            echo "PR created on branch: $BRANCH_NAME"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Summary output
+      - name: "Summary"
+        if: always()
+        run: |
+          echo "## Documentation Automation Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ steps.phase4.outputs.updates_required }}" == "false" ]; then
+            echo "No documentation updates required for this change." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f /tmp/phase6-summary.md ]; then
+            cat /tmp/phase6-summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Workflow completed. Check individual phase outputs for details." >> "$GITHUB_STEP_SUMMARY"
+          fi

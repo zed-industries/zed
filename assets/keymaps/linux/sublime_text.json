@@ -22,8 +22,8 @@
       "ctrl-^": ["workspace::MoveItemToPane", { "destination": 5 }],
       "ctrl-&": ["workspace::MoveItemToPane", { "destination": 6 }],
       "ctrl-*": ["workspace::MoveItemToPane", { "destination": 7 }],
-      "ctrl-(": ["workspace::MoveItemToPane", { "destination": 8 }]
-    }
+      "ctrl-(": ["workspace::MoveItemToPane", { "destination": 8 }],
+    },
   },
   {
     "context": "Editor",
@@ -55,20 +55,20 @@
       "alt-right": "editor::MoveToNextSubwordEnd",
       "alt-left": "editor::MoveToPreviousSubwordStart",
       "alt-shift-right": "editor::SelectToNextSubwordEnd",
-      "alt-shift-left": "editor::SelectToPreviousSubwordStart"
-    }
+      "alt-shift-left": "editor::SelectToPreviousSubwordStart",
+    },
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "ctrl-r": "outline::Toggle"
-    }
+      "ctrl-r": "outline::Toggle",
+    },
   },
   {
     "context": "Editor && !agent_diff",
     "bindings": {
-      "ctrl-k ctrl-z": "git::Restore"
-    }
+      "ctrl-k ctrl-z": "git::Restore",
+    },
   },
   {
     "context": "Pane",
@@ -83,15 +83,15 @@
       "alt-6": ["pane::ActivateItem", 5],
       "alt-7": ["pane::ActivateItem", 6],
       "alt-8": ["pane::ActivateItem", 7],
-      "alt-9": "pane::ActivateLastItem"
-    }
+      "alt-9": "pane::ActivateLastItem",
+    },
   },
   {
     "context": "Workspace",
     "bindings": {
       "ctrl-k ctrl-b": "workspace::ToggleLeftDock",
       // "ctrl-0": "project_panel::ToggleFocus", // normally resets zoom
-      "shift-ctrl-r": "project_symbols::Toggle"
-    }
-  }
+      "shift-ctrl-r": "project_symbols::Toggle",
+    },
+  },
 ]

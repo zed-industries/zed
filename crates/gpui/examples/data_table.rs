@@ -438,7 +438,7 @@ impl Render for DataTable {
                                     }),
                                 )
                                 .size_full()
-                                .track_scroll(self.scroll_handle.clone()),
+                                .track_scroll(&self.scroll_handle),
                             )
                             .child(self.render_scrollbar(window, cx)),
                     ),

@@ -23,7 +23,16 @@ html {
 body {
   margin: 0;
   font-size: 1.6rem;
-  overflow-x: hidden;
+  overflow: hidden;
+  height: 100vh;
+  overscroll-behavior-y: none;
+}
+
+#body-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 code {
@@ -37,6 +46,17 @@ main {
   overflow-wrap: break-word;
 }
 
+.noise-pattern {
+  pointer-events: none;
+  user-select: none;
+  z-index: 105;
+  position: absolute;
+  inset: 0;
+  background-size: 180px;
+  background-repeat: repeat;
+  opacity: var(--noise-opacity);
+}
+
 /* make wide tables scroll if they overflow */
 .table-wrapper {
   overflow-x: auto;
@@ -48,6 +68,7 @@ h3,
 h4,
 h5,
 h6 {
+  position: relative;
   font-family: var(--title-font);
   font-weight: 480;
   color: var(--title-color);
@@ -91,6 +112,9 @@ h2 {
 
 h3 {
   font-size: 2rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px dashed;
+  border-color: var(--border-light);
 }
 
 h4 {
@@ -109,6 +133,14 @@ h5 {
   margin-block-end: 0;
 }
 
+code:focus-visible,
+pre:focus-visible,
+li:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #094ece80;
+}
+
 .header + .header h3,
 .header + .header h4,
 .header + .header h5 {
@@ -121,10 +153,9 @@ h3:target::before,
 h4:target::before,
 h5:target::before,
 h6:target::before {
-  display: inline-block;
   content: "»";
-  margin-inline-start: -30px;
-  width: 30px;
+  position: absolute;
+  left: -1.5ch;
 }
 
 hr {
@@ -144,17 +175,27 @@ hr {
   scroll-margin-top: calc(var(--menu-bar-height) + 2rem);
 }
 
-.page {
-  outline: 0;
-  padding: 0 var(--page-padding);
-  margin-block-start: calc(
-    0px - var(--menu-bar-height)
-  ); /* Compensate for the #menu-bar-hover-placeholder */
-}
 .page-wrapper {
   box-sizing: border-box;
   background-color: var(--bg);
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
 }
+
+.page {
+  outline: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
+  min-width: 0;
+  position: relative;
+}
+
 .no-js .page-wrapper,
 .js:not(.sidebar-resizing) .page-wrapper {
   transition:
@@ -168,18 +209,23 @@ hr {
 }
 
 .content {
-  overflow-y: auto;
-  padding: 48px 4px;
+  padding: 48px 32px 0 32px;
+  display: flex;
+  justify-content: space-between;
+  gap: 36px;
 }
+
 .content main {
   margin-inline-start: auto;
   margin-inline-end: auto;
   max-width: var(--content-max-width);
 }
+
 .content p {
   line-height: 1.625em;
 }
 .content div.video {
+  z-index: 150;
   margin-top: 1rem;
   border: 1px solid;
   border-color: var(--border);
@@ -213,6 +259,8 @@ hr {
 }
 .content img,
 .content video {
+  position: relative;
+  z-index: 150;
   max-width: 100%;
   background-color: var(--media-bg);
   border: 1px solid;
@@ -333,7 +381,7 @@ blockquote .warning:before {
 kbd {
   background-color: rgba(8, 76, 207, 0.1);
   border-radius: 4px;
-  border: solid 1px var(--theme-popup-border);
+  border: solid 1px var(--popover-border);
   box-shadow: inset 0 -1px 0 var(--theme-hover);
   display: inline-block;
   font-size: var(--code-font-size);
@@ -378,15 +426,6 @@ kbd {
   visibility: visible;
 }
 
-.chapter li.part-title {
-  font-size: 18px;
-  font-family: var(--title-font);
-  font-weight: 520;
-  color: var(--title-color);
-  margin: 5px 0;
-  margin-top: 2rem;
-}
-
 .result-no-output {
   font-style: italic;
 }
@@ -394,4 +433,20 @@ kbd {
 code:not(pre code).hljs {
   color: var(--code-text) !important;
   background-color: var(--code-bg) !important;
+}
+
+@media only screen and (max-width: 1020px) {
+  .content {
+    padding: 16px 32px 0 32px;
+  }
+
+  .content main {
+    width: 100%;
+  }
+}
+
+@media only screen and (max-width: 400px) {
+  .content {
+    padding: 16px 16px 0 16px;
+  }
 }

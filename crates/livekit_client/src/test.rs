@@ -714,6 +714,14 @@ impl Room {
         self.0.lock().token.clone()
     }
 
+    pub fn name(&self) -> String {
+        "test_room".to_string()
+    }
+
+    pub async fn sid(&self) -> String {
+        "RM_test_session".to_string()
+    }
+
     pub fn play_remote_audio_track(
         &self,
         _track: &RemoteAudioTrack,

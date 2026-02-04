@@ -3,13 +3,8 @@ pub mod auth;
 pub mod db;
 pub mod env;
 pub mod executor;
-pub mod llm;
-pub mod migrations;
 pub mod rpc;
 pub mod seed;
-
-#[cfg(test)]
-mod tests;
 
 use anyhow::Context as _;
 use aws_config::{BehaviorVersion, Region};
@@ -171,7 +166,7 @@ impl Config {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn test() -> Self {
         Self {
             http_port: 0,
