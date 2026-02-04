@@ -28,6 +28,7 @@ project.workspace = true
 proto.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
 sysinfo.workspace = true
