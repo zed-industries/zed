@@ -136,7 +136,7 @@ Zed's Agent Panel provides the `agent.tool_permissions.default` setting to contr
 - `"allow"` - Auto-approves tool actions without prompting
 - `"deny"` - Blocks all tool actions
 
-You can change this in either your `settings.json` or through the Agent Panel's settings view.
+You can change this in either your `settings.json` or through the Agent Panel settings.
 
 Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
