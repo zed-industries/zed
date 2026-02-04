@@ -84,6 +84,9 @@ pub(crate) fn render_tool_permissions_setup_page(
     let page_description =
         "Configure regex patterns to control which tool actions require confirmation.";
 
+    let settings = AgentSettings::get_global(cx);
+    let global_default = settings.tool_permissions.default;
+
     let scroll_step = px(40.);
 
     v_flex()
@@ -117,9 +120,11 @@ pub(crate) fn render_tool_permissions_setup_page(
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
+        .child(render_global_default_mode_section(global_default))
+        .child(Divider::horizontal())
         .child(
             v_flex()
-                .mt_4()
+                .mt_2()
                 .children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
                     let mut elements: Vec<AnyElement> = vec![item];
                     if i + 1 < TOOLS.len() {
@@ -345,9 +350,6 @@ fn render_verification_section(
 ) -> AnyElement {
     let input_id = format!("{}-verification-input", tool_id);
 
-    let settings = AgentSettings::get_global(cx);
-    let global_default_is_allow = settings.tool_permissions.default == ToolPermissionMode::Allow;
-
     let editor = window.use_keyed_state(input_id, cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
         editor.set_placeholder_text("Enter a rule to see how it applies…", window, cx);
@@ -375,37 +377,12 @@ fn render_verification_section(
         (Some(decision), matches)
     };
 
-    let global_allow_description = "The global tool permission default is set to \"allow\": tools will be allowed unless blocked by deny or confirm patterns.";
     let theme_colors = cx.theme().colors();
 
     v_flex()
         .mt_3()
         .min_w_0()
         .gap_2()
-        .when(global_default_is_allow, |this| {
-            this.child(
-                Banner::new()
-                    .severity(Severity::Warning)
-                    .wrap_content(false)
-                    .child(
-                        Label::new(global_allow_description)
-                            .size(LabelSize::Small)
-                            .mt(px(3.))
-                            .mr_8(),
-                    )
-                    .action_slot(
-                        Button::new("configure_setting", "Configure Setting")
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.navigate_to_setting(
-                                    "agent.tool_permissions.default",
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
-            )
-        })
         .child(
             v_flex()
                 .p_2p5()
@@ -687,6 +664,56 @@ fn render_add_pattern_input(
         .into_any_element()
 }
 
+fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyElement {
+    let mode_label = match current_mode {
+        ToolPermissionMode::Allow => "Allow",
+        ToolPermissionMode::Deny => "Deny",
+        ToolPermissionMode::Confirm => "Confirm",
+    };
+
+    h_flex()
+        .mt_4()
+        .justify_between()
+        .child(
+            v_flex()
+                .child(Label::new("Default Permission Mode"))
+                .child(
+                    Label::new(
+                        "Controls the default behavior for all tool actions. Per-tool rules and patterns can override this.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .child(
+            PopoverMenu::new("global-default-mode")
+                .trigger(
+                    Button::new("global-mode-trigger", mode_label)
+                        .tab_index(0_isize)
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .icon(IconName::ChevronDown)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::Small),
+                )
+                .menu(move |window, cx| {
+                    Some(ContextMenu::build(window, cx, move |menu, _, _| {
+                        menu.entry("Confirm", None, move |_, cx| {
+                            set_global_default_mode(ToolPermissionMode::Confirm, cx);
+                        })
+                        .entry("Allow", None, move |_, cx| {
+                            set_global_default_mode(ToolPermissionMode::Allow, cx);
+                        })
+                        .entry("Deny", None, move |_, cx| {
+                            set_global_default_mode(ToolPermissionMode::Deny, cx);
+                        })
+                    }))
+                })
+                .anchor(gpui::Corner::TopRight),
+        )
+        .into_any_element()
+}
+
 fn render_default_mode_section(
     tool_id: &'static str,
     current_mode: ToolPermissionMode,
@@ -876,6 +903,17 @@ fn delete_pattern(tool_name: &str, rule_type: RuleType, pattern: &str, cx: &mut 
                 list.0.retain(|r| r.pattern != pattern);
             }
         }
+    });
+}
+
+fn set_global_default_mode(mode: ToolPermissionMode, cx: &mut App) {
+    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+        settings
+            .agent
+            .get_or_insert_default()
+            .tool_permissions
+            .get_or_insert_default()
+            .default = Some(mode);
     });
 }
 

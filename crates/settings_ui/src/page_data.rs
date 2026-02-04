@@ -6893,35 +6893,9 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 13] {
+    fn agent_configuration_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Tool Permission Default Mode",
-                description: "Controls the default behavior for tool actions. 'allow' auto-approves, 'confirm' (default) prompts for approval, and 'deny' blocks all actions. Per-tool rules and patterns can override this default.",
-                field: Box::new(SettingField {
-                    json_path: Some("agent.tool_permissions.default"),
-                    pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .tool_permissions
-                            .as_ref()?
-                            .default
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .tool_permissions
-                            .get_or_insert_default()
-                            .default = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Configure Tool Rules".into(),
                 r#type: Default::default(),
