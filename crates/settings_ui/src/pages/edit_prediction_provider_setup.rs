@@ -1,10 +1,9 @@
 use edit_prediction::{
-    ApiKeyState, MercuryFeatureFlag, SweepFeatureFlag,
+    ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
@@ -29,7 +28,7 @@ pub(crate) fn render_edit_prediction_setup_page(
     let providers = [
         Some(render_provider_dropdown(window, cx)),
         render_github_copilot_provider(window, cx).map(IntoElement::into_any_element),
-        cx.has_flag::<MercuryFeatureFlag>().then(|| {
+        Some(
             render_api_key_provider(
                 IconName::Inception,
                 "Mercury",
@@ -40,9 +39,9 @@ pub(crate) fn render_edit_prediction_setup_page(
                 window,
                 cx,
             )
-            .into_any_element()
-        }),
-        cx.has_flag::<SweepFeatureFlag>().then(|| {
+            .into_any_element(),
+        ),
+        Some(
             render_api_key_provider(
                 IconName::SweepAi,
                 "Sweep",
@@ -62,8 +61,8 @@ pub(crate) fn render_edit_prediction_setup_page(
                 window,
                 cx,
             )
-            .into_any_element()
-        }),
+            .into_any_element(),
+        ),
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(

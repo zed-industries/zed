@@ -105,18 +105,6 @@ const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
-pub struct SweepFeatureFlag;
-
-impl FeatureFlag for SweepFeatureFlag {
-    const NAME: &str = "sweep-ai";
-}
-
-pub struct MercuryFeatureFlag;
-
-impl FeatureFlag for MercuryFeatureFlag {
-    const NAME: &str = "mercury";
-}
-
 static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
     LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
 
