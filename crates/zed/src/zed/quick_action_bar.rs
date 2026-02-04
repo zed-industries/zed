@@ -114,6 +114,7 @@ impl Render for QuickActionBar {
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
+        let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
         let is_full = editor_value.mode().is_full();
         let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
@@ -375,6 +376,29 @@ impl Render for QuickActionBar {
                                                 .ok();
                                         }
                                     }
+                                );
+                            }
+
+                            if is_full {
+                                menu = menu.toggleable_entry(
+                                    "Semantic Highlights",
+                                    semantic_highlights_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleSemanticHighlights.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_semantic_highlights(
+                                                        &editor::actions::ToggleSemanticHighlights,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
                                 );
                             }
 

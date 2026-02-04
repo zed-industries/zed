@@ -17,10 +17,25 @@ use ui::ActiveTheme as _;
 
 use crate::{
     Editor,
+    actions::ToggleSemanticHighlights,
     display_map::{HighlightStyleInterner, SemanticTokenHighlight},
 };
 
 impl Editor {
+    pub fn semantic_highlights_enabled(&self) -> bool {
+        self.semantic_tokens_enabled
+    }
+
+    pub fn toggle_semantic_highlights(
+        &mut self,
+        _: &ToggleSemanticHighlights,
+        _window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.semantic_tokens_enabled = !self.semantic_tokens_enabled;
+        self.update_semantic_tokens(None, None, cx);
+    }
+
     pub(crate) fn update_semantic_tokens(
         &mut self,
         buffer_id: Option<BufferId>,
@@ -33,6 +48,7 @@ impl Editor {
                 display_map.semantic_token_highlights.clear();
             });
             self.update_semantic_tokens_task = Task::ready(());
+            cx.notify();
             return;
         }
 
