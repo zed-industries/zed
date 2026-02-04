@@ -169,13 +169,12 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     }
 
     fn discard(&mut self, reason: EditPredictionDismissReason, cx: &mut Context<Self>) {
+        let reject_reason = match reason {
+            EditPredictionDismissReason::Rejected => EditPredictionRejectReason::Rejected,
+            EditPredictionDismissReason::Discarded => EditPredictionRejectReason::Discarded,
+        };
         self.store.update(cx, |store, cx| {
-            store.reject_current_prediction(
-                EditPredictionRejectReason::Discarded,
-                &self.project,
-                reason,
-                cx,
-            );
+            store.reject_current_prediction(reject_reason, &self.project, cx);
         });
     }
 
@@ -213,7 +212,6 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 store.reject_current_prediction(
                     EditPredictionRejectReason::InterpolatedEmpty,
                     &self.project,
-                    EditPredictionDismissReason::Ignored,
                     cx,
                 );
                 return None;

@@ -8089,7 +8089,7 @@ impl Editor {
             let reason = if should_report_edit_prediction_event {
                 EditPredictionDismissReason::Rejected
             } else {
-                EditPredictionDismissReason::Ignored
+                EditPredictionDismissReason::Discarded
             };
             provider.discard(reason, cx);
         }

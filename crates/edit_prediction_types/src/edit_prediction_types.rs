@@ -6,7 +6,7 @@ use gpui::{App, Context, Entity, SharedString};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditPredictionDismissReason {
     Rejected,
-    Ignored,
+    Discarded,
 }
 use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
