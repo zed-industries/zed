@@ -13958,6 +13958,7 @@ dependencies = [
  "regex",
  "serde",
  "tokio",
+ "util",
  "zed-reqwest",
 ]
 
@@ -15198,6 +15199,8 @@ dependencies = [
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
+ "agent",
+ "agent_settings",
  "anyhow",
  "assets",
  "bm25",
@@ -15208,7 +15211,6 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",

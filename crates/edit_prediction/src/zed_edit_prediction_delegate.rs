@@ -76,6 +76,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                     .with_down(IconName::ZedPredictDown)
                     .with_error(IconName::ZedPredictError)
             }
+            EditPredictionModel::Ollama => EditPredictionIconSet::new(IconName::AiOllama),
         }
     }
 

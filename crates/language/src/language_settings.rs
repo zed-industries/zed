@@ -392,6 +392,8 @@ pub struct EditPredictionSettings {
     pub codestral: CodestralSettings,
     /// Settings specific to Sweep.
     pub sweep: SweepSettings,
+    /// Settings specific to Ollama.
+    pub ollama: OllamaSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -448,6 +450,16 @@ pub struct SweepSettings {
     /// diagnostics, file paths, repository names, and generated predictions
     /// to improve the service.
     pub privacy_mode: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OllamaSettings {
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_output_tokens: u32,
+    /// Custom API URL to use for Ollama.
+    pub api_url: Arc<str>,
 }
 
 impl AllLanguageSettings {
@@ -681,6 +693,12 @@ impl settings::Settings for AllLanguageSettings {
         let sweep_settings = SweepSettings {
             privacy_mode: sweep.privacy_mode.unwrap(),
         };
+        let ollama = edit_predictions.ollama.unwrap();
+        let ollama_settings = OllamaSettings {
+            model: ollama.model.map(|m| m.0),
+            max_output_tokens: ollama.max_output_tokens.unwrap(),
+            api_url: ollama.api_url.unwrap().into(),
+        };
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
@@ -720,6 +738,7 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 codestral: codestral_settings,
                 sweep: sweep_settings,
+                ollama: ollama_settings,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
                 example_capture_rate: edit_predictions.example_capture_rate,

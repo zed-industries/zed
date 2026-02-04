@@ -84,6 +84,7 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    Ollama,
     Sweep,
     Mercury,
     Experimental(&'static str),
@@ -104,6 +105,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Supermaven,
             Zed,
             Codestral,
+            Ollama,
             Sweep,
             Mercury,
             Experimental(String),
@@ -115,6 +117,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Ollama => EditPredictionProvider::Ollama,
             Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
@@ -142,6 +145,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Ollama
             | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
@@ -160,6 +164,7 @@ impl EditPredictionProvider {
                 EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
             ) => Some("Zeta2"),
             EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+            EditPredictionProvider::Ollama => Some("Ollama"),
         }
     }
 }
@@ -183,6 +188,8 @@ pub struct EditPredictionSettingsContent {
     pub codestral: Option<CodestralSettingsContent>,
     /// Settings specific to Sweep.
     pub sweep: Option<SweepSettingsContent>,
+    /// Settings specific to Ollama.
+    pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -240,6 +247,48 @@ pub struct SweepSettingsContent {
     ///
     /// Default: false
     pub privacy_mode: Option<bool>,
+}
+
+/// Ollama model name for edit predictions.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct OllamaModelName(pub String);
+
+impl AsRef<str> for OllamaModelName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for OllamaModelName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<OllamaModelName> for String {
+    fn from(value: OllamaModelName) -> Self {
+        value.0
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct OllamaEditPredictionSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: none
+    pub model: Option<OllamaModelName>,
+    /// Maximum tokens to generate for FIM models.
+    /// This setting does not apply to sweep models.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "http://localhost:11434"
+    pub api_url: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.

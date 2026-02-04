@@ -3,9 +3,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
 use copilot::Status;
-use edit_prediction::{
-    EditPredictionStore, MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag,
-};
+use edit_prediction::{EditPredictionStore, Zeta2FeatureFlag};
 use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -89,9 +87,9 @@ impl Render for EditPredictionButton {
             return div().hidden();
         }
 
-        let all_language_settings = all_language_settings(None, cx);
+        let language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.edit_predictions.provider {
+        match language_settings.edit_predictions.provider {
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = EditPredictionStore::try_global(cx)
                     .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
@@ -303,6 +301,60 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::Ollama,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("ollama-icon", IconName::AiOllama)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                let settings = all_language_settings(None, cx);
+                                let tooltip_meta = match settings
+                                    .edit_predictions
+                                    .ollama
+                                    .model
+                                    .as_deref()
+                                {
+                                    Some(model) if !model.trim().is_empty() => {
+                                        format!("Powered by Ollama ({model})")
+                                    }
+                                    _ => {
+                                        "Ollama model not configured — configure a model before use"
+                                            .to_string()
+                                    }
+                                };
+
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             provider @ (EditPredictionProvider::Experimental(_)
             | EditPredictionProvider::Zed
             | EditPredictionProvider::Sweep
@@ -434,22 +486,11 @@ impl Render for EditPredictionButton {
                 let this = cx.weak_entity();
 
                 let mut popover_menu = PopoverMenu::new("edit-prediction")
-                    .when(user.is_some(), |popover_menu| {
+                    .map(|popover_menu| {
                         let this = this.clone();
-
                         popover_menu.menu(move |window, cx| {
                             this.update(cx, |this, cx| {
                                 this.build_edit_prediction_context_menu(provider, window, cx)
-                            })
-                            .ok()
-                        })
-                    })
-                    .when(user.is_none(), |popover_menu| {
-                        let this = this.clone();
-
-                        popover_menu.menu(move |window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.build_zeta_upsell_context_menu(window, cx)
                             })
                             .ok()
                         })
@@ -506,6 +547,7 @@ impl EditPredictionButton {
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
 
+        edit_prediction::ollama::ensure_authenticated(cx);
         let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
 
@@ -981,7 +1023,55 @@ impl EditPredictionButton {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, window, cx| {
-            if let Some(usage) = self
+            let user = self.user_store.read(cx).current_user();
+
+            let needs_sign_in = user.is_none()
+                && matches!(
+                    provider,
+                    EditPredictionProvider::None | EditPredictionProvider::Zed
+                );
+
+            if needs_sign_in {
+                menu = menu
+                    .custom_row(move |_window, cx| {
+                        let description = indoc! {
+                            "You get 2,000 accepted suggestions at every keystroke for free, \
+                            powered by Zeta, our open-source, open-data model"
+                        };
+
+                        v_flex()
+                            .max_w_64()
+                            .h(rems_from_px(148.))
+                            .child(render_zeta_tab_animation(cx))
+                            .child(Label::new("Edit Prediction"))
+                            .child(
+                                Label::new(description)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                    .separator()
+                    .entry("Sign In & Start Using", None, |window, cx| {
+                        let client = Client::global(cx);
+                        window
+                            .spawn(cx, async move |cx| {
+                                client
+                                    .sign_in_with_optional_connect(true, &cx)
+                                    .await
+                                    .log_err();
+                            })
+                            .detach();
+                    })
+                    .link(
+                        "Learn More",
+                        OpenBrowser {
+                            url: zed_urls::edit_prediction_docs(cx),
+                        }
+                        .boxed_clone(),
+                    )
+                    .separator();
+            } else if let Some(usage) = self
                 .edit_prediction_provider
                 .as_ref()
                 .and_then(|provider| provider.usage(cx))
@@ -1063,8 +1153,9 @@ impl EditPredictionButton {
                     .separator();
             }
 
-            menu = self.build_language_settings_menu(menu, window, cx);
-
+            if !needs_sign_in {
+                menu = self.build_language_settings_menu(menu, window, cx);
+            }
             menu = self.add_provider_switching_section(menu, provider, cx);
             menu = menu.separator().item(
                 ContextMenuEntry::new("Configure Providers")
@@ -1081,55 +1172,6 @@ impl EditPredictionButton {
                         );
                     }),
             );
-
-            menu
-        })
-    }
-
-    fn build_zeta_upsell_context_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |mut menu, _window, cx| {
-            menu = menu
-                .custom_row(move |_window, cx| {
-                    let description = indoc! {
-                        "You get 2,000 accepted suggestions at every keystroke for free, \
-                        powered by Zeta, our open-source, open-data model"
-                    };
-
-                    v_flex()
-                        .max_w_64()
-                        .h(rems_from_px(148.))
-                        .child(render_zeta_tab_animation(cx))
-                        .child(Label::new("Edit Prediction"))
-                        .child(
-                            Label::new(description)
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .into_any_element()
-                })
-                .separator()
-                .entry("Sign In & Start Using", None, |window, cx| {
-                    let client = Client::global(cx);
-                    window
-                        .spawn(cx, async move |cx| {
-                            client
-                                .sign_in_with_optional_connect(true, &cx)
-                                .await
-                                .log_err();
-                        })
-                        .detach();
-                })
-                .link(
-                    "Learn More",
-                    OpenBrowser {
-                        url: zed_urls::edit_prediction_docs(cx),
-                    }
-                    .boxed_clone(),
-                );
 
             menu
         })
@@ -1318,18 +1360,20 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    if cx.has_flag::<SweepFeatureFlag>()
-        && edit_prediction::sweep_ai::sweep_api_token(cx)
-            .read(cx)
-            .has_key()
+    if edit_prediction::ollama::is_available(cx) {
+        providers.push(EditPredictionProvider::Ollama);
+    }
+
+    if edit_prediction::sweep_ai::sweep_api_token(cx)
+        .read(cx)
+        .has_key()
     {
         providers.push(EditPredictionProvider::Sweep);
     }
 
-    if cx.has_flag::<MercuryFeatureFlag>()
-        && edit_prediction::mercury::mercury_api_token(cx)
-            .read(cx)
-            .has_key()
+    if edit_prediction::mercury::mercury_api_token(cx)
+        .read(cx)
+        .has_key()
     {
         providers.push(EditPredictionProvider::Mercury);
     }
