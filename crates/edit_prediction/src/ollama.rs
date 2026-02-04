@@ -159,7 +159,7 @@ impl Ollama {
 
                 let inputs = ZetaPromptInput {
                     events: events.clone(),
-                    related_files: related_files.clone(),
+                    related_files,
                     cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
                         - context_offset_range.start,
                     cursor_path: full_path.clone(),

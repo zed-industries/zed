@@ -19,7 +19,6 @@ struct OllamaModelPickerDelegate {
     models: Vec<SharedString>,
     filtered_models: Vec<StringMatch>,
     selected_index: usize,
-    query: String,
     on_model_changed: Arc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
 }
 
@@ -31,7 +30,7 @@ impl OllamaModelPickerDelegate {
     ) -> Self {
         let mut models = Self::fetch_ollama_models(cx);
 
-        let current_in_list = models.iter().any(|m| *m == current_model);
+        let current_in_list = models.contains(&current_model);
         if !current_model.is_empty() && !current_in_list {
             models.insert(0, current_model.clone());
         }
@@ -56,7 +55,6 @@ impl OllamaModelPickerDelegate {
             models,
             filtered_models,
             selected_index,
-            query: String::new(),
             on_model_changed: Arc::new(on_model_changed),
         }
     }
@@ -102,7 +100,7 @@ impl PickerDelegate for OllamaModelPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search models or enter custom name…".into()
+        "Search models…".into()
     }
 
     fn update_matches(
@@ -111,50 +109,22 @@ impl PickerDelegate for OllamaModelPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<OllamaModelPicker>,
     ) -> Task<()> {
-        self.query = query.clone();
-        let models = self.models.clone();
+        let query_lower = query.to_lowercase();
 
-        let matches: Vec<StringMatch> = if query.is_empty() {
-            models
-                .iter()
-                .enumerate()
-                .map(|(index, model)| StringMatch {
-                    candidate_id: index,
-                    string: model.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect()
-        } else {
-            let filtered: Vec<StringMatch> = models
-                .iter()
-                .enumerate()
-                .filter(|(_, model)| model.to_lowercase().contains(&query.to_lowercase()))
-                .map(|(index, model)| StringMatch {
-                    candidate_id: index,
-                    string: model.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect();
-
-            let query_already_in_list = filtered.iter().any(|m| m.string == query);
-            if query_already_in_list {
-                filtered
-            } else {
-                std::iter::once(StringMatch {
-                    candidate_id: usize::MAX,
-                    string: query.clone(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .chain(filtered)
-                .collect()
-            }
-        };
+        self.filtered_models = self
+            .models
+            .iter()
+            .enumerate()
+            .filter(|(_, model)| query.is_empty() || model.to_lowercase().contains(&query_lower))
+            .map(|(index, model)| StringMatch {
+                candidate_id: index,
+                string: model.to_string(),
+                positions: Vec::new(),
+                score: 0.0,
+            })
+            .collect();
 
         self.selected_index = 0;
-        self.filtered_models = matches;
         cx.notify();
 
         Task::ready(())
