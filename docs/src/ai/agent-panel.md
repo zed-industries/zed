@@ -47,12 +47,27 @@ Every time the model performs an edit, you should see a "Restore Checkpoint" but
 
 The checkpoint button appears even if you interrupt the thread midway through an edit, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
 
+### Context Menu {#context-menu}
+
+Right-click on any agent response in the thread view to access a context menu with the following actions:
+
+- **Copy Selection**: Copies the currently selected text as Markdown (available when text is selected).
+- **Copy This Agent Response**: Copies the full text of the agent response you right-clicked on.
+- **Scroll to Top / Scroll to Bottom**: Scrolls to the beginning or end of the thread, depending on your current position.
+- **Open Thread as Markdown**: Opens the entire thread as a Markdown file in a new tab.
+
+### Navigating the Thread {#navigating-the-thread}
+
+In long conversations, use the scroll button at the bottom of the panel to jump to your most recent prompt.
+
 ### Navigating History {#navigating-history}
 
 To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding when focused on the panel's editor, or click the menu icon button at the top right of the panel.
 Doing that will open a dropdown that shows you your six most recently updated threads.
 
 To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
+
+Thread titles are auto-generated based on the conversation content. To regenerate a title, open the ellipsis menu in the top right of the panel and select "Regenerate Thread Title".
 
 ### Following the Agent {#following-the-agent}
 
@@ -138,6 +153,8 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
 
+Use {#kb agent::CycleModeSelector} to switch between profiles without opening the modal.
+
 #### Custom Profiles {#custom-profiles}
 
 You can also create a custom profile through the Agent Profile modal.
@@ -149,6 +166,8 @@ In the Agent Profile modal, select a built-in profile, navigate to `Configure To
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
 All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your `settings.json` file.
+
+To delete a custom profile, open the Agent Profile modal, select the profile you want to remove, and click the delete button.
 
 ### Tool Approval
 

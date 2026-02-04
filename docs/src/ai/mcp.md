@@ -9,6 +9,8 @@ Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to inter
 Zed currently supports MCP's [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and [Prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) features.
 We welcome contributions that help advance Zed's MCP feature coverage (Discovery, Sampling, Elicitation, etc).
 
+Zed also handles the `notifications/tools/list_changed` notification from MCP servers. When a server adds, removes, or modifies its available tools at runtime, Zed automatically reloads the tool list without requiring a server restart.
+
 ## Installing MCP Servers
 
 ### As Extensions
