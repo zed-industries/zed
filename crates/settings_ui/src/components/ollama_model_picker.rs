@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use fuzzy::StringMatch;
 use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Task, Window, px};
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};
@@ -28,7 +27,7 @@ impl OllamaModelPickerDelegate {
         on_model_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
         cx: &mut Context<OllamaModelPicker>,
     ) -> Self {
-        let mut models = Self::fetch_ollama_models(cx);
+        let mut models = edit_prediction::ollama::fetch_models(cx);
 
         let current_in_list = models.contains(&current_model);
         if !current_model.is_empty() && !current_in_list {
@@ -57,28 +56,6 @@ impl OllamaModelPickerDelegate {
             selected_index,
             on_model_changed: Arc::new(on_model_changed),
         }
-    }
-
-    fn fetch_ollama_models(cx: &mut App) -> Vec<SharedString> {
-        let ollama_provider_id = LanguageModelProviderId::new("ollama");
-
-        let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&ollama_provider_id)
-        else {
-            return Vec::new();
-        };
-
-        // Re-fetch models in case ollama has been started or updated since
-        // Zed was launched.
-        provider.authenticate(cx).detach_and_log_err(cx);
-
-        let mut models: Vec<SharedString> = provider
-            .provided_models(cx)
-            .into_iter()
-            .map(|model| SharedString::from(model.id().0.to_string()))
-            .collect();
-
-        models.sort();
-        models
     }
 }
 
