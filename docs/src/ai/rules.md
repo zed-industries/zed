@@ -1,6 +1,6 @@
 # Using Rules {#using-rules}
 
-Rules are prompts inserted at the beginning of each agent interaction. Add them via files in your worktree (`.rules`, etc.) or through the Rules Library for reuse across projects.
+Rules are prompts inserted at the beginning of each agent interaction. Add them via files in your worktree (`.rules`, etc.) or through the Rules Library for reuse across projects and threads.
 
 ## `.rules` files
 
