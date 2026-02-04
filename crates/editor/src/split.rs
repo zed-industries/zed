@@ -25,7 +25,8 @@ use crate::{
 use workspace::{ActivatePaneLeft, ActivatePaneRight, Item, Workspace};
 
 use crate::{
-    Autoscroll, DisplayMap, Editor, EditorEvent, ToggleCodeActions, ToggleSoftWrap,
+    Autoscroll, DisplayMap, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleCodeActions,
+    ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -308,6 +309,22 @@ impl SplittableEditor {
         self.lhs.is_some()
     }
 
+    pub fn set_render_diff_hunk_controls(
+        &self,
+        render_diff_hunk_controls: RenderDiffHunkControlsFn,
+        cx: &mut Context<Self>,
+    ) {
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
+        });
+
+        if let Some(lhs) = &self.lhs {
+            lhs.editor.update(cx, |editor, cx| {
+                editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
+            });
+        }
+    }
+
     pub fn last_selected_editor(&self) -> &Entity<Editor> {
         if let Some(lhs) = &self.lhs
             && lhs.has_latest_selection
@@ -395,6 +412,8 @@ impl SplittableEditor {
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
+
+        let render_diff_hunk_controls = self.rhs_editor.read(cx).render_diff_hunk_controls.clone();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
@@ -404,6 +423,10 @@ impl SplittableEditor {
             editor.set_show_vertical_scrollbar(false, cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
+        });
+
+        lhs_editor.update(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
         let subscriptions =
