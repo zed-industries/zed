@@ -256,7 +256,6 @@ impl Companion {
 
         let excerpt = convert_fn(
             excerpt_map,
-            // FIXME
             our_snapshot,
             companion_snapshot,
             (Bound::Included(point), Bound::Included(point)),

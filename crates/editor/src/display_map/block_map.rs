@@ -654,7 +654,7 @@ impl BlockMap {
 
                     let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
-                    // FIXME hsou
+                    // TODO(split-diff) should use trailing_excerpt_update_count for the second case
                     if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
                         *my_end.row_mut() += 1;
                         *my_end.column_mut() = 0;
