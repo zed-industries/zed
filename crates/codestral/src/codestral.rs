@@ -6,7 +6,7 @@ use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
 use icons::IconName;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
+    Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint, language_settings::all_language_settings,
 };
 use language_models::MistralLanguageModelProvider;
 use mistral::CODESTRAL_API_URL;

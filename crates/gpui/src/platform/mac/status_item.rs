@@ -1,18 +1,17 @@
 use crate::{
+    Scene,
     geometry::{
         rect::RectF,
-        vector::{vec2f, Vector2F},
+        vector::{Vector2F, vec2f},
     },
     platform::{
-        self,
+        self, Event, FontSystem, WindowBounds,
         mac::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer},
-        Event, FontSystem, WindowBounds,
     },
-    Scene,
 };
 use cocoa::{
     appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
-    base::{id, nil, YES},
+    base::{YES, id, nil},
     foundation::{NSPoint, NSRect, NSSize},
 };
 use ctor::ctor;

@@ -75,8 +75,8 @@ pub(crate) struct SearchUnderCursorPrevious {
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
-    #[serde(default)]
-    regex: Option<bool>,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 /// Executes a find command to search for patterns in the buffer.
@@ -244,12 +244,15 @@ impl Vim {
             cx.focus_self(window);
 
             search_bar.set_replacement(None, cx);
-            let mut options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-            if let Some(regex) = action.regex {
-                options.set(SearchOptions::REGEX, regex);
+            let mut options = SearchOptions::NONE;
+            if action.regex {
+                options |= SearchOptions::REGEX;
             }
             if action.backwards {
                 options |= SearchOptions::BACKWARDS;
+            }
+            if EditorSettings::get_global(cx).search.case_sensitive {
+                options |= SearchOptions::CASE_SENSITIVE;
             }
             search_bar.set_search_options(options, cx);
             true
@@ -753,7 +756,7 @@ mod test {
     use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
-    use search::{self, BufferSearchBar};
+    use search::BufferSearchBar;
     use settings::SettingsStore;
 
     #[gpui::test]
@@ -1401,109 +1404,5 @@ mod test {
         // was cleared, so dismiss should not restore the cursor.
         // The cursor should be at the match location on line 3 (row 2).
         cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
-    }
-
-    #[gpui::test]
-    async fn test_vim_search_respects_search_settings(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-
-        // Test 1: Verify that search settings are respected when opening vim search
-        // Set search settings: regex=false, whole_word=true, case_sensitive=true
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.editor.search = Some(settings::SearchSettingsContent {
-                    button: Some(true),
-                    whole_word: Some(true),
-                    case_sensitive: Some(true),
-                    include_ignored: Some(false),
-                    regex: Some(false),
-                    center_on_match: Some(false),
-                });
-            });
-        });
-
-        cx.set_state("ˇhello Hello HELLO helloworld", Mode::Normal);
-        cx.simulate_keystrokes("/");
-        cx.run_until_parked();
-
-        // Verify search options are set from settings
-        let search_bar = cx.workspace(|workspace, _, cx| {
-            workspace
-                .active_pane()
-                .read(cx)
-                .toolbar()
-                .read(cx)
-                .item_of_type::<BufferSearchBar>()
-                .expect("Buffer search bar should be deployed")
-        });
-
-        cx.update_entity(search_bar, |bar, _window, _cx| {
-            // Should have WHOLE_WORD and CASE_SENSITIVE from settings
-            assert!(
-                bar.has_search_option(search::SearchOptions::WHOLE_WORD),
-                "whole_word setting should be respected"
-            );
-            assert!(
-                bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
-                "case_sensitive setting should be respected"
-            );
-            // Should NOT have REGEX since we set regex=false
-            assert!(
-                !bar.has_search_option(search::SearchOptions::REGEX),
-                "regex=false setting should be respected"
-            );
-        });
-
-        // Dismiss and test with different settings
-        cx.simulate_keystrokes("escape");
-        cx.run_until_parked();
-
-        // Test 2: Change settings to regex=true, whole_word=false
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.editor.search = Some(settings::SearchSettingsContent {
-                    button: Some(true),
-                    whole_word: Some(false),
-                    case_sensitive: Some(false),
-                    include_ignored: Some(true),
-                    regex: Some(true),
-                    center_on_match: Some(false),
-                });
-            });
-        });
-
-        cx.simulate_keystrokes("/");
-        cx.run_until_parked();
-
-        let search_bar = cx.workspace(|workspace, _, cx| {
-            workspace
-                .active_pane()
-                .read(cx)
-                .toolbar()
-                .read(cx)
-                .item_of_type::<BufferSearchBar>()
-                .expect("Buffer search bar should be deployed")
-        });
-
-        cx.update_entity(search_bar, |bar, _window, _cx| {
-            // Should have REGEX and INCLUDE_IGNORED from settings
-            assert!(
-                bar.has_search_option(search::SearchOptions::REGEX),
-                "regex=true setting should be respected"
-            );
-            assert!(
-                bar.has_search_option(search::SearchOptions::INCLUDE_IGNORED),
-                "include_ignored=true setting should be respected"
-            );
-            // Should NOT have WHOLE_WORD or CASE_SENSITIVE
-            assert!(
-                !bar.has_search_option(search::SearchOptions::WHOLE_WORD),
-                "whole_word=false setting should be respected"
-            );
-            assert!(
-                !bar.has_search_option(search::SearchOptions::CASE_SENSITIVE),
-                "case_sensitive=false setting should be respected"
-            );
-        });
     }
 }

@@ -49,8 +49,8 @@ use gpui::{
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
     TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
-    linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba, size,
-    solid_background, transparent_black,
+    linear_gradient, outline, pattern_slash, point, px, quad, relative, size, solid_background,
+    transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -4005,7 +4005,11 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
+                .bg(pattern_slash(
+                    cx.theme().colors().panel_background,
+                    8.0,
+                    8.0,
+                ))
                 .into_any(),
         };
 
@@ -10712,24 +10716,25 @@ impl Element for EditorElement {
 
                     let mode = snapshot.mode.clone();
 
-                    let (diff_hunk_controls, diff_hunk_control_bounds) = if is_read_only {
-                        (vec![], vec![])
-                    } else {
-                        self.layout_diff_hunk_controls(
-                            start_row..end_row,
-                            &row_infos,
-                            &text_hitbox,
-                            newest_selection_head,
-                            line_height,
-                            right_margin,
-                            scroll_pixel_position,
-                            &display_hunks,
-                            &highlighted_rows,
-                            self.editor.clone(),
-                            window,
-                            cx,
-                        )
-                    };
+                    let (diff_hunk_controls, diff_hunk_control_bounds) =
+                        if is_read_only && !self.editor.read(cx).delegate_stage_and_restore {
+                            (vec![], vec![])
+                        } else {
+                            self.layout_diff_hunk_controls(
+                                start_row..end_row,
+                                &row_infos,
+                                &text_hitbox,
+                                newest_selection_head,
+                                line_height,
+                                right_margin,
+                                scroll_pixel_position,
+                                &display_hunks,
+                                &highlighted_rows,
+                                self.editor.clone(),
+                                window,
+                                cx,
+                            )
+                        };
 
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,

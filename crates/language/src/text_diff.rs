@@ -301,6 +301,12 @@ pub fn apply_diff_patch(base_text: &str, patch: &str) -> Result<String, anyhow::
     result.map_err(|err| anyhow!(err))
 }
 
+pub fn apply_reversed_diff_patch(base_text: &str, patch: &str) -> Result<String, anyhow::Error> {
+    let patch = diffy::Patch::from_str(patch).context("Failed to parse patch")?;
+    let reversed = patch.reverse();
+    diffy::apply(base_text, &reversed).map_err(|err| anyhow!(err))
+}
+
 fn should_perform_word_diff_within_hunk(
     old_row_range: &Range<u32>,
     old_byte_range: &Range<usize>,
@@ -460,6 +466,17 @@ mod tests {
         let new_text = "one two\nthree FOUR five\nsix SEVEN eight nine\nten\nELEVEN\n";
         let patch = unified_diff(old_text, new_text);
         assert_eq!(apply_diff_patch(old_text, &patch).unwrap(), new_text);
+    }
+
+    #[test]
+    fn test_apply_reversed_diff_patch() {
+        let old_text = "one two\nthree four five\nsix seven eight nine\nten\n";
+        let new_text = "one two\nthree FOUR five\nsix SEVEN eight nine\nten\nELEVEN\n";
+        let patch = unified_diff(old_text, new_text);
+        assert_eq!(
+            apply_reversed_diff_patch(new_text, &patch).unwrap(),
+            old_text
+        );
     }
 
     #[test]
