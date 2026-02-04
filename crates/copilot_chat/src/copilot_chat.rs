@@ -595,7 +595,6 @@ impl CopilotChat {
     ) -> Self {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
-        println!("CopilotChat: Watching config directory {:?}", dir_path);
 
         cx.spawn(async move |this, cx| {
             let mut parent_watch_rx = watch_config_dir(
@@ -699,7 +698,6 @@ impl CopilotChat {
 
         cx.spawn(async move |this, cx| {
             let stats = request_user_stats(client, api_key, url).await?;
-            println!("Fetched Copilot user stats: {:?}", stats);
             this.update(cx, |this, cx| {
                 this.user_stats = Some(stats);
                 cx.notify();
