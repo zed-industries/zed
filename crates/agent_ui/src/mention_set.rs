@@ -336,6 +336,77 @@ impl MentionSet {
         })
     }
 
+    pub fn confirm_mention_for_selection(
+        &self,
+        abs_path: PathBuf,
+        line_range: RangeInclusive<u32>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow!("project not found")));
+        };
+        let Some(project_path) = project
+            .read(cx)
+            .project_path_for_absolute_path(&abs_path, cx)
+        else {
+            return Task::ready(Err(anyhow!("project path not found")));
+        };
+
+        let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+        cx.spawn(async move |_, cx| {
+            let buffer = buffer.await?;
+            let mention = buffer.update(cx, |buffer, cx| {
+                let start = Point::new(*line_range.start(), 0).min(buffer.max_point());
+                let end = Point::new(*line_range.end() + 1, 0).min(buffer.max_point());
+                let content = buffer.text_for_range(start..end).collect();
+                Mention::Text {
+                    content,
+                    tracked_buffers: vec![cx.entity()],
+                }
+            });
+            Ok(mention)
+        })
+    }
+
+    pub fn mention_task_for_uri(
+        &mut self,
+        mention_uri: MentionUri,
+        supports_images: bool,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        match mention_uri {
+            MentionUri::Fetch { url } => {
+                self.confirm_mention_for_fetch(url, workspace.read(cx).client().http_client(), cx)
+            }
+            MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
+            MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
+            MentionUri::TextThread { .. } => {
+                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
+            }
+            MentionUri::File { abs_path } => {
+                self.confirm_mention_for_file(abs_path, supports_images, cx)
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
+            MentionUri::PastedImage => Task::ready(Ok(Mention::Link)),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+            } => self.confirm_mention_for_selection(path, line_range, cx),
+            MentionUri::Selection { abs_path: None, .. } => Task::ready(Ok(Mention::Link)),
+            MentionUri::TerminalSelection { .. } => Task::ready(Ok(Mention::Link)),
+        }
+    }
+
     fn confirm_mention_for_fetch(
         &self,
         url: url::Url,
@@ -400,7 +471,7 @@ impl MentionSet {
         })
     }
 
-    pub fn confirm_mention_for_selection(
+    pub fn confirm_mention_for_selections(
         &mut self,
         source_range: Range<text::Anchor>,
         selections: Vec<(Entity<Buffer>, Range<text::Anchor>, Range<usize>)>,
@@ -478,6 +549,53 @@ impl MentionSet {
                 });
             });
         });
+    }
+
+    pub fn confirm_mention_for_terminal_selections(
+        &mut self,
+        source_range: Range<text::Anchor>,
+        terminal_ranges: Vec<(String, Range<usize>)>,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
+            return;
+        };
+        let offset = start.to_offset(&snapshot);
+
+        for (terminal_text, terminal_range) in terminal_ranges {
+            let line_count = terminal_text.lines().count() as u32;
+            let mention_uri = MentionUri::TerminalSelection { line_count };
+            let range = snapshot.anchor_after(offset + terminal_range.start)
+                ..snapshot.anchor_after(offset + terminal_range.end);
+
+            let crease = crate::mention_set::crease_for_mention(
+                mention_uri.name().into(),
+                mention_uri.icon_path(cx),
+                range,
+                editor.downgrade(),
+            );
+
+            let crease_id = editor.update(cx, |editor, cx| {
+                let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                editor.fold_creases(vec![crease], false, window, cx);
+                crease_ids.first().copied().unwrap()
+            });
+
+            self.mentions.insert(
+                crease_id,
+                (
+                    mention_uri,
+                    Task::ready(Ok(Mention::Text {
+                        content: terminal_text,
+                        tracked_buffers: vec![],
+                    }))
+                    .shared(),
+                ),
+            );
+        }
     }
 
     fn confirm_mention_for_thread(

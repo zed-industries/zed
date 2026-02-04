@@ -331,6 +331,10 @@ pub fn parse_markdown(
     (events, language_names, language_paths)
 }
 
+/// Parse a string for raw URLs only, producing link events without Markdown parsing.
+///
+/// This uses `linkify` and returns `MarkdownEvent::Link` spans for autolinks.
+/// Use this when you want to detect plain URLs regardless of Markdown syntax.
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     let mut events = Vec::new();
     let mut finder = LinkFinder::new();
@@ -366,6 +370,62 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     }
 
     events
+}
+
+/// Parse Markdown links, returning link ranges, destination URLs, and optional link labels.
+///
+/// This uses the Markdown parser and ignores autolinks. It only captures explicit
+/// Markdown link syntax like `[label](url)`, preserving the label text when present.
+pub fn parse_markdown_links(text: &str) -> Vec<(Range<usize>, SharedString, Option<SharedString>)> {
+    let (events, _, _) = parse_markdown(text);
+    let mut links = Vec::new();
+    let mut pending_link: Option<(usize, SharedString, String, LinkType)> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::Link {
+                link_type,
+                dest_url,
+                ..
+            }) => {
+                pending_link = Some((range.start, dest_url, String::new(), link_type));
+            }
+            MarkdownEvent::End(MarkdownTagEnd::Link) => {
+                if let Some((start, dest_url, label, link_type)) = pending_link.take() {
+                    if range.end >= start {
+                        if matches!(link_type, LinkType::Autolink) {
+                            continue;
+                        }
+                        let label = label.trim();
+                        let label = if label.is_empty() {
+                            None
+                        } else {
+                            Some(SharedString::from(label.to_string()))
+                        };
+                        links.push((start..range.end, dest_url, label));
+                    }
+                }
+            }
+            MarkdownEvent::Text => {
+                if let Some((_, _, label, _)) = pending_link.as_mut() {
+                    label.push_str(&text[range]);
+                }
+            }
+            MarkdownEvent::SubstitutedText(text) => {
+                if let Some((_, _, label, _)) = pending_link.as_mut() {
+                    label.push_str(&text);
+                }
+            }
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                if let Some((_, _, label, _)) = pending_link.as_mut() {
+                    label.push(' ');
+                }
+            }
+            _ => {}
+        }
+    }
+
+    links
 }
 
 /// A static-lifetime equivalent of pulldown_cmark::Event so we can cache the

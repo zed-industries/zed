@@ -13,12 +13,10 @@ use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
 use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
-use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
-use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
@@ -615,7 +613,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 if !selections.is_empty() {
                                     mention_set
                                         .update(cx, |store, cx| {
-                                            store.confirm_mention_for_selection(
+                                            store.confirm_mention_for_selections(
                                                 source_range.clone(),
                                                 selections,
                                                 editor.clone(),
@@ -627,46 +625,15 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 }
 
                                 // Insert terminal selections
-                                for (terminal_text, terminal_range) in terminal_ranges {
-                                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                                    let Some(start) =
-                                        snapshot.as_singleton_anchor(source_range.start)
-                                    else {
-                                        return;
-                                    };
-                                    let offset = start.to_offset(&snapshot);
-
-                                    let line_count = terminal_text.lines().count() as u32;
-                                    let mention_uri = MentionUri::TerminalSelection { line_count };
-                                    let range = snapshot.anchor_after(offset + terminal_range.start)
-                                        ..snapshot.anchor_after(offset + terminal_range.end);
-
-                                    let crease = crate::mention_set::crease_for_mention(
-                                        mention_uri.name().into(),
-                                        mention_uri.icon_path(cx),
-                                        range,
-                                        editor.downgrade(),
-                                    );
-
-                                    let crease_id = editor.update(cx, |editor, cx| {
-                                        let crease_ids =
-                                            editor.insert_creases(vec![crease.clone()], cx);
-                                        editor.fold_creases(vec![crease], false, window, cx);
-                                        crease_ids.first().copied().unwrap()
-                                    });
-
+                                if !terminal_ranges.is_empty() {
                                     mention_set
-                                        .update(cx, |mention_set, _| {
-                                            mention_set.insert_mention(
-                                                crease_id,
-                                                mention_uri.clone(),
-                                                gpui::Task::ready(Ok(
-                                                    crate::mention_set::Mention::Text {
-                                                        content: terminal_text,
-                                                        tracked_buffers: vec![],
-                                                    },
-                                                ))
-                                                .shared(),
+                                        .update(cx, |mention_set, cx| {
+                                            mention_set.confirm_mention_for_terminal_selections(
+                                                source_range.clone(),
+                                                terminal_ranges,
+                                                editor.clone(),
+                                                window,
+                                                cx,
                                             );
                                         })
                                         .ok();
