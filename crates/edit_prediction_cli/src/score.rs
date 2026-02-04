@@ -75,6 +75,7 @@ pub async fn run_scoring(
         cursor_distance: None,
         cursor_exact_match: None,
         wrong_editable_region: None,
+        has_isolated_whitespace_changes: false,
     };
 
     let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
@@ -163,6 +164,10 @@ pub async fn run_scoring(
         // Compute approximation of editable region correctness
         let wrong_editable_region = Some(!metrics::is_editable_region_correct(&actual_patch));
 
+        // Check for isolated whitespace changes
+        let has_isolated_whitespace_changes =
+            metrics::has_isolated_whitespace_changes(&actual_patch);
+
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
             braces_disbalance,
@@ -173,6 +178,7 @@ pub async fn run_scoring(
             cursor_distance,
             cursor_exact_match,
             wrong_editable_region,
+            has_isolated_whitespace_changes,
         });
     }
 
@@ -229,6 +235,7 @@ pub fn print_report(examples: &[Example]) {
     let mut cursor_distance_count: usize = 0;
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
+    let mut isolated_whitespace_count: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -307,6 +314,11 @@ pub fn print_report(examples: &[Example]) {
                 }
             }
 
+            // Accumulate isolated whitespace metrics
+            if score.has_isolated_whitespace_changes {
+                isolated_whitespace_count += 1;
+            }
+
             // Accumulate cursor metrics
             if let Some(exact_match) = score.cursor_exact_match {
                 cursor_total += 1;
@@ -362,6 +374,16 @@ pub fn print_report(examples: &[Example]) {
         } else {
             "-".to_string()
         };
+        let isolated_ws_str = if total_scores > 0 {
+            format!(
+                "{}/{} ({:.1}%)",
+                isolated_whitespace_count,
+                total_scores,
+                isolated_whitespace_count as f32 / total_scores as f32 * 100.0
+            )
+        } else {
+            "-".to_string()
+        };
         let avg_cursor_distance = if cursor_distance_count > 0 {
             Some(cursor_distance_sum as f32 / cursor_distance_count as f32)
         } else {
@@ -391,6 +413,11 @@ pub fn print_report(examples: &[Example]) {
                 cursor_exact_matches as f32 / cursor_total as f32 * 100.0,
                 avg_dist
             );
+        }
+
+        // Print isolated whitespace metrics
+        if total_scores > 0 {
+            println!("Isolated whitespace changes: {}", isolated_ws_str);
         }
     }
 
@@ -429,6 +456,7 @@ pub struct SummaryJson {
     pub cursor_total_evaluated: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wrong_editable_region_rate: Option<f32>,
+    pub isolated_whitespace_rate: Option<f32>,
 }
 
 pub fn compute_summary(examples: &[Example]) -> SummaryJson {
@@ -449,6 +477,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut cursor_distance_count: usize = 0;
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
+    let mut isolated_whitespace_count: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -480,6 +509,11 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
                 if wrong {
                     wrong_editable_region_count += 1;
                 }
+            }
+
+            // Accumulate isolated whitespace metrics
+            if score.has_isolated_whitespace_changes {
+                isolated_whitespace_count += 1;
             }
 
             // Accumulate cursor metrics
@@ -550,6 +584,12 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         None
     };
 
+    let isolated_whitespace_rate = if total_scores > 0 {
+        Some(isolated_whitespace_count as f32 / total_scores as f32)
+    } else {
+        None
+    };
+
     SummaryJson {
         total_examples: total_scores,
         avg_delta_chr_f,
@@ -567,6 +607,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         cursor_avg_distance,
         cursor_total_evaluated,
         wrong_editable_region_rate,
+        isolated_whitespace_rate,
     }
 }
 
