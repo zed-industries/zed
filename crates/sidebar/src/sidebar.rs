@@ -1,3 +1,4 @@
+use agent_ui::acp::{AcpServerView, AcpThreadHistory, ThreadActivityEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Task,
@@ -12,88 +13,87 @@ use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
     MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
-    ToggleWorkspaceSidebar, Workspace,
+    ToggleWorkspaceSidebar, WorkspaceId,
 };
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
-const DEFAULT_THREAD_TITLE: &str = "The Last Thread Title Here"; // TODO: Delete this after when pulling from db
-const DEFAULT_THREAD_TIMESTAMP: &str = "12:10 AM"; // TODO: Delete this after when pulling from db
 const MAX_MATCHES: usize = 100;
 
-#[derive(Clone)]
-struct WorkspaceThreadEntry {
-    index: usize,
+#[derive(Default)]
+struct ThreadRuntimeState {
+    is_running: bool,
+    has_unread_changes: bool,
+}
+
+struct AgentThread {
+    thread_id: Arc<str>,
     title: SharedString,
-    timestamp: SharedString,
-    worktree_label: SharedString,
+    workspace_id: Option<WorkspaceId>,
+    worktree_paths: Vec<String>,
+    runtime_state: ThreadRuntimeState,
 }
 
-#[derive(Clone)]
-struct WorkspaceThreadMatch {
-    entry: WorkspaceThreadEntry,
-    positions: Vec<usize>,
-}
-
-impl WorkspaceThreadEntry {
-    fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
-        let workspace_ref = workspace.read(cx);
-
-        let worktree_names: Vec<String> = workspace_ref
-            .worktrees(cx)
-            .filter_map(|worktree| {
-                worktree
-                    .read(cx)
-                    .abs_path()
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-            })
+impl AgentThread {
+    fn worktree_label(&self) -> SharedString {
+        if self.worktree_paths.is_empty() {
+            return "No workspace".into();
+        }
+        let names: Vec<&str> = self
+            .worktree_paths
+            .iter()
+            .filter_map(|path| std::path::Path::new(path).file_name()?.to_str())
             .collect();
-
-        let worktree_label: SharedString = if worktree_names.is_empty() {
-            format!("Workspace {}", index + 1).into()
+        if names.is_empty() {
+            "No workspace".into()
         } else {
-            worktree_names.join(", ").into()
-        };
-
-        Self {
-            index,
-            title: SharedString::new_static(DEFAULT_THREAD_TITLE),
-            timestamp: SharedString::new_static(DEFAULT_THREAD_TIMESTAMP),
-            worktree_label,
+            names.join(", ").into()
         }
     }
 }
 
-struct WorkspacePickerDelegate {
+#[derive(Clone)]
+struct ThreadEntry {
+    index: usize,
+    thread_id: Arc<str>,
+    title: SharedString,
+    worktree_label: SharedString,
+    workspace_id: Option<WorkspaceId>,
+    is_running: bool,
+}
+
+#[derive(Clone)]
+struct ThreadMatch {
+    entry: ThreadEntry,
+    positions: Vec<usize>,
+}
+
+struct ThreadPickerDelegate {
     multi_workspace: Entity<MultiWorkspace>,
-    entries: Vec<WorkspaceThreadEntry>,
-    active_workspace_index: usize,
-    matches: Vec<WorkspaceThreadMatch>,
+    entries: Vec<ThreadEntry>,
+    matches: Vec<ThreadMatch>,
     selected_index: usize,
     query: String,
 }
 
-impl WorkspacePickerDelegate {
+impl ThreadPickerDelegate {
     fn new(multi_workspace: Entity<MultiWorkspace>) -> Self {
         Self {
             multi_workspace,
             entries: Vec::new(),
-            active_workspace_index: 0,
             matches: Vec::new(),
             selected_index: 0,
             query: String::new(),
         }
     }
 
-    fn set_entries(&mut self, entries: Vec<WorkspaceThreadEntry>, active_workspace_index: usize) {
+    fn set_entries(&mut self, entries: Vec<ThreadEntry>) {
         self.entries = entries;
-        self.active_workspace_index = active_workspace_index;
     }
 }
 
-impl PickerDelegate for WorkspacePickerDelegate {
+impl PickerDelegate for ThreadPickerDelegate {
     type ListItem = ThreadItem;
 
     fn match_count(&self) -> usize {
@@ -135,18 +135,23 @@ impl PickerDelegate for WorkspacePickerDelegate {
         self.query = query.clone();
 
         let entries = self.entries.clone();
+        let previously_selected_thread_id = self
+            .matches
+            .get(self.selected_index)
+            .map(|m| m.entry.thread_id.clone());
+
         if query.is_empty() {
             self.matches = entries
                 .into_iter()
-                .map(|entry| WorkspaceThreadMatch {
+                .map(|entry| ThreadMatch {
                     entry,
                     positions: Vec::new(),
                 })
                 .collect();
 
-            self.selected_index = self
-                .active_workspace_index
-                .min(self.matches.len().saturating_sub(1));
+            self.selected_index = previously_selected_thread_id
+                .and_then(|id| self.matches.iter().position(|m| m.entry.thread_id == id))
+                .unwrap_or(0);
             return Task::ready(());
         }
 
@@ -176,7 +181,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     .into_iter()
                     .filter_map(|search_match| {
                         let entry = entries.get(search_match.candidate_id)?.clone();
-                        Some(WorkspaceThreadMatch {
+                        Some(ThreadMatch {
                             entry,
                             positions: search_match.positions,
                         })
@@ -187,7 +192,14 @@ impl PickerDelegate for WorkspacePickerDelegate {
 
             this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
-                this.delegate.selected_index = 0;
+                this.delegate.selected_index = previously_selected_thread_id
+                    .and_then(|id| {
+                        this.delegate
+                            .matches
+                            .iter()
+                            .position(|m| m.entry.thread_id == id)
+                    })
+                    .unwrap_or(0);
             })
             .log_err();
         })
@@ -197,11 +209,17 @@ impl PickerDelegate for WorkspacePickerDelegate {
         let Some(selected_match) = self.matches.get(self.selected_index) else {
             return;
         };
-
-        let target_index = selected_match.entry.index;
+        let Some(workspace_id) = selected_match.entry.workspace_id else {
+            return;
+        };
 
         self.multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate_index(target_index, cx);
+            for (index, workspace) in multi_workspace.workspaces().iter().enumerate() {
+                if workspace.read(cx).database_id() == Some(workspace_id) {
+                    multi_workspace.activate_index(index, cx);
+                    return;
+                }
+            }
         });
     }
 
@@ -215,11 +233,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let match_entry = self.matches.get(index)?;
-        let WorkspaceThreadMatch { entry, positions } = match_entry;
+        let ThreadMatch { entry, positions } = match_entry;
 
-        let thread_item = ThreadItem::new(("workspace-item", entry.index), entry.title.clone())
-            .timestamp(entry.timestamp.clone())
+        let thread_item = ThreadItem::new(("thread-item", entry.index), entry.title.clone())
             .worktree(entry.worktree_label.clone())
+            .running(entry.is_running)
             .selected(selected);
 
         let thread_item = if positions.is_empty() {
@@ -255,10 +273,10 @@ impl PickerDelegate for WorkspacePickerDelegate {
 }
 
 pub struct Sidebar {
-    multi_workspace: Entity<MultiWorkspace>,
     width: Pixels,
-    picker: Entity<Picker<WorkspacePickerDelegate>>,
-    _subscription: Subscription,
+    active_threads: Vec<AgentThread>,
+    picker: Entity<Picker<ThreadPickerDelegate>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
@@ -269,7 +287,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = WorkspacePickerDelegate::new(multi_workspace.clone());
+        let delegate = ThreadPickerDelegate::new(multi_workspace.clone());
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .max_height(None)
@@ -277,52 +295,167 @@ impl Sidebar {
                 .modal(false)
         });
 
-        let subscription = cx.observe_in(
-            &multi_workspace,
-            window,
-            |this, multi_workspace, window, cx| {
-                this.queue_refresh(multi_workspace.clone(), window, cx);
-            },
-        );
+        let weak_sidebar = cx.weak_entity();
 
-        let mut this = Self {
-            multi_workspace,
+        let observe_server_views = cx.observe_new::<AcpServerView>({
+            let weak_sidebar = weak_sidebar.clone();
+            move |_view, _window, cx| {
+                let entity = cx.entity();
+                weak_sidebar
+                    .update(cx, |sidebar, cx| {
+                        sidebar._subscriptions.push(cx.subscribe(
+                            &entity,
+                            |sidebar, _emitter, event, cx| {
+                                sidebar.handle_thread_activity(event, cx);
+                            },
+                        ));
+                    })
+                    .ok();
+            }
+        });
+
+        let observe_thread_history = cx.observe_new::<AcpThreadHistory>({
+            let weak_sidebar = weak_sidebar.clone();
+            move |_view, _window, cx| {
+                let entity = cx.entity();
+                weak_sidebar
+                    .update(cx, |sidebar, cx| {
+                        sidebar._subscriptions.push(cx.subscribe(
+                            &entity,
+                            |sidebar, _emitter, event, cx| {
+                                sidebar.handle_thread_activity(event, cx);
+                            },
+                        ));
+                    })
+                    .ok();
+            }
+        });
+
+        Self {
             width: DEFAULT_WIDTH,
+            active_threads: Vec::new(),
             picker,
-            _subscription: subscription,
-        };
-        this.queue_refresh(this.multi_workspace.clone(), window, cx);
-        this
+            _subscriptions: vec![observe_server_views, observe_thread_history],
+        }
     }
 
-    fn build_entries(
-        multi_workspace: &MultiWorkspace,
-        cx: &App,
-    ) -> (Vec<WorkspaceThreadEntry>, usize) {
-        let entries = multi_workspace
-            .workspaces()
+    fn handle_thread_activity(&mut self, event: &ThreadActivityEvent, cx: &mut Context<Self>) {
+        match event {
+            ThreadActivityEvent::MessageSent {
+                thread_id,
+                title,
+                workspace_id,
+                worktree_paths,
+            } => {
+                if let Some(position) = self.thread_position(thread_id) {
+                    let thread = &mut self.active_threads[position];
+                    thread.title = title.clone();
+                    thread.workspace_id = *workspace_id;
+                    thread.worktree_paths = worktree_paths.clone();
+                    thread.runtime_state.is_running = true;
+                    self.move_thread_to_front(position);
+                } else {
+                    self.active_threads.insert(
+                        0,
+                        AgentThread {
+                            thread_id: thread_id.clone(),
+                            title: title.clone(),
+                            workspace_id: *workspace_id,
+                            worktree_paths: worktree_paths.clone(),
+                            runtime_state: ThreadRuntimeState {
+                                is_running: true,
+                                has_unread_changes: false,
+                            },
+                        },
+                    );
+                }
+            }
+            ThreadActivityEvent::Stopped { thread_id } => {
+                if let Some(position) = self.thread_position(thread_id) {
+                    self.active_threads[position].runtime_state.is_running = false;
+                }
+            }
+            ThreadActivityEvent::Updated { thread_id } => {
+                if let Some(position) = self.thread_position(thread_id) {
+                    self.active_threads[position]
+                        .runtime_state
+                        .has_unread_changes = true;
+                    self.move_thread_to_front(position);
+                }
+            }
+            ThreadActivityEvent::Deleted { thread_id } => {
+                if let Some(position) = self.thread_position(thread_id) {
+                    self.active_threads.remove(position);
+                }
+            }
+            ThreadActivityEvent::DeletedAll => {
+                self.active_threads.clear();
+            }
+            ThreadActivityEvent::TitleChanged { thread_id, title } => {
+                if let Some(position) = self.thread_position(thread_id) {
+                    self.active_threads[position].title = title.clone();
+                }
+            }
+        }
+
+        self.refresh_picker(cx);
+        cx.notify();
+    }
+
+    fn thread_position(&self, thread_id: &Arc<str>) -> Option<usize> {
+        self.active_threads
+            .iter()
+            .position(|thread| thread.thread_id == *thread_id)
+    }
+
+    fn move_thread_to_front(&mut self, position: usize) {
+        if position > 0 {
+            let thread = self.active_threads.remove(position);
+            self.active_threads.insert(0, thread);
+        }
+    }
+
+    fn build_entries(&self) -> Vec<ThreadEntry> {
+        self.active_threads
             .iter()
             .enumerate()
-            .map(|(index, workspace)| WorkspaceThreadEntry::new(index, workspace, cx))
-            .collect();
-        (entries, multi_workspace.active_workspace_index())
+            .map(|(index, thread)| ThreadEntry {
+                index,
+                thread_id: thread.thread_id.clone(),
+                title: thread.title.clone(),
+                worktree_label: thread.worktree_label(),
+                workspace_id: thread.workspace_id,
+                is_running: thread.runtime_state.is_running,
+            })
+            .collect()
     }
 
-    fn queue_refresh(
-        &mut self,
-        multi_workspace: Entity<MultiWorkspace>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.defer_in(window, move |this, window, cx| {
-            let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
-                Self::build_entries(multi_workspace, cx)
-            });
-            this.picker.update(cx, |picker, cx| {
-                picker.delegate.set_entries(entries, active_index);
-                let query = picker.query(cx);
-                picker.update_matches(query, window, cx);
-            });
+    fn refresh_picker(&mut self, cx: &mut Context<Self>) {
+        let entries = self.build_entries();
+        self.picker.update(cx, |picker, _cx| {
+            let previously_selected_thread_id = picker
+                .delegate
+                .matches
+                .get(picker.delegate.selected_index)
+                .map(|m| m.entry.thread_id.clone());
+
+            picker.delegate.set_entries(entries.clone());
+            picker.delegate.matches = entries
+                .into_iter()
+                .map(|entry| ThreadMatch {
+                    entry,
+                    positions: Vec::new(),
+                })
+                .collect();
+            picker.delegate.selected_index = previously_selected_thread_id
+                .and_then(|id| {
+                    picker
+                        .delegate
+                        .matches
+                        .iter()
+                        .position(|m| m.entry.thread_id == id)
+                })
+                .unwrap_or(0);
         });
     }
 }

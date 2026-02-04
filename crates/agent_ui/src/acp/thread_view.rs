@@ -29,10 +29,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
-    PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient, list, point,
-    pulsating_between,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
+    list, point, pulsating_between,
 };
 use language::Buffer;
 use language_model::LanguageModelRegistry;
@@ -60,6 +60,8 @@ use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{
     CollaboratorId, NewTerminal, OpenOptions, Toast, Workspace, notifications::NotificationId,
 };
+
+use crate::acp::ThreadActivityEvent;
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -348,6 +350,8 @@ pub struct AcpServerView {
     in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
+
+impl EventEmitter<ThreadActivityEvent> for AcpServerView {}
 
 impl AcpServerView {
     pub fn as_active_thread(&self) -> Option<&AcpThreadView> {
@@ -1364,6 +1368,8 @@ impl AcpServerView {
         let login = self.login.clone();
         let agent_name = self.agent.name();
 
+        self.emit_thread_started(cx);
+
         if let Some(active) = self.as_active_thread_mut() {
             active.send(message_editor, agent_name, login, window, cx);
         }
@@ -1457,6 +1463,8 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.emit_thread_started(cx);
+
         if let Some(active) = self.as_active_thread_mut() {
             active.send_content(contents_task, window, cx);
         };
@@ -1572,6 +1580,45 @@ impl AcpServerView {
         }
     }
 
+    fn active_thread_id(&self, cx: &App) -> Option<Arc<str>> {
+        Some(
+            self.as_active_thread()?
+                .thread
+                .read(cx)
+                .session_id()
+                .0
+                .clone(),
+        )
+    }
+
+    fn emit_thread_started(&mut self, cx: &mut Context<Self>) {
+        let Some(active) = self.as_active_thread() else {
+            return;
+        };
+        let thread = active.thread.read(cx);
+        let thread_id: Arc<str> = thread.session_id().0.clone();
+        let title = thread.title();
+
+        let workspace_id = self
+            .workspace
+            .upgrade()
+            .and_then(|ws| ws.read(cx).database_id());
+
+        let worktree_paths: Vec<String> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            .collect();
+
+        cx.emit(ThreadActivityEvent::MessageSent {
+            thread_id,
+            title,
+            workspace_id,
+            worktree_paths,
+        });
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
@@ -1593,6 +1640,10 @@ impl AcpServerView {
                                 .and_then(|entry| entry.focus_handle(cx))],
                         );
                     });
+                }
+
+                if let Some(thread_id) = self.active_thread_id(cx) {
+                    cx.emit(ThreadActivityEvent::Updated { thread_id });
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
@@ -1626,6 +1677,11 @@ impl AcpServerView {
                 if let Some(active) = self.as_active_thread_mut() {
                     active.thread_retry_status.take();
                 }
+
+                if let Some(thread_id) = self.active_thread_id(cx) {
+                    cx.emit(ThreadActivityEvent::Stopped { thread_id });
+                }
+
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
                     if used_tools {
@@ -1697,6 +1753,14 @@ impl AcpServerView {
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
+
+                if let Some(thread_id) = self.active_thread_id(cx) {
+                    cx.emit(ThreadActivityEvent::TitleChanged {
+                        thread_id,
+                        title: title.clone(),
+                    });
+                }
+
                 if let Some(title_editor) = self
                     .as_active_thread()
                     .and_then(|active| active.title_editor.as_ref())
@@ -8425,6 +8489,9 @@ impl AcpServerView {
     }
 
     pub fn delete_history_entry(&mut self, entry: AgentSessionInfo, cx: &mut Context<Self>) {
+        let thread_id: Arc<str> = entry.session_id.0.clone();
+        cx.emit(ThreadActivityEvent::Deleted { thread_id });
+
         let task = self.history.update(cx, |history, cx| {
             history.delete_session(&entry.session_id, cx)
         });
