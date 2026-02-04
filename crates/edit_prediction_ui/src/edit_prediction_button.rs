@@ -155,7 +155,7 @@ impl Render for EditPredictionButton {
                     PopoverMenu::new("copilot")
                         .on_open({
                             let file = file.clone();
-                            let language = language.clone();
+                            let language = language;
                             let project = project.clone();
                             Rc::new(move |_window, cx| {
                                 emit_edit_prediction_menu_opened(
@@ -229,8 +229,8 @@ impl Render for EditPredictionButton {
                     PopoverMenu::new("supermaven")
                         .on_open({
                             let file = file.clone();
-                            let language = language.clone();
-                            let project = project.clone();
+                            let language = language;
+                            let project = project;
                             Rc::new(move |_window, cx| {
                                 emit_edit_prediction_menu_opened(
                                     "supermaven",
@@ -303,8 +303,8 @@ impl Render for EditPredictionButton {
                     PopoverMenu::new("codestral")
                         .on_open({
                             let file = file.clone();
-                            let language = language.clone();
-                            let project = project.clone();
+                            let language = language;
+                            let project = project;
                             Rc::new(move |_window, cx| {
                                 emit_edit_prediction_menu_opened(
                                     "codestral",
@@ -544,8 +544,8 @@ impl Render for EditPredictionButton {
                 let mut popover_menu = PopoverMenu::new("edit-prediction")
                     .on_open({
                         let file = file.clone();
-                        let language = language.clone();
-                        let project = project.clone();
+                        let language = language;
+                        let project = project;
                         Rc::new(move |_window, cx| {
                             emit_edit_prediction_menu_opened(
                                 provider_name,
