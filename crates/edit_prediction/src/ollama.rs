@@ -21,6 +21,8 @@ use zeta_prompt::{
     zeta1::{EDITABLE_REGION_END_MARKER, format_zeta1_prompt},
 };
 
+const FIM_CONTEXT_TOKENS: usize = 512;
+
 pub struct Ollama;
 
 #[derive(Debug, Serialize)]
@@ -143,9 +145,10 @@ impl Ollama {
                     cursor_excerpt::editable_and_context_ranges_for_cursor_position(
                         cursor_point,
                         &snapshot,
-                        500,
+                        FIM_CONTEXT_TOKENS,
                         0,
                     );
+                let excerpt_offset_range = excerpt_range.to_offset(&snapshot);
 
                 let related_files = crate::filter_redundant_excerpts(
                     related_files,
@@ -153,24 +156,20 @@ impl Ollama {
                     excerpt_range.start.row..excerpt_range.end.row,
                 );
 
-                let context_offset_range = excerpt_range.to_offset(&snapshot);
-                let context_start_row = excerpt_range.start.row;
-                let editable_offset_range = excerpt_range.to_offset(&snapshot);
-
                 let inputs = ZetaPromptInput {
                     events: events.clone(),
                     related_files,
                     cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
-                        - context_offset_range.start,
+                        - excerpt_offset_range.start,
                     cursor_path: full_path.clone(),
+                    excerpt_start_row: Some(excerpt_range.start.row),
                     cursor_excerpt: snapshot
                         .text_for_range(excerpt_range)
                         .collect::<String>()
                         .into(),
-                    editable_range_in_excerpt: (editable_offset_range.start
-                        - context_offset_range.start)
-                        ..(editable_offset_range.end - context_offset_range.start),
-                    excerpt_start_row: Some(context_start_row),
+                    editable_range_in_excerpt: (excerpt_offset_range.start
+                        - excerpt_offset_range.start)
+                        ..(excerpt_offset_range.end - excerpt_offset_range.start),
                 };
 
                 let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
@@ -276,8 +275,7 @@ impl Ollama {
 }
 
 fn is_zeta_model(model: &str) -> bool {
-    let model_lower = model.to_lowercase();
-    model_lower.contains("zeta")
+    model.to_lowercase().contains("zeta")
 }
 
 fn get_zeta_stop_tokens() -> Vec<String> {
