@@ -6882,13 +6882,13 @@ fn ai_page() -> SettingsPage {
                 description: "Whether to disable all AI features in Zed.",
                 field: Box::new(SettingField {
                     json_path: Some("disable_ai"),
-                    pick: |settings_content| settings_content.disable_ai.as_ref(),
+                    pick: |settings_content| settings_content.project.disable_ai.as_ref(),
                     write: |settings_content, value| {
-                        settings_content.disable_ai = value;
+                        settings_content.project.disable_ai = value;
                     },
                 }),
                 metadata: None,
-                files: USER,
+                files: USER | PROJECT,
             }),
         ]
     }
