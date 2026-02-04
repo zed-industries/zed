@@ -7902,7 +7902,6 @@ impl LspStore {
                                         flat_responses
                                             .into_iter()
                                             .map(|lsp_symbol| {
-                                                #[allow(deprecated)]
                                                 (
                                                     lsp_symbol.name,
                                                     lsp_symbol.kind,
@@ -14485,12 +14484,10 @@ async fn populate_labels_for_symbols(
     let mut label_params = Vec::new();
     for (language, mut symbols) in symbols_by_language {
         label_params.clear();
-        label_params.extend(symbols.iter_mut().map(|symbol| {
-            (
-                mem::take(&mut symbol.name),
-                symbol.kind,
-                symbol.container_name.take(),
-            )
+        label_params.extend(symbols.iter_mut().map(|symbol| language::Symbol {
+            name: mem::take(&mut symbol.name),
+            kind: symbol.kind,
+            container_name: symbol.container_name.take(),
         }));
 
         let mut labels = Vec::new();
@@ -14510,7 +14507,17 @@ async fn populate_labels_for_symbols(
             }
         }
 
-        for ((symbol, (name, _, container_name)), label) in symbols
+        for (
+            (
+                symbol,
+                language::Symbol {
+                    name,
+                    container_name,
+                    ..
+                },
+            ),
+            label,
+        ) in symbols
             .into_iter()
             .zip(label_params.drain(..))
             .zip(labels.into_iter().chain(iter::repeat(None)))

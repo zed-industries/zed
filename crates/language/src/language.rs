@@ -197,6 +197,13 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub container_name: Option<String>,
+}
+
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
 type DownloadableLanguageServerBinary = LocalBoxFuture<'static, Result<LanguageServerBinary>>;
 pub type LanguageServerBinaryLocations = LocalBoxFuture<
@@ -316,7 +323,7 @@ impl CachedLspAdapter {
 
     pub async fn labels_for_symbols(
         &self,
-        symbols: &[(String, lsp::SymbolKind, Option<String>)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
@@ -446,14 +453,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind, Option<String>)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind, container_name)) in symbols.iter().enumerate() {
-            let label = self
-                .label_for_symbol(name, *kind, container_name.as_deref(), language)
-                .await;
+        for (ix, lsp_label) in symbols.iter().enumerate() {
+            let label = self.label_for_symbol(lsp_label, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
@@ -464,9 +469,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _name: &str,
-        _kind: lsp::SymbolKind,
-        _container_name: Option<&str>,
+        _lsp_symbol: &Symbol,
         _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
