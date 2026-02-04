@@ -457,8 +457,8 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, lsp_label) in symbols.iter().enumerate() {
-            let label = self.label_for_symbol(lsp_label, language).await;
+        for (ix, symbol) in symbols.iter().enumerate() {
+            let label = self.label_for_symbol(symbol, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
