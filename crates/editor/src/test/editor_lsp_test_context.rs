@@ -130,6 +130,10 @@ impl EditorLspTestContext {
         });
 
         let lsp = fake_servers.next().await.unwrap();
+
+        // Ensure the language server is fully registered with the buffer
+        cx.executor().run_until_parked();
+
         Self {
             cx: EditorTestContext {
                 cx,
@@ -484,12 +488,12 @@ impl EditorLspTestContext {
     }
 
     #[cfg(target_os = "windows")]
-    fn root_path() -> &'static Path {
+    pub fn root_path() -> &'static Path {
         Path::new("C:\\root")
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn root_path() -> &'static Path {
+    pub fn root_path() -> &'static Path {
         Path::new("/root")
     }
 }

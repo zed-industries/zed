@@ -237,7 +237,7 @@ impl LspAdapter for EsLintLspAdapter {
                 cx,
             )
             .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         if let Some(override_options) = override_options {
             let working_directories = override_options.get("workingDirectories").and_then(|wd| {

@@ -487,24 +487,16 @@ pub(crate) fn resolve_conflict(
         else {
             return;
         };
-        let Some(save) = project
-            .update(cx, |project, cx| {
-                if multibuffer.read(cx).all_diff_hunks_expanded() {
-                    project.save_buffer(buffer.clone(), cx)
-                } else {
-                    Task::ready(Ok(()))
-                }
-            })
-            .ok()
-        else {
-            return;
-        };
+        let save = project.update(cx, |project, cx| {
+            if multibuffer.read(cx).all_diff_hunks_expanded() {
+                project.save_buffer(buffer.clone(), cx)
+            } else {
+                Task::ready(Ok(()))
+            }
+        });
         if save.await.log_err().is_none() {
             let open_path = maybe!({
-                let path = buffer
-                    .read_with(cx, |buffer, cx| buffer.project_path(cx))
-                    .ok()
-                    .flatten()?;
+                let path = buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_path_preview(path, None, false, false, false, window, cx)

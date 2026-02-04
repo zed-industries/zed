@@ -4,14 +4,26 @@ use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
 use language::Point;
 use std::{
     cmp::Ordering,
-    ops::{AddAssign, Range, Sub},
+    ops::{Add, AddAssign, Range, Sub},
 };
 use sum_tree::Bias;
 
+/// A stable reference to a position within a [`MultiBuffer`](super::MultiBuffer).
+///
+/// Unlike simple offsets, anchors remain valid as the text is edited, automatically
+/// adjusting to reflect insertions and deletions around them.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Anchor {
+    /// Identifies which excerpt within the multi-buffer this anchor belongs to.
+    /// A multi-buffer can contain multiple excerpts from different buffers.
     pub excerpt_id: ExcerptId,
+    /// The position within the excerpt's underlying buffer. This is a stable
+    /// reference that remains valid as the buffer text is edited.
     pub text_anchor: text::Anchor,
+    /// When present, indicates this anchor points into deleted text within an
+    /// expanded diff hunk. The anchor references a position in the diff base
+    /// (original) text rather than the current buffer text. This is used when
+    /// displaying inline diffs where deleted lines are shown.
     pub diff_base_anchor: Option<text::Anchor>,
 }
 
@@ -185,7 +197,9 @@ impl Anchor {
         D: MultiBufferDimension
             + Ord
             + Sub<Output = D::TextDimension>
-            + AddAssign<D::TextDimension>,
+            + Sub<D::TextDimension, Output = D>
+            + AddAssign<D::TextDimension>
+            + Add<D::TextDimension, Output = D>,
         D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         snapshot.summary_for_anchor(self)
@@ -253,5 +267,232 @@ impl AnchorRangeExt for Range<Anchor> {
 
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point> {
         self.start.to_point(content)..self.end.to_point(content)
+    }
+}
+
+/// An [`Anchor`] without a diff base anchor.
+///
+/// The main benefit of this type is that it almost half the size of a full anchor.
+/// Store this if you know you are never working with diff base anchors.
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+pub struct DiffbaselessAnchor {
+    /// Identifies which excerpt within the multi-buffer this anchor belongs to.
+    /// A multi-buffer can contain multiple excerpts from different buffers.
+    pub excerpt_id: ExcerptId,
+    /// The position within the excerpt's underlying buffer. This is a stable
+    /// reference that remains valid as the buffer text is edited.
+    pub text_anchor: text::Anchor,
+}
+
+impl std::fmt::Debug for DiffbaselessAnchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_min() {
+            return write!(f, "Anchor::min({:?})", self.text_anchor.buffer_id);
+        }
+        if self.is_max() {
+            return write!(f, "Anchor::max({:?})", self.text_anchor.buffer_id);
+        }
+
+        f.debug_struct("Anchor")
+            .field("excerpt_id", &self.excerpt_id)
+            .field("text_anchor", &self.text_anchor)
+            .finish()
+    }
+}
+
+impl DiffbaselessAnchor {
+    pub fn in_buffer(excerpt_id: ExcerptId, text_anchor: text::Anchor) -> Self {
+        Self {
+            excerpt_id,
+            text_anchor,
+        }
+    }
+
+    pub fn range_in_buffer(excerpt_id: ExcerptId, range: Range<text::Anchor>) -> Range<Self> {
+        Self::in_buffer(excerpt_id, range.start)..Self::in_buffer(excerpt_id, range.end)
+    }
+
+    pub fn min() -> Self {
+        Self {
+            excerpt_id: ExcerptId::min(),
+            text_anchor: text::Anchor::MIN,
+        }
+    }
+
+    pub fn max() -> Self {
+        Self {
+            excerpt_id: ExcerptId::max(),
+            text_anchor: text::Anchor::MAX,
+        }
+    }
+
+    pub fn is_min(&self) -> bool {
+        self.excerpt_id == ExcerptId::min() && self.text_anchor.is_min()
+    }
+
+    pub fn is_max(&self) -> bool {
+        self.excerpt_id == ExcerptId::max() && self.text_anchor.is_max()
+    }
+
+    pub fn cmp(&self, other: &DiffbaselessAnchor, snapshot: &MultiBufferSnapshot) -> Ordering {
+        if self == other {
+            return Ordering::Equal;
+        }
+
+        let self_excerpt_id = snapshot.latest_excerpt_id(self.excerpt_id);
+        let other_excerpt_id = snapshot.latest_excerpt_id(other.excerpt_id);
+
+        let excerpt_id_cmp = self_excerpt_id.cmp(&other_excerpt_id, snapshot);
+        if excerpt_id_cmp.is_ne() {
+            return excerpt_id_cmp;
+        }
+        if self_excerpt_id == ExcerptId::max()
+            && self.text_anchor.is_max()
+            && self.text_anchor.is_max()
+        {
+            return Ordering::Equal;
+        }
+        if let Some(excerpt) = snapshot.excerpt(self_excerpt_id) {
+            let text_cmp = self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer);
+            if text_cmp.is_ne() {
+                return text_cmp;
+            }
+        }
+        Ordering::Equal
+    }
+
+    pub fn bias(&self) -> Bias {
+        self.text_anchor.bias
+    }
+
+    pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> DiffbaselessAnchor {
+        if self.text_anchor.bias != Bias::Left
+            && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
+        {
+            return Self {
+                excerpt_id: excerpt.id,
+                text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
+            };
+        }
+        *self
+    }
+
+    pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> DiffbaselessAnchor {
+        if self.text_anchor.bias != Bias::Right
+            && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
+        {
+            return Self {
+                excerpt_id: excerpt.id,
+                text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
+            };
+        }
+        *self
+    }
+
+    pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
+    where
+        D: MultiBufferDimension
+            + Ord
+            + Sub<Output = D::TextDimension>
+            + Sub<D::TextDimension, Output = D>
+            + AddAssign<D::TextDimension>
+            + Add<D::TextDimension, Output = D>,
+        D::TextDimension: Sub<Output = D::TextDimension> + Ord,
+    {
+        snapshot.summary_for_anchor(&Anchor {
+            excerpt_id: self.excerpt_id,
+            text_anchor: self.text_anchor,
+            diff_base_anchor: None,
+        })
+    }
+
+    pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        if self.is_min() || self.is_max() {
+            true
+        } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+            (self.text_anchor == excerpt.range.context.start
+                || self.text_anchor == excerpt.range.context.end
+                || self.text_anchor.is_valid(&excerpt.buffer))
+                && excerpt.contains_diffbaseless(self)
+        } else {
+            false
+        }
+    }
+}
+
+impl ToOffset for DiffbaselessAnchor {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+        self.summary(snapshot)
+    }
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
+        self.summary(snapshot)
+    }
+}
+
+impl ToPoint for DiffbaselessAnchor {
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+        self.summary(snapshot)
+    }
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> rope::PointUtf16 {
+        self.summary(snapshot)
+    }
+}
+
+pub trait DiffbaselessAnchorRangeExt {
+    fn cmp(&self, other: &Range<DiffbaselessAnchor>, buffer: &MultiBufferSnapshot) -> Ordering;
+    fn includes(&self, other: &Range<DiffbaselessAnchor>, buffer: &MultiBufferSnapshot) -> bool;
+    fn overlaps(&self, other: &Range<DiffbaselessAnchor>, buffer: &MultiBufferSnapshot) -> bool;
+    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferOffset>;
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
+}
+
+impl DiffbaselessAnchorRangeExt for Range<DiffbaselessAnchor> {
+    fn cmp(&self, other: &Range<DiffbaselessAnchor>, buffer: &MultiBufferSnapshot) -> Ordering {
+        match self.start.cmp(&other.start, buffer) {
+            Ordering::Equal => other.end.cmp(&self.end, buffer),
+            ord => ord,
+        }
+    }
+
+    fn includes(&self, other: &Range<DiffbaselessAnchor>, buffer: &MultiBufferSnapshot) -> bool {
+        self.start.cmp(&other.start, buffer).is_le() && other.end.cmp(&self.end, buffer).is_le()
+    }
+
+    fn overlaps(&self, other: &Range<DiffbaselessAnchor>, buffer: &MultiBufferSnapshot) -> bool {
+        self.end.cmp(&other.start, buffer).is_ge() && self.start.cmp(&other.end, buffer).is_le()
+    }
+
+    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<MultiBufferOffset> {
+        self.start.to_offset(content)..self.end.to_offset(content)
+    }
+
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point> {
+        self.start.to_point(content)..self.end.to_point(content)
+    }
+}
+
+pub struct AnchorHasDiffbaseError;
+
+impl TryFrom<Anchor> for DiffbaselessAnchor {
+    type Error = AnchorHasDiffbaseError;
+
+    fn try_from(anchor: Anchor) -> Result<Self, AnchorHasDiffbaseError> {
+        if anchor.diff_base_anchor.is_some() {
+            return Err(AnchorHasDiffbaseError);
+        }
+        Ok(DiffbaselessAnchor {
+            excerpt_id: anchor.excerpt_id,
+            text_anchor: anchor.text_anchor,
+        })
+    }
+}
+
+impl From<DiffbaselessAnchor> for Anchor {
+    fn from(diffbaseless: DiffbaselessAnchor) -> Self {
+        Anchor {
+            excerpt_id: diffbaseless.excerpt_id,
+            text_anchor: diffbaseless.text_anchor,
+            diff_base_anchor: None,
+        }
     }
 }

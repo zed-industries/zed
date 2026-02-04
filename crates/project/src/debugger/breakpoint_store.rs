@@ -223,8 +223,6 @@ impl BreakpointStore {
                         .update(cx, |this, cx| this.open_buffer(path, cx)),
                 )
             })
-            .ok()
-            .flatten()
             .context("Invalid project path")?
             .await?;
 
@@ -263,7 +261,7 @@ impl BreakpointStore {
                 .collect();
 
             cx.notify();
-        })?;
+        });
 
         Ok(())
     }
@@ -278,12 +276,12 @@ impl BreakpointStore {
                 this.worktree_store
                     .read(cx)
                     .project_path_for_absolute_path(message.payload.path.as_ref(), cx)
-            })?
+            })
             .context("Could not resolve provided abs path")?;
         let buffer = this
             .update(&mut cx, |this, cx| {
                 this.buffer_store.read(cx).get_by_path(&path)
-            })?
+            })
             .context("Could not find buffer for a given path")?;
         let breakpoint = message
             .payload
@@ -309,7 +307,7 @@ impl BreakpointStore {
                 BreakpointEditAction::Toggle,
                 cx,
             );
-        })?;
+        });
         Ok(proto::Ack {})
     }
 
@@ -809,7 +807,7 @@ impl BreakpointStore {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
-                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
                     let mut breakpoints_for_file =
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;

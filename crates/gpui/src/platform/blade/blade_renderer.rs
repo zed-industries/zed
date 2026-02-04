@@ -709,11 +709,7 @@ impl BladeRenderer {
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
                     view: frame.texture_view(),
-                    init_op: gpu::InitOp::Clear(if self.surface_config.transparent {
-                        gpu::TextureColor::TransparentBlack
-                    } else {
-                        gpu::TextureColor::White
-                    }),
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
                     finish_op: gpu::FinishOp::Store,
                 }],
                 depth_stencil: None,
@@ -723,7 +719,8 @@ impl BladeRenderer {
         profiling::scope!("render pass");
         for batch in scene.batches() {
             match batch {
-                PrimitiveBatch::Quads(quads) => {
+                PrimitiveBatch::Quads(range) => {
+                    let quads = &scene.quads[range];
                     let instance_buf = unsafe { self.instance_belt.alloc_typed(quads, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.quads);
                     encoder.bind(
@@ -735,7 +732,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, quads.len() as u32);
                 }
-                PrimitiveBatch::Shadows(shadows) => {
+                PrimitiveBatch::Shadows(range) => {
+                    let shadows = &scene.shadows[range];
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(shadows, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.shadows);
@@ -748,7 +746,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, shadows.len() as u32);
                 }
-                PrimitiveBatch::Paths(paths) => {
+                PrimitiveBatch::Paths(range) => {
+                    let paths = &scene.paths[range];
                     let Some(first_path) = paths.first() else {
                         continue;
                     };
@@ -804,7 +803,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::Underlines(underlines) => {
+                PrimitiveBatch::Underlines(range) => {
+                    let underlines = &scene.underlines[range];
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(underlines, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.underlines);
@@ -817,10 +817,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, underlines.len() as u32);
                 }
-                PrimitiveBatch::MonochromeSprites {
-                    texture_id,
-                    sprites,
-                } => {
+                PrimitiveBatch::MonochromeSprites { texture_id, range } => {
+                    let sprites = &scene.monochrome_sprites[range];
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
@@ -840,10 +838,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::PolychromeSprites {
-                    texture_id,
-                    sprites,
-                } => {
+                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                    let sprites = &scene.polychrome_sprites[range];
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
@@ -859,10 +855,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::SubpixelSprites {
-                    texture_id,
-                    sprites,
-                } => {
+                PrimitiveBatch::SubpixelSprites { texture_id, range } => {
+                    let sprites = &scene.subpixel_sprites[range];
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
@@ -882,7 +876,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::Surfaces(surfaces) => {
+                PrimitiveBatch::Surfaces(range) => {
+                    let surfaces = &scene.surfaces[range];
                     let mut _encoder = pass.with(&self.pipelines.surfaces);
 
                     for surface in surfaces {

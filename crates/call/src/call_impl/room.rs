@@ -185,13 +185,13 @@ impl Room {
                     room.local_participant.role = participant.role()
                 }
                 room
-            })?;
+            });
 
             let initial_project_id = if let Some(initial_project) = initial_project {
                 let initial_project_id = room
                     .update(cx, |room, cx| {
                         room.share_project(initial_project.clone(), cx)
-                    })?
+                    })
                     .await?;
                 Some(initial_project_id)
             } else {
@@ -202,7 +202,7 @@ impl Room {
                 .update(cx, |room, cx| {
                     room.leave_when_empty = true;
                     room.call(called_user_id, initial_project_id, cx)
-                })?
+                })
                 .await;
             match did_join {
                 Ok(()) => Ok(room),
@@ -286,12 +286,12 @@ impl Room {
                 user_store,
                 cx,
             )
-        })?;
+        });
         room.update(&mut cx, |room, cx| {
             room.leave_when_empty = room.channel_id.is_none();
             room.apply_room_update(room_proto, cx)?;
             anyhow::Ok(())
-        })??;
+        })?;
         Ok(room)
     }
 
@@ -379,7 +379,7 @@ impl Room {
                     .update(cx, |this, cx| {
                         this.status = RoomStatus::Rejoining;
                         cx.notify();
-                    })?;
+                    });
 
                 // Wait for client to re-establish a connection to the server.
                 let executor = cx.background_executor().clone();
@@ -390,15 +390,11 @@ impl Room {
                             log::info!("client reconnected, attempting to rejoin room");
 
                             let Some(this) = this.upgrade() else { break };
-                            match this.update(cx, |this, cx| this.rejoin(cx)) {
-                                Ok(task) => {
-                                    if task.await.log_err().is_some() {
-                                        return true;
-                                    } else {
-                                        remaining_attempts -= 1;
-                                    }
-                                }
-                                Err(_app_dropped) => return false,
+                            let task = this.update(cx, |this, cx| this.rejoin(cx));
+                            if task.await.log_err().is_some() {
+                                return true;
+                            } else {
+                                remaining_attempts -= 1;
                             }
                         } else if client_status.borrow().is_signed_out() {
                             return false;
@@ -437,7 +433,7 @@ impl Room {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, leaving room");
-            this.update(cx, |this, cx| this.leave(cx))?.await?;
+            this.update(cx, |this, cx| this.leave(cx)).await?;
         }
         anyhow::bail!("can't reconnect to room: client failed to re-establish connection");
     }
@@ -665,7 +661,7 @@ impl Room {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let room = envelope.payload.room.context("invalid room")?;
-        this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?
+        this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))
     }
 
     fn apply_room_update(&mut self, room: proto::Room, cx: &mut Context<Self>) -> Result<()> {
@@ -1203,7 +1199,7 @@ impl Room {
         cx.spawn(async move |this, cx| {
             let response = request.await?;
 
-            project.update(cx, |project, cx| project.shared(response.project_id, cx))??;
+            project.update(cx, |project, cx| project.shared(response.project_id, cx))?;
 
             // If the user's location is in this project, it changes from UnsharedProject to SharedProject.
             this.update(cx, |this, cx| {

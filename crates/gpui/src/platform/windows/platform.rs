@@ -20,6 +20,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
+        Media::{timeBeginPeriod, timeEndPeriod},
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -33,12 +34,14 @@ pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
     raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
+    headless: bool,
     icon: HICON,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    text_system: Arc<DirectWriteTextSystem>,
+    text_system: Arc<dyn PlatformTextSystem>,
+    direct_write_text_system: Option<Arc<DirectWriteTextSystem>>,
     windows_version: WindowsVersion,
-    drop_target_helper: IDropTargetHelper,
+    drop_target_helper: Option<IDropTargetHelper>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
@@ -51,7 +54,7 @@ struct WindowsPlatformInner {
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
-    main_receiver: PriorityQueueReceiver<GpuiRunnable>,
+    main_receiver: PriorityQueueReceiver<RunnableVariant>,
     dispatcher: Arc<WindowsDispatcher>,
 }
 
@@ -76,11 +79,10 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new(directx_devices: DirectXDevices) -> Self {
+    fn new(directx_devices: Option<DirectXDevices>) -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
-        let directx_devices = Some(directx_devices);
 
         Self {
             callbacks,
@@ -93,11 +95,33 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new(liveness: std::sync::Weak<()>) -> Result<Self> {
+    pub(crate) fn new(headless: bool) -> Result<Self> {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
+            // Set the system timer resolution to 1ms so that short timeouts
+            // (e.g. in Scheduler::block) are not rounded up to the default
+            // ~15.6ms tick interval.
+            timeBeginPeriod(1);
         }
-        let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
+        let (directx_devices, text_system, direct_write_text_system) = if !headless {
+            let devices = DirectXDevices::new().context("Creating DirectX devices")?;
+            let dw_text_system = Arc::new(
+                DirectWriteTextSystem::new(&devices)
+                    .context("Error creating DirectWriteTextSystem")?,
+            );
+            (
+                Some(devices),
+                dw_text_system.clone() as Arc<dyn PlatformTextSystem>,
+                Some(dw_text_system),
+            )
+        } else {
+            (
+                None,
+                Arc::new(crate::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
+                None,
+            )
+        };
+
         let (main_sender, main_receiver) = PriorityQueueReceiver::new();
         let validation_number = if usize::BITS == 64 {
             rand::random::<u64>() as usize
@@ -105,10 +129,7 @@ impl WindowsPlatform {
             rand::random::<u32>() as usize
         };
         let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
-        let text_system = Arc::new(
-            DirectWriteTextSystem::new(&directx_devices)
-                .context("Error creating DirectWriteTextSystem")?,
-        );
+
         register_platform_window_class();
         let mut context = PlatformWindowCreateContext {
             inner: None,
@@ -116,7 +137,7 @@ impl WindowsPlatform {
             validation_number,
             main_sender: Some(main_sender),
             main_receiver: Some(main_receiver),
-            directx_devices: Some(directx_devices),
+            directx_devices,
             dispatcher: None,
         };
         let result = unsafe {
@@ -148,23 +169,33 @@ impl WindowsPlatform {
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher, liveness);
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
 
-        let drop_target_helper: IDropTargetHelper = unsafe {
-            CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
-                .context("Error creating drop target helper.")?
+        let drop_target_helper: Option<IDropTargetHelper> = if !headless {
+            Some(unsafe {
+                CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
+                    .context("Error creating drop target helper.")?
+            })
+        } else {
+            None
         };
-        let icon = load_icon().unwrap_or_default();
+        let icon = if !headless {
+            load_icon().unwrap_or_default()
+        } else {
+            HICON::default()
+        };
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
             inner,
             handle,
             raw_window_handles,
+            headless,
             icon,
             background_executor,
             foreground_executor,
             text_system,
+            direct_write_text_system,
             disable_direct_composition,
             windows_version,
             drop_target_helper,
@@ -196,7 +227,7 @@ impl WindowsPlatform {
             executor: self.foreground_executor.clone(),
             current_cursor: self.inner.state.current_cursor.get(),
             windows_version: self.windows_version,
-            drop_target_helper: self.drop_target_helper.clone(),
+            drop_target_helper: self.drop_target_helper.clone().unwrap(),
             validation_number: self.inner.validation_number,
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
@@ -214,14 +245,25 @@ impl WindowsPlatform {
             }
         });
         self.inner.state.jump_list.borrow_mut().dock_menus = actions;
-        update_jump_list(&self.inner.state.jump_list.borrow()).log_err();
+        let borrow = self.inner.state.jump_list.borrow();
+        let dock_menus = borrow
+            .dock_menus
+            .iter()
+            .map(|menu| (menu.name.clone(), menu.description.clone()))
+            .collect::<Vec<_>>();
+        let recent_workspaces = borrow.recent_workspaces.clone();
+        self.background_executor
+            .spawn(async move {
+                update_jump_list(&recent_workspaces, &dock_menus).log_err();
+            })
+            .detach();
     }
 
     fn update_jump_list(
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
             if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
@@ -230,8 +272,18 @@ impl WindowsPlatform {
         });
         let mut jump_list = self.inner.state.jump_list.borrow_mut();
         jump_list.dock_menus = actions;
-        jump_list.recent_workspaces = entries;
-        update_jump_list(&jump_list).log_err().unwrap_or_default()
+        jump_list.recent_workspaces = entries.into();
+        let dock_menus = jump_list
+            .dock_menus
+            .iter()
+            .map(|menu| (menu.name.clone(), menu.description.clone()))
+            .collect::<Vec<_>>();
+        let recent_workspaces = jump_list.recent_workspaces.clone();
+        self.background_executor.spawn(async move {
+            update_jump_list(&recent_workspaces, &dock_menus)
+                .log_err()
+                .unwrap_or_default()
+        })
     }
 
     fn find_current_active_window(&self) -> Option<HWND> {
@@ -247,11 +299,17 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
-        let mut directx_device = self.inner.state.directx_devices.borrow().clone().unwrap();
+        let Some(directx_devices) = self.inner.state.directx_devices.borrow().clone() else {
+            return;
+        };
+        let Some(direct_write_text_system) = &self.direct_write_text_system else {
+            return;
+        };
+        let mut directx_device = directx_devices;
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
-        let text_system = Arc::downgrade(&self.text_system);
+        let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
 
         std::thread::Builder::new()
@@ -338,7 +396,9 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        self.begin_vsync_thread();
+        if !self.headless {
+            self.begin_vsync_thread();
+        }
 
         let mut msg = MSG::default();
         unsafe {
@@ -635,7 +695,14 @@ impl Platform for WindowsPlatform {
                 UserName: PWSTR::from_raw(username.as_mut_ptr()),
                 ..CREDENTIALW::default()
             };
-            unsafe { CredWriteW(&credentials, 0) }?;
+            unsafe {
+                CredWriteW(&credentials, 0).map_err(|err| {
+                    anyhow!(
+                        "Failed to write credentials to Windows Credential Manager: {}",
+                        err,
+                    )
+                })?;
+            }
             Ok(())
         })
     }
@@ -719,19 +786,14 @@ impl Platform for WindowsPlatform {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.update_jump_list(menus, entries)
     }
 }
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
-        let state = WindowsPlatformState::new(
-            context
-                .directx_devices
-                .take()
-                .context("missing directx devices")?,
-        );
+        let state = WindowsPlatformState::new(context.directx_devices.take());
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
@@ -838,6 +900,11 @@ impl WindowsPlatformInner {
                     let peek_msg = |msg: &mut _, msg_kind| unsafe {
                         PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
                     };
+                    // We need to process a paint message here as otherwise we will re-enter `run_foreground_task` before painting if we have work remaining.
+                    // The reason for this is that windows prefers custom application message processing over system messages.
+                    if peek_msg(&mut msg, PM_QS_PAINT) {
+                        process_message(&msg);
+                    }
                     while peek_msg(&mut msg, PM_QS_INPUT) {
                         process_message(&msg);
                     }
@@ -856,7 +923,7 @@ impl WindowsPlatformInner {
                 }
                 let mut main_receiver = self.main_receiver.clone();
                 match main_receiver.try_pop() {
-                    Ok(Some(runnable)) => _ = runnable.run_and_profile(),
+                    Ok(Some(runnable)) => WindowsDispatcher::execute_runnable(runnable),
                     _ => break 'timeout_loop,
                 }
             }
@@ -868,7 +935,8 @@ impl WindowsPlatformInner {
             match main_receiver.try_pop() {
                 Ok(Some(runnable)) => {
                     self.dispatcher.wake_posted.store(true, Ordering::Release);
-                    runnable.run_and_profile();
+
+                    WindowsDispatcher::execute_runnable(runnable);
                 }
                 _ => break 'tasks,
             }
@@ -917,6 +985,7 @@ impl WindowsPlatformInner {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            timeEndPeriod(1);
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();
@@ -932,7 +1001,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
-    pub(crate) main_receiver: PriorityQueueReceiver<GpuiRunnable>,
+    pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
@@ -945,8 +1014,8 @@ struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     validation_number: usize,
-    main_sender: Option<PriorityQueueSender<GpuiRunnable>>,
-    main_receiver: Option<PriorityQueueReceiver<GpuiRunnable>>,
+    main_sender: Option<PriorityQueueSender<RunnableVariant>>,
+    main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
 }

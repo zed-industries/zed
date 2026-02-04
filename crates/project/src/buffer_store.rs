@@ -19,7 +19,7 @@ use language::{
 };
 use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
-    proto::{self},
+    proto::{self, PeerId},
 };
 
 use settings::Settings;
@@ -39,6 +39,17 @@ pub struct BufferStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
     non_searchable_buffers: HashSet<BufferId>,
+    project_search: RemoteProjectSearchState,
+}
+
+#[derive(Default)]
+struct RemoteProjectSearchState {
+    // List of ongoing project search chunks from our remote host. Used by the side issuing a search RPC request.
+    chunks: HashMap<u64, smol::channel::Sender<BufferId>>,
+    // Monotonously-increasing handle to hand out to remote host in order to identify the project search result chunk.
+    next_id: u64,
+    // Used by the side running the actual search for match candidates to potentially cancel the search prematurely.
+    searches_in_progress: HashMap<(PeerId, u64), Task<Result<()>>>,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -75,6 +86,7 @@ enum OpenBuffer {
 
 pub enum BufferStoreEvent {
     BufferAdded(Entity<Buffer>),
+    // TODO(jk): this event seems unused
     BufferOpened {
         buffer: Entity<Buffer>,
         project_path: ProjectPath,
@@ -148,7 +160,7 @@ impl RemoteBufferStore {
 
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.did_save(version.clone(), mtime, cx);
-            })?;
+            });
 
             Ok(())
         })
@@ -274,14 +286,14 @@ impl RemoteBufferStore {
                 buffer
                     .update(cx, |buffer, _| {
                         buffer.wait_for_edits(transaction.edit_ids.iter().copied())
-                    })?
+                    })
                     .await?;
 
                 if push_to_history {
                     buffer.update(cx, |buffer, _| {
                         buffer.push_transaction(transaction.clone(), Instant::now());
                         buffer.finalize_last_transaction();
-                    })?;
+                    });
                 }
             }
 
@@ -320,6 +332,7 @@ impl RemoteBufferStore {
 
     fn create_buffer(
         &self,
+        language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -330,13 +343,20 @@ impl RemoteBufferStore {
             let response = create.await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
 
-            this.update(cx, |this, cx| {
-                if !project_searchable {
-                    this.non_searchable_buffers.insert(buffer_id);
-                }
-                this.wait_for_remote_buffer(buffer_id, cx)
-            })?
-            .await
+            let buffer = this
+                .update(cx, |this, cx| {
+                    if !project_searchable {
+                        this.non_searchable_buffers.insert(buffer_id);
+                    }
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            if let Some(language) = language {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(Some(language), cx);
+                });
+            }
+            Ok(buffer)
         })
     }
 
@@ -422,7 +442,8 @@ impl LocalBufferStore {
                     buffer.file_updated(new_file, cx);
                 }
                 buffer.did_save(version.clone(), mtime, cx);
-            })
+            });
+            Ok(())
         })
     }
 
@@ -614,6 +635,7 @@ impl LocalBufferStore {
         self.save_local_buffer(buffer, worktree, path.path, true, cx)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn open_buffer(
         &self,
         path: Arc<RelPath>,
@@ -625,7 +647,7 @@ impl LocalBufferStore {
             let path = path.clone();
             let buffer = match load_file.await {
                 Ok(loaded) => {
-                    let reservation = cx.reserve_entity::<Buffer>()?;
+                    let reservation = cx.reserve_entity::<Buffer>();
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
                     let text_buffer = cx
                         .background_spawn(async move {
@@ -638,7 +660,7 @@ impl LocalBufferStore {
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
                         buffer
-                    })?
+                    })
                 }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
@@ -655,7 +677,7 @@ impl LocalBufferStore {
                         })),
                         Capability::ReadWrite,
                     )
-                })?,
+                }),
                 Err(e) => return Err(e),
             };
             this.update(cx, |this, cx| {
@@ -698,12 +720,15 @@ impl LocalBufferStore {
 
     fn create_buffer(
         &self,
+        language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |buffer_store, cx| {
-            let buffer =
-                cx.new(|cx| Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx))?;
+            let buffer = cx.new(|cx| {
+                Buffer::local("", cx)
+                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+            });
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
                 if !project_searchable {
@@ -725,7 +750,7 @@ impl LocalBufferStore {
         cx.spawn(async move |_, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for buffer in buffers {
-                let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
+                let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx)).await?;
                 buffer.update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !push_to_history {
@@ -733,7 +758,7 @@ impl LocalBufferStore {
                         }
                         project_transaction.0.insert(cx.entity(), transaction);
                     }
-                })?;
+                });
             }
 
             Ok(project_transaction)
@@ -770,6 +795,7 @@ impl BufferStore {
             loading_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
             worktree_store,
+            project_search: Default::default(),
         }
     }
 
@@ -795,6 +821,7 @@ impl BufferStore {
             shared_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
             worktree_store,
+            project_search: Default::default(),
         }
     }
 
@@ -819,6 +846,7 @@ impl BufferStore {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
@@ -886,12 +914,13 @@ impl BufferStore {
 
     pub fn create_buffer(
         &mut self,
+        language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         match &self.state {
-            BufferStoreState::Local(this) => this.create_buffer(project_searchable, cx),
-            BufferStoreState::Remote(this) => this.create_buffer(project_searchable, cx),
+            BufferStoreState::Local(this) => this.create_buffer(language, project_searchable, cx),
+            BufferStoreState::Remote(this) => this.create_buffer(language, project_searchable, cx),
         }
     }
 
@@ -1179,7 +1208,7 @@ impl BufferStore {
                 }
             }
             Ok(proto::Ack {})
-        })?
+        })
     }
 
     pub fn register_shared_lsp_handle(
@@ -1348,7 +1377,7 @@ impl BufferStore {
                     .log_err();
             }
             Ok(())
-        })?
+        })
     }
 
     pub async fn handle_save_buffer(
@@ -1365,32 +1394,32 @@ impl BufferStore {
                     .map(|(_, project_id)| *project_id)
                     .context("project is not shared")?,
             ))
-        })??;
+        })?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
-            })?
+            })
             .await?;
-        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
 
         if let Some(new_path) = envelope.payload.new_path
             && let Some(new_path) = ProjectPath::from_proto(new_path)
         {
             this.update(&mut cx, |this, cx| {
                 this.save_buffer_as(buffer.clone(), new_path, cx)
-            })?
+            })
             .await?;
         } else {
-            this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
+            this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))
                 .await?;
         }
 
-        buffer.read_with(&cx, |buffer, _| proto::BufferSaved {
+        Ok(buffer.read_with(&cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: buffer.saved_mtime().map(|time| time.into()),
-        })
+        }))
     }
 
     pub async fn handle_close_buffer(
@@ -1415,7 +1444,8 @@ impl BufferStore {
                 peer_id,
                 buffer_id
             )
-        })
+        });
+        Ok(())
     }
 
     pub async fn handle_buffer_saved(
@@ -1443,7 +1473,8 @@ impl BufferStore {
                     })
                     .log_err();
             }
-        })
+        });
+        Ok(())
     }
 
     pub async fn handle_buffer_reloaded(
@@ -1476,7 +1507,8 @@ impl BufferStore {
                     })
                     .log_err();
             }
-        })
+        });
+        Ok(())
     }
 
     pub fn reload_buffers(
@@ -1507,12 +1539,12 @@ impl BufferStore {
                 buffers.insert(this.get_existing(buffer_id)?);
             }
             anyhow::Ok(this.reload_buffers(buffers, false, cx))
-        })??;
+        })?;
 
         let project_transaction = reload.await?;
         let project_transaction = this.update(&mut cx, |this, cx| {
             this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        })?;
+        });
         Ok(proto::ReloadBuffersResponse {
             transaction: Some(project_transaction),
         })
@@ -1546,9 +1578,9 @@ impl BufferStore {
                 return anyhow::Ok(());
             };
 
-            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx))?;
+            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx));
             let operations = operations.await;
-            let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx))?;
+            let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx));
 
             let initial_state = proto::CreateBufferForPeer {
                 project_id,
@@ -1686,6 +1718,82 @@ impl BufferStore {
                 .push(language::proto::serialize_transaction(&transaction));
         }
         serialized_transaction
+    }
+
+    pub(crate) fn register_project_search_result_handle(
+        &mut self,
+    ) -> (u64, smol::channel::Receiver<BufferId>) {
+        let (tx, rx) = smol::channel::unbounded();
+        let handle = util::post_inc(&mut self.project_search.next_id);
+        let _old_entry = self.project_search.chunks.insert(handle, tx);
+        debug_assert!(_old_entry.is_none());
+        (handle, rx)
+    }
+
+    pub fn register_ongoing_project_search(
+        &mut self,
+        id: (PeerId, u64),
+        search: Task<anyhow::Result<()>>,
+    ) {
+        let _old = self.project_search.searches_in_progress.insert(id, search);
+        debug_assert!(_old.is_none());
+    }
+
+    pub async fn handle_find_search_candidates_cancel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FindSearchCandidatesCancelled>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let id = (
+            envelope.original_sender_id.unwrap_or(envelope.sender_id),
+            envelope.payload.handle,
+        );
+        let _ = this.update(&mut cx, |this, _| {
+            this.project_search.searches_in_progress.remove(&id)
+        });
+        Ok(())
+    }
+
+    pub(crate) async fn handle_find_search_candidates_chunk(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        use proto::find_search_candidates_chunk::Variant;
+        let handle = envelope.payload.handle;
+
+        let buffer_ids = match envelope
+            .payload
+            .variant
+            .context("Expected non-null variant")?
+        {
+            Variant::Matches(find_search_candidates_matches) => find_search_candidates_matches
+                .buffer_ids
+                .into_iter()
+                .filter_map(|buffer_id| BufferId::new(buffer_id).ok())
+                .collect::<Vec<_>>(),
+            Variant::Done(_) => {
+                this.update(&mut cx, |this, _| {
+                    this.project_search.chunks.remove(&handle)
+                });
+                return Ok(proto::Ack {});
+            }
+        };
+        let Some(sender) = this.read_with(&mut cx, |this, _| {
+            this.project_search.chunks.get(&handle).cloned()
+        }) else {
+            return Ok(proto::Ack {});
+        };
+
+        for buffer_id in buffer_ids {
+            let Ok(_) = sender.send(buffer_id).await else {
+                this.update(&mut cx, |this, _| {
+                    this.project_search.chunks.remove(&handle)
+                });
+                return Ok(proto::Ack {});
+            };
+        }
+        Ok(proto::Ack {})
     }
 }
 

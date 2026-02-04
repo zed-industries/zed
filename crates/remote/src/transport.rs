@@ -13,6 +13,8 @@ use rpc::proto::Envelope;
 use smol::process::Child;
 
 pub mod docker;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock;
 pub mod ssh;
 pub mod wsl;
 
@@ -157,10 +159,14 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-        let status = remote_proxy_process.status().await?.code().unwrap_or(1);
-        if status != 0 {
-            anyhow::bail!("Remote server exited with status {status}");
-        }
+        let exit_status = remote_proxy_process.status().await?;
+        let status = exit_status.code().unwrap_or_else(|| {
+            #[cfg(unix)]
+            let status = std::os::unix::process::ExitStatusExt::signal(&exit_status).unwrap_or(1);
+            #[cfg(not(unix))]
+            let status = 1;
+            status
+        });
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),
@@ -168,10 +174,11 @@ fn handle_rpc_messages_over_child_process_stdio(
     })
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
     delegate: &dyn crate::RemoteClientDelegate,
+    binary_exists_on_server: bool,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
     use smol::process::{Command, Stdio};
@@ -179,19 +186,36 @@ async fn build_remote_server_from_source(
     use std::path::Path;
     use util::command::new_smol_command;
 
+    if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return Ok(Some(path));
+        } else {
+            log::warn!(
+                "ZED_COPY_REMOTE_SERVER path does not exist, falling back to ZED_BUILD_REMOTE_SERVER: {}",
+                path.display()
+            );
+        }
+    }
+
     // By default, we make building remote server from source opt-out and we do not force artifact compression
     // for quicker builds.
     let build_remote_server =
         std::env::var("ZED_BUILD_REMOTE_SERVER").unwrap_or("nocompress".into());
 
-    if let "false" | "no" | "off" | "0" = &*build_remote_server {
+    if let "never" = &*build_remote_server {
         return Ok(None);
+    } else if let "false" | "no" | "off" | "0" = &*build_remote_server {
+        if binary_exists_on_server {
+            return Ok(None);
+        }
+        log::warn!("ZED_BUILD_REMOTE_SERVER is disabled, but no server binary exists on the server")
     }
 
     async fn run_cmd(command: &mut Command) -> Result<()> {
         let output = command
             .kill_on_drop(true)
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::inherit())
             .output()
             .await?;
         anyhow::ensure!(
@@ -322,32 +346,31 @@ async fn build_remote_server_from_source(
         delegate.set_status(Some("Compressing binary"), cx);
 
         #[cfg(not(target_os = "windows"))]
-        {
-            run_cmd(new_smol_command("gzip").args(["-f", &bin_path.to_string_lossy()])).await?;
-        }
+        let archive_path = {
+            run_cmd(new_smol_command("gzip").arg("-f").arg(&bin_path)).await?;
+            bin_path.with_extension("gz")
+        };
 
         #[cfg(target_os = "windows")]
-        {
-            // On Windows, we use 7z to compress the binary
-
-            let seven_zip = which("7z.exe",cx)
-                .await?
-                .context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
-            let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
-            if smol::fs::metadata(&gz_path).await.is_ok() {
-                smol::fs::remove_file(&gz_path).await?;
+        let archive_path = {
+            let zip_path = bin_path.with_extension("zip");
+            if smol::fs::metadata(&zip_path).await.is_ok() {
+                smol::fs::remove_file(&zip_path).await?;
             }
-            run_cmd(new_smol_command(seven_zip).args([
-                "a",
-                "-tgzip",
-                &gz_path,
-                &bin_path.to_string_lossy(),
+            let compress_command = format!(
+                "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
+                bin_path.display(),
+                zip_path.display(),
+            );
+            run_cmd(new_smol_command("powershell.exe").args([
+                "-NoProfile",
+                "-Command",
+                &compress_command,
             ]))
             .await?;
-        }
+            zip_path
+        };
 
-        let mut archive_path = bin_path;
-        archive_path.set_extension("gz");
         std::env::current_dir()?.join(archive_path)
     } else {
         bin_path
@@ -356,7 +379,7 @@ async fn build_remote_server_from_source(
     Ok(Some(path))
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn which(
     binary_name: impl AsRef<str>,
     cx: &mut AsyncApp,

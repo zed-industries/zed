@@ -1,0 +1,62 @@
+{"Put":{"state":"// ˇconsole.log(var);"}}
+{"Key":"%"}
+{"Get":{"state":"// console.log(varˇ);","mode":"Normal"}}
+{"Put":{"state":"// console.logˇ(var);"}}
+{"Key":"%"}
+{"Get":{"state":"// console.log(varˇ);","mode":"Normal"}}
+{"Put":{"state":"// console.log(ˇvar);"}}
+{"Key":"%"}
+{"Get":{"state":"// console.logˇ(var);","mode":"Normal"}}
+{"Put":{"state":"// console.log(vaˇr);"}}
+{"Key":"%"}
+{"Get":{"state":"// console.logˇ(var);","mode":"Normal"}}
+{"Put":{"state":"// console.log(varˇ);"}}
+{"Key":"%"}
+{"Get":{"state":"// console.logˇ(var);","mode":"Normal"}}
+{"Put":{"state":"// console.log(var)ˇ;"}}
+{"Key":"%"}
+{"Get":{"state":"// console.log(var)ˇ;","mode":"Normal"}}
+{"Put":{"state":"// ˇ{ {} }"}}
+{"Key":"%"}
+{"Get":{"state":"// { {} ˇ}","mode":"Normal"}}
+{"Put":{"state":"// { ˇ{} }"}}
+{"Key":"%"}
+{"Get":{"state":"// { {ˇ} }","mode":"Normal"}}
+{"Key":"%"}
+{"Get":{"state":"// { ˇ{} }","mode":"Normal"}}
+{"Put":{"state":"// { {}ˇ }"}}
+{"Key":"%"}
+{"Get":{"state":"// ˇ{ {} }","mode":"Normal"}}
+{"Put":{"state":"// { {} }ˇ"}}
+{"Key":"%"}
+{"Get":{"state":"// ˇ{ {} }","mode":"Normal"}}
+{"Put":{"state":"ˇ{% block %}"}}
+{"Key":"%"}
+{"Get":{"state":"{% block %ˇ}","mode":"Normal"}}
+{"Put":{"state":"{ˇ% block %}"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ{% block %}","mode":"Normal"}}
+{"Put":{"state":"{% block %ˇ}"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ{% block %}","mode":"Normal"}}
+{"Put":{"state":"{% block %}ˇ"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ{% block %}","mode":"Normal"}}
+{"Put":{"state":"ˇ{{ var }}"}}
+{"Key":"%"}
+{"Get":{"state":"{{ var }ˇ}","mode":"Normal"}}
+{"Put":{"state":"{ˇ{ var }}"}}
+{"Key":"%"}
+{"Get":{"state":"{{ var ˇ}}","mode":"Normal"}}
+{"Put":{"state":"{{ˇ var }}"}}
+{"Key":"%"}
+{"Get":{"state":"{ˇ{ var }}","mode":"Normal"}}
+{"Put":{"state":"{{ var ˇ}}"}}
+{"Key":"%"}
+{"Get":{"state":"{ˇ{ var }}","mode":"Normal"}}
+{"Put":{"state":"{{ var }ˇ}"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ{{ var }}","mode":"Normal"}}
+{"Put":{"state":"{{ var }}ˇ"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ{{ var }}","mode":"Normal"}}

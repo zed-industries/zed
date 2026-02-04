@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use client::Client;
 use db::kvp::KEY_VALUE_STORE;
+use futures_lite::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
     actions,
@@ -19,16 +20,18 @@ use std::{
         self,
         consts::{ARCH, OS},
     },
+    ffi::OsStr,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use util::command::new_smol_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
 actions!(
     auto_update,
@@ -436,7 +439,7 @@ impl AutoUpdater {
                 .0
                 .clone()
                 .context("auto-update not initialized")
-        })??;
+        })?;
 
         set_status("Fetching remote server release", cx);
         let release = Self::get_release_asset(
@@ -456,7 +459,7 @@ impl AutoUpdater {
         let version_path = platform_dir.join(format!("{}.gz", release.version));
         smol::fs::create_dir_all(&platform_dir).await.ok();
 
-        let client = this.read_with(cx, |this, _| this.client.http_client())?;
+        let client = this.read_with(cx, |this, _| this.client.http_client());
 
         if smol::fs::metadata(&version_path).await.is_err() {
             log::info!(
@@ -465,6 +468,16 @@ impl AutoUpdater {
             );
             set_status("Downloading remote server", cx);
             download_remote_server_binary(&version_path, release, client).await?;
+        }
+
+        if let Err(error) =
+            cleanup_remote_server_cache(&platform_dir, &version_path, REMOTE_SERVER_CACHE_LIMIT)
+                .await
+        {
+            log::warn!(
+                "Failed to clean up remote server cache in {:?}: {error:#}",
+                platform_dir
+            );
         }
 
         Ok(version_path)
@@ -482,7 +495,7 @@ impl AutoUpdater {
                 .0
                 .clone()
                 .context("auto-update not initialized")
-        })??;
+        })?;
 
         let release =
             Self::get_release_asset(&this, channel, version, "zed-remote-server", os, arch, cx)
@@ -500,7 +513,7 @@ impl AutoUpdater {
         arch: &str,
         cx: &mut AsyncApp,
     ) -> Result<ReleaseAsset> {
-        let client = this.read_with(cx, |this, _| this.client.clone())?;
+        let client = this.read_with(cx, |this, _| this.client.clone());
 
         let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
             (
@@ -563,7 +576,7 @@ impl AutoUpdater {
                     this.status.clone(),
                     ReleaseChannel::try_global(cx).unwrap_or(ReleaseChannel::Stable),
                 )
-            })?;
+            });
 
         Self::check_dependencies()?;
 
@@ -571,12 +584,12 @@ impl AutoUpdater {
             this.status = AutoUpdateStatus::Checking;
             log::info!("Auto Update: checking for updates");
             cx.notify();
-        })?;
+        });
 
         let fetched_release_data =
             Self::get_release_asset(&this, release_channel, None, "zed", OS, ARCH, cx).await?;
         let fetched_version = fetched_release_data.clone().version;
-        let app_commit_sha = cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full()));
+        let app_commit_sha = Ok(cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full())));
         let newer_version = Self::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
@@ -586,7 +599,7 @@ impl AutoUpdater {
         )?;
 
         let Some(newer_version) = newer_version else {
-            return this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let status = match previous_status {
                     AutoUpdateStatus::Updated { .. } => previous_status,
                     _ => AutoUpdateStatus::Idle,
@@ -594,6 +607,7 @@ impl AutoUpdater {
                 this.status = status;
                 cx.notify();
             });
+            return Ok(());
         };
 
         this.update(cx, |this, cx| {
@@ -601,7 +615,7 @@ impl AutoUpdater {
                 version: newer_version.clone(),
             };
             cx.notify();
-        })?;
+        });
 
         let installer_dir = InstallerDir::new().await?;
         let target_path = Self::target_path(&installer_dir).await?;
@@ -612,11 +626,11 @@ impl AutoUpdater {
                 version: newer_version.clone(),
             };
             cx.notify();
-        })?;
+        });
 
         let new_binary_path = Self::install_release(installer_dir, target_path, cx).await?;
         if let Some(new_binary_path) = new_binary_path {
-            cx.update(|cx| cx.set_restart_path(new_binary_path))?;
+            cx.update(|cx| cx.set_restart_path(new_binary_path));
         }
 
         this.update(cx, |this, cx| {
@@ -626,7 +640,8 @@ impl AutoUpdater {
                 version: newer_version,
             };
             cx.notify();
-        })
+        });
+        Ok(())
     }
 
     fn check_if_fetched_version_is_newer(
@@ -783,6 +798,63 @@ async fn download_remote_server_binary(
     Ok(())
 }
 
+async fn cleanup_remote_server_cache(
+    platform_dir: &Path,
+    keep_path: &Path,
+    limit: usize,
+) -> Result<()> {
+    if limit == 0 {
+        return Ok(());
+    }
+
+    let mut entries = smol::fs::read_dir(platform_dir).await?;
+    let now = SystemTime::now();
+    let mut candidates = Vec::new();
+
+    while let Some(entry) = entries.next().await {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension() != Some(OsStr::new("gz")) {
+            continue;
+        }
+
+        let mtime = if path == keep_path {
+            now
+        } else {
+            smol::fs::metadata(&path)
+                .await
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        };
+
+        candidates.push((path, mtime));
+    }
+
+    if candidates.len() <= limit {
+        return Ok(());
+    }
+
+    candidates.sort_by(|(path_a, time_a), (path_b, time_b)| {
+        time_b.cmp(time_a).then_with(|| path_a.cmp(path_b))
+    });
+
+    for (index, (path, _)) in candidates.into_iter().enumerate() {
+        if index < limit || path == keep_path {
+            continue;
+        }
+
+        if let Err(error) = smol::fs::remove_file(&path).await {
+            log::warn!(
+                "Failed to remove old remote server archive {:?}: {}",
+                path,
+                error
+            );
+        }
+    }
+
+    Ok(())
+}
+
 async fn download_release(
     target_path: &Path,
     release: ReleaseAsset,
@@ -807,9 +879,9 @@ async fn install_release_linux(
     downloaded_tar_gz: PathBuf,
     cx: &AsyncApp,
 ) -> Result<Option<PathBuf>> {
-    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
+    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
-    let running_app_path = cx.update(|cx| cx.app_path())??;
+    let running_app_path = cx.update(|cx| cx.app_path())?;
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)
@@ -874,7 +946,7 @@ async fn install_release_macos(
     downloaded_dmg: PathBuf,
     cx: &AsyncApp,
 ) -> Result<Option<PathBuf>> {
-    let running_app_path = cx.update(|cx| cx.app_path())??;
+    let running_app_path = cx.update(|cx| cx.app_path())?;
     let running_app_filename = running_app_path
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;

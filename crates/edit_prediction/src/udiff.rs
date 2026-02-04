@@ -23,6 +23,10 @@ impl OpenedBuffers {
     pub fn get(&self, path: &str) -> Option<&Entity<Buffer>> {
         self.0.get(path)
     }
+
+    pub fn buffers(&self) -> impl Iterator<Item = &Entity<Buffer>> {
+        self.0.values()
+    }
 }
 
 #[must_use]
@@ -32,7 +36,7 @@ pub async fn apply_diff(
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {
     let worktree = project
-        .read_with(cx, |project, cx| project.visible_worktrees(cx).next())?
+        .read_with(cx, |project, cx| project.visible_worktrees(cx).next())
         .context("project has no worktree")?;
 
     let paths: Vec<_> = diff_str
@@ -57,30 +61,44 @@ pub async fn apply_diff(
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk {
-                path,
-                hunk,
-                is_new_file,
-            } => {
+            DiffEvent::Hunk { path, hunk, status } => {
+                if status == FileStatus::Deleted {
+                    let delete_task = project.update(cx, |project, cx| {
+                        if let Some(path) = project.find_project_path(path.as_ref(), cx) {
+                            project.delete_file(path, false, cx)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(delete_task) = delete_task {
+                        delete_task.await?;
+                    };
+
+                    continue;
+                }
+
                 let buffer = match current_file {
                     None => {
                         let buffer = match included_files.entry(path.to_string()) {
                             Entry::Occupied(entry) => entry.get().clone(),
                             Entry::Vacant(entry) => {
-                                let buffer = if is_new_file {
+                                let buffer: Entity<Buffer> = if status == FileStatus::Created {
                                     project
-                                        .update(cx, |project, cx| project.create_buffer(true, cx))?
+                                        .update(cx, |project, cx| {
+                                            project.create_buffer(None, true, cx)
+                                        })
                                         .await?
                                 } else {
                                     let project_path = project
                                         .update(cx, |project, cx| {
                                             project.find_project_path(path.as_ref(), cx)
-                                        })?
+                                        })
                                         .with_context(|| format!("no such path: {}", path))?;
                                     project
                                         .update(cx, |project, cx| {
                                             project.open_buffer(project_path, cx)
-                                        })?
+                                        })
                                         .await?
                                 };
                                 entry.insert(buffer.clone());
@@ -94,12 +112,14 @@ pub async fn apply_diff(
                 };
 
                 buffer.read_with(cx, |buffer, _| {
-                    edits.extend(
-                        resolve_hunk_edits_in_buffer(hunk, buffer, ranges.as_slice(), is_new_file)
-                            .with_context(|| format!("Diff:\n{diff_str}"))?,
-                    );
+                    edits.extend(resolve_hunk_edits_in_buffer(
+                        hunk,
+                        buffer,
+                        ranges.as_slice(),
+                        status,
+                    )?);
                     anyhow::Ok(())
-                })??;
+                })?;
             }
             DiffEvent::FileEnd { renamed_to } => {
                 let buffer = current_file
@@ -123,14 +143,14 @@ pub async fn apply_diff(
                                 new_project_path,
                                 cx,
                             ))
-                        })??
+                        })?
                         .await?;
                 }
 
                 let edits = mem::take(&mut edits);
                 buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
-                })?;
+                });
             }
         }
     }
@@ -162,7 +182,7 @@ pub async fn refresh_worktree_entries(
                     .as_local()
                     .unwrap()
                     .refresh_entries_for_paths(rel_paths)
-            })?
+            })
             .recv()
             .await;
     }
@@ -170,38 +190,54 @@ pub async fn refresh_worktree_entries(
     Ok(())
 }
 
-/// Extract the diff for a specific file from a multi-file diff.
-/// Returns an error if the file is not found in the diff.
-pub fn extract_file_diff(full_diff: &str, file_path: &str) -> Result<String> {
-    let mut result = String::new();
-    let mut in_target_file = false;
-    let mut found_file = false;
+pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
+    if prefix.is_empty() {
+        return Cow::Borrowed(diff);
+    }
 
-    for line in full_diff.lines() {
-        if line.starts_with("diff --git") {
-            if in_target_file {
-                break;
-            }
-            in_target_file = line.contains(&format!("a/{}", file_path))
-                || line.contains(&format!("b/{}", file_path));
-            if in_target_file {
-                found_file = true;
-            }
-        }
+    let prefix_with_slash = format!("{}/", prefix);
+    let mut needs_rewrite = false;
 
-        if in_target_file {
-            result.push_str(line);
-            result.push('\n');
+    for line in diff.lines() {
+        match DiffLine::parse(line) {
+            DiffLine::OldPath { path } | DiffLine::NewPath { path } => {
+                if path.starts_with(&prefix_with_slash) {
+                    needs_rewrite = true;
+                    break;
+                }
+            }
+            _ => {}
         }
     }
 
-    if !found_file {
-        anyhow::bail!("File '{}' not found in diff", file_path);
+    if !needs_rewrite {
+        return Cow::Borrowed(diff);
     }
 
-    Ok(result)
+    let mut result = String::with_capacity(diff.len());
+    for line in diff.lines() {
+        match DiffLine::parse(line) {
+            DiffLine::OldPath { path } => {
+                let stripped = path
+                    .strip_prefix(&prefix_with_slash)
+                    .unwrap_or(path.as_ref());
+                result.push_str(&format!("--- a/{}\n", stripped));
+            }
+            DiffLine::NewPath { path } => {
+                let stripped = path
+                    .strip_prefix(&prefix_with_slash)
+                    .unwrap_or(path.as_ref());
+                result.push_str(&format!("+++ b/{}\n", stripped));
+            }
+            _ => {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+    }
+
+    Cow::Owned(result)
 }
-
 /// Strip unnecessary git metadata lines from a diff, keeping only the lines
 /// needed for patch application: path headers (--- and +++), hunk headers (@@),
 /// and content lines (+, -, space).
@@ -251,16 +287,27 @@ fn disambiguate_by_line_number(
 }
 
 pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
+    apply_diff_to_string_with_hunk_offset(diff_str, text).map(|(text, _)| text)
+}
+
+/// Applies a diff to a string and returns the result along with the offset where
+/// the first hunk's context matched in the original text. This offset can be used
+/// to adjust cursor positions that are relative to the hunk's content.
+pub fn apply_diff_to_string_with_hunk_offset(
+    diff_str: &str,
+    text: &str,
+) -> Result<(String, Option<usize>)> {
     let mut diff = DiffParser::new(diff_str);
 
     let mut text = text.to_string();
+    let mut first_hunk_offset = None;
 
-    while let Some(event) = diff.next()? {
+    while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
             DiffEvent::Hunk {
                 hunk,
                 path: _,
-                is_new_file: _,
+                status: _,
             } => {
                 // Find all matches of the context in the text
                 let candidates: Vec<usize> = text
@@ -272,7 +319,11 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
                     disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
                         text[..offset].matches('\n').count() as u32
                     })
-                    .ok_or_else(|| anyhow!("couldn't resolve hunk {:?}", hunk.context))?;
+                    .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
+
+                if first_hunk_offset.is_none() {
+                    first_hunk_offset = Some(hunk_offset);
+                }
 
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
@@ -283,7 +334,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
         }
     }
 
-    Ok(text)
+    Ok((text, first_hunk_offset))
 }
 
 /// Returns the individual edits that would be applied by a diff to the given content.
@@ -299,7 +350,7 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
             DiffEvent::Hunk {
                 hunk,
                 path: _,
-                is_new_file: _,
+                status: _,
             } => {
                 if hunk.context.is_empty() {
                     return Ok(Vec::new());
@@ -367,11 +418,18 @@ enum DiffEvent<'a> {
     Hunk {
         path: Cow<'a, str>,
         hunk: Hunk,
-        is_new_file: bool,
+        status: FileStatus,
     },
     FileEnd {
         renamed_to: Option<Cow<'a, str>>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FileStatus {
+    Created,
+    Modified,
+    Deleted,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -420,8 +478,14 @@ impl<'a> DiffParser<'a> {
                 if let Some(file) = &self.current_file
                     && !self.hunk.is_empty()
                 {
-                    let is_new_file = file.old_path == "/dev/null";
-                    let path = if is_new_file {
+                    let status = if file.old_path == "/dev/null" {
+                        FileStatus::Created
+                    } else if file.new_path == "/dev/null" {
+                        FileStatus::Deleted
+                    } else {
+                        FileStatus::Modified
+                    };
+                    let path = if status == FileStatus::Created {
                         file.new_path.clone()
                     } else {
                         file.old_path.clone()
@@ -430,11 +494,7 @@ impl<'a> DiffParser<'a> {
                     hunk.start_line = self.pending_start_line.take();
                     self.processed_no_newline = false;
                     self.last_diff_op = LastDiffOp::None;
-                    return Ok(Some(DiffEvent::Hunk {
-                        path,
-                        hunk,
-                        is_new_file,
-                    }));
+                    return Ok(Some(DiffEvent::Hunk { path, hunk, status }));
                 }
             }
 
@@ -554,9 +614,9 @@ fn resolve_hunk_edits_in_buffer(
     hunk: Hunk,
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
-    is_new_file: bool,
+    status: FileStatus,
 ) -> Result<impl Iterator<Item = (Range<Anchor>, Arc<str>)>, anyhow::Error> {
-    let context_offset = if is_new_file || hunk.context.is_empty() {
+    let context_offset = if status == FileStatus::Created || hunk.context.is_empty() {
         0
     } else {
         let mut candidates: Vec<usize> = Vec::new();
@@ -573,16 +633,17 @@ fn resolve_hunk_edits_in_buffer(
         })
         .ok_or_else(|| {
             if candidates.is_empty() {
-                anyhow!(
-                    "Failed to match context:\n\n```\n{}```\n\nBuffer contents:\n\n```\n{}```",
-                    hunk.context,
-                    buffer.text()
-                )
+                anyhow!("Failed to match context:\n\n```\n{}```\n", hunk.context,)
             } else {
                 anyhow!("Context is not unique enough:\n{}", hunk.context)
             }
         })?
     };
+
+    if let Some(edit) = hunk.edits.iter().find(|edit| edit.range.end > buffer.len()) {
+        return Err(anyhow!("Edit range {:?} exceeds buffer length", edit.range));
+    }
+
     let iter = hunk.edits.into_iter().flat_map(move |edit| {
         let old_text = buffer
             .text_for_range(context_offset + edit.range.start..context_offset + edit.range.end)
@@ -615,9 +676,9 @@ pub enum DiffLine<'a> {
 
 #[derive(Debug, PartialEq)]
 pub struct HunkLocation {
-    start_line_old: u32,
+    pub start_line_old: u32,
     count_old: u32,
-    start_line_new: u32,
+    pub start_line_new: u32,
     count_new: u32,
 }
 
@@ -951,7 +1012,7 @@ mod tests {
                         }],
                         start_line: None,
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1002,7 +1063,7 @@ mod tests {
                         }],
                         start_line: Some(54), // @@ -55,7 -> line 54 (0-indexed)
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1040,7 +1101,7 @@ mod tests {
                         }],
                         start_line: Some(0), // @@ -1,2 -> line 0 (0-indexed)
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1081,7 +1142,7 @@ mod tests {
                         }],
                         start_line: Some(0),
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1124,7 +1185,7 @@ mod tests {
                         }],
                         start_line: Some(0),
                     },
-                    is_new_file: false,
+                    status: FileStatus::Modified,
                 },
                 DiffEvent::FileEnd { renamed_to: None }
             ],
@@ -1377,63 +1438,6 @@ mod tests {
         });
 
         FakeFs::new(cx.background_executor.clone())
-    }
-
-    #[test]
-    fn test_extract_file_diff() {
-        let multi_file_diff = indoc! {r#"
-            diff --git a/file1.txt b/file1.txt
-            index 1234567..abcdefg 100644
-            --- a/file1.txt
-            +++ b/file1.txt
-            @@ -1,3 +1,4 @@
-             line1
-            +added line
-             line2
-             line3
-            diff --git a/file2.txt b/file2.txt
-            index 2345678..bcdefgh 100644
-            --- a/file2.txt
-            +++ b/file2.txt
-            @@ -1,2 +1,2 @@
-            -old line
-            +new line
-             unchanged
-        "#};
-
-        let file1_diff = extract_file_diff(multi_file_diff, "file1.txt").unwrap();
-        assert_eq!(
-            file1_diff,
-            indoc! {r#"
-                diff --git a/file1.txt b/file1.txt
-                index 1234567..abcdefg 100644
-                --- a/file1.txt
-                +++ b/file1.txt
-                @@ -1,3 +1,4 @@
-                 line1
-                +added line
-                 line2
-                 line3
-            "#}
-        );
-
-        let file2_diff = extract_file_diff(multi_file_diff, "file2.txt").unwrap();
-        assert_eq!(
-            file2_diff,
-            indoc! {r#"
-                diff --git a/file2.txt b/file2.txt
-                index 2345678..bcdefgh 100644
-                --- a/file2.txt
-                +++ b/file2.txt
-                @@ -1,2 +1,2 @@
-                -old line
-                +new line
-                 unchanged
-            "#}
-        );
-
-        let result = extract_file_diff(multi_file_diff, "nonexistent.txt");
-        assert!(result.is_err());
     }
 
     #[test]

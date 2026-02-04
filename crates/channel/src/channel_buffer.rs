@@ -71,8 +71,8 @@ impl ChannelBuffer {
                 capability,
                 base_text,
             )
-        })?;
-        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+        });
+        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -93,7 +93,7 @@ impl ChannelBuffer {
             };
             this.replace_collaborators(response.collaborators, cx);
             this
-        })?)
+        }))
     }
 
     fn release(&mut self, _: &mut App) {
@@ -168,7 +168,7 @@ impl ChannelBuffer {
             cx.notify();
             this.buffer
                 .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
-        })?;
+        });
 
         Ok(())
     }
@@ -182,7 +182,8 @@ impl ChannelBuffer {
             this.replace_collaborators(message.payload.collaborators, cx);
             cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
-        })
+        });
+        Ok(())
     }
 
     fn on_buffer_update(

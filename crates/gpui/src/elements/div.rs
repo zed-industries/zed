@@ -1295,6 +1295,7 @@ pub fn div() -> Div {
         children: SmallVec::default(),
         prepaint_listener: None,
         image_cache: None,
+        prepaint_order_fn: None,
     }
 }
 
@@ -1304,6 +1305,7 @@ pub struct Div {
     children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
+    prepaint_order_fn: Option<Box<dyn Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]>>>,
 }
 
 impl Div {
@@ -1320,6 +1322,22 @@ impl Div {
     /// Add an image cache at the location of this div in the element tree.
     pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
         self.image_cache = Some(Box::new(cache));
+        self
+    }
+
+    /// Specify a function that determines the order in which children are prepainted.
+    ///
+    /// The function is called at prepaint time and should return a vector of child indices
+    /// in the desired prepaint order. Each index should appear exactly once.
+    ///
+    /// This is useful when the prepaint of one child affects state that another child reads.
+    /// For example, in split editor views, the editor with an autoscroll request should
+    /// be prepainted first so its scroll position update is visible to the other editor.
+    pub fn with_dynamic_prepaint_order(
+        mut self,
+        order_fn: impl Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]> + 'static,
+    ) -> Self {
+        self.prepaint_order_fn = Some(Box::new(order_fn));
         self
     }
 }
@@ -1486,8 +1504,17 @@ impl Element for Div {
 
                 window.with_image_cache(image_cache, |window| {
                     window.with_element_offset(scroll_offset, |window| {
-                        for child in &mut self.children {
-                            child.prepaint(window, cx);
+                        if let Some(order_fn) = &self.prepaint_order_fn {
+                            let order = order_fn(window, cx);
+                            for idx in order {
+                                if let Some(child) = self.children.get_mut(idx) {
+                                    child.prepaint(window, cx);
+                                }
+                            }
+                        } else {
+                            for child in &mut self.children {
+                                child.prepaint(window, cx);
+                            }
                         }
                     });
 
@@ -1983,12 +2010,12 @@ impl Interactivity {
     ) {
         use crate::{BorderStyle, TextAlign};
 
-        if global_id.is_some()
+        if let Some(global_id) = global_id
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(window)
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-            let element_id = format!("{:?}", global_id.unwrap());
+            let element_id = format!("{global_id:?}");
             let str_len = element_id.len();
 
             let render_debug_text = |window: &mut Window| {
@@ -2011,7 +2038,7 @@ impl Interactivity {
                         origin: hitbox.origin,
                         size: text.size(FONT_SIZE),
                     };
-                    if self.source_location.is_some()
+                    if let Some(source_location) = self.source_location
                         && text_bounds.contains(&window.mouse_position())
                         && window.modifiers().secondary()
                     {
@@ -2042,7 +2069,6 @@ impl Interactivity {
 
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            let location = self.source_location.unwrap();
                             move |e: &crate::MouseDownEvent, phase, window, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
@@ -2055,9 +2081,9 @@ impl Interactivity {
 
                                     eprintln!(
                                         "This element was created at:\n{}:{}:{}",
-                                        dir.join(location.file()).to_string_lossy(),
-                                        location.line(),
-                                        location.column()
+                                        dir.join(source_location.file()).to_string_lossy(),
+                                        source_location.line(),
+                                        source_location.column()
                                     );
                                 }
                             }
@@ -2177,8 +2203,8 @@ impl Interactivity {
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
+                        cx.notify(current_view);
                     }
-                    cx.notify(current_view);
                 }
             });
         }
@@ -2377,7 +2403,7 @@ impl Interactivity {
             if let Some(hover_listener) = self.hover_listener.take() {
                 let hitbox = hitbox.clone();
                 let was_hovered = element_state
-                    .hover_state
+                    .hover_listener_state
                     .get_or_insert_with(Default::default)
                     .clone();
                 let has_mouse_down = element_state
@@ -2394,8 +2420,8 @@ impl Interactivity {
                         && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
 
-                    if is_hovered != was_hovered.element {
-                        was_hovered.element = is_hovered;
+                    if is_hovered != *was_hovered {
+                        *was_hovered = is_hovered;
                         drop(was_hovered);
 
                         hover_listener(&is_hovered, window, cx);
@@ -2727,6 +2753,7 @@ pub struct InteractiveElementState {
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
+    pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,

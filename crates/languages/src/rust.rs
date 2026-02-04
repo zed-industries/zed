@@ -13,7 +13,7 @@ use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
-use settings::Settings as _;
+use settings::{SemanticTokenRules, Settings as _};
 use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
@@ -31,7 +31,16 @@ use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
+use crate::LanguageDir;
 use crate::language_settings::language_settings;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = LanguageDir::get("rust/semantic_token_rules.json")
+        .expect("missing rust/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse rust semantic_token_rules.json")
+}
 
 pub struct RustLspAdapter;
 
@@ -563,18 +572,30 @@ impl LspAdapter for RustLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (prefix, suffix) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
-            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
-            lsp::SymbolKind::ENUM => ("enum ", " {}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
-            lsp::SymbolKind::MODULE => ("mod ", " {}"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
+        let name = &symbol.name;
+        let (prefix, suffix) = match symbol.kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
+            lsp::SymbolKind::STRUCT => ("struct ", ";"),
+            lsp::SymbolKind::ENUM => ("enum ", "{}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
+            lsp::SymbolKind::MODULE => ("mod ", ";"),
+            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
+            lsp::SymbolKind::ENUM_MEMBER => {
+                let prefix = "enum E {";
+                return Some(CodeLabel::new(
+                    name.to_string(),
+                    0..name.len(),
+                    language.highlight_text(
+                        &Rope::from_iter([prefix, name, "}"]),
+                        prefix.len()..prefix.len() + name.len(),
+                    ),
+                ));
+            }
             _ => return None,
         };
 
@@ -1805,7 +1826,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "hello".to_string(),
+                        kind: lsp::SymbolKind::FUNCTION,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "fn hello".to_string(),
@@ -1816,12 +1844,55 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "World".to_string(),
+                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "type World".to_string(),
                 5..10,
                 vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "zed".to_string(),
+                        kind: lsp::SymbolKind::PACKAGE,
+                        container_name: None,
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "extern crate zed".to_string(),
+                13..16,
+                vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "Variant".to_string(),
+                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        container_name: None,
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "Variant".to_string(),
+                0..7,
+                vec![(0..7, highlight_type)],
             ))
         );
     }

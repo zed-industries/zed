@@ -138,3 +138,11 @@
 ] @constant.builtin
 
 (comment) @comment
+
+; Go directives
+((comment) @preproc
+ (#match? @preproc "^//go:"))
+
+((comment) @preproc
+ (#match? @preproc "^// \\+build"))
+
