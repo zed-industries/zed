@@ -1128,6 +1128,9 @@ impl BlockMap {
 
             let spacer = if new_delta > delta {
                 let height = (new_delta - delta) as u32;
+                if display_map_id == companion.rhs_display_map_id {
+                    dbg!(our_point, their_point, our_wrap, companion_wrap, height,);
+                }
                 Some((our_wrap, height))
             } else {
                 None
@@ -1209,7 +1212,7 @@ impl BlockMap {
                     result.push((
                         BlockPlacement::Above(wrap_row),
                         Block::Spacer {
-                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            id: SpacerId(dbg!(self.next_block_id.fetch_add(1, SeqCst))),
                             height,
                             is_below: false,
                         },
@@ -1228,14 +1231,23 @@ impl BlockMap {
                     break;
                 }
 
+                // current range is the deleted line on the LHS
+                // current boundary starts out at the start of the added line
+                // we insert a spacer before for the soft wrap, that much is good
+                // then we keep going
+
+                dbg!("--------------");
                 // Align the two sides at the start of this group.
                 let (delta_at_start, mut spacer_at_start) =
                     determine_spacer(current_boundary, current_range.start, delta);
                 delta = delta_at_start;
 
+                // FIXME
                 while let Some(next_point) = source_points.peek().copied() {
+                    dbg!(next_point);
                     let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
                     if edit_for_next_point.new.end > current_range.end {
+                        dbg!("break");
                         break;
                     }
 
@@ -1243,14 +1255,15 @@ impl BlockMap {
                         result.push((
                             BlockPlacement::Above(wrap_row),
                             Block::Spacer {
-                                id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                                id: SpacerId(dbg!(self.next_block_id.fetch_add(1, SeqCst))),
                                 height,
                                 is_below: false,
                             },
                         ));
                     }
 
-                    current_boundary = next_point;
+                    dbg!(current_boundary);
+                    current_boundary = dbg!(next_point);
                     source_points.next();
                 }
 
@@ -1260,6 +1273,7 @@ impl BlockMap {
                     break;
                 }
 
+                // FIXME
                 let (delta_at_end, spacer_at_end) =
                     determine_spacer(current_boundary, current_range.end, delta);
                 delta = delta_at_end;
@@ -1271,20 +1285,23 @@ impl BlockMap {
                     result.push((
                         BlockPlacement::Above(wrap_row),
                         Block::Spacer {
-                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            id: SpacerId(dbg!(self.next_block_id.fetch_add(1, SeqCst))),
                             height,
                             is_below: false,
                         },
                     ));
                 } else if let Some((wrap_row, height)) = spacer_at_end {
+                    dbg!("2");
                     result.push((
                         BlockPlacement::Above(wrap_row),
                         Block::Spacer {
-                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            id: SpacerId(dbg!(self.next_block_id.fetch_add(1, SeqCst))),
                             height,
                             is_below: false,
                         },
                     ));
+                } else {
+                    dbg!("3");
                 }
             }
 
@@ -1295,7 +1312,7 @@ impl BlockMap {
                     result.push((
                         BlockPlacement::Below(wrap_row),
                         Block::Spacer {
-                            id: SpacerId(self.next_block_id.fetch_add(1, SeqCst)),
+                            id: SpacerId(dbg!(self.next_block_id.fetch_add(1, SeqCst))),
                             height,
                             is_below: true,
                         },
