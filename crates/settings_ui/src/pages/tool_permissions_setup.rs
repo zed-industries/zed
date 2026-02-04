@@ -270,7 +270,7 @@ pub(crate) fn render_tool_config_page(
                 .min_w_0()
                 .w_full()
                 .gap_5()
-                .child(render_default_mode_section(tool_id, rules.default_mode, cx))
+                .child(render_default_mode_section(tool_id, rules.default, cx))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
                 .child(render_rule_section(
                     tool_id,
@@ -346,7 +346,7 @@ fn render_verification_section(
     let input_id = format!("{}-verification-input", tool_id);
 
     let settings = AgentSettings::get_global(cx);
-    let always_allow_enabled = settings.always_allow_tool_actions;
+    let global_default_is_allow = settings.tool_permissions.default == ToolPermissionMode::Allow;
 
     let editor = window.use_keyed_state(input_id, cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
@@ -375,20 +375,20 @@ fn render_verification_section(
         (Some(decision), matches)
     };
 
-    let always_allow_description = "The Always Allow Tool Actions setting is enabled: all tools will be allowed regardless of these rules.";
+    let global_allow_description = "The global tool permission default is set to \"allow\": tools will be allowed unless blocked by deny or confirm patterns.";
     let theme_colors = cx.theme().colors();
 
     v_flex()
         .mt_3()
         .min_w_0()
         .gap_2()
-        .when(always_allow_enabled, |this| {
+        .when(global_default_is_allow, |this| {
             this.child(
                 Banner::new()
                     .severity(Severity::Warning)
                     .wrap_content(false)
                     .child(
-                        Label::new(always_allow_description)
+                        Label::new(global_allow_description)
                             .size(LabelSize::Small)
                             .mt(px(3.))
                             .mr_8(),
@@ -398,7 +398,7 @@ fn render_verification_section(
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.navigate_to_setting(
-                                    "agent.always_allow_tool_actions",
+                                    "agent.tool_permissions.default",
                                     window,
                                     cx,
                                 );
@@ -545,15 +545,12 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
 fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDecision {
     let settings = AgentSettings::get_global(cx);
 
-    // Always pass false for always_allow_tool_actions so we test the actual rules,
-    // not the global override that bypasses all checks.
     // ShellKind is only used for terminal tool's hardcoded security rules;
     // for other tools, the check returns None immediately.
     ToolPermissionDecision::from_input(
         tool_id,
         input,
         &settings.tool_permissions,
-        false,
         ShellKind::system(),
     )
 }
@@ -754,7 +751,7 @@ pub(crate) enum RuleType {
 }
 
 struct ToolRulesView {
-    default_mode: ToolPermissionMode,
+    default: ToolPermissionMode,
     always_allow: Vec<String>,
     always_deny: Vec<String>,
     always_confirm: Vec<String>,
@@ -767,7 +764,7 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
 
     match tool_rules {
         Some(rules) => ToolRulesView {
-            default_mode: rules.default_mode,
+            default: rules.default,
             always_allow: rules
                 .always_allow
                 .iter()
@@ -785,7 +782,7 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
                 .collect(),
         },
         None => ToolRulesView {
-            default_mode: ToolPermissionMode::Confirm,
+            default: ToolPermissionMode::Confirm,
             always_allow: Vec::new(),
             always_deny: Vec::new(),
             always_confirm: Vec::new(),
@@ -895,7 +892,7 @@ fn set_default_mode(tool_name: &str, mode: ToolPermissionMode, cx: &mut App) {
             .tools
             .entry(Arc::from(tool_name.as_str()))
             .or_default();
-        tool_rules.default_mode = Some(mode);
+        tool_rules.default = Some(mode);
     });
 }
 
