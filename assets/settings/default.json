@@ -2225,39 +2225,10 @@
       // Set to 0 to disable auto-dismiss.
       "dismiss_timeout_ms": 5000,
     },
-    // Rules for highlighting semantic tokens. User-defined rules are prepended to the default
-    // rules (defined in `default_semantic_tokens.json`), so they take precedence.
-    //
-    // Each `rule` has the following properties:
-    // - `token_type`: The LSP semantic token type to customize. If omitted, the rule matches all token types.
-    // - `token_modifiers`: A list of LSP semantic token modifiers to match. All modifiers must be present
-    //    to match.
-    // - `style`: A list of styles from the current syntax theme to use. The first style found is used. Any
-    //    settings below override that style.
-    // - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., "#ff0000").
-    // - `background_color`: The background color to use for the token type, in hex format.
-    // - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
-    // - `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
-    // - `font_weight`: One of "normal", "bold".
-    // - `font_style`: One of "normal", "italic".
-    //
-    // The first matching rule for a token is applied. Because user-defined rules are prepended to the
-    // default rules, a token can be entirely disabled by adding an empty rule that matches it.
-    //
-    // Example: Highlight unresolved references in red and bold:
-    // "semantic_token_rules": [
-    //   {
-    //     "token_type": "unresolvedReference",
-    //     "foreground_color": "#c93f3f",
-    //     "font_weight": "bold"
-    //   }
-    // ]
-    //
-    // Default rules are defined in `assets/settings/default_semantic_tokens.json`.
-    // See the VSCode docs [1] and the LSP Spec [2] for more information.
-    //
-    // [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
-    // [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+    // Rules for highlighting semantic tokens.
+    // A list of rules can be altered in a separate file and here, overrides can be added.
+    // Overrides take precedence over the base rules.
+    // See language docs for better details.
     "semantic_token_rules": [],
   },
   // Jupyter settings

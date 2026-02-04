@@ -1334,9 +1334,9 @@ pub struct Editor {
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
     suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
-    semantic_token_rules: SemanticTokenRules,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
+    semantic_token_rules: SemanticTokenRules,
     semantic_tokens_enabled: bool,
     update_semantic_tokens_task: Task<()>,
     semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
@@ -24133,7 +24133,6 @@ impl Editor {
                 });
                 self.update_semantic_tokens(None, None, cx);
             }
-            self.update_semantic_tokens(None, None, cx);
         }
 
         cx.notify();
