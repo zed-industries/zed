@@ -15,7 +15,7 @@ use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
     CloseIntent, MultiWorkspace, NewWorkspaceInWindow, OpenOptions, OpenVisible,
-    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
@@ -27,19 +27,22 @@ const MAX_MATCHES: usize = 100;
 struct WorkspaceThreadEntry {
     index: usize,
     worktree_label: SharedString,
+    full_path: SharedString,
 }
 
 impl WorkspaceThreadEntry {
     fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
         let workspace_ref = workspace.read(cx);
 
-        let worktree_names: Vec<String> = workspace_ref
+        let worktrees: Vec<_> = workspace_ref
             .worktrees(cx)
-            .filter_map(|worktree| {
-                worktree
-                    .read(cx)
-                    .abs_path()
-                    .file_name()
+            .map(|worktree| worktree.read(cx).abs_path())
+            .collect();
+
+        let worktree_names: Vec<String> = worktrees
+            .iter()
+            .filter_map(|path| {
+                path.file_name()
                     .map(|name| name.to_string_lossy().to_string())
             })
             .collect();
@@ -50,9 +53,17 @@ impl WorkspaceThreadEntry {
             worktree_names.join(", ").into()
         };
 
+        let full_path: SharedString = worktrees
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into();
+
         Self {
             index,
             worktree_label,
+            full_path,
         }
     }
 }
@@ -467,6 +478,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
             ),
             SidebarEntry::WorkspaceThread(thread_entry) => {
                 let worktree_label = thread_entry.worktree_label.clone();
+                let full_path = thread_entry.full_path.clone();
                 let title = render_title(worktree_label.clone(), positions);
 
                 Some(
@@ -478,7 +490,9 @@ impl PickerDelegate for WorkspacePickerDelegate {
                                 .size(IconSize::XSmall),
                         )
                         .child(title)
-                        .tooltip(Tooltip::text(worktree_label))
+                        .tooltip(move |_, cx| {
+                            Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
+                        })
                         .into_any_element(),
                 )
             }
