@@ -138,6 +138,17 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
         .add_with(("path", "~/.rustup"))
 }
 
+pub fn cache_nix_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "nix"))
+}
+
+pub fn cache_nix_store_macos() -> Step<Use> {
+    // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
+    // cannot mount or symlink there. Instead we cache a user-writable directory and
+    // use nix-store --import/--export in separate steps to transfer store paths.
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("path", "~/nix-cache"))
+}
+
 pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
