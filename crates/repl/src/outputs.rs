@@ -51,6 +51,9 @@ use table::TableView;
 mod json;
 use json::JsonView;
 
+mod html;
+use html::HtmlView;
+
 pub mod plain;
 use plain::TerminalOutput;
 
@@ -64,7 +67,8 @@ use settings::Settings;
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 6,
+        MimeType::DataTable(_) => 7,
+        MimeType::Html(_) => 6,
         MimeType::Json(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
@@ -132,6 +136,10 @@ pub enum Output {
         content: Entity<JsonView>,
         display_id: Option<String>,
     },
+    Html {
+        content: Entity<HtmlView>,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
 }
 
@@ -169,7 +177,8 @@ impl Output {
             Output::Image { .. }
             | Output::Markdown { .. }
             | Output::Table { .. }
-            | Output::Json { .. } => None,
+            | Output::Json { .. }
+            | Output::Html { .. } => None,
             Output::Message(_) => None,
             Output::ClearOutputWaitMarker => None,
         }
@@ -268,11 +277,15 @@ impl Output {
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
+            Self::Html { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         };
 
-        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+        let needs_horizontal_scroll = matches!(
+            self,
+            Self::Table { .. } | Self::Image { .. } | Self::Html { .. }
+        );
 
         h_flex()
             .id("output-content")
@@ -301,6 +314,9 @@ impl Output {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Json { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
+                }
+                Self::Html { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::ErrorOutput(err) => Some(
@@ -378,6 +394,7 @@ impl Output {
             Output::Table { display_id, .. } => display_id.clone(),
             Output::Markdown { display_id, .. } => display_id.clone(),
             Output::Json { display_id, .. } => display_id.clone(),
+            Output::Html { display_id, .. } => display_id.clone(),
             Output::ClearOutputWaitMarker => None,
         }
     }
@@ -420,6 +437,13 @@ impl Output {
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
                 display_id,
+            },
+            Some(MimeType::Html(html)) => match HtmlView::new(html.clone(), window, cx) {
+                Ok(html_view) => Output::Html {
+                    content: cx.new(|_| html_view),
+                    display_id,
+                },
+                Err(error) => Output::Message(format!("Failed to create HTML view: {}", error)),
             },
             // Any other media types are not supported
             _ => Output::Message("Unsupported media type".to_string()),

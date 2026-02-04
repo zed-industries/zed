@@ -1273,6 +1273,9 @@ impl Render for CodeCell {
                                                     Output::ErrorOutput(error_view) => {
                                                         error_view.render(window, cx)
                                                     }
+                                                    Output::Html { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
                                                     Output::ClearOutputWaitMarker => None,
                                                 };
 
