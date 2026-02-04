@@ -1,0 +1,40 @@
+name: Prevent Upstream Sync
+
+on:
+  pull_request:
+    branches:
+      - home
+
+jobs:
+  check-upstream-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for upstream merge
+        run: |
+          # Check if PR contains merge commits from upstream
+          git log --merges --oneline origin/home..HEAD | grep -i "zed-industries/zed" && {
+            echo "⚠️ Warning: This PR appears to contain merges from upstream Zed repository."
+            echo "According to BRANCH_STRATEGY.md, the 'home' branch should remain separate from upstream."
+            echo "Please review the changes carefully and ensure this merge is intentional."
+            echo ""
+            echo "If this was accidental, you can reset your branch and remove the upstream merge."
+            exit 1
+          } || {
+            echo "✅ No upstream merge detected. PR looks good!"
+            exit 0
+          }
+
+      - name: Check for upstream references
+        if: always()
+        run: |
+          # Check commit messages for references to upstream
+          if git log --oneline origin/home..HEAD | grep -iE "(upstream|zed-industries)" > /dev/null; then
+            echo "ℹ️ Note: Found references to 'upstream' or 'zed-industries' in commit messages."
+            echo "If you're cherry-picking specific features, this is fine."
+            echo "Just ensure you're not merging entire upstream branches."
+          fi
