@@ -51,8 +51,8 @@ jobs:
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not a PR, running full test suite"
           echo "changed_packages=" >> "$GITHUB_OUTPUT"
-        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|\.github/)'; then
-          echo "Toolchain, .github or cargo config changed, will run all tests"
+        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|\.github/|Cargo\.(toml|lock)$)'; then
+          echo "Toolchain, cargo config, or root Cargo files changed, will run all tests"
           echo "changed_packages=" >> "$GITHUB_OUTPUT"
         else
           # Extract changed packages from file paths
@@ -65,15 +65,8 @@ jobs:
             FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
           fi
 
-          # Parse Cargo.toml and Cargo.lock for changed dependencies
-          CARGO_CHANGED_DEPS=""
-          if echo "$CHANGED_FILES" | grep -qP '^Cargo\.(toml|lock)$'; then
-            echo "Cargo files changed, analyzing..."
-            CARGO_CHANGED_DEPS=$(./script/diff-cargo-deps "$COMPARE_REV" || true)
-          fi
-
           # Combine all changed packages
-          ALL_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$CARGO_CHANGED_DEPS" | sort -u | grep -v '^$' || true)
+          ALL_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' || true)
 
           if [ -z "$ALL_CHANGED_PKGS" ]; then
             echo "No package changes detected, will run all tests"
