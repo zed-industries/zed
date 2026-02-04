@@ -4008,7 +4008,6 @@ impl EditorElement {
                 .h((*height as f32) * line_height)
                 .bg(checkerboard(
                     cx.theme().colors().panel_background,
-                    // 20.0
                     Self::checkerboard_size(line_height.into(), 20.0),
                 ))
                 .into_any(),

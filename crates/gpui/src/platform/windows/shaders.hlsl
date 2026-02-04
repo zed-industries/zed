@@ -411,8 +411,8 @@ float4 gradient_color(Background background,
             float y_index = floor(relative_position.y / size);
             float should_be_colored = (x_index + y_index) % 2.0;
             
-            background_color = solid_color;
-            background_color.a *= saturate(should_be_colored);
+            color = solid_color;
+            color.a *= saturate(should_be_colored);
             break;
         }
     }
