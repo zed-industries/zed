@@ -1954,6 +1954,136 @@ impl EditorElement {
         cursor_layouts
     }
 
+    fn layout_beam_jump_cursors(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        content_origin: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        line_height: Pixels,
+        em_advance: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<CursorLayout> {
+        let visible_start_offset = DisplayPoint::new(visible_row_range.start, 0)
+            .to_offset(&snapshot.display_snapshot, Bias::Left);
+        let visible_end_offset = DisplayPoint::new(visible_row_range.end, 0)
+            .to_offset(&snapshot.display_snapshot, Bias::Right);
+
+        let highlights = self.editor.read(cx).beam_jump_highlights.clone();
+        let highlights = highlights.as_slice();
+
+        let start_ix =
+            highlights.partition_point(|highlight| highlight.range.end <= visible_start_offset);
+        let end_ix =
+            highlights.partition_point(|highlight| highlight.range.start < visible_end_offset);
+        let highlights = &highlights[start_ix..end_ix];
+        if highlights.is_empty() {
+            return Vec::new();
+        }
+
+        let color = cx.theme().players().local().cursor;
+        let label_text_color = self.style.background;
+        let mut cursors = Vec::new();
+
+        for highlight in highlights {
+            let start = highlight
+                .range
+                .start
+                .to_display_point(&snapshot.display_snapshot);
+            let end = highlight
+                .range
+                .end
+                .to_display_point(&snapshot.display_snapshot);
+
+            // For soft-wrapped ranges, render one outline per display row segment.
+            let mut row = start.row();
+            let last_row = end.row();
+            while row <= last_row {
+                let start_col = if row == start.row() {
+                    start.column()
+                } else {
+                    0
+                };
+                let end_col = if row == last_row {
+                    end.column()
+                } else {
+                    snapshot.display_snapshot.line_len(row)
+                };
+
+                if end_col <= start_col {
+                    if row == last_row {
+                        break;
+                    }
+                    row = row.next_row();
+                    continue;
+                }
+
+                if !visible_row_range.contains(&row) {
+                    if row == last_row {
+                        break;
+                    }
+                    row = row.next_row();
+                    continue;
+                }
+
+                let Some(cursor_row_layout) =
+                    line_layouts.get(row.minus(visible_row_range.start) as usize)
+                else {
+                    if row == last_row {
+                        break;
+                    }
+                    row = row.next_row();
+                    continue;
+                };
+                let start_x = cursor_row_layout.x_for_index(start_col as usize);
+                let end_x = cursor_row_layout.x_for_index(end_col as usize);
+                let mut block_width = end_x - start_x;
+                if block_width == Pixels::ZERO {
+                    block_width = em_advance;
+                }
+
+                let x = start_x - scroll_pixel_position.x.into();
+                let y = ((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height))
+                    .into();
+                let mut cursor = CursorLayout::new(
+                    point(x, y),
+                    block_width,
+                    line_height,
+                    color,
+                    CursorShape::Hollow,
+                    None,
+                );
+
+                if let Some(label) = highlight.label.clone()
+                    && row == last_row
+                {
+                    cursor.layout(
+                        content_origin,
+                        Some(CursorName {
+                            string: label,
+                            color: label_text_color,
+                            is_top_row: row.0 == 0,
+                        }),
+                        window,
+                        cx,
+                    );
+                }
+
+                cursors.push(cursor);
+
+                if row == last_row {
+                    break;
+                }
+                row = row.next_row();
+            }
+        }
+
+        cursors
+    }
+
     fn layout_scrollbars(
         &self,
         snapshot: &EditorSnapshot,
@@ -10435,7 +10565,19 @@ impl Element for EditorElement {
                         .iter()
                         .any(|c| !visible_row_range.contains(&c.0.row()));
 
-                    let visible_cursors = self.layout_visible_cursors(
+                    let mut visible_cursors = self.layout_beam_jump_cursors(
+                        &snapshot,
+                        start_row..end_row,
+                        &line_layouts,
+                        content_origin,
+                        scroll_position,
+                        scroll_pixel_position,
+                        line_height,
+                        em_advance,
+                        window,
+                        cx,
+                    );
+                    visible_cursors.extend(self.layout_visible_cursors(
                         &snapshot,
                         &selections,
                         &row_block_types,
@@ -10452,7 +10594,7 @@ impl Element for EditorElement {
                         &redacted_ranges,
                         window,
                         cx,
-                    );
+                    ));
 
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
