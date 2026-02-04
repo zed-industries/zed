@@ -1,16 +1,16 @@
 use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
-    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
-    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
-    DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
-    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
-    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
-    HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs,
+    ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
+    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
+    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
     SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
     SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
-    code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
+    code_context_menus::{ContextMenuOrigin, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -2544,17 +2544,13 @@ impl EditorElement {
                 .borrow()
                 .as_ref()
                 .and_then(|menu| {
-                    if let crate::CodeContextMenu::CodeActions(CodeActionsMenu {
-                        deployed_from,
-                        ..
-                    }) = menu
-                    {
-                        deployed_from.as_ref()
+                    if let crate::CodeContextMenu::CodeActions(popover) = menu {
+                        popover.origin.as_ref()
                     } else {
                         None
                     }
                 })
-                .is_some_and(|source| matches!(source, CodeActionSource::Indicator(..)));
+                .is_some_and(|origin| matches!(origin, ContextMenuOrigin::GutterIndicator(..)));
             Some(editor.render_inline_code_actions(icon_size, display_point.row(), active, cx))
         })?;
 
@@ -3223,17 +3219,15 @@ impl EditorElement {
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
                 // TODO: add edit button on the right side of each row in the context menu
-                if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
-                    deployed_from,
-                    actions,
-                    ..
-                })) = editor.context_menu.borrow().as_ref()
+                if let Some(crate::CodeContextMenu::CodeActions(popover)) =
+                    editor.context_menu.borrow().as_ref()
                 {
-                    actions
-                        .tasks()
-                        .map(|tasks| tasks.position.to_display_point(snapshot).row())
-                        .or_else(|| match deployed_from {
-                            Some(CodeActionSource::Indicator(row)) => Some(*row),
+                    popover
+                        .task_position
+                        .as_ref()
+                        .map(|pos| pos.to_display_point(snapshot).row())
+                        .or_else(|| match &popover.origin {
+                            Some(ContextMenuOrigin::GutterIndicator(row)) => Some(*row),
                             _ => None,
                         })
                 } else {
@@ -4549,7 +4543,7 @@ impl EditorElement {
 
             while end_rows
                 .last()
-                .is_some_and(|&last_end| last_end <= sticky_row)
+                .is_some_and(|&last_end| last_end < sticky_row)
             {
                 end_rows.pop();
             }
@@ -4608,9 +4602,9 @@ impl EditorElement {
                 edit_prediction_popover_visible = true;
             }
 
-            if editor.context_menu_visible()
-                && let Some(crate::ContextMenuOrigin::Cursor) = editor.context_menu_origin()
-            {
+            let menu_visible = editor.context_menu_visible();
+            let menu_origin = editor.context_menu_origin();
+            if menu_visible && let Some(crate::ContextMenuOrigin::Cursor) = menu_origin {
                 let (min_height_in_lines, max_height_in_lines) = editor
                     .context_menu_options
                     .as_ref()

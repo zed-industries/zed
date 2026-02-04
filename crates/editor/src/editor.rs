@@ -19,6 +19,7 @@ pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
 mod element;
+mod fuzzy_popover;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
@@ -84,8 +85,8 @@ use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
 use code_context_menus::{
-    AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionsMenu, ContextMenuOrigin,
+    AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeContextMenu, CompletionsMenu,
+    ContextMenuOrigin, create_code_actions_popover,
 };
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -110,9 +111,8 @@ use gpui::{
     Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
     Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
-    TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
-    pulsating_between, px, relative, size,
+    TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, WeakEntity,
+    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -5009,6 +5009,22 @@ impl Editor {
     }
 
     pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        // Check if we should confirm code action instead of inserting newline
+        let is_code_actions_menu_open = matches!(
+            self.context_menu.borrow().as_ref(),
+            Some(CodeContextMenu::CodeActions(_))
+        );
+
+        if is_code_actions_menu_open {
+            // If the code actions menu is visible, confirm the selected action
+            if let Some(task) =
+                self.confirm_code_action(&ConfirmCodeAction { item_ix: None }, window, cx)
+            {
+                task.detach_and_log_err(cx);
+            }
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             let (edits_with_flags, selection_info): (Vec<_>, Vec<_>) = {
@@ -6511,15 +6527,18 @@ impl Editor {
         let quick_launch = action.quick_launch;
         let mut context_menu = self.context_menu.borrow_mut();
         if let Some(CodeContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
-            if code_actions.deployed_from == action.deployed_from {
-                // Toggle if we're selecting the same one
+            let action_origin = action.deployed_from.as_ref().map(|source| match source {
+                CodeActionSource::Indicator(row) | CodeActionSource::RunMenu(row) => {
+                    ContextMenuOrigin::GutterIndicator(*row)
+                }
+                CodeActionSource::QuickActionBar => ContextMenuOrigin::QuickActionBar,
+            });
+            if code_actions.origin == action_origin {
                 *context_menu = None;
                 cx.notify();
                 return;
             } else {
-                // Otherwise, clear it and start a new one
                 *context_menu = None;
-                cx.notify();
             }
         }
         drop(context_menu);
@@ -6617,28 +6636,34 @@ impl Editor {
 
             editor.update_in(cx, |editor, window, cx| {
                 crate::hover_popover::hide_hover(editor, cx);
-                let actions = CodeActionContents::new(
-                    resolved_tasks,
-                    code_actions,
-                    debug_scenarios,
-                    task_context.unwrap_or_default(),
-                );
+                let task_position = resolved_tasks.as_ref().map(|tasks| tasks.position);
+                let task_context_value = task_context.unwrap_or_default();
+                let actions =
+                    CodeActionContents::new(resolved_tasks, code_actions, debug_scenarios);
 
                 // Don't show the menu if there are no actions available
                 if actions.is_empty() {
                     cx.notify();
                     return Task::ready(Ok(()));
-                }
+                };
 
-                *editor.context_menu.borrow_mut() =
-                    Some(CodeContextMenu::CodeActions(CodeActionsMenu {
-                        buffer,
-                        actions,
-                        selected_item: Default::default(),
-                        scroll_handle: UniformListScrollHandle::default(),
-                        deployed_from,
-                    }));
+                let popover = create_code_actions_popover(
+                    actions,
+                    buffer.clone(),
+                    deployed_from,
+                    task_context_value,
+                    task_position,
+                    window,
+                    cx,
+                );
+
+                *editor.context_menu.borrow_mut() = Some(CodeContextMenu::CodeActions(popover));
                 cx.notify();
+                if let Some(CodeContextMenu::CodeActions(menu)) =
+                    editor.context_menu.borrow().as_ref()
+                {
+                    menu.focus(window, cx);
+                }
                 if spawn_straight_away
                     && let Some(task) = editor.confirm_code_action(
                         &ConfirmCodeAction { item_ix: Some(0) },
@@ -6741,68 +6766,138 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        let actions_menu =
-            if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
-                menu
+        // Check if the code actions menu is currently open and use filtered results if available
+        let menu_context = {
+            let menu_borrow = self.context_menu.borrow();
+            if let Some(CodeContextMenu::CodeActions(menu)) = menu_borrow.as_ref() {
+                let action_ix = action.item_ix.unwrap_or(menu.selected_item);
+                let selected_action = menu.get_item(action_ix)?;
+                Some((selected_action, menu.buffer.clone(), menu.context.clone()))
             } else {
-                return None;
-            };
+                None
+            }
+        };
 
-        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?;
-        let title = action.label();
-        let buffer = actions_menu.buffer;
-        let workspace = self.workspace()?;
+        if let Some((selected_action, buffer, context)) = menu_context {
+            // Hide the menu before executing the action
+            self.hide_context_menu(window, cx);
 
-        match action {
-            CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.schedule_resolved_task(
-                        task_source_kind,
-                        resolved_task,
-                        false,
-                        window,
-                        cx,
-                    );
+            let title = selected_action.label();
+            let workspace = self.workspace()?;
 
+            match selected_action {
+                CodeActionsItem::Task(task_source_kind, resolved_task) => {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.schedule_resolved_task(
+                            task_source_kind,
+                            resolved_task,
+                            false,
+                            window,
+                            cx,
+                        );
+                        Some(Task::ready(Ok(())))
+                    })
+                }
+                CodeActionsItem::CodeAction {
+                    excerpt_id,
+                    action,
+                    provider,
+                } => {
+                    let apply_code_action =
+                        provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
+                    let workspace = workspace.downgrade();
+                    Some(cx.spawn_in(window, async move |editor, cx| {
+                        let project_transaction = apply_code_action.await?;
+                        Self::open_project_transaction(
+                            &editor,
+                            workspace,
+                            project_transaction,
+                            title,
+                            cx,
+                        )
+                        .await
+                    }))
+                }
+                CodeActionsItem::DebugScenario(scenario) => {
+                    workspace.update(cx, |workspace, cx| {
+                        dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
+                        workspace.start_debug_session(
+                            scenario,
+                            context,
+                            Some(buffer),
+                            None,
+                            window,
+                            cx,
+                        );
+                    });
                     Some(Task::ready(Ok(())))
-                })
+                }
             }
-            CodeActionsItem::CodeAction {
-                excerpt_id,
-                action,
-                provider,
-            } => {
-                let apply_code_action =
-                    provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
-                let workspace = workspace.downgrade();
-                Some(cx.spawn_in(window, async move |editor, cx| {
-                    let project_transaction = apply_code_action.await?;
-                    Self::open_project_transaction(
-                        &editor,
-                        workspace,
-                        project_transaction,
-                        title,
-                        cx,
-                    )
-                    .await
-                }))
-            }
-            CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context;
+        } else {
+            // Original behavior if no context menu is open - hide and get the menu
+            let actions_menu =
+                if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
+                    menu
+                } else {
+                    return None;
+                };
 
-                workspace.update(cx, |workspace, cx| {
-                    dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
-                    workspace.start_debug_session(
-                        scenario,
-                        context,
-                        Some(buffer),
-                        None,
-                        window,
-                        cx,
-                    );
-                });
-                Some(Task::ready(Ok(())))
+            let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
+            let action = actions_menu.get_item(action_ix)?;
+            let title = action.label();
+            let buffer = actions_menu.buffer;
+            let workspace = self.workspace()?;
+
+            match action {
+                CodeActionsItem::Task(task_source_kind, resolved_task) => {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.schedule_resolved_task(
+                            task_source_kind,
+                            resolved_task,
+                            false,
+                            window,
+                            cx,
+                        );
+
+                        Some(Task::ready(Ok(())))
+                    })
+                }
+                CodeActionsItem::CodeAction {
+                    excerpt_id,
+                    action,
+                    provider,
+                } => {
+                    let apply_code_action =
+                        provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
+                    let workspace = workspace.downgrade();
+                    Some(cx.spawn_in(window, async move |editor, cx| {
+                        let project_transaction = apply_code_action.await?;
+                        Self::open_project_transaction(
+                            &editor,
+                            workspace,
+                            project_transaction,
+                            title,
+                            cx,
+                        )
+                        .await
+                    }))
+                }
+                CodeActionsItem::DebugScenario(scenario) => {
+                    let context = actions_menu.context;
+
+                    workspace.update(cx, |workspace, cx| {
+                        dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
+                        workspace.start_debug_session(
+                            scenario,
+                            context,
+                            Some(buffer),
+                            None,
+                            window,
+                            cx,
+                        );
+                    });
+                    Some(Task::ready(Ok(())))
+                }
             }
         }
     }
@@ -10224,8 +10319,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        let menu = self.context_menu.borrow();
-        let menu = menu.as_ref()?;
+        let mut menu = self.context_menu.borrow_mut();
+        let menu = menu.as_mut()?;
         if !menu.visible() {
             return None;
         };
