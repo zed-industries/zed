@@ -216,11 +216,12 @@ impl Render for CommandPalette {
                 .right(px(0.))
                 .w(RESIZE_HANDLE_SIZE)
                 .h(RESIZE_HANDLE_SIZE)
+                .opacity(0.5)
                 .cursor_nwse_resize()
                 .child(
-                    Icon::new(IconName::Resize)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
+                    Icon::new(IconName::DragHandle)
+                        .size(IconSize::Indicator)
+                        .color(Color::Disabled),
                 ),
         );
 
