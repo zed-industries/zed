@@ -26,19 +26,12 @@ const FIM_CONTEXT_TOKENS: usize = 512;
 pub struct Ollama;
 
 #[derive(Debug, Serialize)]
-struct OllamaGenerateRequest {
+struct OpenAiCompletionRequest {
     model: String,
     prompt: String,
-    raw: bool,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<OllamaGenerateOptions>,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaGenerateOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    num_predict: Option<u32>,
+    max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,9 +39,14 @@ struct OllamaGenerateOptions {
 }
 
 #[derive(Debug, Deserialize)]
-struct OllamaGenerateResponse {
-    created_at: String,
-    response: String,
+struct OpenAiCompletionResponse {
+    id: String,
+    choices: Vec<OpenAiCompletionChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiCompletionChoice {
+    text: String,
 }
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
@@ -205,22 +203,19 @@ impl Ollama {
                 (prompt, stop_tokens, None, inputs)
             };
 
-            let request = OllamaGenerateRequest {
+            let request = OpenAiCompletionRequest {
                 model: model.clone(),
                 prompt,
-                raw: true,
                 stream: false,
-                options: Some(OllamaGenerateOptions {
-                    num_predict: Some(max_output_tokens),
-                    temperature: Some(0.2),
-                    stop: Some(stop_tokens),
-                }),
+                max_tokens: Some(max_output_tokens),
+                temperature: Some(0.2),
+                stop: Some(stop_tokens),
             };
 
             let request_body = serde_json::to_string(&request)?;
             let http_request = http_client::Request::builder()
                 .method(http_client::Method::POST)
-                .uri(format!("{}/api/generate", api_url))
+                .uri(format!("{}/v1/completions", api_url))
                 .header("Content-Type", "application/json")
                 .body(http_client::AsyncBody::from(request_body))?;
 
@@ -238,8 +233,14 @@ impl Ollama {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
 
-            let ollama_response: OllamaGenerateResponse =
+            let ollama_response: OpenAiCompletionResponse =
                 serde_json::from_str(&body).context("Failed to parse Ollama response")?;
+
+            let response_text = ollama_response
+                .choices
+                .first()
+                .map(|choice| choice.text.clone())
+                .unwrap_or_default();
 
             let response_received_at = Instant::now();
 
@@ -252,9 +253,9 @@ impl Ollama {
                 let editable_range =
                     editable_range_override.expect("zeta model should have editable range");
 
-                log::trace!("ollama response: {}", ollama_response.response);
+                log::trace!("ollama response: {}", response_text);
 
-                let response = clean_zeta_completion(&ollama_response.response);
+                let response = clean_zeta_completion(&response_text);
                 match zeta1::parse_edits(&response, editable_range, &snapshot) {
                     Ok(edits) => edits,
                     Err(err) => {
@@ -263,7 +264,7 @@ impl Ollama {
                     }
                 }
             } else {
-                let completion: Arc<str> = clean_fim_completion(&ollama_response.response).into();
+                let completion: Arc<str> = clean_fim_completion(&response_text).into();
                 if completion.is_empty() {
                     vec![]
                 } else {
@@ -274,7 +275,7 @@ impl Ollama {
             };
 
             anyhow::Ok(OllamaRequestOutput {
-                created_at: ollama_response.created_at,
+                created_at: ollama_response.id,
                 edits,
                 snapshot,
                 response_received_at,
