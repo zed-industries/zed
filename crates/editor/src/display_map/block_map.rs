@@ -1100,10 +1100,29 @@ impl BlockMap {
             bounds,
         );
 
-        let determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
-            let our_wrap = wrap_snapshot.make_wrap_point(our_point, Bias::Left).row();
-            let companion_wrap = companion_snapshot
-                .make_wrap_point(their_point, Bias::Left)
+        let mut our_inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut our_fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
+        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
+        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
+        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
+        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
+
+        let mut determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
+            let our_wrap = our_wrap_point_cursor
+                .map(our_tab_point_cursor.map(
+                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
+                ))
+                .row();
+            let companion_wrap = companion_wrap_point_cursor
+                .map(
+                    companion_tab_point_cursor.map(
+                        companion_fold_point_cursor
+                            .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
+                    ),
+                )
                 .row();
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
@@ -1118,8 +1137,6 @@ impl BlockMap {
 
         let mut result = Vec::new();
 
-        // old approach: buffer_diff computed the patch, and then passed a chosen sequence of points through it, returning the results
-        // new approach: buffer_diff gives us the patch directly, and then we pass through the points we are interested in
         for excerpt in patches {
             let mut source_points = (excerpt.edited_range.start.row..=excerpt.edited_range.end.row)
                 .map(|row| MultiBufferPoint::new(row, 0))
