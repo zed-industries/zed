@@ -676,7 +676,6 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
-                                        false,
                                         cx,
                                     )
                                 })??

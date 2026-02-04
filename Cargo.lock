@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
@@ -270,6 +269,7 @@ dependencies = [
  "acp_tools",
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "async-trait",
  "chrono",

@@ -5,15 +5,16 @@ use acp_thread::{
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
+use agent_settings::AgentSettings;
 use anyhow::anyhow;
 use collections::HashMap;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
-use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
+use futures::{AsyncBufReadExt as _, FutureExt as _};
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use settings::Settings as _;
+use settings::{Settings as _, ToolPermissionMode};
 use task::ShellBuilder;
 use util::ResultExt as _;
 use util::process::Child;
@@ -1144,26 +1145,46 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
-        let respect_default_mode_setting;
+        let auto_approve_from_settings;
         let thread;
         {
             let sessions_ref = self.sessions.borrow();
             let session = sessions_ref
                 .get(&arguments.session_id)
                 .context("Failed to get session")?;
-            respect_default_mode_setting = session.session_modes.is_none();
+            // Only respect the user's default setting when the external agent
+            // doesn't have its own permission modes.
+            auto_approve_from_settings = session.session_modes.is_none();
             thread = session.thread.clone();
         }
 
         let cx = &mut self.cx.clone();
 
+        let options = acp_thread::PermissionOptions::Flat(arguments.options);
+
         let task = thread.update(cx, |thread, cx| {
-            thread.request_tool_call_authorization(
-                arguments.tool_call,
-                acp_thread::PermissionOptions::Flat(arguments.options),
-                respect_default_mode_setting,
-                cx,
-            )
+            // For external agents that don't have their own permission modes,
+            // auto-approve if the user has set tool_permissions.default to "allow".
+            if auto_approve_from_settings {
+                let global_default = AgentSettings::get_global(cx).tool_permissions.default;
+                if global_default == ToolPermissionMode::Allow {
+                    if let Some(allow_once_option) = options.allow_once_option_id() {
+                        thread.upsert_tool_call_inner(
+                            arguments.tool_call,
+                            acp_thread::ToolCallStatus::Pending,
+                            cx,
+                        )?;
+                        return Ok(async {
+                            acp::RequestPermissionOutcome::Selected(
+                                acp::SelectedPermissionOutcome::new(allow_once_option),
+                            )
+                        }
+                        .boxed());
+                    }
+                }
+            }
+
+            thread.request_tool_call_authorization(arguments.tool_call, options, cx)
         })??;
 
         let outcome = task.await;

@@ -435,7 +435,7 @@ fn forward_event_to_acp_thread(
             ..
         }) => {
             let outcome_task = acp_thread.update(cx, |thread, cx| {
-                thread.request_tool_call_authorization(tool_call, options, true, cx)
+                thread.request_tool_call_authorization(tool_call, options, cx)
             });
             if let Ok(Ok(task)) = outcome_task {
                 cx.background_spawn(async move {

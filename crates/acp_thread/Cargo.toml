@@ -19,7 +19,6 @@ test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot", 
 action_log.workspace = true
 agent-client-protocol.workspace = true
 base64.workspace = true
-agent_settings.workspace = true
 anyhow.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true

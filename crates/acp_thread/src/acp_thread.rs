@@ -3,8 +3,6 @@ mod diff;
 mod mention;
 mod terminal;
 
-use agent_settings::AgentSettings;
-
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
@@ -32,7 +30,7 @@ pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
-use settings::Settings as _;
+
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
@@ -1740,27 +1738,9 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
-        respect_default_mode_setting: bool,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
-
-        let settings = AgentSettings::get_global(cx);
-        let global_default = settings.tool_permissions.default;
-
-        if respect_default_mode_setting && global_default == settings::ToolPermissionMode::Allow {
-            // Don't use AllowAlways, because then if you were to change default,
-            // some tools would (incorrectly) continue to auto-accept.
-            if let Some(allow_once_option) = options.allow_once_option_id() {
-                self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
-                return Ok(async {
-                    acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
-                        allow_once_option,
-                    ))
-                }
-                .boxed());
-            }
-        }
 
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
