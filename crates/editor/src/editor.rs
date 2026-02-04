@@ -1176,6 +1176,7 @@ pub struct Editor {
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     delegate_expand_excerpts: bool,
+    delegate_stage_and_restore: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -2374,6 +2375,7 @@ impl Editor {
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
             delegate_expand_excerpts: false,
+            delegate_stage_and_restore: false,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -11418,6 +11420,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if self.delegate_stage_and_restore {
+            let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
+            if !hunks.is_empty() {
+                cx.emit(EditorEvent::RestoreRequested { hunks });
+            }
+            return;
+        }
         let mut revert_changes = HashMap::default();
         let chunk_by = self
             .snapshot(window, cx)
@@ -20344,6 +20353,14 @@ impl Editor {
         ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) {
+        if self.delegate_stage_and_restore {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let hunks: Vec<_> = self.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+            if !hunks.is_empty() {
+                cx.emit(EditorEvent::StageOrUnstageRequested { stage, hunks });
+            }
+            return;
+        }
         let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
         cx.spawn(async move |this, cx| {
             task.await?;
@@ -20439,7 +20456,7 @@ impl Editor {
         }
     }
 
-    fn do_stage_or_unstage(
+    pub(crate) fn do_stage_or_unstage(
         &self,
         stage: bool,
         buffer_id: BufferId,
@@ -21109,6 +21126,10 @@ impl Editor {
 
     pub fn set_delegate_expand_excerpts(&mut self, delegate: bool) {
         self.delegate_expand_excerpts = delegate;
+    }
+
+    pub fn set_delegate_stage_and_restore(&mut self, delegate: bool) {
+        self.delegate_stage_and_restore = delegate;
     }
 
     pub fn set_on_local_selections_changed(
@@ -27359,6 +27380,13 @@ pub enum EditorEvent {
         excerpt_ids: Vec<ExcerptId>,
         lines: u32,
         direction: ExpandExcerptDirection,
+    },
+    StageOrUnstageRequested {
+        stage: bool,
+        hunks: Vec<MultiBufferDiffHunk>,
+    },
+    RestoreRequested {
+        hunks: Vec<MultiBufferDiffHunk>,
     },
     BufferEdited,
     Edited {

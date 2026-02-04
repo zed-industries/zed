@@ -4,10 +4,11 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
+use itertools::Itertools;
 use language::{Buffer, Capability};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferPoint,
-    MultiBufferSnapshot, PathKey,
+    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferDiffHunk,
+    MultiBufferPoint, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
@@ -58,6 +59,34 @@ pub(crate) fn convert_rhs_rows_to_lhs(
         rhs_bounds,
         |diff, range, buffer| diff.patch_for_buffer_range(range, buffer),
     )
+}
+
+fn translate_lhs_hunks_to_rhs(
+    lhs_hunks: &[MultiBufferDiffHunk],
+    splittable: &SplittableEditor,
+    cx: &App,
+) -> Vec<MultiBufferDiffHunk> {
+    let rhs_display_map = splittable.rhs_editor.read(cx).display_map.read(cx);
+    let Some(companion) = rhs_display_map.companion() else {
+        return vec![];
+    };
+    let companion = companion.read(cx);
+    let rhs_snapshot = splittable.rhs_multibuffer.read(cx).snapshot(cx);
+    let rhs_hunks: Vec<MultiBufferDiffHunk> = rhs_snapshot.diff_hunks().collect();
+
+    let mut translated = Vec::new();
+    for lhs_hunk in lhs_hunks {
+        let Some(rhs_buffer_id) = companion.lhs_to_rhs_buffer(lhs_hunk.buffer_id) else {
+            continue;
+        };
+        if let Some(rhs_hunk) = rhs_hunks.iter().find(|rhs_hunk| {
+            rhs_hunk.buffer_id == rhs_buffer_id
+                && rhs_hunk.diff_base_byte_range == lhs_hunk.diff_base_byte_range
+        }) {
+            translated.push(rhs_hunk.clone());
+        }
+    }
+    translated
 }
 
 fn patches_for_range<F>(
@@ -371,6 +400,7 @@ impl SplittableEditor {
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
+            editor.set_delegate_stage_and_restore(true);
             editor.set_show_vertical_scrollbar(false, cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
@@ -394,6 +424,63 @@ impl SplittableEditor {
                                 })
                                 .collect();
                             this.expand_excerpts(rhs_ids.into_iter(), *lines, *direction, cx);
+                        }
+                    }
+                    EditorEvent::StageOrUnstageRequested { stage, hunks } => {
+                        if this.lhs.is_some() {
+                            let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
+                            if !translated.is_empty() {
+                                let stage = *stage;
+                                this.rhs_editor.update(cx, |editor, cx| {
+                                    let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
+                                    for (buffer_id, hunks) in &chunk_by {
+                                        editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    EditorEvent::RestoreRequested { hunks } => {
+                        if this.lhs.is_some() {
+                            let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
+                            if !translated.is_empty() {
+                                this.rhs_editor.update(cx, |editor, cx| {
+                                    let mut revert_changes = HashMap::default();
+                                    let chunk_by =
+                                        translated.into_iter().chunk_by(|hunk| hunk.buffer_id);
+                                    for (buffer_id, hunks) in &chunk_by {
+                                        let hunks = hunks.collect::<Vec<_>>();
+                                        for hunk in &hunks {
+                                            editor.prepare_restore_change(
+                                                &mut revert_changes,
+                                                hunk,
+                                                cx,
+                                            );
+                                        }
+                                        editor.do_stage_or_unstage(
+                                            false,
+                                            buffer_id,
+                                            hunks.into_iter(),
+                                            cx,
+                                        );
+                                    }
+                                    editor.buffer().update(cx, |multi_buffer, cx| {
+                                        for (buffer_id, changes) in revert_changes {
+                                            if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                                                buffer.update(cx, |buffer, cx| {
+                                                    buffer.edit(
+                                                        changes.into_iter().map(|(range, text)| {
+                                                            (range, text.to_string())
+                                                        }),
+                                                        None,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }
+                                    });
+                                });
+                            }
                         }
                     }
                     EditorEvent::SelectionsChanged { .. } => {
