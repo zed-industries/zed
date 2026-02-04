@@ -138,6 +138,25 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
         .add_with(("path", "~/.rustup"))
 }
 
+pub fn check_macos_environment() -> Step<Run> {
+    named::bash(indoc::indoc! {r#"
+        echo "=== Gatekeeper Status ==="
+        spctl --status || true
+
+        echo "=== System Integrity Protection ==="
+        csrutil status || true
+
+        echo "=== Xcode Version ==="
+        xcodebuild -version || true
+
+        echo "=== Available Disk Space ==="
+        df -h /
+
+        echo "=== macOS Version ==="
+        sw_vers
+    "#})
+}
+
 pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }

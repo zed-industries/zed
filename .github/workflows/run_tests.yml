@@ -245,6 +245,22 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::check_macos_environment
+      run: |
+        echo "=== Gatekeeper Status ==="
+        spctl --status || true
+
+        echo "=== System Integrity Protection ==="
+        csrutil status || true
+
+        echo "=== Xcode Version ==="
+        xcodebuild -version || true
+
+        echo "=== Available Disk Space ==="
+        df -h /
+
+        echo "=== macOS Version ==="
+        sw_vers
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
