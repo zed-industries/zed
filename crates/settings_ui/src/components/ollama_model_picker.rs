@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use fuzzy::StringMatch;
 use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Task, Window, px};
+use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};
@@ -13,12 +14,6 @@ use crate::{
 };
 
 type OllamaModelPicker = Picker<OllamaModelPickerDelegate>;
-
-const PRESET_MODELS: &[&str] = &[
-    "qwen2.5-coder:1.5b-base",
-    "qwen2.5-coder:3b-base",
-    "qwen2.5-coder:7b-base",
-];
 
 struct OllamaModelPickerDelegate {
     models: Vec<SharedString>,
@@ -32,15 +27,12 @@ impl OllamaModelPickerDelegate {
     fn new(
         current_model: SharedString,
         on_model_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
-        _cx: &mut Context<OllamaModelPicker>,
+        cx: &mut Context<OllamaModelPicker>,
     ) -> Self {
-        let mut models: Vec<SharedString> = PRESET_MODELS
-            .iter()
-            .map(|&s| SharedString::from(s))
-            .collect();
+        let mut models = Self::fetch_ollama_models(cx);
 
-        let current_in_presets = models.iter().any(|m| *m == current_model);
-        if !current_model.is_empty() && !current_in_presets {
+        let current_in_list = models.iter().any(|m| *m == current_model);
+        if !current_model.is_empty() && !current_in_list {
             models.insert(0, current_model.clone());
         }
 
@@ -67,6 +59,24 @@ impl OllamaModelPickerDelegate {
             query: String::new(),
             on_model_changed: Arc::new(on_model_changed),
         }
+    }
+
+    fn fetch_ollama_models(cx: &App) -> Vec<SharedString> {
+        let ollama_provider_id = LanguageModelProviderId::new("ollama");
+
+        let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&ollama_provider_id)
+        else {
+            return Vec::new();
+        };
+
+        let mut models: Vec<SharedString> = provider
+            .provided_models(cx)
+            .into_iter()
+            .map(|model| SharedString::from(model.id().0.to_string()))
+            .collect();
+
+        models.sort();
+        models
     }
 }
 

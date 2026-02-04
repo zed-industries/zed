@@ -288,7 +288,7 @@ pub struct OllamaEditPredictionSettingsContent {
     /// Api URL to use for completions.
     ///
     /// Default: "http://localhost:11434"
-    pub api_url: Option<Arc<str>>,
+    pub api_url: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.

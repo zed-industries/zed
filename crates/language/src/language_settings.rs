@@ -694,7 +694,7 @@ impl settings::Settings for AllLanguageSettings {
         let ollama_settings = OllamaSettings {
             model: ollama.model.map(|m| m.0),
             max_output_tokens: ollama.max_output_tokens.unwrap(),
-            api_url: ollama.api_url.unwrap(),
+            api_url: ollama.api_url.unwrap().into(),
         };
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
