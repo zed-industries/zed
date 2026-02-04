@@ -515,6 +515,14 @@ impl LocalLspStore {
                 .diagnostics
                 .lsp_pull_diagnostics
                 .enabled;
+            let settings_location = SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            };
+            let augments_syntax_tokens = AllLanguageSettings::get(Some(settings_location), cx)
+                .language(Some(settings_location), Some(&language_name), cx)
+                .semantic_tokens
+                .use_tree_sitter();
             cx.spawn(async move |cx| {
                 let result = async {
                     let language_server = pending_server.await?;
@@ -543,23 +551,11 @@ impl LocalLspStore {
                     }
 
                     let initialization_params = cx.update(|cx| {
-                        let mut params =
-                            language_server.default_initialize_params(pull_diagnostics, cx);
-                        if let Some(semantic_tokens) = params
-                            .capabilities
-                            .text_document
-                            .as_mut()
-                            .and_then(|td| td.semantic_tokens.as_mut())
-                        {
-                            let settings_location = SettingsLocation {
-                                worktree_id,
-                                path: RelPath::empty(),
-                            };
-                            let settings = AllLanguageSettings::get(Some(settings_location), cx)
-                                .language(Some(settings_location), Some(&language_name), cx);
-                            semantic_tokens.augments_syntax_tokens =
-                                Some(settings.semantic_tokens.use_tree_sitter());
-                        }
+                        let mut params = language_server.default_initialize_params(
+                            pull_diagnostics,
+                            augments_syntax_tokens,
+                            cx,
+                        );
                         params.initialization_options = initialization_options;
                         adapter.adapter.prepare_initialize_params(params, cx)
                     })?;

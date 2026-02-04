@@ -709,7 +709,12 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
+    pub fn default_initialize_params(
+        &self,
+        pull_diagnostics: bool,
+        augments_syntax_tokens: bool,
+        cx: &App,
+    ) -> InitializeParams {
         let workspace_folders = self.workspace_folders.as_ref().map_or_else(
             || {
                 vec![WorkspaceFolder {
@@ -901,9 +906,7 @@ impl LanguageServer {
                         overlapping_token_support: Some(true),
                         multiline_token_support: Some(true),
                         server_cancel_support: Some(true),
-                        // We apply semantic tokens over tree-sitter highlighting, so
-                        // let the server know that we are augmenting existing tokens.
-                        augments_syntax_tokens: Some(true),
+                        augments_syntax_tokens: Some(augments_syntax_tokens),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -1988,7 +1991,7 @@ mod tests {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(false, cx);
+                let params = server.default_initialize_params(false, false, cx);
                 let configuration = DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
