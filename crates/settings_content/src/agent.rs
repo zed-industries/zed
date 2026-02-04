@@ -546,7 +546,7 @@ pub enum CustomAgentServerSettings {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolPermissionsContent {
-    /// Global default mode when no tool-specific rules match.
+    /// Global default permission when no tool-specific rules match.
     /// Individual tools can override this with their own default.
     /// Default: confirm
     #[serde(alias = "default_mode")]

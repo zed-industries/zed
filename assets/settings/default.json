@@ -956,7 +956,7 @@
     // This setting only applies to the native Zed agent.
     // External agent servers have their own permission systems.
     "tool_permissions": {
-      // Global default mode when no tool-specific rules match.
+      // Global default permission when no tool-specific rules match.
       // "allow" - Auto-approve without prompting
       // "deny" - Auto-reject
       // "confirm" - Always prompt (default)

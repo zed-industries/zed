@@ -131,7 +131,7 @@ impl Default for AgentProfileId {
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolPermissions {
-    /// Global default mode when no tool-specific rules or patterns match.
+    /// Global default permission when no tool-specific rules or patterns match.
     pub default: ToolPermissionMode,
     pub tools: collections::HashMap<Arc<str>, ToolRules>,
 }
