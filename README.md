@@ -21,6 +21,14 @@ Other platforms are not yet available:
 - [Building Zed for Linux](./docs/src/development/linux.md)
 - [Building Zed for Windows](./docs/src/development/windows.md)
 
+### Model API Integration
+
+For AI/LLM model integration during the build phase:
+
+- [MODEL_API_RULES.md](./MODEL_API_RULES.md) - Complete API contract and rules
+- [MODEL_API_QUICK_REF.md](./MODEL_API_QUICK_REF.md) - Quick reference guide
+- [docs/MODEL_BUILD_INTEGRATION.md](./docs/MODEL_BUILD_INTEGRATION.md) - Implementation guide
+
 ### Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
