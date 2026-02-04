@@ -16,12 +16,13 @@ Tämä PR luo `home` branchin ja konfiguraation pitämään se erillään Zed-pr
 
 **Tärkeää**: Oletusbranchin vaihtaminen täytyy tehdä GitHubin asetuksissa:
 
-1. Mene GitHubissa: `https://github.com/Jounikka1918/zed_cachy_experiment`
-2. Klikkaa **Settings** (vaatii admin-oikeudet)
-3. Vasemmalta valikosta: **Branches**
-4. Kohdassa "Default branch", klikkaa kynä-ikonia
-5. Valitse `home` pudotusvalikosta
-6. Klikkaa **Update** ja vahvista
+1. Mene suoraan: https://github.com/Jounikka1918/zed_cachy_experiment/settings/branches
+   (Vaatii admin-oikeudet)
+2. Kohdassa "Default branch", klikkaa kynä-ikonia tai ⟷ painiketta
+3. Valitse `home` pudotusvalikosta
+4. Klikkaa **Update** ja vahvista
+
+Tarkemmat ohjeet: [SETUP_DEFAULT_BRANCH.md](./SETUP_DEFAULT_BRANCH.md)
 
 ## Kuinka pitää "home" erillään Zed-päivityksistä
 
