@@ -1,0 +1,67 @@
+[
+  {
+    "token_type": "lifetime",
+    "token_modifiers": [],
+    "style": ["symbol", "type.parameter", "type"]
+  },
+  {
+    "token_type": "builtinType",
+    "token_modifiers": [],
+    "style": ["type.builtin", "type"]
+  },
+  {
+    "token_type": "selfKeyword",
+    "token_modifiers": [],
+    "style": ["variable.special", "keyword"]
+  },
+  {
+    "token_type": "selfTypeKeyword",
+    "token_modifiers": [],
+    "style": ["type.builtin", "type"]
+  },
+  {
+    "token_type": "boolean",
+    "token_modifiers": [],
+    "style": ["boolean", "constant.builtin"]
+  },
+  {
+    "token_type": "formatSpecifier",
+    "token_modifiers": [],
+    "style": ["string.special", "punctuation.special"]
+  },
+  {
+    "token_type": "escapeSequence",
+    "token_modifiers": [],
+    "style": ["string.escape", "constant.character.escape"]
+  },
+  {
+    "token_type": "attribute",
+    "token_modifiers": [],
+    "style": ["attribute", "function.decorator", "function.annotation"]
+  },
+  {
+    "token_type": "derive",
+    "token_modifiers": [],
+    "style": ["attribute", "function.macro"]
+  },
+  {
+    "token_type": "deriveHelper",
+    "token_modifiers": [],
+    "style": ["attribute", "function.macro"]
+  },
+  {
+    "token_type": "union",
+    "token_modifiers": [],
+    "style": ["type.union", "type"]
+  },
+  {
+    "token_type": "unresolvedReference",
+    "token_modifiers": [],
+    "style": ["variable"]
+  },
+  {
+    "token_type": "constParameter",
+    "token_modifiers": [],
+    "style": ["constant"]
+  }
+]

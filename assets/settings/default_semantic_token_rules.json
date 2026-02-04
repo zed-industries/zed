@@ -235,10 +235,4 @@
     "token_modifiers": [],
     "style": ["type.event", "type"],
   },
-  // Rust
-  {
-    "token_type": "lifetime",
-    "token_modifiers": [],
-    "style": ["symbol", "type.parameter", "type"],
-  },
 ]
