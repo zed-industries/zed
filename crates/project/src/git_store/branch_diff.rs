@@ -70,7 +70,7 @@ impl BranchDiff {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         event_repo_id,
-                        RepositoryEvent::StatusesChanged,
+                        RepositoryEvent::StatusesChanged | RepositoryEvent::BranchChanged,
                         _,
                     ) => this
                         .repo
