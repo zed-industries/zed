@@ -3,7 +3,7 @@ use std::{cmp, sync::Arc};
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{
-    DataCollectionState, EditPredictionDelegate, EditPredictionDismissReason,
+    DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
     EditPredictionIconSet, SuggestionDisplayType,
 };
 use gpui::{App, Entity, prelude::*};
@@ -168,10 +168,10 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         });
     }
 
-    fn discard(&mut self, reason: EditPredictionDismissReason, cx: &mut Context<Self>) {
+    fn discard(&mut self, reason: EditPredictionDiscardReason, cx: &mut Context<Self>) {
         let reject_reason = match reason {
-            EditPredictionDismissReason::Rejected => EditPredictionRejectReason::Rejected,
-            EditPredictionDismissReason::Discarded => EditPredictionRejectReason::Discarded,
+            EditPredictionDiscardReason::Rejected => EditPredictionRejectReason::Rejected,
+            EditPredictionDiscardReason::Ignored => EditPredictionRejectReason::Discarded,
         };
         self.store.update(cx, |store, cx| {
             store.reject_current_prediction(reject_reason, &self.project, cx);
