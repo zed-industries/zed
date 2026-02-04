@@ -49,8 +49,8 @@ use gpui::{
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
     TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, rgb,
-    rgba, size, solid_background, transparent_black,
+    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
+    transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -61,7 +61,7 @@ use multi_buffer::{
 };
 
 use edit_prediction_types::EditPredictionGranularity;
-use ordered_float::Float;
+
 use project::{
     DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -4009,10 +4009,7 @@ impl EditorElement {
                 .bg(checkerboard(cx.theme().colors().panel_background, {
                     let target_size = 16.0;
                     let scale = window.scale_factor();
-                    Self::checkerboard_size(
-                        f32::from(line_height) * scale,
-                        target_size * scale,
-                    )
+                    Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale)
                 }))
                 .into_any(),
         };
