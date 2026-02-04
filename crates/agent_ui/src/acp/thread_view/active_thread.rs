@@ -1819,29 +1819,23 @@ impl AcpThreadView {
                                         )
                                         .label_size(LabelSize::XSmall),
                                     )
-                                    .when(
-                                        self.hovered_edited_file_buttons == Some(index),
-                                        |this| {
-                                            let full_path = full_path.clone();
-                                            this.hover(|s| s.bg(cx.theme().colors().element_hover))
-                                                .tooltip(move |_, cx| {
-                                                    Tooltip::with_meta(
-                                                        "Go to File",
-                                                        None,
-                                                        full_path.clone(),
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_click({
-                                                    let buffer = buffer.clone();
-                                                    cx.listener(move |this, _, window, cx| {
-                                                        this.open_edited_buffer(
-                                                            &buffer, window, cx,
-                                                        );
-                                                    })
-                                                })
-                                        },
-                                    ),
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .tooltip({
+                                        move |_, cx| {
+                                            Tooltip::with_meta(
+                                                "Go to File",
+                                                None,
+                                                full_path.clone(),
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.open_edited_buffer(&buffer, window, cx);
+                                        })
+                                    }),
                             )
                             .child(buttons);
 
@@ -1887,7 +1881,6 @@ impl AcpThreadView {
                         })
                     }),
             )
-            .child(Divider::vertical().color(DividerColor::BorderVariant))
             .child(
                 Button::new(("reject-file", index), "Reject")
                     .label_size(LabelSize::Small)
