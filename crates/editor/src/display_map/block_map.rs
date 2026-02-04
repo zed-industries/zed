@@ -1643,7 +1643,7 @@ impl BlockMapWriter<'_> {
                 ..
             }) = self.companion.as_deref_mut()
             {
-                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
+                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, rgba};
                 let my_anchor = block.placement.start();
                 let my_point = my_anchor.to_point(buffer);
                 let their_point = companion
@@ -1669,9 +1669,9 @@ impl BlockMapWriter<'_> {
                     render: Arc::new(move |cx| {
                         div()
                             .id(cx.block_id)
-                            .size_full()
+                            .w_full()
                             .h(Pixels::from(cx.line_height * cx.height as f32))
-                            .bg(pattern_slash(white(), 8.0, 8.0))
+                            .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
                             .into_any()
                     }),
                     priority: 0,
