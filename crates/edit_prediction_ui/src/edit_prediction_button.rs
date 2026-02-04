@@ -1179,14 +1179,20 @@ impl EditPredictionButton {
                             })
                             .detach();
                     })
-                    .entry("Learn More", None, |_window, cx| {
-                        telemetry::event!(
-                            "Edit Prediction Menu Action",
-                            action = "view_docs",
-                            source = "upsell",
-                        );
-                        cx.open_url(&zed_urls::edit_prediction_docs(cx));
-                    })
+                    .link_with_handler(
+                        "Learn More",
+                        OpenBrowser {
+                            url: zed_urls::edit_prediction_docs(cx),
+                        }
+                        .boxed_clone(),
+                        |_window, _cx| {
+                            telemetry::event!(
+                                "Edit Prediction Menu Action",
+                                action = "view_docs",
+                                source = "upsell",
+                            );
+                        },
+                    )
                     .separator();
             } else if let Some(usage) = self
                 .edit_prediction_provider
