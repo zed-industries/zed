@@ -465,6 +465,42 @@ impl Extension {
         }
     }
 
+    pub async fn call_language_server_initialization_options_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Result<Option<String>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_initialization_options_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            // Schema methods are only available in v0.8.0+
+            _ => Ok(Ok(None)),
+        }
+    }
+
+    pub async fn call_language_server_settings_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Result<Option<String>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_settings_schema(store, &language_server_id.0, resource)
+                    .await
+            }
+            // Schema methods are only available in v0.8.0+
+            _ => Ok(Ok(None)),
+        }
+    }
+
     pub async fn call_language_server_additional_initialization_options(
         &self,
         store: &mut Store<WasmState>,
