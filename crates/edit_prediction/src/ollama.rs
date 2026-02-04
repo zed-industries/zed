@@ -47,6 +47,7 @@ struct OllamaGenerateOptions {
 
 #[derive(Debug, Deserialize)]
 struct OllamaGenerateResponse {
+    created_at: String,
     response: String,
 }
 
@@ -59,6 +60,7 @@ pub fn is_available(cx: &App) -> bool {
 
 /// Output from the Ollama HTTP request, containing all data needed to create the prediction result.
 struct OllamaRequestOutput {
+    created_at: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
     snapshot: BufferSnapshot,
     response_received_at: Instant,
@@ -79,7 +81,6 @@ impl Ollama {
             snapshot,
             position,
             events,
-            related_files,
             ..
         }: EditPredictionModelInput,
         cx: &mut App,
@@ -124,8 +125,8 @@ impl Ollama {
                 let stop_tokens = get_zeta_stop_tokens();
 
                 let inputs = ZetaPromptInput {
-                    events: events.clone(),
-                    related_files: vec![],
+                    events,
+                    related_files: Vec::new(),
                     cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
                         - context_offset_range.start,
                     cursor_path: full_path.clone(),
@@ -149,27 +150,20 @@ impl Ollama {
                         0,
                     );
                 let excerpt_offset_range = excerpt_range.to_offset(&snapshot);
-
-                let related_files = crate::filter_redundant_excerpts(
-                    related_files,
-                    full_path.as_ref(),
-                    excerpt_range.start.row..excerpt_range.end.row,
-                );
+                let cursor_offset = cursor_point.to_offset(&snapshot);
 
                 let inputs = ZetaPromptInput {
-                    events: events.clone(),
-                    related_files,
-                    cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
-                        - excerpt_offset_range.start,
+                    events,
+                    related_files: Vec::new(),
+                    cursor_offset_in_excerpt: cursor_offset - excerpt_offset_range.start,
+                    editable_range_in_excerpt: cursor_offset - excerpt_offset_range.start
+                        ..cursor_offset - excerpt_offset_range.start,
                     cursor_path: full_path.clone(),
                     excerpt_start_row: Some(excerpt_range.start.row),
                     cursor_excerpt: snapshot
                         .text_for_range(excerpt_range)
                         .collect::<String>()
                         .into(),
-                    editable_range_in_excerpt: (excerpt_offset_range.start
-                        - excerpt_offset_range.start)
-                        ..(excerpt_offset_range.end - excerpt_offset_range.start),
                 };
 
                 let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
@@ -226,7 +220,11 @@ impl Ollama {
             let edits = if is_zeta {
                 let editable_range =
                     editable_range_override.expect("zeta model should have editable range");
-                match zeta1::parse_edits(&ollama_response.response, editable_range, &snapshot) {
+
+                log::trace!("ollama response: {}", ollama_response.response);
+
+                let response = clean_zeta_completion(&ollama_response.response);
+                match zeta1::parse_edits(&response, editable_range, &snapshot) {
                     Ok(edits) => edits,
                     Err(err) => {
                         log::warn!("Ollama zeta: Failed to parse response: {}", err);
@@ -245,6 +243,7 @@ impl Ollama {
             };
 
             anyhow::Ok(OllamaRequestOutput {
+                created_at: ollama_response.created_at,
                 edits,
                 snapshot,
                 response_received_at,
@@ -258,7 +257,7 @@ impl Ollama {
             let output = result.await.context("Ollama edit prediction failed")?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
-                    EditPredictionId(String::new().into()),
+                    EditPredictionId(output.created_at.into()),
                     &output.buffer,
                     &output.snapshot,
                     output.edits.into(),
@@ -330,6 +329,16 @@ fn get_fim_stop_tokens() -> Vec<String> {
         "[PREFIX]".to_string(),
         "[SUFFIX]".to_string(),
     ]
+}
+
+fn clean_zeta_completion(mut response: &str) -> &str {
+    if let Some(last_newline_ix) = response.rfind('\n') {
+        let last_line = &response[last_newline_ix + 1..];
+        if EDITABLE_REGION_END_MARKER.starts_with(&last_line) {
+            response = &response[..last_newline_ix]
+        }
+    }
+    response
 }
 
 fn clean_fim_completion(response: &str) -> String {
