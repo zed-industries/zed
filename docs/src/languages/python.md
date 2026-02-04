@@ -360,9 +360,9 @@ requirements.txt
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
-## Troubleshoot and Maintain a Productive Python Setup
+## Troubleshooting
 
-Zed is designed to minimize configuration overhead, but occasional issues can still arise—especially around environments, language servers, or tooling. Here's how to keep your Python setup working smoothly.
+Issues with Python in Zed typically involve virtual environments, language servers, or tooling configuration.
 
 ### Resolve Language Server Startup Issues
 

@@ -1,8 +1,8 @@
 # Agent Panel
 
-The Agent Panel allows you to interact with many LLMs and coding agents that can help with various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
+The Agent Panel is where you interact with AI agents that can read, write, and run code in your project. Use it for code generation, refactoring, debugging, documentation, and general questions.
 
-To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
+Open it with `agent: new thread` from [the Command Palette](../getting-started.md#command-palette) or click the ✨ icon in the status bar.
 
 ## Getting Started {#getting-started}
 
@@ -15,11 +15,9 @@ You can do that by:
 
 ## Overview {#overview}
 
-With an LLM provider or an external agent configured, type at the message editor and hit `enter` to submit your prompt.
-If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
+With an LLM provider or external agent configured, type in the message editor and press `enter` to submit. Expand the editor with {#kb agent::ExpandMessageEditor} if you need more room.
 
-You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
-From this point on, you can interact with the many supported features outlined below.
+Responses stream in with indicators showing [which tools](./tools.md) the model is using. The sections below cover what you can do from here.
 
 > Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below may _not_ be supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, and others. Their availability varies depending on the agent.
 
@@ -58,10 +56,9 @@ To view all historical conversations, reach for the `View All` option from withi
 
 ### Following the Agent {#following-the-agent}
 
-Zed is built with collaboration natively integrated, and this naturally extends to collaboration with AI models.
-To follow the agent as it reads and edits in your codebase, click on the "crosshair" icon button at the bottom left of the panel.
+Follow the agent as it reads and edits files by clicking the crosshair icon at the bottom left of the panel. Your editor will jump to each file the agent touches.
 
-You can also do that with the keyboard by holding down the `cmd`/`ctrl` modifier when submitting a message.
+You can also hold `cmd`/`ctrl` when submitting a message to automatically follow.
 
 ### Get Notified {#get-notified}
 
@@ -86,10 +83,9 @@ You can turn this off, though, through the `agent.single_file_review` setting.
 
 ## Adding Context {#adding-context}
 
-Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant context, manually adding whatever would be useful to fulfill your prompt is still encouraged as a way to not only improve the AI's response quality but also to speed up its response time.
+The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
-In Zed's Agent Panel, all pieces of context are added as mentions in the panel's message editor.
-You can type `@` to mention files, directories, symbols, previous threads, rules files, and diagnostics.
+Add context by typing `@` in the message editor. You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
 
 Copying images and pasting them in the panel's message editor is also supported.
 
@@ -118,12 +114,12 @@ After you've configured your LLM providers—either via [a custom API key](./llm
 
 You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or through your settings via the `agent.favorite_models` settings key.
 
-The great thing about favoriting models is that you can cycle through them with {#kb agent::CycleFavoriteModels} without opening the model selector, enabling quick experimentation with the models you're already most comfortable with.
+Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector.
 
 ## Using Tools {#using-tools}
 
-The new Agent Panel supports tool calling, which enables agentic editing.
-Zed comes with [several built-in tools](./tools.md) that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
+The Agent Panel supports tool calling, which enables agentic editing.
+Zed includes [built-in tools](./tools.md) for searching your codebase, editing files, running terminal commands, and fetching web content.
 
 You can also extend the set of available tools via [MCP Servers](./mcp.md).
 
@@ -181,8 +177,8 @@ Zed's UI will inform you about this via a warning icon that appears close to the
 With text threads, you have full control over the conversation data.
 You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
 
-For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers.
-We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
+Text threads are Zed's original assistant panel format, preserved for users who want direct control over conversation data.
+Autonomous code editing (where the agent writes to files) is only available in the default thread format, not text threads.
 
 ## Errors and Debugging {#errors-and-debugging}
 
@@ -192,7 +188,7 @@ You can also open threads as Markdown by clicking on the file icon button, to th
 
 ## Feedback {#feedback}
 
-Zed supports rating responses from the agent for feedback and improvement.
+You can rate agent responses to help improve Zed's system prompt and tools.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
 > See [AI Improvement](./ai-improvement.md) and [Privacy and Security](./privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.

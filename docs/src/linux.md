@@ -2,7 +2,7 @@
 
 ## Standard Installation
 
-For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
+The installation script on the [download](https://zed.dev/download) page is the fastest way to install Zed:
 
 ```sh
 curl -f https://zed.dev/install.sh | sh

@@ -7,8 +7,8 @@ The default provider is [Zeta, a proprietary open source and open dataset model]
 
 ## Configuring Zeta
 
-To use Zeta, the only thing you need to do is [to sign in](../authentication.md#what-features-require-signing-in).
-After doing that, you should already see predictions as you type on your files.
+To use Zeta, [sign in](../authentication.md#what-features-require-signing-in).
+Once signed in, predictions appear as you type.
 
 You can confirm that Zeta is properly configured either by verifying whether you have the following code in your `settings.json`:
 
@@ -18,13 +18,11 @@ You can confirm that Zeta is properly configured either by verifying whether you
 },
 ```
 
-Or you can also look for a little Z icon in the right of your status bar at the bottom.
+The Z icon in the status bar also indicates Zeta is active.
 
 ### Pricing and Plans
 
-From just signing in, while in Zed's free plan, you get 2,000 Zeta-powered edit predictions per month.
-But you can get _**unlimited edit predictions**_ by upgrading to [the Pro plan](../ai/plans-and-usage.md).
-More information can be found in [Zed's pricing page](https://zed.dev/pricing).
+The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../ai/plans-and-usage.md) removes this limit. See [Zed's pricing page](https://zed.dev/pricing) for details.
 
 ### Switching Modes {#switching-modes}
 
@@ -235,7 +233,7 @@ If you would like to use the default keybinding, you can free it up by either mo
 
 ## Disabling Automatic Edit Prediction
 
-There are different levels in which you can disable edit predictions to be displayed, including not having it turned on at all.
+You can disable edit predictions at several levels, or turn them off entirely.
 
 Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
 
@@ -290,8 +288,7 @@ To completely turn off edit prediction across all providers, explicitly set the 
 
 ## Configuring Other Providers {#other-providers}
 
-Zed's Edit Prediction also work with other completion model providers aside from Zeta.
-Learn about the available ones below.
+Edit Prediction also works with other providers.
 
 ### GitHub Copilot {#github-copilot}
 
@@ -400,4 +397,5 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 
 ## See also
 
-To learn about other ways to interact with AI in Zed, you may also want to see more about the [Agent Panel](./agent-panel.md) or the [Inline Assistant](./inline-assistant.md) feature.
+- [Agent Panel](./agent-panel.md): Agentic editing with file read/write and terminal access
+- [Inline Assistant](./inline-assistant.md): Prompt-driven transformations on selected code
