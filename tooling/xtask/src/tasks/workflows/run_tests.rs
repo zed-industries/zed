@@ -159,8 +159,8 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not a PR, running full test suite"
           echo "changed_packages=" >> "$GITHUB_OUTPUT"
-        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/)'; then
-          echo "Toolchain or cargo config changed, will run all tests"
+        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|\.github/)'; then
+          echo "Toolchain, .github or cargo config changed, will run all tests"
           echo "changed_packages=" >> "$GITHUB_OUTPUT"
         else
           # Extract changed packages from file paths
@@ -170,7 +170,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(echo -e "${FILE_CHANGED_PKGS}\nsettings\nstorybook\nassets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
           fi
 
           # Parse Cargo.lock diff for added/changed crates
@@ -183,7 +183,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
           fi
 
           # Combine all changed packages
-          ALL_CHANGED_PKGS=$(echo -e "${FILE_CHANGED_PKGS}\n${LOCK_CHANGED_PKGS}" | sort -u | grep -v '^$' || true)
+          ALL_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$LOCK_CHANGED_PKGS" | sort -u | grep -v '^$' || true)
 
           if [ -z "$ALL_CHANGED_PKGS" ]; then
             echo "No package changes detected, will run all tests"
@@ -191,7 +191,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
           else
             # Build nextest filterset with rdeps for each package
             FILTERSET=$(echo "$ALL_CHANGED_PKGS" | \
-              sed 's/.*/rdeps(package(\&))/' | \
+              sed 's/.*/rdeps(&)/' | \
               tr '\n' '|' | \
               sed 's/|$//')
             echo "Changed packages filterset: $FILTERSET"
