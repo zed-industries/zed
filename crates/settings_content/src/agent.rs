@@ -70,6 +70,10 @@ pub struct AgentSettingsContent {
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
+    /// **Security note**: Even with this enabled, Zed's built-in security rules
+    /// still block some tool actions, such as the terminal tool running `rm -rf /` or `rm -rf ~`,
+    /// to prevent certain classes of failures from happening.
+    ///
     /// This setting has no effect on external agents that support permission modes, such as Claude Code.
     ///
     /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
@@ -109,6 +113,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    ///
+    /// Default: true
+    pub cancel_generation_on_terminal_stop: Option<bool>,
     /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     ///
     /// Default: false

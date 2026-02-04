@@ -1,8 +1,6 @@
 mod ids;
-mod queries;
+pub mod queries;
 mod tables;
-#[cfg(test)]
-pub mod tests;
 
 use crate::{Error, Result};
 use anyhow::{Context as _, anyhow};
@@ -37,15 +35,12 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use util::paths::PathStyle;
 use worktree_settings_file::LocalSettingsKind;
 
-#[cfg(test)]
-pub use tests::TestDb;
-
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;
 
-#[cfg(test)]
+#[cfg(feature = "test-support")]
 pub struct DatabaseTestOptions {
     pub executor: gpui::BackgroundExecutor,
     pub runtime: tokio::runtime::Runtime,
@@ -55,14 +50,14 @@ pub struct DatabaseTestOptions {
 /// Database gives you a handle that lets you access the database.
 /// It handles pooling internally.
 pub struct Database {
-    options: ConnectOptions,
-    pool: DatabaseConnection,
+    pub options: ConnectOptions,
+    pub pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     projects: DashMap<ProjectId, Arc<Mutex<()>>>,
     notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
     notification_kinds_by_name: HashMap<String, NotificationKindId>,
-    #[cfg(test)]
-    test_options: Option<DatabaseTestOptions>,
+    #[cfg(feature = "test-support")]
+    pub test_options: Option<DatabaseTestOptions>,
 }
 
 // The `Database` type has so many methods that its impl blocks are split into
@@ -78,7 +73,7 @@ impl Database {
             projects: DashMap::with_capacity(16384),
             notification_kinds_by_id: HashMap::default(),
             notification_kinds_by_name: HashMap::default(),
-            #[cfg(test)]
+            #[cfg(feature = "test-support")]
             test_options: None,
         })
     }
@@ -87,7 +82,7 @@ impl Database {
         &self.options
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn reset(&self) {
         self.rooms.clear();
         self.projects.clear();
@@ -248,7 +243,7 @@ impl Database {
     where
         F: Future<Output = Result<T>>,
     {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         {
             let test_options = self.test_options.as_ref().unwrap();
             test_options.executor.simulate_random_delay().await;
@@ -260,7 +255,7 @@ impl Database {
             test_options.runtime.block_on(future)
         }
 
-        #[cfg(not(test))]
+        #[cfg(not(feature = "test-support"))]
         {
             future.await
         }

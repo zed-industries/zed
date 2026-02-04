@@ -217,7 +217,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
-    fn on_removed(&self, _cx: &App) {}
+    fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn navigate(
         &mut self,
@@ -364,6 +364,16 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn include_in_nav_history() -> bool {
         true
     }
+
+    /// Returns additional actions to add to the tab's context menu.
+    /// Each entry is a label and an action to dispatch.
+    fn tab_extra_context_menu_actions(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        Vec::new()
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -483,7 +493,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut Context<Workspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
-    fn on_removed(&self, cx: &App);
+    fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
@@ -534,6 +544,11 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn tab_extra_context_menu_actions(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<(SharedString, Box<dyn Action>)>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -941,8 +956,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| this.deactivated(window, cx));
     }
 
-    fn on_removed(&self, cx: &App) {
-        self.read(cx).on_removed(cx);
+    fn on_removed(&self, cx: &mut App) {
+        self.update(cx, |item, cx| item.on_removed(cx));
     }
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
@@ -1082,6 +1097,16 @@ impl<T: Item> ItemHandle for Entity<T> {
             window.dispatch_action(action, cx);
         })
     }
+
+    fn tab_extra_context_menu_actions(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        self.update(cx, |this, cx| {
+            this.tab_extra_context_menu_actions(window, cx)
+        })
+    }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyView {
@@ -1165,7 +1190,7 @@ pub enum Dedup {
 
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant>;
     fn from_state_proto(
         project: Entity<Workspace>,
         id: ViewId,
@@ -1178,8 +1203,8 @@ pub trait FollowableItem: Item {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool;
     fn apply_update_proto(
         &mut self,
@@ -1259,7 +1284,7 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
     }
 
     fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
-        self.read(cx).to_state_proto(window, cx)
+        self.update(cx, |this, cx| this.to_state_proto(window, cx))
     }
 
     fn add_event_to_update_proto(
@@ -1270,8 +1295,9 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
         cx: &mut App,
     ) -> bool {
         if let Some(event) = event.downcast_ref() {
-            self.read(cx)
-                .add_event_to_update_proto(event, update, window, cx)
+            self.update(cx, |this, cx| {
+                this.add_event_to_update_proto(event, update, window, cx)
+            })
         } else {
             false
         }

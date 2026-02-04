@@ -204,16 +204,16 @@ struct Session {
 
 impl Session {
     async fn db(&self) -> tokio::sync::MutexGuard<'_, DbHandle> {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         tokio::task::yield_now().await;
         guard
     }
 
     async fn connection_pool(&self) -> ConnectionPoolGuard<'_> {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         tokio::task::yield_now().await;
         let guard = self.connection_pool.lock();
         ConnectionPoolGuard {
@@ -267,13 +267,13 @@ impl Deref for DbHandle {
 pub struct Server {
     id: parking_lot::Mutex<ServerId>,
     peer: Arc<Peer>,
-    pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
+    pub connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
     teardown: watch::Sender<bool>,
 }
 
-pub(crate) struct ConnectionPoolGuard<'a> {
+struct ConnectionPoolGuard<'a> {
     guard: parking_lot::MutexGuard<'a, ConnectionPool>,
     _not_send: PhantomData<Rc<()>>,
 }
@@ -339,6 +339,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
+            .add_request_handler(forward_read_only_project_request::<proto::DownloadFileByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
@@ -391,6 +392,9 @@ impl Server {
             .add_message_handler(create_image_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshSemanticTokens>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
@@ -651,7 +655,7 @@ impl Server {
         let _ = self.teardown.send(true);
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn reset(&self, id: ServerId) {
         self.teardown();
         *self.id.lock() = id;
@@ -659,7 +663,7 @@ impl Server {
         let _ = self.teardown.send(false);
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn id(&self) -> ServerId {
         *self.id.lock()
     }
@@ -1013,7 +1017,7 @@ impl DerefMut for ConnectionPoolGuard<'_> {
 
 impl Drop for ConnectionPoolGuard<'_> {
     fn drop(&mut self) {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         self.check_invariants();
     }
 }

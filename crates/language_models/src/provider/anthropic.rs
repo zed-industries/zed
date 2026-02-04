@@ -578,7 +578,6 @@ impl LanguageModel for AnthropicModel {
             LanguageModelCompletionError,
         >,
     > {
-        let bypass_rate_limit = request.bypass_rate_limit;
         let request = into_anthropic(
             request,
             self.model.request_id().into(),
@@ -587,13 +586,10 @@ impl LanguageModel for AnthropicModel {
             self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream_with_bypass(
-            async move {
-                let response = request.await?;
-                Ok(AnthropicEventMapper::new().map_stream(response))
-            },
-            bypass_rate_limit,
-        );
+        let future = self.request_limiter.stream(async move {
+            let response = request.await?;
+            Ok(AnthropicEventMapper::new().map_stream(response))
+        });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
@@ -1168,7 +1164,6 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
-            bypass_rate_limit: false,
         };
 
         let anthropic_request = into_anthropic(

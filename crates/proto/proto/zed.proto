@@ -8,6 +8,7 @@ import "call.proto";
 import "channel.proto";
 import "core.proto";
 import "debugger.proto";
+import "download.proto";
 import "git.proto";
 import "image.proto";
 import "lsp.proto";
@@ -455,7 +456,18 @@ message Envelope {
         FindSearchCandidatesChunk find_search_candidates_chunk = 409;
         FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
         GetContextServerCommand get_context_server_command = 411;
-        ContextServerCommand context_server_command = 412; // current max
+        ContextServerCommand context_server_command = 412;
+        
+        AllocateWorktreeId allocate_worktree_id = 413;
+        AllocateWorktreeIdResponse allocate_worktree_id_response = 414;
+
+        DownloadFileByPath download_file_by_path = 415;
+        DownloadFileResponse download_file_response = 416;
+        CreateFileForPeer create_file_for_peer = 417;
+
+        SemanticTokens semantic_tokens = 418;
+        SemanticTokensResponse semantic_tokens_response = 419;
+        RefreshSemanticTokens refresh_semantic_tokens = 420; // current max
     }
 
     reserved 87 to 88;

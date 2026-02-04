@@ -3692,8 +3692,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by deny rule"
         );
+        let err_msg = result.unwrap_err().to_string().to_lowercase();
         assert!(
-            result.unwrap_err().to_string().contains("blocked"),
+            err_msg.contains("blocked"),
             "error should mention the command was blocked"
         );
     }
@@ -4293,19 +4294,8 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
         )
     });
 
-    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
-        std::collections::BTreeMap::new();
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx, mut cancellation_tx) =
         crate::ToolCallEventStream::test_with_cancellation();
@@ -4314,14 +4304,12 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Long running task".to_string(),
-                    task_prompt: "Do a very long task that takes forever".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Long running task".to_string(),
+                task_prompt: "Do a very long task that takes forever".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream.clone(),
             cx,
@@ -4591,32 +4579,12 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         thread
     });
 
-    let mut parent_tools: std::collections::BTreeMap<
-        gpui::SharedString,
-        Arc<dyn crate::AnyAgentTool>,
-    > = std::collections::BTreeMap::new();
-    parent_tools.insert("echo".into(), EchoTool.erase());
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project,
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
-    let subagent_configs = vec![crate::SubagentConfig {
-        label: "Test".to_string(),
-        task_prompt: "Do something".to_string(),
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-        timeout_ms: None,
-        allowed_tools: Some(vec!["nonexistent_tool".to_string()]),
-    }];
-    let result = tool.validate_subagents(&subagent_configs);
+    let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
+    let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx));
+
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4919,33 +4887,20 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         );
     });
 
-    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
-        std::collections::BTreeMap::new();
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let result = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Test".to_string(),
-                    task_prompt: "Do something".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Test".to_string(),
+                task_prompt: "Do something".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -4994,36 +4949,20 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         thread
     });
 
-    let mut parent_tools: std::collections::BTreeMap<
-        gpui::SharedString,
-        Arc<dyn crate::AnyAgentTool>,
-    > = std::collections::BTreeMap::new();
-    parent_tools.insert("echo".into(), EchoTool.erase());
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Research task".to_string(),
-                    task_prompt: "Find all TODOs in the codebase".to_string(),
-                    summary_prompt: "Summarize what you found".to_string(),
-                    context_low_prompt: "Context low, wrap up".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Research task".to_string(),
+                task_prompt: "Find all TODOs in the codebase".to_string(),
+                summary_prompt: "Summarize what you found".to_string(),
+                context_low_prompt: "Context low, wrap up".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -5703,14 +5642,9 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
 
-    // Queue a message before ending the stream
+    // Signal that a message is queued before ending the stream
     thread.update(cx, |thread, _cx| {
-        thread.queue_message(
-            vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "This is my queued message".to_string(),
-            ))],
-            vec![],
-        );
+        thread.set_has_queued_message(true);
     });
 
     // Now end the stream - tool will run, and the boundary check should see the queue
@@ -5741,14 +5675,12 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
         "Turn should have ended after tool completion due to queued message"
     );
 
-    // Verify the queued message is still there
+    // Verify the queued message flag is still set
     thread.update(cx, |thread, _cx| {
-        let queued = thread.queued_messages();
-        assert_eq!(queued.len(), 1, "Should still have one queued message");
-        assert!(matches!(
-            &queued[0].content[0],
-            acp::ContentBlock::Text(t) if t.text == "This is my queued message"
-        ));
+        assert!(
+            thread.has_queued_message(),
+            "Should still have queued message flag set"
+        );
     });
 
     // Thread should be idle now

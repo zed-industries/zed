@@ -176,7 +176,7 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
@@ -200,7 +200,7 @@ impl WslRemoteConnection {
         )
         .await?
         {
-            let tmp_path = paths::remote_wsl_server_dir_relative().join(
+            let tmp_path = paths::remote_server_dir_relative().join(
                 &RelPath::unix(&format!(
                     "download-{}-{}",
                     std::process::id(),
@@ -362,7 +362,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let proxy_process =
-            match wsl_command_impl(&self.connection_options, "env", &proxy_args, false)
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, true)
                 .kill_on_drop(true)
                 .spawn()
             {
@@ -577,6 +577,22 @@ async fn windows_path_to_wsl_path_impl(
 ) -> Result<String> {
     let source = sanitize_path(source).await?;
     run_wsl_command_with_output_impl(options, "wslpath", &["-u", &source]).await
+}
+
+/// Converts a WSL/POSIX path to a Windows path using `wslpath -w`.
+///
+/// For example, `/home/user/project` becomes `\\wsl.localhost\Ubuntu\home\user\project`
+#[cfg(target_os = "windows")]
+pub fn wsl_path_to_windows_path(
+    options: &WslConnectionOptions,
+    wsl_path: &Path,
+) -> impl Future<Output = Result<PathBuf>> + use<> {
+    let wsl_path_str = wsl_path.to_string_lossy().to_string();
+    let command = wsl_command_impl(options, "wslpath", &["-w", &wsl_path_str], true);
+    async move {
+        let windows_path = run_wsl_command_impl(command).await?;
+        Ok(PathBuf::from(windows_path))
+    }
 }
 
 fn run_wsl_command_impl(mut command: process::Command) -> impl Future<Output = Result<String>> {

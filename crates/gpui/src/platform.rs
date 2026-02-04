@@ -132,9 +132,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
+pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(
-        WindowsPlatform::new()
+        WindowsPlatform::new(headless)
             .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
@@ -254,8 +254,8 @@ pub(crate) trait Platform: 'static {
         &self,
         _menus: Vec<MenuItem>,
         _entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
-        Vec::new()
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
+        Task::ready(Vec::new())
     }
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);

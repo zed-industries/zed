@@ -336,27 +336,48 @@ impl AgentServer for CustomAgentServer {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
-        let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
-            settings
-                .get::<AllAgentServersSettings>(None)
-                .custom
-                .get(self.name().as_ref())
-                .map(|s| match s {
-                    project::agent_server_store::CustomAgentServerSettings::Custom {
-                        default_config_options,
-                        ..
-                    }
-                    | project::agent_server_store::CustomAgentServerSettings::Extension {
-                        default_config_options,
-                        ..
-                    }
-                    | project::agent_server_store::CustomAgentServerSettings::Registry {
-                        default_config_options,
-                        ..
-                    } => default_config_options.clone(),
-                })
-                .unwrap_or_default()
-        });
+        let (default_config_options, is_registry_agent) =
+            cx.read_global(|settings: &SettingsStore, _| {
+                let agent_settings = settings
+                    .get::<AllAgentServersSettings>(None)
+                    .custom
+                    .get(self.name().as_ref());
+
+                let is_registry = agent_settings
+                    .map(|s| {
+                        matches!(
+                            s,
+                            project::agent_server_store::CustomAgentServerSettings::Registry { .. }
+                        )
+                    })
+                    .unwrap_or(false);
+
+                let config_options = agent_settings
+                    .map(|s| match s {
+                        project::agent_server_store::CustomAgentServerSettings::Custom {
+                            default_config_options,
+                            ..
+                        }
+                        | project::agent_server_store::CustomAgentServerSettings::Extension {
+                            default_config_options,
+                            ..
+                        }
+                        | project::agent_server_store::CustomAgentServerSettings::Registry {
+                            default_config_options,
+                            ..
+                        } => default_config_options.clone(),
+                    })
+                    .unwrap_or_default();
+
+                (config_options, is_registry)
+            });
+
+        if is_registry_agent {
+            if let Some(registry_store) = project::AgentRegistryStore::try_global(cx) {
+                registry_store.update(cx, |store, cx| store.refresh_if_stale(cx));
+            }
+        }
+
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
         cx.spawn(async move |cx| {
