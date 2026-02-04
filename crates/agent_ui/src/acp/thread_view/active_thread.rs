@@ -443,7 +443,7 @@ impl AcpThreadView {
 
     /// Returns the currently active editor, either for a message that is being
     /// edited or the editor for a new message.
-    fn active_editor(&self, cx: &App) -> Entity<MessageEditor> {
+    pub(crate) fn active_editor(&self, cx: &App) -> Entity<MessageEditor> {
         if let Some(index) = self.editing_message
             && let Some(editor) = self
                 .entry_view_state

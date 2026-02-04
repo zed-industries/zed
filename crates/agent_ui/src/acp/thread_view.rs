@@ -2093,7 +2093,7 @@ impl AcpServerView {
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_thread) = self.as_active_thread() {
             active_thread.update(cx, |thread, cx| {
-                thread.message_editor.update(cx, |editor, cx| {
+                thread.active_editor(cx).update(cx, |editor, cx| {
                     editor.insert_selections(window, cx);
                 })
             });
@@ -3696,7 +3696,7 @@ pub(crate) mod tests {
 
         let focus_handle = setup
             .thread_view
-            .read_with(cx, |view, _cx| view.focus_handle.clone());
+            .read_with(cx, |view, cx| view.focus_handle(cx).clone());
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
         });
