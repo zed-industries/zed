@@ -4,6 +4,7 @@ use gpui::{
     SharedString, Subscription, Task, WeakEntity, Window, px,
 };
 use picker::{Picker, PickerDelegate};
+use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -494,6 +495,7 @@ pub struct Sidebar {
     width: Pixels,
     picker: Entity<Picker<WorkspacePickerDelegate>>,
     _subscription: Subscription,
+    _project_subscriptions: Vec<Subscription>,
     _fetch_recent_projects: Task<()>,
 }
 
@@ -544,10 +546,43 @@ impl Sidebar {
             width: DEFAULT_WIDTH,
             picker,
             _subscription: subscription,
+            _project_subscriptions: Vec::new(),
             _fetch_recent_projects: fetch_recent_projects,
         };
         this.queue_refresh(this.multi_workspace.clone(), window, cx);
         this
+    }
+
+    fn subscribe_to_projects(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let projects: Vec<_> = self
+            .multi_workspace
+            .read(cx)
+            .workspaces()
+            .iter()
+            .map(|w| w.read(cx).project().clone())
+            .collect();
+
+        projects
+            .iter()
+            .map(|project| {
+                cx.subscribe_in(
+                    project,
+                    window,
+                    |this, _project, event, window, cx| match event {
+                        ProjectEvent::WorktreeAdded(_)
+                        | ProjectEvent::WorktreeRemoved(_)
+                        | ProjectEvent::WorktreeOrderChanged => {
+                            this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                        }
+                        _ => {}
+                    },
+                )
+            })
+            .collect()
     }
 
     fn build_workspace_thread_entries(
@@ -570,6 +605,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         cx.defer_in(window, move |this, window, cx| {
+            this._project_subscriptions = this.subscribe_to_projects(window, cx);
             let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
                 Self::build_workspace_thread_entries(multi_workspace, cx)
             });
