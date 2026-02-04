@@ -20,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView, MultiWorkspace, Workspace};
+use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();

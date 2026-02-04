@@ -1,5 +1,4 @@
 use crate::acp::AcpServerView;
-use crate::acp::ThreadActivityEvent;
 use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
@@ -71,7 +70,6 @@ pub enum ThreadHistoryEvent {
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
-impl EventEmitter<ThreadActivityEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub fn new(
@@ -546,8 +544,6 @@ impl AcpThreadHistory {
         if !session_list.supports_delete() {
             return;
         }
-        let thread_id: std::sync::Arc<str> = entry.session_id.0.clone();
-        cx.emit(ThreadActivityEvent::Deleted { thread_id });
         let task = session_list.delete_session(&entry.session_id, cx);
         task.detach_and_log_err(cx);
     }
@@ -559,7 +555,6 @@ impl AcpThreadHistory {
         if !session_list.supports_delete() {
             return;
         }
-        cx.emit(ThreadActivityEvent::DeletedAll);
         session_list.delete_sessions(cx).detach_and_log_err(cx);
         self.confirming_delete_history = false;
         cx.notify();

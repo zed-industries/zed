@@ -15,7 +15,6 @@ path = "src/sidebar.rs"
 default = []
 
 [dependencies]
-agent_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
