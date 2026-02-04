@@ -238,8 +238,8 @@ pub(crate) struct Companion {
     lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
     lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
-    rhs_custom_blocks_to_lhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
-    lhs_custom_blocks_to_rhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
+    pub(crate) rhs_custom_blocks_to_lhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
+    pub(crate) lhs_custom_blocks_to_rhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
 }
 
 impl Companion {
@@ -263,11 +263,15 @@ impl Companion {
         }
     }
 
+    pub(crate) fn is_rhs(&self, display_map_id: EntityId) -> bool {
+        self.rhs_display_map_id == display_map_id
+    }
+
     pub(crate) fn companion_custom_block_to_custom_block(
         &self,
         display_map_id: EntityId,
     ) -> &HashMap<CustomBlockId, CustomBlockId> {
-        if display_map_id == self.rhs_display_map_id {
+        if self.is_rhs(display_map_id) {
             &self.lhs_custom_blocks_to_rhs_custom_blocks
         } else {
             &self.rhs_custom_blocks_to_lhs_custom_blocks
@@ -301,7 +305,7 @@ impl Companion {
         our_snapshot: &MultiBufferSnapshot,
         bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
     ) -> Vec<CompanionExcerptPatch> {
-        let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
+        let (excerpt_map, convert_fn) = if self.is_rhs(display_map_id) {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
         } else {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
@@ -316,7 +320,7 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let (excerpt_map, convert_fn) = if display_map_id == self.rhs_display_map_id {
+        let (excerpt_map, convert_fn) = if self.is_rhs(display_map_id) {
             (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
         } else {
             (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
@@ -341,7 +345,7 @@ impl Companion {
         &self,
         display_map_id: EntityId,
     ) -> &HashMap<ExcerptId, ExcerptId> {
-        if display_map_id == self.rhs_display_map_id {
+        if self.is_rhs(display_map_id) {
             &self.lhs_excerpt_to_rhs_excerpt
         } else {
             &self.rhs_excerpt_to_lhs_excerpt
@@ -349,7 +353,7 @@ impl Companion {
     }
 
     fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
-        if display_map_id == self.rhs_display_map_id {
+        if self.is_rhs(display_map_id) {
             &self.rhs_buffer_to_lhs_buffer
         } else {
             &self.lhs_buffer_to_rhs_buffer
@@ -527,76 +531,10 @@ impl DisplayMap {
         self.block_map
             .read(snapshot.clone(), edits.clone(), companion_view);
 
-        if let Some((companion_dm, companion)) = &self.companion {
+        if let Some((companion_dm, _)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, cx| {
                 if let Some((companion_snapshot, companion_edits)) = companion_wrap_data {
                     let their_companion_ref = dm.companion.as_ref().map(|(_, c)| c);
-
-                    // Sync existing custom blocks to the companion
-                    if self.entity_id != companion.read(cx).rhs_display_map_id {
-                        use gpui::{
-                            Element, InteractiveElement, Styled, div, pattern_slash, white,
-                        };
-                        let buffer_snapshot = snapshot.buffer_snapshot();
-                        let their_custom_blocks: Vec<_> = dm
-                            .block_map
-                            .read(companion_snapshot.clone(), Patch::default(), None)
-                            .blocks
-                            .iter()
-                            .cloned()
-                            .collect();
-                        let my_custom_blocks = their_custom_blocks.iter().map(|block| {
-                            let their_anchor = block.placement.start();
-                            let their_point =
-                                their_anchor.to_point(companion_snapshot.buffer_snapshot());
-                            let my_point = companion
-                                .read(cx)
-                                .convert_point_from_companion(
-                                    self.entity_id,
-                                    buffer_snapshot,
-                                    companion_snapshot.buffer_snapshot(),
-                                    their_point,
-                                )
-                                .start;
-                            let anchor = buffer_snapshot.anchor_before(my_point);
-                            let height = block.height.unwrap_or(1);
-                            let new_block = BlockProperties {
-                                placement: BlockPlacement::Above(anchor),
-                                height: Some(height),
-                                style: BlockStyle::Sticky,
-                                render: Arc::new(move |cx| {
-                                    div()
-                                        .id(cx.block_id)
-                                        .w_full()
-                                        .h(Pixels::from(cx.line_height * cx.height as f32))
-                                        .bg(pattern_slash(white(), 8.0, 8.0))
-                                        // .bg(pattern_slash(cx.theme().colors().panel_background, 8.0, 8.0))
-                                        .into_any()
-                                }),
-                                priority: 0,
-                            };
-                            log::debug!(
-                                "Inserting matching companion custom block: {block:#?} => {new_block:#?}"
-                            );
-                            new_block
-                        });
-                        let my_custom_blocks = self
-                            .block_map
-                            .write(snapshot.clone(), Patch::default(), None)
-                            .insert(my_custom_blocks);
-
-                        for (my_custom_block, their_custom_block) in my_custom_blocks
-                            .into_iter()
-                            .zip(their_custom_blocks.into_iter())
-                        {
-                            companion.update(cx, |companion, _| {
-                                companion.add_custom_block_mapping(
-                                    their_custom_block.id,
-                                    my_custom_block,
-                                );
-                            });
-                        }
-                    }
 
                     dm.block_map.read(
                         companion_snapshot,
@@ -608,6 +546,40 @@ impl DisplayMap {
                 }
             });
         }
+    }
+
+    pub(crate) fn sync_custom_blocks_into_companion(&mut self, cx: &mut Context<Self>) {
+        if self.companion.is_none() {
+            return;
+        }
+
+        let (self_wrap_snapshot, _) = self.sync_through_wrap(cx);
+        let (companion_dm, companion) = self
+            .companion
+            .as_ref()
+            .expect("companion must exist at this point");
+
+        companion
+            .update(cx, |companion, cx| {
+                companion_dm.update(cx, |dm, cx| {
+                    let (companion_snapshot, _) = dm.sync_through_wrap(cx);
+                    // Sync existing custom blocks to the companion
+                    for block in self
+                        .block_map
+                        .read(self_wrap_snapshot.clone(), Patch::default(), None)
+                        .blocks
+                    {
+                        dm.block_map.insert_custom_block_into_companion(
+                            self.entity_id,
+                            &companion_snapshot,
+                            block,
+                            self_wrap_snapshot.buffer_snapshot(),
+                            companion,
+                        )
+                    }
+                })
+            })
+            .ok();
     }
 
     pub(crate) fn companion(&self) -> Option<&Entity<Companion>> {

@@ -1461,6 +1461,58 @@ impl BlockMap {
             _ => false,
         });
     }
+
+    pub(crate) fn insert_custom_block_into_companion(
+        &mut self,
+        entity_id: EntityId,
+        snapshot: &WrapSnapshot,
+        block: &CustomBlock,
+        companion_snapshot: &MultiBufferSnapshot,
+        companion: &mut Companion,
+    ) {
+        use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
+        let their_anchor = block.placement.start();
+        let their_point = their_anchor.to_point(companion_snapshot);
+        let my_patches = companion.convert_rows_to_companion(
+            entity_id,
+            snapshot.buffer_snapshot(),
+            companion_snapshot,
+            (Bound::Included(their_point), Bound::Included(their_point)),
+        );
+        let my_excerpt = my_patches.first().unwrap();
+        let my_range = my_excerpt.patch.edit_for_old_position(their_point).new;
+        let my_point = my_range.start;
+        let anchor = snapshot.buffer_snapshot().anchor_before(my_point);
+        let height = block.height.unwrap_or(1);
+        let new_block = BlockProperties {
+            placement: BlockPlacement::Above(anchor),
+            height: Some(height),
+            style: BlockStyle::Sticky,
+            render: Arc::new(move |cx| {
+                div()
+                    .id(cx.block_id)
+                    .w_full()
+                    .h(Pixels::from(cx.line_height * cx.height as f32))
+                    .bg(pattern_slash(white(), 8.0, 8.0))
+                    // .bg(pattern_slash(
+                    //     cx.theme().colors().panel_background,
+                    //     8.0,
+                    //     8.0,
+                    // ))
+                    .into_any()
+            }),
+            priority: 0,
+        };
+        log::debug!("Inserting matching companion custom block: {block:#?} => {new_block:#?}");
+        let new_block_id = self
+            .write(snapshot.clone(), Patch::default(), None)
+            .insert([new_block])[0];
+        if companion.is_rhs(entity_id) {
+            companion.add_custom_block_mapping(block.id, new_block_id);
+        } else {
+            companion.add_custom_block_mapping(new_block_id, block.id);
+        }
+    }
 }
 
 #[ztracing::instrument(skip(tree, wrap_snapshot))]
@@ -1643,50 +1695,13 @@ impl BlockMapWriter<'_> {
                 ..
             }) = self.companion.as_deref_mut()
             {
-                use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
-                let my_anchor = block.placement.start();
-                let my_point = my_anchor.to_point(buffer);
-                let their_patches = companion.convert_rows_to_companion(
+                their_block_map.insert_custom_block_into_companion(
                     *their_entity_id,
-                    their_snapshot.buffer_snapshot(),
+                    their_snapshot,
+                    &new_block,
                     buffer,
-                    (Bound::Included(my_point), Bound::Included(my_point)),
+                    companion,
                 );
-                let their_excerpt = their_patches.first().unwrap();
-                let their_range = their_excerpt.patch.edit_for_old_position(my_point).new;
-                let their_point = their_range.start;
-                let anchor = their_snapshot.buffer_snapshot().anchor_before(their_point);
-                let height = new_block.height.unwrap_or(1);
-                let their_new_block = BlockProperties {
-                    placement: BlockPlacement::Above(anchor),
-                    height: Some(height),
-                    style: BlockStyle::Sticky,
-                    render: Arc::new(move |cx| {
-                        div()
-                            .id(cx.block_id)
-                            .w_full()
-                            .h(Pixels::from(cx.line_height * cx.height as f32))
-                            .bg(pattern_slash(white(), 8.0, 8.0))
-                            // .bg(pattern_slash(
-                            //     cx.theme().colors().panel_background,
-                            //     8.0,
-                            //     8.0,
-                            // ))
-                            .into_any()
-                    }),
-                    priority: 0,
-                };
-                log::debug!(
-                    "Inserting matching companion custom block: {new_block:#?} => {their_new_block:#?}"
-                );
-                let their_new_block_id = their_block_map
-                    .write(their_snapshot.clone(), Patch::default(), None)
-                    .insert([their_new_block])[0];
-                if *their_entity_id == companion.rhs_display_map_id {
-                    companion.add_custom_block_mapping(id, their_new_block_id)
-                } else {
-                    companion.add_custom_block_mapping(their_new_block_id, id)
-                }
             }
 
             edits = edits.compose([Edit {
@@ -1837,18 +1852,18 @@ impl BlockMapWriter<'_> {
             let their_block_ids: HashSet<_> = block_ids
                 .iter()
                 .filter_map(|my_block_id| {
-                    let their_block_id = companion
-                        .companion_custom_block_to_custom_block(*their_entity_id)
-                        .get(my_block_id)?;
+                    let mapping = companion.companion_custom_block_to_custom_block(*their_entity_id);
+                    let their_block_id =
+                        mapping.get(my_block_id)?;
                     log::debug!("Removing custom block in the companion with id {their_block_id:?} for mine {my_block_id:?}");
                     Some(*their_block_id)
                 })
                 .collect();
-            for (lhs_id, rhs_id) in their_block_ids.iter().zip(block_ids.iter()) {
-                if *their_entity_id == companion.rhs_display_map_id {
-                    companion.remove_custom_block_mapping(lhs_id, rhs_id)
+            for (lhs_id, rhs_id) in block_ids.iter().zip(their_block_ids.iter()) {
+                if !companion.is_rhs(*their_entity_id) {
+                    companion.remove_custom_block_mapping(lhs_id, rhs_id);
                 } else {
-                    companion.remove_custom_block_mapping(rhs_id, lhs_id)
+                    companion.remove_custom_block_mapping(rhs_id, lhs_id);
                 }
             }
             their_block_map
