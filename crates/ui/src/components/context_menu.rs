@@ -761,12 +761,24 @@ impl ContextMenu {
         self
     }
 
-    pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+    pub fn link(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+        self.link_with_handler(label, action, |_, _| {})
+    }
+
+    pub fn link_with_handler(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
-            handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
+            handler: Rc::new(move |_, window, cx| {
+                handler(window, cx);
+                window.dispatch_action(action.boxed_clone(), cx);
+            }),
             secondary_handler: None,
             icon: Some(IconName::ArrowUpRight),
             custom_icon_path: None,
