@@ -193,6 +193,7 @@ fn assign_edit_prediction_provider(
         }
         value @ (EditPredictionProvider::Experimental(_)
         | EditPredictionProvider::Zed
+        | EditPredictionProvider::Ollama
         | EditPredictionProvider::Sweep
         | EditPredictionProvider::Mercury) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -208,6 +209,12 @@ fn assign_edit_prediction_provider(
                         }
                         EditPredictionProvider::Mercury if cx.has_flag::<MercuryFeatureFlag>() => {
                             edit_prediction::EditPredictionModel::Mercury
+                        }
+                        EditPredictionProvider::Ollama => {
+                            if !edit_prediction::ollama::is_available(cx) {
+                                return false;
+                            }
+                            edit_prediction::EditPredictionModel::Ollama
                         }
                         EditPredictionProvider::Experimental(name)
                             if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME

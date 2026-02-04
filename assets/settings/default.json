@@ -962,75 +962,26 @@
     // Per-tool permission rules for granular control over tool actions.
     // This setting only applies to the native Zed agent.
     "tool_permissions": {
+      // Here are some examples of tool-specific permissions.
       "tools": {
-        "terminal": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // Dangerous rm commands
-            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
-            { "pattern": "rm\\s+-rf\\s*$" },
-            // Disk destruction
-            { "pattern": "> /dev/sd" },
-            { "pattern": "mkfs\\." },
-            { "pattern": "dd\\s+if=/dev/(zero|random)" },
-            // Fork bomb
-            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
-            // System files
-            { "pattern": "/etc/passwd" },
-            { "pattern": "/etc/shadow" },
-            // Windows destructive commands
-            { "pattern": "del /f /s /q c:\\\\" },
-            { "pattern": "format c:" },
-            { "pattern": "rd /s /q" },
-          ],
-          "always_confirm": [
-            // File deletion
-            { "pattern": "rm\\s" },
-            // Destructive git operations
-            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
-            { "pattern": "git\\s+push\\s+(-f|--force)" },
-            // Database operations
-            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
-            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
-            // Privileged commands
-            { "pattern": "sudo\\s" },
-          ],
-        },
-        "edit_file": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // Secrets and credentials
-            { "pattern": "\\.env($|\\.)" },
-            { "pattern": "secrets?/" },
-            { "pattern": "\\.pem$" },
-            { "pattern": "\\.key$" },
-          ],
-        },
-        "delete_path": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // System directories
-            { "pattern": "^/etc" },
-            { "pattern": "^/usr" },
-            { "pattern": "^/bin" },
-            { "pattern": "^/sbin" },
-            { "pattern": "^/var" },
-            { "pattern": "^/boot" },
-            { "pattern": "^/root" },
-            // Home directory root
-            { "pattern": "^~$" },
-            { "pattern": "^/Users/[^/]+$" },
-            { "pattern": "^/home/[^/]+$" },
-            // Git directory
-            { "pattern": "\\.git/?$" },
-            // Windows system directories
-            { "pattern": "^C:\\\\Windows" },
-            { "pattern": "^C:\\\\Program Files" },
-          ],
-        },
-        "fetch": {
-          "default_mode": "confirm",
-        },
+        // "terminal": {
+        //   "default_mode": "confirm",
+        //   "always_confirm": [
+        //     // Destructive git operations
+        //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+        //     { "pattern": "git\\s+push\\s+(-f|--force)" },
+        //   ],
+        // },
+        // "edit_file": {
+        //   "default_mode": "confirm",
+        //   "always_deny": [
+        //     // Secrets and credentials
+        //     { "pattern": "\\.env($|\\.)" },
+        //     { "pattern": "secrets?/" },
+        //     { "pattern": "\\.pem$" },
+        //     { "pattern": "\\.key$" },
+        //   ],
+        // },
       },
     },
     // When enabled, agent edits will be displayed in single-file editors for review
@@ -1548,6 +1499,11 @@
       // diagnostics, file paths, repository names, and generated predictions
       // to improve the service.
       "privacy_mode": false,
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "max_output_tokens": 256,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.

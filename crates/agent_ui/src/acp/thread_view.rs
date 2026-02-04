@@ -7678,7 +7678,7 @@ impl AcpServerView {
                     )
                     .child(
                         div().min_w(rems(8.)).child(
-                            LoadingLabel::new("Waiting Confirmation")
+                            LoadingLabel::new("Awaiting Confirmation")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),
