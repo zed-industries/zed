@@ -122,7 +122,7 @@ pub struct Buffer {
     reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
     completion_triggers: BTreeSet<String>,
@@ -189,7 +189,7 @@ pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
     pub syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
@@ -1055,7 +1055,7 @@ impl Buffer {
             })
         }));
 
-        for (server_id, diagnostics) in &self.diagnostics {
+        for (server_id, diagnostics) in self.diagnostics.iter() {
             operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
                 lamport_timestamp: self.diagnostics_timestamp,
                 server_id: *server_id,
@@ -1939,10 +1939,10 @@ impl Buffer {
         for_server: Option<LanguageServerId>,
     ) -> Vec<&DiagnosticEntry<Anchor>> {
         match for_server {
-            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
-                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
-                Err(_) => Vec::new(),
-            },
+            Some(server_id) => self
+                .diagnostics
+                .get(&server_id)
+                .map_or_else(Vec::new, |diagnostics| diagnostics.iter().collect()),
             None => self
                 .diagnostics
                 .iter()
@@ -3076,16 +3076,10 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
-            let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
             if diagnostics.is_empty() {
-                if let Ok(ix) = ix {
-                    self.diagnostics.remove(ix);
-                }
+                self.diagnostics.remove(&server_id);
             } else {
-                match ix {
-                    Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
-                    Ok(ix) => self.diagnostics[ix].1 = diagnostics,
-                };
+                self.diagnostics.insert(server_id, diagnostics);
             }
             self.diagnostics_timestamp = lamport_timestamp;
             self.non_text_state_update_count += 1;
@@ -5240,12 +5234,6 @@ impl BufferSnapshot {
         })
     }
 
-    /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
-    /// should be used instead.
-    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
-        &self.diagnostics
-    }
-
     /// Returns all the diagnostic groups associated with the given
     /// language server ID. If no language server ID is provided,
     /// all diagnostics groups are returned.
@@ -5256,13 +5244,8 @@ impl BufferSnapshot {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
-            if let Ok(ix) = self
-                .diagnostics
-                .binary_search_by_key(&language_server_id, |e| e.0)
-            {
-                self.diagnostics[ix]
-                    .1
-                    .groups(language_server_id, &mut groups, self);
+            if let Some(set) = self.diagnostics.get(&language_server_id) {
+                set.groups(language_server_id, &mut groups, self);
             }
         } else {
             for (language_server_id, diagnostics) in self.diagnostics.iter() {
