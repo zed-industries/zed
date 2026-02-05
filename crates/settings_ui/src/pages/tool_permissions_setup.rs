@@ -289,7 +289,7 @@ pub(crate) fn render_tool_config_page(
                 .child(render_rule_section(
                     tool_id,
                     "Always Allow",
-                    "If any of these regexes match, the tool action will be approved—unless an Always Confirm or Always Deny regex matches.",
+                    "If any of these regexes match, the action will be approved—unless an Always Confirm or Always Deny matches.",
                     RuleType::Allow,
                     &rules.always_allow,
                     cx,
