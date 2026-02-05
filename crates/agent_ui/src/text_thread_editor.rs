@@ -319,11 +319,13 @@ impl TextThreadEditor {
                         move |model, cx| {
                             update_settings_file(fs.clone(), cx, move |settings, _| {
                                 let provider = model.provider_id().0.to_string();
+                                let enable_thinking = model.supports_thinking();
                                 let model = model.id().0.to_string();
                                 settings.agent.get_or_insert_default().set_model(
                                     LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider),
                                         model,
+                                        enable_thinking,
                                     },
                                 )
                             });

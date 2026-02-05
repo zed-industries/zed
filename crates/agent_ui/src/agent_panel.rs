@@ -1400,6 +1400,7 @@ impl AgentPanel {
                             .set_model(LanguageModelSelection {
                                 provider: LanguageModelProviderSetting(provider),
                                 model,
+                                enable_thinking: false,
                             })
                     });
                 }

@@ -1158,15 +1158,26 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         update_settings_file(
             self.connection.0.read(cx).fs.clone(),
             cx,
-            move |settings, _cx| {
+            move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
+                let enable_thinking = settings
+                    .agent
+                    .as_ref()
+                    .and_then(|agent| {
+                        agent
+                            .default_model
+                            .as_ref()
+                            .map(|default_model| default_model.enable_thinking)
+                    })
+                    .unwrap_or_else(|| thread.read(cx).thinking_enabled());
                 settings
                     .agent
                     .get_or_insert_default()
                     .set_model(LanguageModelSelection {
                         provider: provider.into(),
                         model,
+                        enable_thinking,
                     });
             },
         );

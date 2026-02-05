@@ -1,4 +1,5 @@
 use gpui::List;
+use settings::update_settings_file;
 
 use super::*;
 
@@ -2725,7 +2726,17 @@ impl AcpThreadView {
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     if let Some(thread) = this.as_native_thread(cx) {
                         thread.update(cx, |thread, cx| {
-                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                            let enable_thinking = !thread.thinking_enabled();
+                            thread.set_thinking_enabled(enable_thinking, cx);
+
+                            let fs = thread.project().read(cx).fs().clone();
+                            update_settings_file(fs, cx, move |settings, _| {
+                                if let Some(agent) = settings.agent.as_mut()
+                                    && let Some(default_model) = agent.default_model.as_mut()
+                                {
+                                    default_model.enable_thinking = enable_thinking;
+                                }
+                            });
                         });
                     }
                 })),
