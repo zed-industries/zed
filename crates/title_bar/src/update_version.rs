@@ -158,3 +158,27 @@ impl UpdateVersion {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use auto_update::VersionCheckType;
+    use release_channel::AppCommitSha;
+    use semver::Version;
+
+    use super::*;
+
+    #[test]
+    fn test_version_tooltip_message() {
+        let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Semantic(
+            Version::new(1, 0, 0),
+        ));
+
+        assert_eq!(message, "Version: 1.0.0");
+
+        let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Sha(
+            AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
+        ));
+
+        assert_eq!(message, "Version: 14d9a41…");
+    }
+}
