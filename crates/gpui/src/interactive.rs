@@ -287,7 +287,7 @@ impl ClickEvent {
     /// Returns if this was a middle click
     ///
     /// `Keyboard`: false
-    /// `Mouse`: Whether the right button was pressed and released
+    /// `Mouse`: Whether the middle button was pressed and released
     pub fn is_middle_click(&self) -> bool {
         match self {
             ClickEvent::Keyboard(_) => false,
