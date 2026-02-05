@@ -201,6 +201,12 @@ pub struct Output {
     pub bounds: Bounds<DevicePixels>,
 }
 
+#[derive(Clone)]
+struct OutputHandle {
+    global_name: u32,
+    wl_output: wl_output::WlOutput,
+}
+
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
@@ -219,6 +225,7 @@ pub(crate) struct WaylandClientState {
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
+    wl_outputs: HashMap<ObjectId, OutputHandle>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
@@ -463,6 +470,8 @@ impl WaylandClient {
         let mut seat: Option<wl_seat::WlSeat> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        #[allow(clippy::mutable_key_type)]
+        let mut wl_outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -480,6 +489,13 @@ impl WaylandClient {
                             wl_output_version(global.version),
                             &qh,
                             (),
+                        );
+                        wl_outputs.insert(
+                            output.id(),
+                            OutputHandle {
+                                global_name: global.name,
+                                wl_output: output.clone(),
+                            },
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
                     }
@@ -587,6 +603,7 @@ impl WaylandClient {
             ime_pre_edit: None,
             composing: false,
             outputs: HashMap::default(),
+            wl_outputs,
             in_progress_outputs,
             windows: HashMap::default(),
             common,
@@ -718,6 +735,15 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         let parent = state.keyboard_focused_window.clone();
+        let target_output = params.display_id.and_then(|display_id| {
+            state
+                .wl_outputs
+                .iter()
+                .find_map(|(object_id, handle)| {
+                    (object_id.protocol_id() == display_id.0)
+                        .then(|| handle.wl_output.clone())
+                })
+        });
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -727,6 +753,7 @@ impl LinuxClient for WaylandClient {
             params,
             state.common.appearance,
             parent,
+            target_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -946,14 +973,32 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         (),
                     );
 
+                    state.wl_outputs.insert(
+                        output.id(),
+                        OutputHandle {
+                            global_name: name,
+                            wl_output: output.clone(),
+                        },
+                    );
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
-                // TODO: handle global removal
+            wl_registry::Event::GlobalRemove { name } => {
+                let to_remove = state
+                    .wl_outputs
+                    .iter()
+                    .find_map(|(object_id, handle)| {
+                        (handle.global_name == name).then(|| object_id.clone())
+                    });
+
+                if let Some(object_id) = to_remove {
+                    state.in_progress_outputs.remove(&object_id);
+                    state.outputs.remove(&object_id);
+                    state.wl_outputs.remove(&object_id);
+                }
             }
             _ => {}
         }
