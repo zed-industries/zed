@@ -71,11 +71,16 @@ impl LanguageSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let current_language_name = buffer
+            .read(cx)
+            .language()
+            .map(|language| language.name().as_ref().to_string());
         let delegate = LanguageSelectorDelegate::new(
             cx.entity().downgrade(),
             buffer,
             project,
             language_registry,
+            current_language_name,
         );
 
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
@@ -109,6 +114,7 @@ pub struct LanguageSelectorDelegate {
     candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    current_language_candidate_index: Option<usize>,
 }
 
 impl LanguageSelectorDelegate {
@@ -117,6 +123,7 @@ impl LanguageSelectorDelegate {
         buffer: Entity<Buffer>,
         project: Entity<Project>,
         language_registry: Arc<LanguageRegistry>,
+        current_language_name: Option<String>,
     ) -> Self {
         let candidates = language_registry
             .language_names()
@@ -132,6 +139,12 @@ impl LanguageSelectorDelegate {
             .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name.as_ref()))
             .collect::<Vec<_>>();
 
+        let current_language_candidate_index = current_language_name.as_ref().and_then(|name| {
+            candidates
+                .iter()
+                .position(|candidate| candidate.string == *name)
+        });
+
         Self {
             language_selector,
             buffer,
@@ -139,7 +152,8 @@ impl LanguageSelectorDelegate {
             language_registry,
             candidates,
             matches: vec![],
-            selected_index: 0,
+            selected_index: current_language_candidate_index.unwrap_or(0),
+            current_language_candidate_index,
         }
     }
 
@@ -239,8 +253,9 @@ impl PickerDelegate for LanguageSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
+        let query_is_empty = query.is_empty();
         cx.spawn_in(window, async move |this, cx| {
-            let matches = if query.is_empty() {
+            let matches = if query_is_empty {
                 candidates
                     .into_iter()
                     .enumerate()
@@ -264,12 +279,21 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 .await
             };
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate
                     .selected_index
                     .min(delegate.matches.len().saturating_sub(1));
+
+                if query_is_empty {
+                    if let Some(index) = delegate
+                        .current_language_candidate_index
+                        .and_then(|ci| delegate.matches.iter().position(|m| m.candidate_id == ci))
+                    {
+                        this.set_selected_index(index, None, false, window, cx);
+                    }
+                }
                 cx.notify();
             })
             .log_err();
