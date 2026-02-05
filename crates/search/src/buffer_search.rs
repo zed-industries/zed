@@ -154,7 +154,7 @@ impl Render for BufferSearchBar {
                     let is_split = splittable_editor.read(cx).is_split();
                     let focus_handle = splittable_editor.focus_handle(cx);
                     h_flex()
-                        .gap_0p5()
+                        .gap_1()
                         .child(
                             IconButton::new("diff-stacked", IconName::DiffStacked)
                                 .shape(IconButtonShape::Square)
@@ -196,42 +196,15 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let (icon, label, tooltip_label) = if self.is_collapsed {
-                (IconName::ChevronUpDown, "Expand All", "Expand All Files")
+            let (icon, tooltip_label) = if self.is_collapsed {
+                (IconName::ChevronUpDown, "Expand All Files")
             } else {
-                (
-                    IconName::ChevronDownUp,
-                    "Collapse All",
-                    "Collapse All Files",
-                )
+                (IconName::ChevronDownUp, "Collapse All Files")
             };
 
-            if self.dismissed {
-                if has_splittable_editor {
-                    return h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new("multibuffer-collapse-expand-empty", icon)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |_, cx| {
-                                    Tooltip::for_action_in(
-                                        tooltip_label,
-                                        &ToggleFoldAll,
-                                        &query_editor_focus,
-                                        cx,
-                                    )
-                                })
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                                }),
-                        )
-                        .children(split_buttons)
-                        .into_any_element();
-                }
-
-                return Button::new("multibuffer-collapse-expand-empty", label)
-                    .icon_position(IconPosition::Start)
-                    .icon(icon)
+            let collapse_expand_icon_button = |id| {
+                IconButton::new(id, icon)
+                    .shape(IconButtonShape::Square)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
@@ -243,27 +216,23 @@ impl Render for BufferSearchBar {
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
                     })
+            };
+
+            if self.dismissed {
+                return h_flex()
+                    .pl_0p5()
+                    .gap_1()
+                    .child(collapse_expand_icon_button(
+                        "multibuffer-collapse-expand-empty",
+                    ))
+                    .when(has_splittable_editor, |this| this.children(split_buttons))
                     .into_any_element();
             }
 
             Some(
                 h_flex()
                     .gap_1()
-                    .child(
-                        IconButton::new("multibuffer-collapse-expand", icon)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(move |_, cx| {
-                                Tooltip::for_action_in(
-                                    tooltip_label,
-                                    &ToggleFoldAll,
-                                    &query_editor_focus,
-                                    cx,
-                                )
-                            })
-                            .on_click(|_event, window, cx| {
-                                window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                            }),
-                    )
+                    .child(collapse_expand_icon_button("multibuffer-collapse-expand"))
                     .children(split_buttons)
                     .into_any_element(),
             )
