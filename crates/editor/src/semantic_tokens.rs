@@ -276,9 +276,6 @@ impl Editor {
 
     pub(super) fn refresh_semantic_token_highlights(&mut self, cx: &mut Context<Self>) {
         self.semantic_token_state.fetched_for_buffers.clear();
-        self.display_map.update(cx, |display_map, _| {
-            display_map.semantic_token_highlights.clear();
-        });
         self.update_semantic_tokens(None, None, cx);
     }
 }
