@@ -392,7 +392,7 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
 /// A whitespace-only change is an added or deleted line whose content is empty or
 /// contains only whitespace. It is "isolated" when it is not adjacent to any
 /// substantive (non-whitespace) change within the same contiguous change group.
-pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: &Option<ActualCursor>) -> bool {
+pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: Option<&ActualCursor>) -> bool {
     let patch = Patch::parse_unified_diff(patch_str);
 
     let cursor_new_file_line = cursor.as_ref().map(|c| (c.row + 1) as usize);
@@ -634,7 +634,18 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::example::ActualCursor;
     use indoc::indoc;
+
+    fn cursor_on_line(one_based_line: u32) -> ActualCursor {
+        ActualCursor {
+            path: String::new(),
+            row: one_based_line - 1,
+            column: 0,
+            offset: 0,
+            editable_region_offset: None,
+        }
+    }
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -935,7 +946,8 @@ index abc123..def456 100644
              }
         "};
         // New-file line 2 is the added blank line
-        assert!(!has_isolated_whitespace_changes(patch, Some(2)));
+        let cursor = cursor_on_line(2);
+        assert!(!has_isolated_whitespace_changes(patch, Some(&cursor)));
     }
 
     #[test]
@@ -948,7 +960,8 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch, Some(1)));
+        let cursor = cursor_on_line(1);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
     }
 
     #[test]
@@ -961,6 +974,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch, Some(2)));
+        let cursor = cursor_on_line(2);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
     }
 }
