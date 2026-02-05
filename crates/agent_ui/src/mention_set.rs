@@ -147,7 +147,9 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
-            MentionUri::PastedImage | MentionUri::Selection { .. } => {
+            MentionUri::PastedImage
+            | MentionUri::Selection { .. }
+            | MentionUri::TerminalSelection { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
