@@ -84,7 +84,6 @@ struct WgpuPipelines {
 
 struct WgpuBindGroupLayouts {
     globals: wgpu::BindGroupLayout,
-    globals_with_gamma: wgpu::BindGroupLayout,
     quads: wgpu::BindGroupLayout,
     shadows: wgpu::BindGroupLayout,
     path_rasterization: wgpu::BindGroupLayout,
@@ -107,7 +106,6 @@ pub struct WgpuRenderer {
     gamma_buffer: wgpu::Buffer,
     path_globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
-    globals_with_gamma_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_buffer_capacity: u64,
@@ -258,15 +256,6 @@ impl WgpuRenderer {
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals_bind_group"),
             layout: &bind_group_layouts.globals,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals_buffer.as_entire_binding(),
-            }],
-        });
-
-        let globals_with_gamma_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals_with_gamma_bind_group"),
-            layout: &bind_group_layouts.globals_with_gamma,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -289,10 +278,16 @@ impl WgpuRenderer {
         let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("path_globals_bind_group"),
             layout: &bind_group_layouts.globals,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: path_globals_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: path_globals_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: gamma_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let adapter_info = context.adapter.get_info();
@@ -310,7 +305,6 @@ impl WgpuRenderer {
             gamma_buffer,
             path_globals_buffer,
             globals_bind_group,
-            globals_with_gamma_bind_group,
             path_globals_bind_group,
             instance_buffer,
             instance_buffer_capacity: initial_instance_buffer_capacity,
@@ -326,23 +320,9 @@ impl WgpuRenderer {
     }
 
     fn create_bind_group_layouts(device: &wgpu::Device) -> WgpuBindGroupLayouts {
-        let globals = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("globals_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<GlobalParams>() as u64),
-                },
-                count: None,
-            }],
-        });
-
-        let globals_with_gamma =
+        let globals =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("globals_with_gamma_layout"),
+                label: Some("globals_layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -495,7 +475,6 @@ impl WgpuRenderer {
 
         WgpuBindGroupLayouts {
             globals,
-            globals_with_gamma,
             quads,
             shadows,
             path_rasterization,
@@ -662,7 +641,7 @@ impl WgpuRenderer {
             "mono_sprites",
             "vs_mono_sprite",
             "fs_mono_sprite",
-            &layouts.globals_with_gamma,
+            &layouts.globals,
             &layouts.sprites,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
@@ -687,7 +666,7 @@ impl WgpuRenderer {
                 "subpixel_sprites",
                 "vs_subpixel_sprite",
                 "fs_subpixel_sprite",
-                &layouts.globals_with_gamma,
+                &layouts.globals,
                 &layouts.sprites,
                 wgpu::PrimitiveTopology::TriangleStrip,
                 &[Some(wgpu::ColorTargetState {
@@ -1045,7 +1024,7 @@ impl WgpuRenderer {
                             .draw_monochrome_sprites(
                                 &scene.monochrome_sprites[range],
                                 texture_id,
-                                &self.globals_with_gamma_bind_group,
+                                &self.globals_bind_group,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
@@ -1053,8 +1032,7 @@ impl WgpuRenderer {
                             .draw_subpixel_sprites(
                                 &scene.subpixel_sprites[range],
                                 texture_id,
-                                &self.globals_with_gamma_bind_group,
-                                &gamma_params,
+                                &self.globals_bind_group,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
@@ -1310,7 +1288,6 @@ impl WgpuRenderer {
         sprites: &[SubpixelSprite],
         texture_id: AtlasTextureId,
         globals_bind_group: &wgpu::BindGroup,
-        gamma_params: &GammaParams,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
@@ -1347,22 +1324,10 @@ impl WgpuRenderer {
         });
 
         if let Some(ref pipeline) = self.pipelines.subpixel_sprites {
-            let subpixel_gamma = GammaParams {
-                gamma_ratios: self.rendering_params.gamma_ratios,
-                grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
-                subpixel_enhanced_contrast: self.rendering_params.subpixel_enhanced_contrast,
-                _pad: [0.0; 2],
-            };
-            self.queue
-                .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&subpixel_gamma));
-
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, globals_bind_group, &[]);
             pass.set_bind_group(1, &bind_group, &[]);
             pass.draw(0..4, 0..sprites.len() as u32);
-
-            self.queue
-                .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(gamma_params));
         } else {
             pass.set_pipeline(&self.pipelines.mono_sprites);
             pass.set_bind_group(0, globals_bind_group, &[]);
