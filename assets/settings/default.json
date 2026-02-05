@@ -968,7 +968,8 @@
       // "deny" - Auto-reject
       // "confirm" - Always prompt (default)
       "default": "confirm",
-      // Per-tool permission rules (native Zed agent only).
+      // Per-tool permission rules. Regex patterns only apply to the native Zed
+      // agent. The per-tool "default" also applies to MCP tools.
       // Each tool can have its own default and regex patterns.
       "tools": {
         // "terminal": {

@@ -117,10 +117,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
-    /// Per-tool permission rules for granular control over which tool actions require confirmation.
+    /// Per-tool permission rules for granular control over which tool actions
+    /// require confirmation.
     ///
-    /// This setting only applies to the native Zed agent. External agent servers (Claude Code, Gemini CLI, etc.)
-    /// have their own permission systems and are not affected by these settings.
+    /// The global `default` applies to both the native Zed agent and external
+    /// agent servers (e.g. Claude Code) that don't define their own permission
+    /// modes. Per-tool regex patterns (`always_allow`, `always_deny`,
+    /// `always_confirm`) only apply to the native Zed agent.
     pub tool_permissions: Option<ToolPermissionsContent>,
 }
 
