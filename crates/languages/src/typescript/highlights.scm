@@ -98,10 +98,27 @@
        (statement_block) @nested
      ])))
 
+; Inline type imports: import { type Foo } or import { type Foo as Bar }
 (import_specifier
   "type"
   name: (identifier) @type
+)
+
+(import_specifier
+  "type"
   alias: (identifier) @type
+)
+
+; Full type imports: import type { Foo } or import type { Foo as Bar }
+(import_statement
+  "type"
+  (import_clause
+    (named_imports
+      (import_specifier
+        name: (identifier) @type
+      )
+    )
+  )
 )
 
 (import_statement
@@ -109,7 +126,6 @@
   (import_clause
     (named_imports
       (import_specifier
-        name: (identifier) @type
         alias: (identifier) @type
       )
     )
@@ -383,27 +399,18 @@
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
   "declare"
   "default"
   "delete"
-  "enum"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
   "implements"
-  "import"
   "in"
   "infer"
   "instanceof"
-  "interface"
   "is"
   "keyof"
-  "let"
   "module"
   "namespace"
   "new"
@@ -417,13 +424,28 @@
   "set"
   "static"
   "target"
-  "type"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+  "enum"
+  "interface"
+  "type"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"

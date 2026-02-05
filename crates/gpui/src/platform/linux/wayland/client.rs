@@ -82,10 +82,6 @@ use crate::{
     ScrollWheelEvent, Size, TouchPhase, WindowParams, point, profiler, px, size,
 };
 use crate::{
-    RunnableVariant, TaskTiming,
-    platform::{PlatformWindow, blade::BladeContext},
-};
-use crate::{
     SharedString,
     platform::linux::{
         LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
@@ -98,6 +94,10 @@ use crate::{
         },
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+};
+use crate::{
+    TaskTiming,
+    platform::{PlatformWindow, blade::BladeContext},
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -157,7 +157,7 @@ impl Globals {
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
-            wm_base: globals.bind(&qh, 2..=5, ()).unwrap(),
+            wm_base: globals.bind(&qh, 1..=5, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
@@ -453,7 +453,7 @@ fn wl_output_version(version: u32) -> u32 {
 }
 
 impl WaylandClient {
-    pub(crate) fn new(liveness: std::sync::Weak<()>) -> Self {
+    pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, mut event_queue) =
@@ -490,7 +490,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal(), liveness);
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -500,32 +500,15 @@ impl WaylandClient {
                     if let calloop::channel::Event::Msg(runnable) = event {
                         handle.insert_idle(|_| {
                             let start = Instant::now();
-                            let mut timing = match runnable {
-                                RunnableVariant::Meta(runnable) => {
-                                    let location = runnable.metadata().location;
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
-                                RunnableVariant::Compat(runnable) => {
-                                    let location = core::panic::Location::caller();
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
+                            let location = runnable.metadata().location;
+                            let mut timing = TaskTiming {
+                                location,
+                                start,
+                                end: None,
                             };
+                            profiler::add_task_timing(timing);
+
+                            runnable.run();
 
                             let end = Instant::now();
                             timing.end = Some(end);
@@ -1224,6 +1207,12 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             if capabilities.contains(wl_seat::Capability::Keyboard) {
                 let keyboard = seat.get_keyboard(qh, ());
 
+                if let Some(text_input) = state.text_input.take() {
+                    text_input.destroy();
+                    state.ime_pre_edit = None;
+                    state.composing = false;
+                }
+
                 state.text_input = state
                     .globals
                     .text_input_manager
@@ -1238,6 +1227,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
+
+                if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
+                    cursor_shape_device.destroy();
+                }
+
                 state.cursor_shape_device = state
                     .globals
                     .cursor_shape_manager

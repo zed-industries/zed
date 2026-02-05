@@ -13,7 +13,16 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = ["assistant_text_thread/test-support", "acp_thread/test-support", "eval_utils", "gpui/test-support", "language/test-support", "reqwest_client", "workspace/test-support", "agent/test-support", "rules_library/test-support"]
+test-support = [
+    "assistant_text_thread/test-support",
+    "acp_thread/test-support",
+    "eval_utils",
+    "gpui/test-support",
+    "language/test-support",
+    "reqwest_client",
+    "workspace/test-support",
+    "agent/test-support",
+]
 unit-eval = []
 
 [dependencies]
@@ -30,9 +39,11 @@ assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 audio.workspace = true
+base64.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -106,7 +117,6 @@ reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
-base64.workspace = true
 agent = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
@@ -121,7 +131,11 @@ languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+remote_connection = { workspace = true, features = ["test-support"] }
+title_bar = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 reqwest_client.workspace = true
+tempfile.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true

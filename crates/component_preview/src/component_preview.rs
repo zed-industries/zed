@@ -583,7 +583,7 @@ impl Render for ComponentPreview {
             if input.is_empty(cx) {
                 String::new()
             } else {
-                input.editor().read(cx).text(cx)
+                input.text(cx)
             }
         });
 

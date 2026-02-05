@@ -11,7 +11,7 @@ on:
 jobs:
   run_tests_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -21,25 +21,25 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
-      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -53,41 +53,40 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-      shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
-      shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
@@ -105,9 +104,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::clippy
-      run: ./script/clippy.ps1
-      shell: pwsh
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
@@ -120,6 +116,69 @@ jobs:
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
       shell: pwsh
     timeout-minutes: 60
+  clippy_mac:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::clippy
+      run: ./script/clippy
+    timeout-minutes: 60
+  clippy_linux:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: steps::clippy
+      run: ./script/clippy
+    timeout-minutes: 60
+  clippy_windows:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        New-Item -ItemType Directory -Path "./../.cargo" -Force
+        Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      shell: pwsh
+    - name: steps::clippy
+      run: ./script/clippy.ps1
+      shell: pwsh
+    timeout-minutes: 60
   check_scripts:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -130,15 +189,12 @@ jobs:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
       run: ./script/shellcheck-scripts error
-      shell: bash -euxo pipefail {0}
     - id: get_actionlint
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::run_actionlint
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -147,7 +203,6 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   create_draft_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -161,22 +216,19 @@ jobs:
         ref: ${{ github.ref }}
     - name: script/determine-release-channel
       run: script/determine-release-channel
-      shell: bash -euxo pipefail {0}
     - name: mkdir -p target/
       run: mkdir -p target/
-      shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::generate_release_notes
       run: node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md
-      shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::create_release
       run: script/create-draft-release target/release-notes.md
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
+    - clippy_linux
     - check_scripts
     runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     env:
@@ -194,16 +246,12 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -220,6 +268,7 @@ jobs:
   bundle_linux_x86_64:
     needs:
     - run_tests_linux
+    - clippy_linux
     - check_scripts
     runs-on: namespace-profile-32x64-ubuntu-2004
     env:
@@ -237,16 +286,12 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -263,8 +308,9 @@ jobs:
   bundle_mac_aarch64:
     needs:
     - run_tests_mac
+    - clippy_mac
     - check_scripts
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -289,10 +335,8 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed-aarch64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -309,8 +353,9 @@ jobs:
   bundle_mac_x86_64:
     needs:
     - run_tests_mac
+    - clippy_mac
     - check_scripts
-    runs-on: self-mini-macos
+    runs-on: namespace-profile-mac-large
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -335,10 +380,8 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed-x86_64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -355,6 +398,7 @@ jobs:
   bundle_windows_aarch64:
     needs:
     - run_tests_windows
+    - clippy_windows
     - check_scripts
     runs-on: self-32vcpu-windows-2022
     env:
@@ -389,10 +433,17 @@ jobs:
         name: Zed-aarch64.exe
         path: target/Zed-aarch64.exe
         if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-windows-aarch64.zip'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-windows-aarch64.zip
+        path: target/zed-remote-server-windows-aarch64.zip
+        if-no-files-found: error
     timeout-minutes: 60
   bundle_windows_x86_64:
     needs:
     - run_tests_windows
+    - clippy_windows
     - check_scripts
     runs-on: self-32vcpu-windows-2022
     env:
@@ -427,6 +478,12 @@ jobs:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
         if-no-files-found: error
+    - name: '@actions/upload-artifact zed-remote-server-windows-x86_64.zip'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-windows-x86_64.zip
+        path: target/zed-remote-server-windows-x86_64.zip
+        if-no-files-found: error
     timeout-minutes: 60
   upload_release_assets:
     needs:
@@ -445,7 +502,6 @@ jobs:
         path: ./artifacts/
     - name: ls -lR ./artifacts
       run: ls -lR ./artifacts
-      shell: bash -euxo pipefail {0}
     - name: release::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
@@ -460,15 +516,38 @@ jobs:
         mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
-      shell: bash -euxo pipefail {0}
+        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
+        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
     - name: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
       run: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
-      shell: bash -euxo pipefail {0}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  validate_release_assets:
+    needs:
+    - upload_release_assets
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: release::validate_release_assets
+      run: |
+        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
+        TAG="$GITHUB_REF_NAME"
+
+        ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
+
+        MISSING_ASSETS=$(echo "$EXPECTED_ASSETS" | jq -r --argjson actual "$ACTUAL_ASSETS" '. - $actual | .[]')
+
+        if [ -n "$MISSING_ASSETS" ]; then
+            echo "Error: The following assets are missing from the release:"
+            echo "$MISSING_ASSETS"
+            exit 1
+        fi
+
+        echo "All expected assets are present in the release."
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   auto_release_preview:
     needs:
-    - upload_release_assets
+    - validate_release_assets
     if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -480,23 +559,98 @@ jobs:
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
-  notify_on_failure:
+  push_release_update_notification:
     needs:
+    - create_draft_release
     - upload_release_assets
+    - validate_release_assets
     - auto_release_preview
-    if: failure()
+    - run_tests_mac
+    - run_tests_linux
+    - run_tests_windows
+    - clippy_mac
+    - clippy_linux
+    - clippy_windows
+    - check_scripts
+    - bundle_linux_aarch64
+    - bundle_linux_x86_64
+    - bundle_mac_aarch64
+    - bundle_mac_x86_64
+    - bundle_windows_aarch64
+    - bundle_windows_x86_64
+    if: always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - name: release::notify_on_failure::notify_slack
-      run: |-
+    - id: generate-webhook-message
+      name: release::generate_slack_message
+      run: |
+        MESSAGE=$(DRAFT_RESULT="${{ needs.create_draft_release.result }}"
+        UPLOAD_RESULT="${{ needs.upload_release_assets.result }}"
+        VALIDATE_RESULT="${{ needs.validate_release_assets.result }}"
+        AUTO_RELEASE_RESULT="${{ needs.auto_release_preview.result }}"
+        TAG="$GITHUB_REF_NAME"
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        if [ "$DRAFT_RESULT" == "failure" ]; then
+            echo "❌ Draft release creation failed for $TAG: $RUN_URL"
+        else
+            RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
+            if [ "$UPLOAD_RESULT" == "failure" ]; then
+                echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
+            elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
+                FAILED_JOBS=""
+                if [ "${{ needs.run_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
+                if [ "${{ needs.run_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
+                if [ "${{ needs.run_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
+                if [ "${{ needs.clippy_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
+                if [ "${{ needs.clippy_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
+                if [ "${{ needs.clippy_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
+                if [ "${{ needs.check_scripts.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "${{ needs.bundle_linux_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
+                if [ "${{ needs.bundle_linux_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
+                if [ "${{ needs.bundle_mac_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
+                if [ "${{ needs.bundle_mac_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
+                if [ "${{ needs.bundle_windows_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
+                if [ "${{ needs.bundle_windows_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
+                FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
+                if [ "$UPLOAD_RESULT" == "cancelled" ]; then
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Release job for $TAG was cancelled, most likely because tests \`$FAILED_JOBS\` failed: $RUN_URL"
+                    else
+                        echo "❌ Release job for $TAG was cancelled: $RUN_URL"
+                    fi
+                else
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
+                    else
+                        echo "❌ Tests for $TAG failed: $RUN_URL"
+                    fi
+                fi
+            elif [ "$VALIDATE_RESULT" == "failure" ]; then
+                echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
+                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
+                echo "❌ Auto release failed for $TAG: $RUN_URL"
+            else
+                echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
+            fi
+        fi
+        )
+        echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
+      env:
+        GH_TOKEN: ${{ github.token }}
+    - name: release::send_slack_message
+      run: |
         curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"${{ github.workflow }} failed:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
-      shell: bash -euxo pipefail {0}
+         --data '{"text":"${{ steps.generate-webhook-message.outputs.message }}"}' "$SLACK_WEBHOOK"
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

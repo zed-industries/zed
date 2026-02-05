@@ -1,11 +1,10 @@
-use std::path::PathBuf;
-
 use anyhow::Context as _;
 use gpui::{App, Context, Entity, Window};
 use language::Language;
 use project::lsp_store::lsp_ext_command::SwitchSourceHeaderResult;
 use rpc::proto;
-use util::paths::PathStyle;
+use url::Url;
+use util::paths::{PathStyle, UrlExt as _};
 use workspace::{OpenOptions, OpenVisible};
 
 use crate::lsp_ext::find_specific_language_server_in_selection;
@@ -77,25 +76,22 @@ pub fn switch_source_header(
         if switch_source_header.0.is_empty() {
             return Ok(());
         }
-
-        let goto = switch_source_header
-            .0
-            .strip_prefix("file://")
-            .with_context(|| {
-                format!(
-                    "Parsing file url \"{}\" returned from switch source/header failed",
-                    switch_source_header.0
-                )
-            })?;
+        let path_style = workspace.update(cx, |ws, cx| ws.path_style(cx));
+        let path = Url::parse(&switch_source_header.0).with_context(|| {
+            format!(
+                "Parsing URL \"{}\" returned from switch source/header failed",
+                switch_source_header.0
+            )
+        })?;
+        let path = path.to_file_path_ext(path_style).map_err(|()| {
+            anyhow::anyhow!(
+                "URL conversion to file path failed for \"{}\"",
+                switch_source_header.0
+            )
+        })?;
 
         workspace
             .update_in(cx, |workspace, window, cx| {
-                let goto = if workspace.path_style(cx).is_windows() {
-                    goto.strip_prefix('/').unwrap_or(goto)
-                } else {
-                    goto
-                };
-                let path = PathBuf::from(goto);
                 workspace.open_abs_path(
                     path,
                     OpenOptions {
@@ -107,7 +103,10 @@ pub fn switch_source_header(
                 )
             })
             .with_context(|| {
-                format!("Switch source/header could not open \"{goto}\" in workspace")
+                format!(
+                    "Switch source/header could not open \"{}\" in workspace",
+                    switch_source_header.0
+                )
             })?
             .await
             .map(|_| ())

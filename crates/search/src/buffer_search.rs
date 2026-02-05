@@ -13,14 +13,16 @@ use crate::{
 use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, MultiBufferOffset,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplitDiffFeatureFlag,
+    SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
+use feature_flags::FeatureFlagAppExt as _;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
-    Window, actions, div,
+    WeakEntity, Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -94,6 +96,7 @@ impl Deploy {
 
 pub enum Event {
     UpdateLocation,
+    Dismissed,
 }
 
 pub fn init(cx: &mut App) {
@@ -131,6 +134,8 @@ pub struct BufferSearchBar {
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
     is_collapsed: bool,
+    splittable_editor: Option<WeakEntity<SplittableEditor>>,
+    _splittable_editor_subscription: Option<Subscription>,
 }
 
 impl EventEmitter<Event> for BufferSearchBar {}
@@ -139,46 +144,94 @@ impl Render for BufferSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
+        let has_splittable_editor =
+            self.splittable_editor.is_some() && cx.has_flag::<SplitDiffFeatureFlag>();
+        let split_buttons = if has_splittable_editor {
+            self.splittable_editor
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+                .map(|splittable_editor| {
+                    let is_split = splittable_editor.read(cx).is_split();
+                    let focus_handle = splittable_editor.focus_handle(cx);
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            IconButton::new("diff-stacked", IconName::DiffStacked)
+                                .shape(IconButtonShape::Square)
+                                .toggle_state(!is_split)
+                                .tooltip(|_, cx| {
+                                    Tooltip::for_action("Stacked", &ToggleSplitDiff, cx)
+                                })
+                                .when(is_split, |button| {
+                                    let focus_handle = focus_handle.clone();
+                                    button.on_click(move |_, window, cx| {
+                                        focus_handle.focus(window, cx);
+                                        window.dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                    })
+                                }),
+                        )
+                        .child(
+                            IconButton::new("diff-split", IconName::DiffSplit)
+                                .shape(IconButtonShape::Square)
+                                .toggle_state(is_split)
+                                .tooltip(|_, cx| {
+                                    Tooltip::for_action("Side by Side", &ToggleSplitDiff, cx)
+                                })
+                                .when(!is_split, |button| {
+                                    button.on_click({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_, window, cx| {
+                                            focus_handle.focus(window, cx);
+                                            window
+                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                        }
+                                    })
+                                }),
+                        )
+                })
+        } else {
+            None
+        };
+
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
             let (icon, label, tooltip_label) = if self.is_collapsed {
-                (
-                    IconName::ChevronUpDown,
-                    "Expand All",
-                    "Expand All Search Results",
-                )
+                (IconName::ChevronUpDown, "Expand All", "Expand All Files")
             } else {
                 (
                     IconName::ChevronDownUp,
                     "Collapse All",
-                    "Collapse All Search Results",
+                    "Collapse All Files",
                 )
             };
 
             if self.dismissed {
-                let button = Button::new("multibuffer-collapse-expand-empty", label)
+                if has_splittable_editor {
+                    return h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("multibuffer-collapse-expand-empty", icon)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        tooltip_label,
+                                        &ToggleFoldAll,
+                                        &query_editor_focus,
+                                        cx,
+                                    )
+                                })
+                                .on_click(|_event, window, cx| {
+                                    window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
+                                }),
+                        )
+                        .children(split_buttons)
+                        .into_any_element();
+                }
+
+                return Button::new("multibuffer-collapse-expand-empty", label)
                     .icon_position(IconPosition::Start)
                     .icon(icon)
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action_in(
-                            tooltip_label,
-                            &ToggleFoldAll,
-                            &query_editor_focus.clone(),
-                            cx,
-                        )
-                    })
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                    })
-                    .into_any_element();
-
-                return button;
-            }
-
-            Some(
-                IconButton::new("multibuffer-collapse-expand", icon)
-                    .shape(IconButtonShape::Square)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
@@ -190,6 +243,28 @@ impl Render for BufferSearchBar {
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
                     })
+                    .into_any_element();
+            }
+
+            Some(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("multibuffer-collapse-expand", icon)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    tooltip_label,
+                                    &ToggleFoldAll,
+                                    &query_editor_focus,
+                                    cx,
+                                )
+                            })
+                            .on_click(|_event, window, cx| {
+                                window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
+                            }),
+                    )
+                    .children(split_buttons)
                     .into_any_element(),
             )
         } else {
@@ -557,8 +632,19 @@ impl ToolbarItemView for BufferSearchBar {
         cx.notify();
         self.active_searchable_item_subscriptions.take();
         self.active_searchable_item.take();
+        self.splittable_editor = None;
+        self._splittable_editor_subscription = None;
 
         self.pending_search.take();
+
+        if let Some(splittable_editor) = item
+            .and_then(|item| item.act_as_type(TypeId::of::<SplittableEditor>(), cx))
+            .and_then(|entity| entity.downcast::<SplittableEditor>().ok())
+        {
+            self._splittable_editor_subscription =
+                Some(cx.observe(&splittable_editor, |_, _, cx| cx.notify()));
+            self.splittable_editor = Some(splittable_editor.downgrade());
+        }
 
         if let Some(searchable_item_handle) =
             item.and_then(|item| item.to_searchable_item_handle(cx))
@@ -817,6 +903,8 @@ impl BufferSearchBar {
             editor_needed_width: px(0.),
             regex_language: None,
             is_collapsed: false,
+            splittable_editor: None,
+            _splittable_editor_subscription: None,
         }
     }
 
@@ -826,6 +914,7 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
+        cx.emit(Event::Dismissed);
         self.query_error = None;
         self.sync_select_next_case_sensitivity(cx);
 
@@ -1311,7 +1400,7 @@ impl BufferSearchBar {
                 let search = self.update_matches(false, true, window, cx);
 
                 let width = editor.update(cx, |editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
+                    let text_layout_details = editor.text_layout_details(window, cx);
                     let snapshot = editor.snapshot(window, cx).display_snapshot;
 
                     snapshot.x_for_display_point(snapshot.max_point(), &text_layout_details)

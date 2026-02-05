@@ -3,10 +3,11 @@ use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
+    kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
     },
+    repl_settings::ReplSettings,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -34,6 +35,7 @@ use runtimelib::{
     ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
     ShutdownRequest,
 };
+use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use ui::{IconButtonShape, Tooltip, prelude::*};
@@ -93,9 +95,14 @@ impl EditorBlock {
                 });
             }
 
-            let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
+            // Re-read snapshot after potential buffer edit and create a fresh anchor for
+            // block placement. Using anchor_before (Bias::Left) ensures the anchor stays
+            // at the end of the code line regardless of whether we inserted a newline.
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let block_placement_anchor = buffer_snapshot.anchor_before(end_point);
+            let invalidation_anchor = buffer_snapshot.anchor_before(next_row_start);
             let block = BlockProperties {
-                placement: BlockPlacement::Below(code_range.end),
+                placement: BlockPlacement::Below(block_placement_anchor),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: Some(1),
                 style: BlockStyle::Sticky,
@@ -143,6 +150,12 @@ impl EditorBlock {
             let rem_size = cx.window.rem_size();
 
             let text_line_height = text_style.line_height_in_pixels(rem_size);
+            let output_settings = ReplSettings::get_global(cx.app);
+            let output_max_height = if output_settings.output_max_height_lines > 0 {
+                Some(text_line_height * output_settings.output_max_height_lines as f32)
+            } else {
+                None
+            };
 
             let close_button = h_flex()
                 .flex_none()
@@ -190,11 +203,15 @@ impl EditorBlock {
                 )
                 .child(
                     div()
+                        .id((ElementId::from(cx.block_id), "output-scroll"))
                         .flex_1()
-                        .size_full()
+                        .overflow_x_hidden()
                         .py(text_line_height / 2.)
                         .mr(editor_margins.right)
                         .pr_2()
+                        .when_some(output_max_height, |div, max_h| {
+                            div.max_h(max_h).overflow_y_scroll()
+                        })
                         .child(execution_view),
                 )
                 .into_any_element()
@@ -648,51 +665,6 @@ impl Session {
         }
     }
 
-    pub fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
-        let parent_message_id = match message.parent_header.as_ref() {
-            Some(header) => &header.msg_id,
-            None => return,
-        };
-
-        match &message.content {
-            JupyterMessageContent::Status(status) => {
-                self.kernel.set_execution_state(&status.execution_state);
-
-                telemetry::event!(
-                    "Kernel Status Changed",
-                    kernel_language = self.kernel_specification.language(),
-                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
-                    repl_session_id = cx.entity_id().to_string(),
-                );
-
-                cx.notify();
-            }
-            JupyterMessageContent::KernelInfoReply(reply) => {
-                self.kernel.set_kernel_info(reply);
-                cx.notify();
-            }
-            JupyterMessageContent::UpdateDisplayData(update) => {
-                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
-                    display_id
-                } else {
-                    return;
-                };
-
-                self.blocks.iter_mut().for_each(|(_, block)| {
-                    block.execution_view.update(cx, |execution_view, cx| {
-                        execution_view.update_display_data(&update.data, &display_id, window, cx);
-                    });
-                });
-                return;
-            }
-            _ => {}
-        }
-
-        if let Some(block) = self.blocks.get_mut(parent_message_id) {
-            block.handle_message(message, window, cx);
-        }
-    }
-
     pub fn interrupt(&mut self, cx: &mut Context<Self>) {
         match &mut self.kernel {
             Kernel::RunningKernel(_kernel) => {
@@ -859,5 +831,56 @@ impl Render for Session {
                     })),
             )
             .buttons(interrupt_button)
+    }
+}
+
+impl KernelSession for Session {
+    fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
+        let parent_message_id = match message.parent_header.as_ref() {
+            Some(header) => &header.msg_id,
+            None => return,
+        };
+
+        match &message.content {
+            JupyterMessageContent::Status(status) => {
+                self.kernel.set_execution_state(&status.execution_state);
+
+                telemetry::event!(
+                    "Kernel Status Changed",
+                    kernel_language = self.kernel_specification.language(),
+                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
+                    repl_session_id = cx.entity_id().to_string(),
+                );
+
+                cx.notify();
+            }
+            JupyterMessageContent::KernelInfoReply(reply) => {
+                self.kernel.set_kernel_info(reply);
+                cx.notify();
+            }
+            JupyterMessageContent::UpdateDisplayData(update) => {
+                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
+                    display_id
+                } else {
+                    return;
+                };
+
+                self.blocks.iter_mut().for_each(|(_, block)| {
+                    block.execution_view.update(cx, |execution_view, cx| {
+                        execution_view.update_display_data(&update.data, &display_id, window, cx);
+                    });
+                });
+                return;
+            }
+            _ => {}
+        }
+
+        if let Some(block) = self.blocks.get_mut(parent_message_id) {
+            block.handle_message(message, window, cx);
+        }
+    }
+
+    fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>) {
+        self.kernel_errored(error_message, cx);
     }
 }

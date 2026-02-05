@@ -522,6 +522,20 @@ impl Interactivity {
         }));
     }
 
+    /// Bind the given callback to non-primary click events of this element.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_aux_click`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_aux_click(&mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)
+    where
+        Self: Sized,
+    {
+        self.aux_click_listeners
+            .push(Rc::new(move |event, window, cx| {
+                listener(event, window, cx)
+            }));
+    }
+
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`Self::on_drag_move`] API.
@@ -1190,6 +1204,21 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Bind the given callback to non-primary click events of this element.
+    /// The fluent API equivalent to [`Interactivity::on_aux_click`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_aux_click(
+        mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().on_aux_click(listener);
+        self
+    }
+
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`InteractiveElement::on_drag_move`] API.
@@ -1295,6 +1324,7 @@ pub fn div() -> Div {
         children: SmallVec::default(),
         prepaint_listener: None,
         image_cache: None,
+        prepaint_order_fn: None,
     }
 }
 
@@ -1304,6 +1334,7 @@ pub struct Div {
     children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
+    prepaint_order_fn: Option<Box<dyn Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]>>>,
 }
 
 impl Div {
@@ -1320,6 +1351,22 @@ impl Div {
     /// Add an image cache at the location of this div in the element tree.
     pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
         self.image_cache = Some(Box::new(cache));
+        self
+    }
+
+    /// Specify a function that determines the order in which children are prepainted.
+    ///
+    /// The function is called at prepaint time and should return a vector of child indices
+    /// in the desired prepaint order. Each index should appear exactly once.
+    ///
+    /// This is useful when the prepaint of one child affects state that another child reads.
+    /// For example, in split editor views, the editor with an autoscroll request should
+    /// be prepainted first so its scroll position update is visible to the other editor.
+    pub fn with_dynamic_prepaint_order(
+        mut self,
+        order_fn: impl Fn(&mut Window, &mut App) -> SmallVec<[usize; 8]> + 'static,
+    ) -> Self {
+        self.prepaint_order_fn = Some(Box::new(order_fn));
         self
     }
 }
@@ -1486,8 +1533,17 @@ impl Element for Div {
 
                 window.with_image_cache(image_cache, |window| {
                     window.with_element_offset(scroll_offset, |window| {
-                        for child in &mut self.children {
-                            child.prepaint(window, cx);
+                        if let Some(order_fn) = &self.prepaint_order_fn {
+                            let order = order_fn(window, cx);
+                            for idx in order {
+                                if let Some(child) = self.children.get_mut(idx) {
+                                    child.prepaint(window, cx);
+                                }
+                            }
+                        } else {
+                            for child in &mut self.children {
+                                child.prepaint(window, cx);
+                            }
                         }
                     });
 
@@ -1595,6 +1651,7 @@ pub struct Interactivity {
     pub(crate) drop_listeners: Vec<(TypeId, DropListener)>,
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
+    pub(crate) aux_click_listeners: Vec<ClickListener>,
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
@@ -1788,6 +1845,7 @@ impl Interactivity {
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
             || !self.click_listeners.is_empty()
+            || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
@@ -1983,12 +2041,12 @@ impl Interactivity {
     ) {
         use crate::{BorderStyle, TextAlign};
 
-        if global_id.is_some()
+        if let Some(global_id) = global_id
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(window)
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-            let element_id = format!("{:?}", global_id.unwrap());
+            let element_id = format!("{global_id:?}");
             let str_len = element_id.len();
 
             let render_debug_text = |window: &mut Window| {
@@ -2011,7 +2069,7 @@ impl Interactivity {
                         origin: hitbox.origin,
                         size: text.size(FONT_SIZE),
                     };
-                    if self.source_location.is_some()
+                    if let Some(source_location) = self.source_location
                         && text_bounds.contains(&window.mouse_position())
                         && window.modifiers().secondary()
                     {
@@ -2042,7 +2100,6 @@ impl Interactivity {
 
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            let location = self.source_location.unwrap();
                             move |e: &crate::MouseDownEvent, phase, window, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
@@ -2055,9 +2112,9 @@ impl Interactivity {
 
                                     eprintln!(
                                         "This element was created at:\n{}:{}:{}",
-                                        dir.join(location.file()).to_string_lossy(),
-                                        location.line(),
-                                        location.column()
+                                        dir.join(source_location.file()).to_string_lossy(),
+                                        source_location.line(),
+                                        source_location.column()
                                     );
                                 }
                             }
@@ -2211,6 +2268,7 @@ impl Interactivity {
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
         let click_listeners = mem::take(&mut self.click_listeners);
+        let aux_click_listeners = mem::take(&mut self.aux_click_listeners);
         let can_drop_predicate = mem::take(&mut self.can_drop_predicate);
 
         if !drop_listeners.is_empty() {
@@ -2247,7 +2305,10 @@ impl Interactivity {
         }
 
         if let Some(element_state) = element_state {
-            if !click_listeners.is_empty() || drag_listener.is_some() {
+            if !click_listeners.is_empty()
+                || !aux_click_listeners.is_empty()
+                || drag_listener.is_some()
+            {
                 let pending_mouse_down = element_state
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
@@ -2261,9 +2322,10 @@ impl Interactivity {
                 window.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
+                    let has_aux_click_listeners = !aux_click_listeners.is_empty();
                     move |event: &MouseDownEvent, phase, window, _cx| {
                         if phase == DispatchPhase::Bubble
-                            && event.button == MouseButton::Left
+                            && (event.button == MouseButton::Left || has_aux_click_listeners)
                             && hitbox.is_hovered(window)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
@@ -2285,6 +2347,7 @@ impl Interactivity {
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
                             && let Some((drag_value, drag_listener)) = drag_listener.take()
+                            && mouse_down.button == MouseButton::Left
                         {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - hitbox.origin;
@@ -2361,12 +2424,24 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
+                                let btn = mouse_down.button;
+
                                 let mouse_click = ClickEvent::Mouse(MouseClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
                                 });
-                                for listener in &click_listeners {
-                                    listener(&mouse_click, window, cx);
+
+                                match btn {
+                                    MouseButton::Left => {
+                                        for listener in &click_listeners {
+                                            listener(&mouse_click, window, cx);
+                                        }
+                                    }
+                                    _ => {
+                                        for listener in &aux_click_listeners {
+                                            listener(&mouse_click, window, cx);
+                                        }
+                                    }
                                 }
                             }
                         }

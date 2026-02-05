@@ -48,6 +48,9 @@ use markdown::MarkdownView;
 mod table;
 use table::TableView;
 
+mod json;
+use json::JsonView;
+
 pub mod plain;
 use plain::TerminalOutput;
 
@@ -62,6 +65,7 @@ use settings::Settings;
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
+        MimeType::Json(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
@@ -124,7 +128,52 @@ pub enum Output {
         content: Entity<MarkdownView>,
         display_id: Option<String>,
     },
+    Json {
+        content: Entity<JsonView>,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
+}
+
+impl Output {
+    pub fn to_nbformat(&self, cx: &App) -> Option<nbformat::v4::Output> {
+        match self {
+            Output::Stream { content } => {
+                let text = content.read(cx).full_text();
+                Some(nbformat::v4::Output::Stream {
+                    name: "stdout".to_string(),
+                    text: nbformat::v4::MultilineString(text),
+                })
+            }
+            Output::Plain { content, .. } => {
+                let text = content.read(cx).full_text();
+                let mut data = jupyter_protocol::media::Media::default();
+                data.content.push(jupyter_protocol::MediaType::Plain(text));
+                Some(nbformat::v4::Output::DisplayData(
+                    nbformat::v4::DisplayData {
+                        data,
+                        metadata: serde_json::Map::new(),
+                    },
+                ))
+            }
+            Output::ErrorOutput(error_view) => {
+                let traceback_text = error_view.traceback.read(cx).full_text();
+                let traceback_lines: Vec<String> =
+                    traceback_text.lines().map(|s| s.to_string()).collect();
+                Some(nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                    ename: error_view.ename.clone(),
+                    evalue: error_view.evalue.clone(),
+                    traceback: traceback_lines,
+                }))
+            }
+            Output::Image { .. }
+            | Output::Markdown { .. }
+            | Output::Table { .. }
+            | Output::Json { .. } => None,
+            Output::Message(_) => None,
+            Output::ClearOutputWaitMarker => None,
+        }
+    }
 }
 
 impl Output {
@@ -206,6 +255,11 @@ impl Output {
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
+        let max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
@@ -213,16 +267,26 @@ impl Output {
             Self::Image { content, .. } => Some(content.clone().into_any_element()),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
+            Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         };
 
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+
         h_flex()
             .id("output-content")
             .w_full()
+            .when_some(max_width, |this, max_w| this.max_w(max_w))
             .overflow_x_scroll()
             .items_start()
-            .child(div().flex_1().children(content))
+            .child(
+                div()
+                    .when(!needs_horizontal_scroll, |el| {
+                        el.flex_1().w_full().overflow_x_hidden()
+                    })
+                    .children(content),
+            )
             .children(match self {
                 Self::Plain { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
@@ -236,6 +300,9 @@ impl Output {
                 Self::Image { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
+                Self::Json { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
+                }
                 Self::ErrorOutput(err) => Some(
                     h_flex()
                         .pl_1()
@@ -246,7 +313,8 @@ impl Output {
                             let traceback_text = traceback.read(cx).full_text();
                             let full_error = format!("{}: {}\n{}", ename, evalue, traceback_text);
 
-                            CopyButton::new(full_error).tooltip_label("Copy Full Error")
+                            CopyButton::new("copy-full-error", full_error)
+                                .tooltip_label("Copy Full Error")
                         })
                         .child(
                             IconButton::new(
@@ -309,6 +377,7 @@ impl Output {
             Output::Message(_) => None,
             Output::Table { display_id, .. } => display_id.clone(),
             Output::Markdown { display_id, .. } => display_id.clone(),
+            Output::Json { display_id, .. } => display_id.clone(),
             Output::ClearOutputWaitMarker => None,
         }
     }
@@ -320,6 +389,16 @@ impl Output {
         cx: &mut App,
     ) -> Self {
         match data.richest(rank_mime_type) {
+            Some(MimeType::Json(json_object)) => {
+                let json_value = serde_json::Value::Object(json_object.clone());
+                match JsonView::from_value(json_value) {
+                    Ok(json_view) => Output::Json {
+                        content: cx.new(|_| json_view),
+                        display_id,
+                    },
+                    Err(_) => Output::Message("Failed to parse JSON".to_string()),
+                }
+            }
             Some(MimeType::Plain(text)) => Output::Plain {
                 content: cx.new(|cx| TerminalOutput::from(text, window, cx)),
                 display_id,

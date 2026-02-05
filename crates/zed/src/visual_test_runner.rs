@@ -50,6 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
+    editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
@@ -58,7 +59,8 @@ use {
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore},
+    settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings_ui::SettingsWindow,
     std::{
         any::Any,
         path::{Path, PathBuf},
@@ -66,7 +68,9 @@ use {
         sync::Arc,
         time::Duration,
     },
+    watch,
     workspace::{AppState, Workspace},
+    zed_actions::OpenSettingsAt,
 };
 
 // All macOS-specific constants grouped together
@@ -146,21 +150,24 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Use real Assets so that SVG icons render properly
     let mut cx = VisualTestAppContext::with_asset_source(Arc::new(Assets));
 
-    // Initialize settings store first (required by theme and other subsystems)
-    // and disable telemetry to prevent HTTP errors from FakeHttpClient
+    // Load embedded fonts (IBM Plex Sans, Lilex, etc.) so UI renders with correct fonts
     cx.update(|cx| {
-        let mut settings_store = SettingsStore::test(cx);
-        settings_store.update_user_settings(cx, |settings| {
-            settings.telemetry = Some(settings::TelemetrySettingsContent {
-                diagnostics: Some(false),
-                metrics: Some(false),
-            });
-        });
-        cx.set_global(settings_store);
+        Assets.load_fonts(cx).unwrap();
+    });
+
+    // Initialize settings store with real default settings (not test settings)
+    // Test settings use Courier font, but we want the real Zed fonts for visual tests
+    cx.update(|cx| {
+        settings::init(cx);
     });
 
     // Create AppState using the test initialization
     let app_state = cx.update(|cx| init_app_state(cx));
+
+    // Set the global app state so settings_ui and other subsystems can find it
+    cx.update(|cx| {
+        AppState::set_global(Arc::downgrade(&app_state), cx);
+    });
 
     // Initialize all Zed subsystems
     cx.update(|cx| {
@@ -183,6 +190,18 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        settings_ui::init(cx);
+
+        // Initialize agent_ui (needed for agent thread tests)
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        agent_ui::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            prompt_builder,
+            app_state.languages.clone(),
+            true, // is_eval - skip language model settings initialization
+            cx,
+        );
 
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
@@ -222,7 +241,10 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -262,7 +284,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // worktree creation spawns foreground tasks via cx.spawn
     // Allow parking since filesystem operations happen outside the test dispatcher
     cx.background_executor.allow_parking();
-    let worktree_result = cx.background_executor.block_test(add_worktree_task);
+    let worktree_result = cx.foreground_executor.block_test(add_worktree_task);
     cx.background_executor.forbid_parking();
     worktree_result.context("Failed to add worktree")?;
 
@@ -277,7 +299,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     cx.background_executor.allow_parking();
     let panel = cx
-        .background_executor
+        .foreground_executor
         .block_test(ProjectPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load project panel")?;
     cx.background_executor.forbid_parking();
@@ -318,7 +340,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let block_result = cx.background_executor.block_test(task);
+        let block_result = cx.foreground_executor.block_test(task);
         cx.background_executor.forbid_parking();
         if let Ok(item) = block_result {
             workspace_window
@@ -404,24 +426,47 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     }
 
     // Run Test 3: Agent Thread View tests
-    println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
-    match run_agent_thread_view_test(app_state.clone(), &mut cx, update_baseline) {
-        Ok(TestResult::Passed) => {
-            println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
-            passed += 1;
-        }
-        Ok(TestResult::BaselineUpdated(_)) => {
-            println!("✓ agent_thread_with_image: Baselines updated (collapsed + expanded)");
-            updated += 1;
-        }
-        Err(e) => {
-            eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
-            failed += 1;
+    #[cfg(feature = "visual-tests")]
+    {
+        println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
+        match run_agent_thread_view_test(app_state.clone(), &mut cx, update_baseline) {
+            Ok(TestResult::Passed) => {
+                println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
+                passed += 1;
+            }
+            Ok(TestResult::BaselineUpdated(_)) => {
+                println!("✓ agent_thread_with_image: Baselines updated (collapsed + expanded)");
+                updated += 1;
+            }
+            Err(e) => {
+                eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
+                failed += 1;
+            }
         }
     }
 
-    // Run Test 4: Breakpoint Hover visual tests
-    println!("\n--- Test 4: breakpoint_hover (3 variants) ---");
+    // Run Test 4: Subagent Cards visual tests
+    #[cfg(feature = "visual-tests")]
+    {
+        println!("\n--- Test 4: subagent_cards (running, completed, expanded) ---");
+        match run_subagent_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+            Ok(TestResult::Passed) => {
+                println!("✓ subagent_cards: PASSED");
+                passed += 1;
+            }
+            Ok(TestResult::BaselineUpdated(_)) => {
+                println!("✓ subagent_cards: Baselines updated");
+                updated += 1;
+            }
+            Err(e) => {
+                eprintln!("✗ subagent_cards: FAILED - {}", e);
+                failed += 1;
+            }
+        }
+    }
+
+    // Run Test 5: Breakpoint Hover visual tests
+    println!("\n--- Test 5: breakpoint_hover (3 variants) ---");
     match run_breakpoint_hover_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ breakpoint_hover: PASSED");
@@ -437,8 +482,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 5: Diff Review Button visual tests
-    println!("\n--- Test 5: diff_review_button (3 variants) ---");
+    // Run Test 6: Diff Review Button visual tests
+    println!("\n--- Test 6: diff_review_button (3 variants) ---");
     match run_diff_review_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ diff_review_button: PASSED");
@@ -450,6 +495,40 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
         Err(e) => {
             eprintln!("✗ diff_review_button: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 7: Tool Permissions Settings UI visual test
+    println!("\n--- Test 7: tool_permissions_settings ---");
+    match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ tool_permissions_settings: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ tool_permissions_settings: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ tool_permissions_settings: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 8: Settings UI sub-page auto-open visual tests
+    println!("\n--- Test 8: settings_ui_subpage_auto_open (2 variants) ---");
+    match run_settings_ui_subpage_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ settings_ui_subpage_auto_open: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ settings_ui_subpage_auto_open: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ settings_ui_subpage_auto_open: FAILED - {}", e);
             failed += 1;
         }
     }
@@ -819,7 +898,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     theme::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
-    Arc::new(AppState {
+    let app_state = Arc::new(AppState {
         client,
         fs,
         languages,
@@ -828,7 +907,9 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         node_runtime: NodeRuntime::unavailable(),
         build_window_options: |_, _| Default::default(),
         session,
-    })
+    });
+    AppState::set_global(Arc::downgrade(&app_state), cx);
+    app_state
 }
 
 /// Runs visual tests for breakpoint hover states in the editor gutter.
@@ -877,7 +958,10 @@ fn run_breakpoint_hover_visual_tests(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -914,7 +998,7 @@ fn run_breakpoint_hover_visual_tests(
         .context("Failed to start adding worktree")?;
 
     cx.background_executor.allow_parking();
-    let worktree_result = cx.background_executor.block_test(add_worktree_task);
+    let worktree_result = cx.foreground_executor.block_test(add_worktree_task);
     cx.background_executor.forbid_parking();
     worktree_result.context("Failed to add worktree")?;
 
@@ -939,7 +1023,7 @@ fn run_breakpoint_hover_visual_tests(
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let _ = cx.background_executor.block_test(task);
+        let _ = cx.foreground_executor.block_test(task);
         cx.background_executor.forbid_parking();
     }
 
@@ -1116,6 +1200,171 @@ fn run_breakpoint_hover_visual_tests(
     }
 }
 
+/// Runs visual tests for the settings UI sub-page auto-open feature.
+///
+/// This test verifies that when opening settings via OpenSettingsAt with a path
+/// that maps to a single SubPageLink, the sub-page is automatically opened.
+///
+/// This test captures two states:
+/// 1. Settings opened with a path that maps to multiple items (no auto-open)
+/// 2. Settings opened with a path that maps to a single SubPageLink (auto-opens sub-page)
+#[cfg(target_os = "macos")]
+fn run_settings_ui_subpage_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // Create a workspace window for dispatching actions
+    let window_size = size(px(1280.0), px(800.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window")?;
+
+    cx.run_until_parked();
+
+    // Test 1: Open settings with a path that maps to multiple items (e.g., "agent")
+    // This should NOT auto-open a sub-page since multiple items match
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt for multiple items")?;
+
+    cx.run_until_parked();
+
+    // Find the settings window
+    let settings_window_1 = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+        })
+        .context("Settings window not found")?;
+
+    // Refresh and capture screenshot
+    cx.update_window(settings_window_1.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test1_result = run_visual_test(
+        "settings_ui_no_auto_open",
+        settings_window_1.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Close the settings window
+    let _ = cx.update_window(settings_window_1.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Test 2: Open settings with a path that maps to a single SubPageLink
+    // "edit_predictions.providers" maps to the "Configure Providers" SubPageLink
+    // This should auto-open the sub-page
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "edit_predictions.providers".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt for single SubPageLink")?;
+
+    cx.run_until_parked();
+
+    // Find the new settings window
+    let settings_window_2 = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+        })
+        .context("Settings window not found for sub-page test")?;
+
+    // Refresh and capture screenshot
+    cx.update_window(settings_window_2.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test2_result = run_visual_test(
+        "settings_ui_subpage_auto_open",
+        settings_window_2.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Clean up: close the settings window
+    let _ = cx.update_window(settings_window_2.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Clean up: close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Give background tasks time to finish
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Return combined result
+    match (&test1_result, &test2_result) {
+        (TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _) | (_, TestResult::BaselineUpdated(p)) => {
+            Ok(TestResult::BaselineUpdated(p.clone()))
+        }
+    }
+}
+
 /// Runs visual tests for the diff review button in git diff views.
 ///
 /// This test captures three states:
@@ -1189,7 +1438,10 @@ import { AiPaneTabContext } from 'context';
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -1200,7 +1452,7 @@ import { AiPaneTabContext } from 'context';
     });
 
     cx.background_executor.allow_parking();
-    let _ = cx.background_executor.block_test(add_worktree_task);
+    let _ = cx.foreground_executor.block_test(add_worktree_task);
     cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
@@ -1335,7 +1587,7 @@ import { AiPaneTabContext } from 'context';
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let _ = cx.background_executor.block_test(task);
+        let _ = cx.foreground_executor.block_test(task);
         cx.background_executor.forbid_parking();
     }
 
@@ -1355,6 +1607,198 @@ import { AiPaneTabContext } from 'context';
     // Capture Test 3: Regular editor with flag enabled (no button)
     let test3_result = run_visual_test(
         "diff_review_button_regular_editor",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 4: Show the diff review overlay on the regular editor
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            // Get the first editor from the workspace
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    editor.show_diff_review_overlay(DisplayRow(1)..DisplayRow(1), window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for overlay to render
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 4: Regular editor with overlay shown
+    let test4_result = run_visual_test(
+        "diff_review_overlay_shown",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 5: Type text into the diff review prompt and submit it
+    // First, get the prompt editor from the overlay and type some text
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Get the prompt editor from the overlay and insert text
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |prompt_editor: &mut editor::Editor, cx| {
+                            prompt_editor.insert(
+                                "This change needs better error handling",
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                });
+            }
+        })
+        .ok();
+
+    // Wait for text to be inserted
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 5: Diff review overlay with typed text
+    let test5_result = run_visual_test(
+        "diff_review_overlay_with_text",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 6: Submit a comment to store it locally
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Submit the comment that was typed in test 5
+                    editor.submit_diff_review_comment(window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for comment to be stored
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 6: Overlay with one stored comment
+    let test6_result = run_visual_test(
+        "diff_review_one_comment",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 7: Add more comments to show multiple comments expanded
+    regular_window
+        .update(cx, |workspace, window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Add second comment
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |pe, cx| {
+                            pe.insert("Second comment about imports", window, cx);
+                        });
+                    }
+                    editor.submit_diff_review_comment(window, cx);
+
+                    // Add third comment
+                    if let Some(prompt_editor) = editor.diff_review_prompt_editor().cloned() {
+                        prompt_editor.update(cx, |pe, cx| {
+                            pe.insert("Third comment about naming conventions", window, cx);
+                        });
+                    }
+                    editor.submit_diff_review_comment(window, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for comments to be stored
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 7: Overlay with multiple comments expanded
+    let test7_result = run_visual_test(
+        "diff_review_multiple_comments_expanded",
+        regular_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Test 8: Collapse the comments section
+    regular_window
+        .update(cx, |workspace, _window, cx| {
+            let editors: Vec<_> = workspace.items_of_type::<editor::Editor>(cx).collect();
+            if let Some(editor) = editors.into_iter().next() {
+                editor.update(cx, |editor, cx| {
+                    // Toggle collapse using the public method
+                    editor.set_diff_review_comments_expanded(false, cx);
+                });
+            }
+        })
+        .ok();
+
+    // Wait for UI to update
+    for _ in 0..3 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh window
+    cx.update_window(regular_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture Test 8: Comments collapsed
+    let test8_result = run_visual_test(
+        "diff_review_comments_collapsed",
         regular_window.into(),
         cx,
         update_baseline,
@@ -1393,12 +1837,27 @@ import { AiPaneTabContext } from 'context';
     }
 
     // Return combined result
-    match (&test1_result, &test2_result, &test3_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _, _)
-        | (_, TestResult::BaselineUpdated(p), _)
-        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
-    }
+    let all_results = [
+        &test1_result,
+        &test2_result,
+        &test3_result,
+        &test4_result,
+        &test5_result,
+        &test6_result,
+        &test7_result,
+        &test8_result,
+    ];
+
+    // Combine results: if any test updated a baseline, return BaselineUpdated;
+    // otherwise return Passed. The exhaustive match ensures the compiler
+    // verifies we handle all TestResult variants.
+    let result = all_results
+        .iter()
+        .fold(TestResult::Passed, |acc, r| match r {
+            TestResult::Passed => acc,
+            TestResult::BaselineUpdated(p) => TestResult::BaselineUpdated(p.clone()),
+        });
+    Ok(result)
 }
 
 /// A stub AgentServer for visual testing that returns a pre-programmed connection.
@@ -1439,7 +1898,335 @@ impl AgentServer for StubAgentServer {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
+fn run_subagent_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use acp_thread::{
+        AcpThread, SUBAGENT_TOOL_NAME, ToolCallUpdateSubagentThread, meta_with_tool_name,
+    };
+    use agent_ui::AgentPanel;
+
+    // Create a temporary project directory
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path.canonicalize()?;
+    let project_path = canonical_temp.join("project");
+    std::fs::create_dir_all(&project_path)?;
+
+    // Create a project
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    // Add the test directory as a worktree
+    let add_worktree_task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&project_path, true, cx)
+    });
+
+    let _ = cx.foreground_executor.block_test(add_worktree_task);
+
+    cx.run_until_parked();
+
+    // Create stub connection - we'll manually inject the subagent content
+    let connection = StubAgentConnection::new();
+
+    // Create a subagent tool call (in progress state)
+    let tool_call = acp::ToolCall::new("subagent-tool-1", "2 subagents")
+        .kind(acp::ToolKind::Other)
+        .meta(meta_with_tool_name(SUBAGENT_TOOL_NAME))
+        .status(acp::ToolCallStatus::InProgress);
+
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
+
+    // Create a window sized for the agent panel
+    let window_size = size(px(600.0), px(700.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open agent window")?;
+
+    cx.run_until_parked();
+
+    // Load the AgentPanel
+    let (weak_workspace, async_window_cx) = workspace_window
+        .update(cx, |workspace, window, cx| {
+            (workspace.weak_handle(), window.to_async(cx))
+        })
+        .context("Failed to get workspace handle")?;
+
+    let prompt_builder =
+        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
+    let panel = cx
+        .foreground_executor
+        .block_test(AgentPanel::load(
+            weak_workspace,
+            prompt_builder,
+            async_window_cx,
+        ))
+        .context("Failed to load AgentPanel")?;
+
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        workspace_window
+            .update(cx, |workspace, window, cx| {
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.open_panel::<AgentPanel>(window, cx);
+            })
+            .ok();
+    })?;
+
+    cx.run_until_parked();
+
+    // Open the stub thread
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        panel.update(cx, |panel: &mut agent_ui::AgentPanel, cx| {
+            panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
+        });
+    })?;
+
+    cx.run_until_parked();
+
+    // Get the thread view and send a message to trigger the subagent tool call
+    let thread_view = cx
+        .read(|cx| panel.read(cx).active_thread_view_for_tests().cloned())
+        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
+
+    let thread = cx
+        .read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|active| active.read(cx).thread.clone())
+        })
+        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
+
+    // Send the message to trigger the subagent response
+    let send_future = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread.send(vec!["Run two subagents".into()], cx)
+    });
+
+    let _ = cx.foreground_executor.block_test(send_future);
+
+    cx.run_until_parked();
+
+    // Get the tool call ID
+    let tool_call_id = cx
+        .read(|cx| {
+            thread.read(cx).entries().iter().find_map(|entry| {
+                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
+                    Some(tool_call.id.clone())
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("Expected a ToolCall entry in thread"))?;
+
+    // Create two subagent AcpThreads and inject them
+    let subagent1 = cx.update(|cx| {
+        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+        let session_id = acp::SessionId::new("subagent-1");
+        cx.new(|cx| {
+            let mut thread = AcpThread::new(
+                "Exploring test-repo",
+                Rc::new(connection.clone()),
+                project.clone(),
+                action_log,
+                session_id,
+                watch::Receiver::constant(acp::PromptCapabilities::new()),
+                cx,
+            );
+            // Add some content to this subagent
+            thread.push_assistant_content_block(
+                "## Summary of test-repo\n\nThis is a test repository with:\n\n- **Files:** test.txt\n- **Purpose:** Testing".into(),
+                false,
+                cx,
+            );
+            thread
+        })
+    });
+
+    let subagent2 = cx.update(|cx| {
+        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
+        let session_id = acp::SessionId::new("subagent-2");
+        cx.new(|cx| {
+            let mut thread = AcpThread::new(
+                "Exploring test-worktree",
+                Rc::new(connection.clone()),
+                project.clone(),
+                action_log,
+                session_id,
+                watch::Receiver::constant(acp::PromptCapabilities::new()),
+                cx,
+            );
+            // Add some content to this subagent
+            thread.push_assistant_content_block(
+                "## Summary of test-worktree\n\nThis directory contains:\n\n- A single `config.json` file\n- Basic project setup".into(),
+                false,
+                cx,
+            );
+            thread
+        })
+    });
+
+    // Inject subagent threads into the tool call
+    thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread
+            .update_tool_call(
+                ToolCallUpdateSubagentThread {
+                    id: tool_call_id.clone(),
+                    thread: subagent1,
+                },
+                cx,
+            )
+            .ok();
+        thread
+            .update_tool_call(
+                ToolCallUpdateSubagentThread {
+                    id: tool_call_id.clone(),
+                    thread: subagent2,
+                },
+                cx,
+            )
+            .ok();
+    });
+
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture subagents in RUNNING state (tool call still in progress)
+    let running_result = run_visual_test(
+        "subagent_cards_running",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Now mark the tool call as completed by updating it through the thread
+    thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
+        thread
+            .handle_session_update(
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    tool_call_id.clone(),
+                    acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                )),
+                cx,
+            )
+            .ok();
+    });
+
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture subagents in COMPLETED state
+    let completed_result = run_visual_test(
+        "subagent_cards_completed",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Expand the first subagent
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpServerView, cx| {
+        view.expand_subagent(acp::SessionId::new("subagent-1"), cx);
+    });
+
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture subagent in EXPANDED state
+    let expanded_result = run_visual_test(
+        "subagent_cards_expanded",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Cleanup
+    workspace_window
+        .update(cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                let worktree_ids: Vec<_> =
+                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in worktree_ids {
+                    project.remove_worktree(id, cx);
+                }
+            });
+        })
+        .ok();
+
+    cx.run_until_parked();
+
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    match (&running_result, &completed_result, &expanded_result) {
+        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _, _)
+        | (_, TestResult::BaselineUpdated(p), _)
+        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
 fn run_agent_thread_view_test(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
@@ -1468,7 +2255,10 @@ fn run_agent_thread_view_test(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         )
     });
@@ -1480,7 +2270,7 @@ fn run_agent_thread_view_test(
 
     cx.background_executor.allow_parking();
     let (worktree, _) = cx
-        .background_executor
+        .foreground_executor
         .block_test(add_worktree_task)
         .context("Failed to add worktree")?;
     cx.background_executor.forbid_parking();
@@ -1530,7 +2320,7 @@ fn run_agent_thread_view_test(
     let run_task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
     cx.background_executor.allow_parking();
-    let run_result = cx.background_executor.block_test(run_task);
+    let run_result = cx.foreground_executor.block_test(run_task);
     cx.background_executor.forbid_parking();
     run_result.context("ReadFileTool failed")?;
 
@@ -1611,7 +2401,7 @@ fn run_agent_thread_view_test(
         cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
-        .background_executor
+        .foreground_executor
         .block_test(AgentPanel::load(
             weak_workspace,
             prompt_builder,
@@ -1646,7 +2436,12 @@ fn run_agent_thread_view_test(
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = cx
-        .read(|cx| thread_view.read(cx).thread().cloned())
+        .read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|active| active.read(cx).thread.clone())
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the image response
@@ -1655,7 +2450,7 @@ fn run_agent_thread_view_test(
     });
 
     cx.background_executor.allow_parking();
-    let send_result = cx.background_executor.block_test(send_future);
+    let send_result = cx.foreground_executor.block_test(send_future);
     cx.background_executor.forbid_parking();
     send_result.context("Failed to send message")?;
 
@@ -1752,4 +2547,214 @@ fn run_agent_thread_view_test(
             Ok(TestResult::BaselineUpdated(p.clone()))
         }
     }
+}
+
+/// Visual test for the Tool Permissions Settings UI page
+///
+/// Takes two screenshots:
+/// 1. The settings page showing the "Configure Tool Rules" item
+/// 2. The tool permissions sub-page after clicking Configure
+#[cfg(target_os = "macos")]
+fn run_tool_permissions_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    _update_baseline: bool,
+) -> Result<TestResult> {
+    use zed_actions::OpenSettingsAt;
+
+    // Create a minimal workspace to dispatch the settings action from
+    let window_size = size(px(900.0), px(700.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window for settings test")?;
+
+    cx.run_until_parked();
+
+    // Dispatch the OpenSettingsAt action to open settings at the tool_permissions path
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent.tool_permissions".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt action")?;
+
+    cx.run_until_parked();
+
+    // Give the settings window time to open and render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Find the settings window - it should be the newest window (last in the list)
+    let all_windows = cx.update(|cx| cx.windows());
+    let settings_window = all_windows.last().copied().context("No windows found")?;
+
+    // Save screenshot 1: Settings page showing "Configure Tool Rules" item
+    let output_dir = std::env::var("VISUAL_TEST_OUTPUT_DIR")
+        .unwrap_or_else(|_| "target/visual_tests".to_string());
+    std::fs::create_dir_all(&output_dir).ok();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    let output_path = PathBuf::from(&output_dir).join("tool_permissions_settings.png");
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&output_path);
+        println!("Screenshot 1 saved to: {}", output_path.display());
+    }
+
+    // Navigate to the tool permissions sub-page using the public API
+    let settings_window_handle = settings_window
+        .downcast::<settings_ui::SettingsWindow>()
+        .context("Failed to downcast to SettingsWindow")?;
+
+    settings_window_handle
+        .update(cx, |settings_window, window, cx| {
+            settings_window.navigate_to_sub_page("agent.tool_permissions", window, cx);
+        })
+        .context("Failed to navigate to tool permissions sub-page")?;
+
+    cx.run_until_parked();
+
+    // Give the sub-page time to render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Refresh and redraw
+    cx.update_window(settings_window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    // Save screenshot 2: The tool permissions sub-page (list of tools)
+    let subpage_output_path = PathBuf::from(&output_dir).join("tool_permissions_subpage.png");
+
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&subpage_output_path);
+        println!(
+            "Screenshot 2 (tool list) saved to: {}",
+            subpage_output_path.display()
+        );
+    }
+
+    // Now navigate into a specific tool (Terminal) to show the tool config page
+    // We need to use push_dynamic_sub_page since the tool pages are nested
+    settings_window_handle
+        .update(cx, |settings_window, window, cx| {
+            settings_window.push_dynamic_sub_page(
+                "Terminal",
+                "Configure Tool Rules",
+                None,
+                settings_ui::pages::render_terminal_tool_config,
+                window,
+                cx,
+            );
+        })
+        .context("Failed to navigate to Terminal tool config")?;
+
+    cx.run_until_parked();
+
+    // Give the tool config page time to render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Refresh and redraw
+    cx.update_window(settings_window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    // Save screenshot 3: Individual tool config page
+    let tool_config_output_path =
+        PathBuf::from(&output_dir).join("tool_permissions_tool_config.png");
+
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&tool_config_output_path);
+        println!(
+            "Screenshot 3 (tool config) saved to: {}",
+            tool_config_output_path.display()
+        );
+    }
+
+    // Clean up - close the settings window
+    let _ = cx.update_window(settings_window, |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    cx.run_until_parked();
+
+    // Give background tasks time to finish
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Return success - we're just capturing screenshots, not comparing baselines
+    Ok(TestResult::Passed)
 }
