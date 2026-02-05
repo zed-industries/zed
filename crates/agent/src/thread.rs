@@ -678,6 +678,7 @@ impl ToolPermissionContext {
         } else if tool_name == EditFileTool::NAME
             || tool_name == DeletePathTool::NAME
             || tool_name == MovePathTool::NAME
+            || tool_name == CopyPathTool::NAME
             || tool_name == CreateDirectoryTool::NAME
             || tool_name == SaveFileTool::NAME
         {
@@ -3087,7 +3088,8 @@ impl ToolCallEventStream {
         }
 
         let (response_tx, response_rx) = oneshot::channel();
-        self.stream
+        if let Err(error) = self
+            .stream
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
@@ -3131,7 +3133,9 @@ impl ToolCallEventStream {
                     context: None,
                 },
             )))
-            .ok();
+        {
+            log::error!("Failed to send tool call authorization: {error}");
+        }
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
@@ -3183,7 +3187,8 @@ impl ToolCallEventStream {
         let options = context.build_permission_options();
 
         let (response_tx, response_rx) = oneshot::channel();
-        self.stream
+        if let Err(error) = self
+            .stream
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
@@ -3196,7 +3201,9 @@ impl ToolCallEventStream {
                     context: Some(context),
                 },
             )))
-            .ok();
+        {
+            log::error!("Failed to send tool call authorization: {error}");
+        }
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {

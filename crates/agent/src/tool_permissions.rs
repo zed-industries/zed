@@ -130,6 +130,8 @@ impl ToolPermissionDecision {
     ///   This is important for security rules where you want to block specific commands
     ///   without accidentally blocking unrelated commands that happen to contain the same
     ///   substring.
+    /// - For `copy_path` and `move_path`, patterns are matched against the formatted string
+    ///   `source_path -> destination_path`.
     /// - Patterns are case-insensitive by default. Set `case_sensitive: true` for exact matching.
     /// - Use `^` and `$` anchors to match the start/end of the input.
     pub fn from_input(
