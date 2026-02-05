@@ -9682,6 +9682,20 @@ impl Element for EditorElement {
                         .row_infos(start_row)
                         .take((start_row..end_row).len())
                         .collect::<Vec<RowInfo>>();
+
+                    // FIXME
+                    let all_staged_lines = snapshot
+                        .buffer_snapshot()
+                        .diff_hunks_in_range(Anchor::min()..Anchor::max())
+                        .flat_map(|hunk| hunk.staged_rows)
+                        .map(|row| {
+                            snapshot
+                                .display_snapshot
+                                .point_to_display_point(Point::new(row.0, 0), Bias::Left)
+                                .row()
+                        })
+                        .collect::<Vec<_>>();
+
                     let is_row_soft_wrapped = |row: usize| {
                         row_infos
                             .get(row)
@@ -9761,14 +9775,16 @@ impl Element for EditorElement {
                             type_id: None,
                         };
 
-                        let background = if Self::diff_hunk_hollow(diff_status, cx) {
+                        let base_display_point =
+                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
+
+                        let background = if Self::diff_hunk_hollow(diff_status, cx)
+                            || all_staged_lines.contains(&base_display_point.row())
+                        {
                             hollow_highlight
                         } else {
                             filled_highlight
                         };
-
-                        let base_display_point =
-                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
 
                         highlighted_rows
                             .entry(base_display_point.row())

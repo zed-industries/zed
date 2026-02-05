@@ -237,12 +237,11 @@ impl Default for DiffOptions {
 
 /// Computes a diff between two strings, using a specific language scope's
 /// word characters for word-level diffing.
-pub fn text_diff_with_options(
+pub fn text_diff_with_options_internal(
     old_text: &str,
     new_text: &str,
     options: DiffOptions,
-) -> Vec<(Range<usize>, Arc<str>)> {
-    let empty: Arc<str> = Arc::default();
+) -> Vec<text::Edit<usize>> {
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
     let input = InternedInput::new(
@@ -275,24 +274,31 @@ pub fn text_diff_with_options(
                         old_offset + old_byte_range.start..old_offset + old_byte_range.end;
                     let new_byte_range =
                         new_offset + new_byte_range.start..new_offset + new_byte_range.end;
-                    let replacement_text = if new_byte_range.is_empty() {
-                        empty.clone()
-                    } else {
-                        new_text[new_byte_range].into()
-                    };
-                    edits.push((old_byte_range, replacement_text));
+                    edits.push(text::Edit {
+                        old: old_byte_range,
+                        new: new_byte_range,
+                    });
                 });
             } else {
-                let replacement_text = if new_byte_range.is_empty() {
-                    empty.clone()
-                } else {
-                    new_text[new_byte_range].into()
-                };
-                edits.push((old_byte_range, replacement_text));
+                edits.push(text::Edit {
+                    old: old_byte_range,
+                    new: new_byte_range,
+                });
             }
         },
     );
     edits
+}
+
+pub fn text_diff_with_options(
+    old_text: &str,
+    new_text: &str,
+    options: DiffOptions,
+) -> Vec<(Range<usize>, Arc<str>)> {
+    text_diff_with_options_internal(old_text, new_text, options)
+        .into_iter()
+        .map(|edit| (edit.old, new_text[edit.new].into()))
+        .collect()
 }
 
 pub fn apply_diff_patch(base_text: &str, patch: &str) -> Result<String, anyhow::Error> {

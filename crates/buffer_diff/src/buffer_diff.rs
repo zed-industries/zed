@@ -3,7 +3,7 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
     Capability, Diff, DiffOptions, File, Language, LanguageName, LanguageRegistry,
-    language_settings::language_settings, word_diff_ranges,
+    language_settings::language_settings, text_diff, word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -108,12 +108,17 @@ pub struct DiffHunk {
     pub buffer_word_diffs: Vec<Range<Anchor>>,
     // Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
+    // These fields are nonempty only if the secondary status is OverlapsWithSecondaryHunk
+    pub buffer_staged_lines: Vec<Range<Anchor>>,
+    pub base_staged_lines: Vec<Range<Point>>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InternalDiffHunk {
+    // Range of text that has been added to the main buffer
     buffer_range: Range<Anchor>,
+    // Range of text that has been deleted from the diff base
     diff_base_byte_range: Range<usize>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
@@ -820,6 +825,9 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 let base_word_diffs = hunk.base_word_diffs.clone();
                 let buffer_word_diffs = hunk.buffer_word_diffs.clone();
 
+                let mut buffer_staged_lines = Vec::new();
+                let mut base_staged_lines = Vec::new();
+
                 if !start_anchor.is_valid(buffer) {
                     continue;
                 }
@@ -879,6 +887,17 @@ impl BufferDiffInner<language::BufferSnapshot> {
                         } else if secondary_range == (start_point..end_point) {
                             secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
                         } else if secondary_range.start <= end_point {
+                            // FIXME this should be a background computation that only happens when either the diff or the secondary diff changes
+                            let (buffer, base) = compute_staged_lines(
+                                &hunk,
+                                &secondary_hunk,
+                                buffer,
+                                &self.base_text,
+                                &secondary.unwrap().base_text,
+                            );
+                            buffer_staged_lines = buffer;
+                            base_staged_lines = base;
+
                             secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                         }
                     }
@@ -891,6 +910,8 @@ impl BufferDiffInner<language::BufferSnapshot> {
                     base_word_diffs,
                     buffer_word_diffs,
                     secondary_status,
+                    buffer_staged_lines,
+                    base_staged_lines,
                 });
             }
         })
@@ -917,9 +938,64 @@ impl BufferDiffInner<language::BufferSnapshot> {
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                 base_word_diffs: hunk.base_word_diffs.clone(),
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
+                base_staged_lines: Vec::new(),
+                buffer_staged_lines: Vec::new(),
             })
         })
     }
+}
+
+fn compute_staged_lines(
+    hunk: &InternalDiffHunk,
+    secondary_hunk: &InternalDiffHunk,
+    buffer: &text::BufferSnapshot,
+    base_text: &language::BufferSnapshot,
+    secondary_base_text: &language::BufferSnapshot,
+) -> (Vec<Range<Anchor>>, Vec<Range<Point>>) {
+    let primary_hunk_buffer_text = buffer
+        .text_for_range(hunk.buffer_range.clone())
+        .collect::<String>();
+    let secondary_hunk_buffer_text = buffer
+        .text_for_range(secondary_hunk.buffer_range.clone())
+        .collect::<String>();
+    let primary_hunk_base_text = base_text
+        .text_for_range(hunk.diff_base_byte_range.clone())
+        .collect::<String>();
+    let secondary_hunk_base_text = secondary_base_text
+        .text_for_range(secondary_hunk.diff_base_byte_range.clone())
+        .collect::<String>();
+
+    let primary_hunk_start_in_buffer = hunk.buffer_range.start.to_offset(buffer);
+    // No word diffs
+    let buffer_staged_lines = language::text_diff_with_options_internal(
+        dbg!(&secondary_hunk_buffer_text),
+        dbg!(&primary_hunk_buffer_text),
+        DiffOptions {
+            language_scope: None,
+            max_word_diff_len: 0,
+            max_word_diff_line_count: 0,
+        },
+    )
+    .into_iter()
+    .map(|edit| {
+        buffer.anchor_before(edit.new.start + primary_hunk_start_in_buffer)
+            ..buffer.anchor_after(edit.new.end + primary_hunk_start_in_buffer)
+    })
+    .collect::<Vec<_>>();
+
+    // FIXME
+    if !buffer_staged_lines.is_empty() {
+        eprintln!(
+            "staged lines: {:?}",
+            buffer_staged_lines
+                .iter()
+                .map(|range| buffer.text_for_range(range.clone()).collect::<String>())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // FIXME
+    (buffer_staged_lines, Vec::new())
 }
 
 fn build_diff_options(

@@ -20622,6 +20622,8 @@ impl Editor {
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.status.secondary,
                         range: Point::zero()..Point::zero(), // unused
+                        buffer_staged_lines: Vec::new(),     // unused
+                        base_staged_lines: Vec::new(),       // unused
                     })
                     .collect::<Vec<_>>(),
                 &buffer_snapshot,

@@ -150,6 +150,7 @@ pub struct MultiBufferDiffHunk {
     pub status: DiffHunkStatus,
     /// The word diffs for this hunk.
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
+    pub staged_rows: Vec<MultiBufferRow>,
 }
 
 impl MultiBufferDiffHunk {
@@ -3933,6 +3934,18 @@ impl MultiBufferSnapshot {
                     })
                     .unwrap_or_default();
 
+            let staged_rows = (!hunk.buffer_staged_lines.is_empty())
+                .then(|| {
+                    let mut rows = Vec::new();
+                    for range in &hunk.buffer_staged_lines {
+                        let range =
+                            Anchor::range_in_buffer(excerpt.id, range.clone()).to_point(self);
+                        rows.extend((range.start.row..range.end.row).map(MultiBufferRow));
+                    }
+                    rows
+                })
+                .unwrap_or_default();
+
             let buffer_range = if is_inverted {
                 excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start)
                     ..excerpt.buffer.anchor_before(hunk.diff_base_byte_range.end)
@@ -3958,6 +3971,7 @@ impl MultiBufferSnapshot {
                     kind: status_kind,
                     secondary: hunk.secondary_status,
                 },
+                staged_rows,
             })
         })
     }
