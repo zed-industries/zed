@@ -2,9 +2,9 @@
 
 ## Usage Overview
 
-Use {#kb assistant::InlineAssist} to open the Inline Assistant nearly anywhere you can enter text: editors, text threads, the rules library, channel notes, and even within the terminal panel.
+Use {#kb assistant::InlineAssist} to open the Inline Assistant in editors, text threads, the rules library, channel notes, and the terminal panel.
 
-The Inline Assistant allows you to send the current selection (or the current line) to a language model and modify the selection with the language model's response.
+The Inline Assistant sends your current selection (or line) to a language model and replaces it with the response.
 
 ## Getting Started
 
@@ -26,18 +26,17 @@ You can add context in the Inline Assistant the same way you can in [the Agent P
 - @-mention files, directories, past threads, rules, and symbols
 - paste images that are copied on your clipboard
 
-Additionally, a useful pattern is to create a thread in the Agent Panel, and then mention it with `@thread` in the Inline Assistant to include it as context.
-That often serves as a way to more quickly iterate over a specific part of a change that happened in the context of a larger thread.
+You can also create a thread in the Agent Panel, then reference it with `@thread` in the Inline Assistant. This lets you refine a specific change from a larger thread without re-explaining context.
 
 ## Parallel Generations
 
-There are two ways in which you can generate multiple changes at once with the Inline Assistant:
+The Inline Assistant can generate multiple changes at once:
 
 ### Multiple Cursors
 
-If you have a multiple cursor selection and hit {#kb assistant::InlineAssist}, you can shoot the same prompt for all cursor positions and get a change in all of them.
+With multiple cursors, pressing {#kb assistant::InlineAssist} sends the same prompt to each cursor position, generating changes at all locations simultaneously.
 
-This is particularly useful when working on excerpts in [a multibuffer context](../multibuffers.md).
+This works well with excerpts in [multibuffers](../multibuffers.md).
 
 ### Multiple Models
 
@@ -92,14 +91,12 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
 
 ## Inline Assistant vs. Edit Prediction
 
-Users often ask what's the difference between these two AI-powered features in Zed, particularly because both of them involve getting inline LLM code completions.
+Both features generate inline code, but they work differently:
 
-Here's how they are different:
+- **Inline Assistant**: You write a prompt and select what to transform. You control the context.
+- **[Edit Prediction](./edit-prediction.md)**: Zed automatically suggests edits based on your recent changes, visited files, and cursor position. No prompting required.
 
-- The Inline Assistant is more similar to the Agent Panel as in you're still writing a prompt yourself and crafting context. It works from within the buffer and is mostly centered around your selections.
-- [Edit Predictions](./edit-prediction.md) is an AI-powered completion mechanism that intelligently suggests what you likely want to add next, based on context automatically gathered from your previous edits, recently visited files, and more.
-
-In summary, the key difference is that in the Inline Assistant, you're still manually prompting, whereas Edit Prediction will _automatically suggest_ edits to you.
+The key difference: Inline Assistant is explicit and prompt-driven; Edit Prediction is automatic and context-inferred.
 
 ## Prefilling Prompts
 

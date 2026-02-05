@@ -307,11 +307,12 @@ impl ProjectState {
                     return;
                 };
 
-                this.update(cx, |this, _cx| {
+                this.update(cx, |this, cx| {
                     this.reject_prediction(
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
+                        cx,
                     );
                 })
                 .ok();
@@ -1214,7 +1215,14 @@ impl EditPredictionStore {
             EditPredictionModel::Sweep => {
                 sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
             }
-            EditPredictionModel::Mercury | EditPredictionModel::Ollama => {}
+            EditPredictionModel::Mercury => {
+                mercury::edit_prediction_accepted(
+                    current_prediction.prediction.id,
+                    self.client.http_client(),
+                    cx,
+                );
+            }
+            EditPredictionModel::Ollama => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
@@ -1284,11 +1292,12 @@ impl EditPredictionStore {
         &mut self,
         reason: EditPredictionRejectReason,
         project: &Entity<Project>,
+        cx: &App,
     ) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
-                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown);
+                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown, cx);
             }
         };
     }
@@ -1347,25 +1356,31 @@ impl EditPredictionStore {
         prediction_id: EditPredictionId,
         reason: EditPredictionRejectReason,
         was_shown: bool,
+        cx: &App,
     ) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
-                if self.custom_predict_edits_url.is_some() {
-                    return;
+                if self.custom_predict_edits_url.is_none() {
+                    self.reject_predictions_tx
+                        .unbounded_send(EditPredictionRejection {
+                            request_id: prediction_id.to_string(),
+                            reason,
+                            was_shown,
+                        })
+                        .log_err();
                 }
             }
-            EditPredictionModel::Sweep
-            | EditPredictionModel::Mercury
-            | EditPredictionModel::Ollama => return,
+            EditPredictionModel::Sweep | EditPredictionModel::Ollama => {}
+            EditPredictionModel::Mercury => {
+                mercury::edit_prediction_rejected(
+                    prediction_id,
+                    was_shown,
+                    reason,
+                    self.client.http_client(),
+                    cx,
+                );
+            }
         }
-
-        self.reject_predictions_tx
-            .unbounded_send(EditPredictionRejection {
-                request_id: prediction_id.to_string(),
-                reason,
-                was_shown,
-            })
-            .log_err();
     }
 
     fn is_refreshing(&self, project: &Entity<Project>) -> bool {
@@ -1614,6 +1629,7 @@ impl EditPredictionStore {
                                     this.reject_current_prediction(
                                         EditPredictionRejectReason::Replaced,
                                         &project,
+                                        cx,
                                     );
 
                                     Some(new_prediction)
@@ -1622,6 +1638,7 @@ impl EditPredictionStore {
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
+                                        cx,
                                     );
                                     None
                                 }
@@ -1630,7 +1647,7 @@ impl EditPredictionStore {
                             }
                         }
                         Err(reject_reason) => {
-                            this.reject_prediction(prediction_result.id, reject_reason, false);
+                            this.reject_prediction(prediction_result.id, reject_reason, false, cx);
                             None
                         }
                     }

@@ -4,11 +4,11 @@
 
 Zed aims to collect only the minimum data necessary to serve and improve our product.
 
-We believe in opt-in data sharing as the default in building AI products, rather than opt-out, like most of our competitors. Privacy Mode is not a setting to be toggled, it's a default stance.
+Data sharing is opt-in by default. Privacy is not a setting to toggle—it's the baseline.
 
 As an open-source product, we believe in maximal transparency, and invite you to examine our codebase. If you find issues, we encourage you to share them with us.
 
-It is entirely possible to use Zed, including Zed's AI capabilities, without sharing any data with us and without authenticating into the product. We're happy to always support this desired use pattern.
+Zed, including AI features, works without sharing data with us and without authentication.
 
 ## Documentation
 

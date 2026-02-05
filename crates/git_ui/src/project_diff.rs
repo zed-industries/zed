@@ -8,13 +8,12 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplitDiffFeatureFlag, SplittableEditor,
-    ToggleSplitDiff,
+    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use feature_flags::FeatureFlagAppExt as _;
+
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -480,7 +479,6 @@ impl ProjectDiff {
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
-        let is_split = self.editor.read(cx).is_split();
         let editor = self.editor.read(cx).rhs_editor().read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let prev_next = snapshot.diff_hunks().nth(1).is_some();
@@ -541,7 +539,6 @@ impl ProjectDiff {
             selection,
             stage_all,
             unstage_all,
-            is_split,
         }
     }
 
@@ -987,6 +984,8 @@ impl Item for ProjectDiff {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
             Some(self.editor.read(cx).rhs_editor().clone().into())
+        } else if type_id == TypeId::of::<SplittableEditor>() {
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -1293,7 +1292,6 @@ struct ButtonStates {
     selection: bool,
     stage_all: bool,
     unstage_all: bool,
-    is_split: bool,
 }
 
 impl Render for ProjectDiffToolbar {
@@ -1433,31 +1431,6 @@ impl Render for ProjectDiffToolbar {
                             )
                         },
                     )
-                    .map(|this| {
-                        if !cx.has_flag::<SplitDiffFeatureFlag>() {
-                            return this;
-                        }
-                        this.child(
-                            Button::new(
-                                "toggle-split",
-                                if button_states.is_split {
-                                    "Stacked View"
-                                } else {
-                                    "Split View"
-                                },
-                            )
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Toggle Split View",
-                                &ToggleSplitDiff,
-                                &focus_handle,
-                            ))
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.dispatch_action(&ToggleSplitDiff, window, cx);
-                                },
-                            )),
-                        )
-                    })
                     .child(
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(
