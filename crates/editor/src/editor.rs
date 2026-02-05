@@ -2163,7 +2163,7 @@ impl Editor {
                         }
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
-                        editor.update_semantic_tokens(None, None, cx);
+                        editor.refresh_semantic_token_highlights(cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
