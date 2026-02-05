@@ -24213,11 +24213,7 @@ impl Editor {
 
             if new_semantic_token_rules != self.semantic_token_rules {
                 self.semantic_token_rules = new_semantic_token_rules;
-                self.semantic_tokens_fetched_for_buffers.clear();
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.semantic_token_highlights.clear();
-                });
-                self.update_semantic_tokens(None, None, cx);
+                self.refresh_semantic_token_highlights(cx);
             }
         }
 
@@ -24234,6 +24230,16 @@ impl Editor {
             self.accent_data = new_accents;
             self.colorize_brackets(true, cx);
         }
+
+        self.refresh_semantic_token_highlights(cx);
+    }
+
+    fn refresh_semantic_token_highlights(&mut self, cx: &mut Context<Self>) {
+        self.semantic_tokens_fetched_for_buffers.clear();
+        self.display_map.update(cx, |display_map, _| {
+            display_map.semantic_token_highlights.clear();
+        });
+        self.update_semantic_tokens(None, None, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
