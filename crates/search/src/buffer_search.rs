@@ -144,8 +144,9 @@ impl Render for BufferSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let has_splittable_editor = self.splittable_editor.is_some();
-        let split_buttons = if cx.has_flag::<SplitDiffFeatureFlag>() {
+        let has_splittable_editor =
+            self.splittable_editor.is_some() && cx.has_flag::<SplitDiffFeatureFlag>();
+        let split_buttons = if has_splittable_editor {
             self.splittable_editor
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
@@ -158,7 +159,9 @@ impl Render for BufferSearchBar {
                             IconButton::new("diff-stacked", IconName::DiffStacked)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
-                                .tooltip(Tooltip::text("Stacked"))
+                                .tooltip(|_, cx| {
+                                    Tooltip::for_action("Stacked", &ToggleSplitDiff, cx)
+                                })
                                 .when(is_split, |button| {
                                     let focus_handle = focus_handle.clone();
                                     button.on_click(move |_, window, cx| {
@@ -171,7 +174,9 @@ impl Render for BufferSearchBar {
                             IconButton::new("diff-split", IconName::DiffSplit)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(is_split)
-                                .tooltip(Tooltip::text("Side by Side"))
+                                .tooltip(|_, cx| {
+                                    Tooltip::for_action("Side by Side", &ToggleSplitDiff, cx)
+                                })
                                 .when(!is_split, |button| {
                                     button.on_click({
                                         let focus_handle = focus_handle.clone();
