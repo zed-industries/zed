@@ -1,48 +1,9 @@
 use crate::AgentTool;
 use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
-use agent_settings::{AgentSettings, CompiledRegex, ToolPermissions, ToolRules};
+use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
-use std::sync::LazyLock;
 use util::shell::ShellKind;
-
-const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
-     harmful to be allowed, and cannot be overridden by settings.";
-
-/// Security rules that are always enforced and cannot be overridden by any setting.
-/// These protect against catastrophic operations like wiping filesystems.
-pub struct HardcodedSecurityRules {
-    pub terminal_deny: Vec<CompiledRegex>,
-}
-
-pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
-    // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
-    // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
-    const FLAGS: &str = r"(--[a-z][-a-z]*\s+|-[a-zA-Z]+\s+)*";
-
-    HardcodedSecurityRules {
-        terminal_deny: vec![
-            // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}/\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}~/?\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
-            CompiledRegex::new(
-                &format!(r"\brm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
-                false,
-            )
-            .expect("hardcoded regex should compile"),
-            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\./?\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\.\./?\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-        ],
-    }
-});
 
 /// Checks if input matches any hardcoded security rules that cannot be bypassed.
 /// Returns a Deny decision if blocked, None otherwise.
@@ -51,39 +12,18 @@ fn check_hardcoded_security_rules(
     input: &str,
     shell_kind: ShellKind,
 ) -> Option<ToolPermissionDecision> {
-    // Currently only terminal tool has hardcoded rules
-    if tool_name != TerminalTool::NAME {
-        return None;
-    }
-
-    let rules = &*HARDCODED_SECURITY_RULES;
-    let terminal_patterns = &rules.terminal_deny;
-
-    // First: check the original input as-is
-    for pattern in terminal_patterns {
-        if pattern.is_match(input) {
-            return Some(ToolPermissionDecision::Deny(
-                HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
-            ));
-        }
-    }
-
-    // Second: parse and check individual sub-commands (for chained commands)
-    if shell_kind.supports_posix_chaining() {
-        if let Some(commands) = extract_commands(input) {
-            for command in &commands {
-                for pattern in terminal_patterns {
-                    if pattern.is_match(command) {
-                        return Some(ToolPermissionDecision::Deny(
-                            HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    None
+    let extracted_commands = if shell_kind.supports_posix_chaining() {
+        extract_commands(input)
+    } else {
+        None
+    };
+    agent_settings::check_hardcoded_security_rules(
+        tool_name,
+        TerminalTool::NAME,
+        input,
+        extracted_commands.as_deref(),
+    )
+    .map(ToolPermissionDecision::Deny)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

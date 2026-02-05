@@ -1157,6 +1157,16 @@ fn check_acp_tool_permission(
     input: &str,
     settings: &AgentSettings,
 ) -> AcpPermissionDecision {
+    // Check hardcoded security rules first (e.g. blocking "rm -rf /").
+    // We pass None for extracted_commands since the ACP code doesn't have
+    // access to the shell parser, but the raw input check still catches
+    // simple dangerous commands.
+    if let Some(denial) =
+        agent_settings::check_hardcoded_security_rules(tool_name, "terminal", input, None)
+    {
+        return AcpPermissionDecision::Deny(denial);
+    }
+
     let rules = match settings.tool_permissions.tools.get(tool_name) {
         Some(rules) => rules,
         None => {

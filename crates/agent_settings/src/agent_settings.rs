@@ -1,6 +1,6 @@
 mod agent_profile;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use agent_client_protocol::ModelId;
 use collections::{HashSet, IndexMap};
@@ -209,6 +209,85 @@ impl CompiledRegex {
     pub fn is_match(&self, input: &str) -> bool {
         self.regex.is_match(input)
     }
+}
+
+pub const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
+     harmful to be allowed, and cannot be overridden by settings.";
+
+/// Security rules that are always enforced and cannot be overridden by any setting.
+/// These protect against catastrophic operations like wiping filesystems.
+pub struct HardcodedSecurityRules {
+    pub terminal_deny: Vec<CompiledRegex>,
+}
+
+pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
+    // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
+    // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
+    const FLAGS: &str = r"(--[a-z][-a-z]*\s+|-[a-zA-Z]+\s+)*";
+
+    HardcodedSecurityRules {
+        terminal_deny: vec![
+            // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}/\*?\s*$"), false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}~/?\*?\s*$"), false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\./?\*?\s*$"), false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\.\./?\*?\s*$"), false)
+                .expect("hardcoded regex should compile"),
+        ],
+    }
+});
+
+/// Checks if input matches any hardcoded security rules that cannot be bypassed.
+/// Returns the denial reason string if blocked, None otherwise.
+///
+/// `terminal_tool_name` should be the tool name used for the terminal tool
+/// (e.g. `"terminal"`). `extracted_commands` can optionally provide parsed
+/// sub-commands for chained command checking; callers with access to a shell
+/// parser should extract sub-commands and pass them here.
+pub fn check_hardcoded_security_rules(
+    tool_name: &str,
+    terminal_tool_name: &str,
+    input: &str,
+    extracted_commands: Option<&[String]>,
+) -> Option<String> {
+    if tool_name != terminal_tool_name {
+        return None;
+    }
+
+    let rules = &*HARDCODED_SECURITY_RULES;
+    let terminal_patterns = &rules.terminal_deny;
+
+    // Check the original input as-is
+    for pattern in terminal_patterns {
+        if pattern.is_match(input) {
+            return Some(HARDCODED_SECURITY_DENIAL_MESSAGE.into());
+        }
+    }
+
+    // Check extracted sub-commands (for chained commands like "ls && rm -rf /")
+    if let Some(commands) = extracted_commands {
+        for command in commands {
+            for pattern in terminal_patterns {
+                if pattern.is_match(command) {
+                    return Some(HARDCODED_SECURITY_DENIAL_MESSAGE.into());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 impl Settings for AgentSettings {
