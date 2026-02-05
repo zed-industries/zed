@@ -3984,7 +3984,7 @@ impl MultiBufferSnapshot {
                 return None;
             }
             let excerpt = region.excerpt;
-            cursor.next_excerpt();
+            cursor.next_excerpt_forwards();
             Some(excerpt)
         })
     }
@@ -4311,7 +4311,7 @@ impl MultiBufferSnapshot {
                     {
                         return None;
                     }
-                    cursor.next_excerpt();
+                    cursor.next_excerpt_forwards();
                 }
             }
         })
@@ -5781,16 +5781,18 @@ impl MultiBufferSnapshot {
         });
 
         if cursor
-            .fetch_region2()
+            .fetch_excerpt_with_range()
             .is_some_and(|(_, range)| bounds.contains(&range.start.key))
         {
             cursor.prev_excerpt();
         } else {
             cursor.seek_to_start_of_current_excerpt();
         }
-        let mut prev_region = cursor.fetch_region2().map(|(excerpt, _)| excerpt);
+        let mut prev_region = cursor
+            .fetch_excerpt_with_range()
+            .map(|(excerpt, _)| excerpt);
 
-        cursor.next_excerpt();
+        cursor.next_excerpt_forwards();
 
         iter::from_fn(move || {
             loop {
@@ -5798,15 +5800,15 @@ impl MultiBufferSnapshot {
                     return None;
                 }
 
-                let (next_excerpt, next_range) = cursor.fetch_region2()?;
-                cursor.next_excerpt();
+                let (next_excerpt, next_range) = cursor.fetch_excerpt_with_range()?;
+                cursor.next_excerpt_forwards();
                 if !bounds.contains(&next_range.start.key) {
                     prev_region = Some(next_excerpt);
                     continue;
                 }
 
                 let next_region_start = next_range.start.value.unwrap();
-                let next_region_end = if let Some((_, range)) = cursor.fetch_region2() {
+                let next_region_end = if let Some((_, range)) = cursor.fetch_excerpt_with_range() {
                     range.start.value.unwrap()
                 } else {
                     self.max_point()
@@ -7041,6 +7043,24 @@ where
         }
     }
 
+    fn next_excerpt_forwards(&mut self) {
+        self.excerpts.next();
+        self.seek_to_start_of_current_excerpt_forward();
+    }
+
+    fn seek_to_start_of_current_excerpt_forward(&mut self) {
+        self.cached_region.take();
+
+        if self
+            .diff_transforms
+            .seek_forward(self.excerpts.start(), Bias::Left)
+            && self.diff_transforms.start().excerpt_dimension < *self.excerpts.start()
+            && self.diff_transforms.next_item().is_some()
+        {
+            self.diff_transforms.next();
+        }
+    }
+
     fn next(&mut self) {
         self.cached_region.take();
         match self
@@ -7231,7 +7251,7 @@ where
         }
     }
 
-    fn fetch_region2(&self) -> Option<(&'a Excerpt, Range<MBD>)> {
+    fn fetch_excerpt_with_range(&self) -> Option<(&'a Excerpt, Range<MBD>)> {
         let excerpt = self.excerpts.item()?;
         match self.diff_transforms.item()? {
             &DiffTransform::DeletedHunk { .. } => {
