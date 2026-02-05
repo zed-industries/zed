@@ -178,6 +178,95 @@ Control the default behavior for tool actions. The default value is `"confirm"`.
 
 Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
+### Per-tool Permission Rules {#per-tool-permission-rules}
+
+You can configure fine-grained permission rules for individual tools using the `tools` key inside `tool_permissions`. Each tool entry supports a `default_mode` and three pattern lists: `always_allow`, `always_deny`, and `always_confirm`. Patterns are regular expressions matched against the tool's input (e.g., the command string for `terminal`, the file path for `edit_file`, etc.).
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "default": "allow",
+      "tools": {
+        "terminal": {
+          "default_mode": "allow",
+          "always_deny": [
+            { "pattern": "rm\\s+-rf" }
+          ],
+          "always_allow": [
+            { "pattern": "^git\\s" }
+          ],
+          "always_confirm": [
+            { "pattern": "sudo" }
+          ]
+        },
+        "edit_file": {
+          "always_deny": [
+            { "pattern": "\\.env$" }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+#### Pattern Precedence
+
+Rules are evaluated in the following order (highest priority first):
+
+1. **Hardcoded security rules** — Built-in rules (e.g., blocking `rm -rf /`) that cannot be overridden.
+2. **`always_deny`** — If any deny pattern matches, the tool call is blocked immediately.
+3. **`always_confirm`** — If any confirm pattern matches (and no deny matched), the user is prompted.
+4. **`always_allow`** — If any allow pattern matches (and no deny/confirm matched), the tool call proceeds without prompting.
+5. **Tool-specific `default_mode`** — Used when no patterns match.
+6. **Global `default`** — Falls back to `tool_permissions.default` when there is no tool-specific default.
+
+Patterns are case-insensitive by default. Set `"case_sensitive": true` on an individual pattern for exact matching:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "always_deny": [
+            { "pattern": "PRODUCTION", "case_sensitive": true }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+#### `copy_path` and `move_path` Patterns
+
+For `copy_path` and `move_path` tools, permission patterns are matched independently against both the source path and the destination path. A deny match on **either** path blocks the entire operation. If either path triggers an `always_confirm` match (and neither is denied), the user is prompted for confirmation.
+
+For example, the following rule prevents copying or moving anything into a `secrets/` directory _or_ out of one:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "copy_path": {
+          "always_deny": [
+            { "pattern": "^secrets/" }
+          ]
+        },
+        "move_path": {
+          "always_deny": [
+            { "pattern": "^secrets/" }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
 ### Single-file Review
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.

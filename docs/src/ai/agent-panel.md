@@ -181,6 +181,8 @@ You can change this in either your `settings.json` or via the Agent Panel's sett
 
 Even with `default: "allow"`, you can configure per-tool rules using `always_deny` and `always_confirm` patterns to maintain safety guardrails for specific commands. For example, you can auto-approve most actions while still requiring confirmation for `sudo` commands.
 
+> For `copy_path` and `move_path` tools, patterns are matched independently against both the source and destination paths. A deny match on either path blocks the operation. See [Per-tool Permission Rules](./agent-settings.md#per-tool-permission-rules) for details and examples.
+
 You can also give more granular permissions through the dropdown that appears in the UI whenever the agent requests authorization to run a tool call.
 
 ### Model Support {#model-support}

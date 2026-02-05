@@ -140,6 +140,8 @@ You can change this in either your `settings.json` or through the Agent Panel se
 
 Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
+For more details on configuring per-tool permission patterns—including how `copy_path` and `move_path` match patterns against both source and destination paths—see the [tool permissions documentation](./agent-settings.md#default-tool-permissions).
+
 ### External Agents
 
 Note that for [external agents](./external-agents.md) connected through the [Agent Client Protocol](https://agentclientprotocol.com/), access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
