@@ -31,7 +31,7 @@ use crate::{
     lsp_store::{
         self,
         log_store::{GlobalLogStore, LanguageServerKind},
-        semantic_tokens::SemanticTokensData,
+        semantic_tokens::{SemanticTokenConfig, SemanticTokensData},
     },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
@@ -144,7 +144,7 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
-use settings::SemanticTokenRules;
+
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -3841,12 +3841,9 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
-    semantic_token_stylizers:
-        HashMap<(LanguageServerId, Option<LanguageName>), SemanticTokenStylizer>,
-    semantic_token_rules: SemanticTokenRules,
+    semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
-    global_semantic_tokens_mode: settings::SemanticTokens,
 }
 
 #[derive(Debug)]
@@ -4131,8 +4128,6 @@ impl LspStore {
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
 
-        let global_semantic_tokens_mode = all_language_settings(None, cx).defaults.semantic_tokens;
-
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -4186,16 +4181,11 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
-            semantic_token_stylizers: HashMap::default(),
-            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
+            semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
             _maintain_workspace_config,
-            global_semantic_tokens_mode,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
         }
     }
@@ -4238,7 +4228,6 @@ impl LspStore {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
-        let global_semantic_tokens_mode = all_language_settings(None, cx).defaults.semantic_tokens;
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
                 upstream_client: Some(upstream_client),
@@ -4248,17 +4237,12 @@ impl LspStore {
             last_formatting_failure: None,
             buffer_store,
             worktree_store,
-            global_semantic_tokens_mode,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
-            semantic_token_stylizers: HashMap::default(),
-            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
+            semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             active_entry: None,
@@ -5064,15 +5048,15 @@ impl LspStore {
             .global_lsp_settings
             .semantic_token_rules
             .clone();
-        if new_semantic_token_rules != self.semantic_token_rules {
-            self.semantic_token_rules = new_semantic_token_rules;
-            self.semantic_token_stylizers.clear();
-        }
+        self.semantic_token_config
+            .update_rules(new_semantic_token_rules);
 
         let new_global_semantic_tokens_mode =
             all_language_settings(None, cx).defaults.semantic_tokens;
-        if new_global_semantic_tokens_mode != self.global_semantic_tokens_mode {
-            self.global_semantic_tokens_mode = new_global_semantic_tokens_mode;
+        if self
+            .semantic_token_config
+            .update_global_mode(new_global_semantic_tokens_mode)
+        {
             self.restart_all_language_servers(cx);
         }
 
@@ -12460,8 +12444,7 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
-        self.semantic_token_stylizers
-            .retain(|&(id, _), _| id != for_server);
+        self.semantic_token_config.remove_server_data(for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
         }
