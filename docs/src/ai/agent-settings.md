@@ -218,7 +218,7 @@ Rules are evaluated in the following order (highest priority first):
 1. **Hardcoded security rules** — Built-in rules (e.g., blocking `rm -rf /`) that cannot be overridden.
 2. **`always_deny`** — If any deny pattern matches, the tool call is blocked immediately.
 3. **`always_confirm`** — If any confirm pattern matches (and no deny matched), the user is prompted.
-4. **`always_allow`** — If any allow pattern matches (and no deny/confirm matched), the tool call proceeds without prompting.
+4. **`always_allow`** — If any allow pattern matches (and no deny/confirm matched), the tool call proceeds without prompting. For `terminal` commands with chaining (`&&`, `||`, `;`), **all** sub-commands must match an allow pattern.
 5. **Tool-specific `default`** — Used when no patterns match.
 6. **Global `default`** — Falls back to `tool_permissions.default` when there is no tool-specific default.
 
