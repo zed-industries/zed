@@ -39,6 +39,7 @@ http_client.workspace = true
 indoc.workspace = true
 language_model.workspace = true
 log.workspace = true
+paths.workspace = true
 project.workspace = true
 release_channel.workspace = true
 reqwest_client = { workspace = true, optional = true }

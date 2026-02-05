@@ -290,6 +290,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "paths",
  "project",
  "release_channel",
  "reqwest_client",

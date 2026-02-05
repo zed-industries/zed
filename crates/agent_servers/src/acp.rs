@@ -1366,6 +1366,30 @@ impl acp::Client for ClientDelegate {
             AcpPermissionDecision::Allow => {}
         }
 
+        // Protect sensitive Zed-specific directories
+        let local_settings_folder = paths::local_settings_folder_name();
+        if arguments.path.components().any(|component| {
+            component.as_os_str() == <_ as AsRef<std::ffi::OsStr>>::as_ref(&local_settings_folder)
+        }) {
+            return Err(anyhow!(
+                "File write to '{}' targets a local settings directory (.zed/). \
+                 Use request_permission to prompt the user first.",
+                path_str
+            )
+            .into());
+        }
+
+        if let Ok(canonical_path) = std::fs::canonicalize(&arguments.path) {
+            if canonical_path.starts_with(paths::config_dir()) {
+                return Err(anyhow!(
+                    "File write to '{}' targets the global config directory. \
+                     Use request_permission to prompt the user first.",
+                    path_str
+                )
+                .into());
+            }
+        }
+
         let task = self
             .session_thread(&arguments.session_id)?
             .update(cx, |thread, cx| {
