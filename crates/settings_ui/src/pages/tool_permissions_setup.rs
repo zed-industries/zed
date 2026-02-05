@@ -1,7 +1,5 @@
-use agent::{
-    AgentTool, HARDCODED_SECURITY_RULES, TerminalTool, ToolPermissionDecision, extract_commands,
-};
-use agent_settings::AgentSettings;
+use agent::{AgentTool, TerminalTool, ToolPermissionDecision, extract_commands};
+use agent_settings::{AgentSettings, HARDCODED_SECURITY_RULES};
 use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
@@ -35,13 +33,13 @@ const TOOLS: &[ToolInfo] = &[
         id: "copy_path",
         name: "Copy Path",
         description: "File and directory copying",
-        regex_explanation: "Patterns are matched against both the source and destination paths.",
+        regex_explanation: "Patterns are matched independently against the source path and the destination path. Enter either path below to test.",
     },
     ToolInfo {
         id: "move_path",
         name: "Move Path",
         description: "File and directory moves/renames",
-        regex_explanation: "Patterns are matched against both the source and destination paths.",
+        regex_explanation: "Patterns are matched independently against the source path and the destination path. Enter either path below to test.",
     },
     ToolInfo {
         id: "create_directory",
@@ -406,7 +404,7 @@ fn render_verification_section(
 
     let editor = window.use_keyed_state(input_id, cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
-        editor.set_placeholder_text("Enter a rule to see how it applies…", window, cx);
+        editor.set_placeholder_text("Enter a tool input to test your rules…", window, cx);
 
         let global_settings = ThemeSettings::get_global(cx);
         editor.set_text_style_refinement(TextStyleRefinement {
