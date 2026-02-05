@@ -1654,7 +1654,7 @@ impl AcpServerView {
         let kind = match ratio {
             acp_thread::TokenUsageRatio::Normal => {
                 active_thread.update(cx, |active, _cx| {
-                    active.token_limit_telemetry_emitted = false;
+                    active.last_token_limit_telemetry = None;
                 });
                 return;
             }
@@ -1662,13 +1662,17 @@ impl AcpServerView {
             acp_thread::TokenUsageRatio::Exceeded => "exceeded",
         };
 
-        let already_emitted = active_thread.read(cx).token_limit_telemetry_emitted;
-        if already_emitted {
+        let should_skip = active_thread
+            .read(cx)
+            .last_token_limit_telemetry
+            .as_ref()
+            .is_some_and(|last| *last >= ratio);
+        if should_skip {
             return;
         }
 
         active_thread.update(cx, |active, _cx| {
-            active.token_limit_telemetry_emitted = true;
+            active.last_token_limit_telemetry = Some(ratio);
         });
 
         telemetry::event!(
@@ -1695,6 +1699,7 @@ impl AcpServerView {
             kind = error_kind,
             message = error.to_string(),
         );
+    }
 
     fn render_load_error(
         &self,
