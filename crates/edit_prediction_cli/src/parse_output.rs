@@ -75,7 +75,6 @@ fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<St
         + start;
 
     let region = &prompt[start..end];
-    let region = region.strip_suffix('\n').unwrap_or(region);
     let region = region.replace(CURSOR_MARKER, "");
 
     Ok(region)
@@ -176,7 +175,7 @@ mod tests {
         "};
 
         let region = extract_zeta2_current_region(prompt, ZetaVersion::V0113Ordered).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -193,7 +192,7 @@ mod tests {
         "};
 
         let region = extract_zeta2_current_region(prompt, ZetaVersion::V0112MiddleAtEnd).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -210,7 +209,7 @@ mod tests {
         "};
 
         let region = extract_zeta2_current_region(prompt, ZetaVersion::V0113Ordered).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -228,7 +227,7 @@ mod tests {
 
         let region =
             extract_zeta2_current_region(prompt, ZetaVersion::V0120GitMergeMarkers).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -246,6 +245,6 @@ mod tests {
 
         let region =
             extract_zeta2_current_region(prompt, ZetaVersion::V0120GitMergeMarkers).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 }
