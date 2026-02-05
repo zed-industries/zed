@@ -46,7 +46,7 @@ fn check_hardcoded_security_rules(
     shell_kind: ShellKind,
 ) -> Option<ToolPermissionDecision> {
     // Currently only terminal tool has hardcoded rules
-    if tool_name != TerminalTool::name() {
+    if tool_name != TerminalTool::NAME {
         return None;
     }
 
@@ -165,7 +165,7 @@ impl ToolPermissionDecision {
         //
         // If parsing fails or the shell syntax is unsupported, always_allow is
         // disabled for this command (we set allow_enabled to false to signal this).
-        if tool_name == TerminalTool::name() {
+        if tool_name == TerminalTool::NAME {
             // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
             // See the doc comment above for the list of compatible/incompatible shells.
             if !shell_kind.supports_posix_chaining() {

@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_subagent_tool_name() {
-        assert_eq!(SubagentTool::name(), "subagent");
+        assert_eq!(SubagentTool::NAME, "subagent");
     }
 
     #[test]

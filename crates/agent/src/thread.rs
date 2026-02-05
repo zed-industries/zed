@@ -664,28 +664,28 @@ impl ToolPermissionContext {
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
-        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
+        let shell_supports_always_allow = if tool_name == TerminalTool::NAME {
             ShellKind::system().supports_posix_chaining()
         } else {
             true
         };
 
-        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
+        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
             (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
             )
-        } else if tool_name == EditFileTool::name()
-            || tool_name == DeletePathTool::name()
-            || tool_name == MovePathTool::name()
-            || tool_name == CreateDirectoryTool::name()
-            || tool_name == SaveFileTool::name()
+        } else if tool_name == EditFileTool::NAME
+            || tool_name == DeletePathTool::NAME
+            || tool_name == MovePathTool::NAME
+            || tool_name == CreateDirectoryTool::NAME
+            || tool_name == SaveFileTool::NAME
         {
             (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
             )
-        } else if tool_name == FetchTool::name() {
+        } else if tool_name == FetchTool::NAME {
             (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
@@ -721,7 +721,7 @@ impl ToolPermissionContext {
             );
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-                let button_text = if tool_name == TerminalTool::name() {
+                let button_text = if tool_name == TerminalTool::NAME {
                     format!("Always for `{}` commands", display)
                 } else {
                     format!("Always for `{}`", display)
@@ -1285,7 +1285,7 @@ impl Thread {
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
-        self.tools.insert(T::name().into(), tool.erase());
+        self.tools.insert(T::NAME.into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -2689,10 +2689,6 @@ where
 
     const NAME: &'static str;
 
-    fn name() -> &'static str {
-        Self::NAME
-    }
-
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
         SharedString::new(
@@ -2800,7 +2796,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        T::name().into()
+        T::NAME.into()
     }
 
     fn description(&self) -> SharedString {

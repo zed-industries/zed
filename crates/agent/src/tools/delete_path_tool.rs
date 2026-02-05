@@ -76,7 +76,7 @@ impl AgentTool for DeletePathTool {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path, settings);
+        let decision = decide_permission_from_settings(Self::NAME, &path, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,

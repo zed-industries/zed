@@ -63,7 +63,7 @@ macro_rules! tools {
                     } else {
                         true
                     })
-                    .then(|| <$tool>::name().to_string()),
+                    .then(|| <$tool>::NAME.to_string()),
                 )*
             ]
             .into_iter()
@@ -71,7 +71,7 @@ macro_rules! tools {
             .collect();
 
             if !cx.has_flag::<SubagentsFeatureFlag>() {
-                tools.retain(|name| name != SubagentTool::name());
+                tools.retain(|name| name != SubagentTool::NAME);
             }
 
             tools
@@ -81,7 +81,7 @@ macro_rules! tools {
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
                 LanguageModelRequestTool {
-                    name: T::name().to_string(),
+                    name: T::NAME.to_string(),
                     description: T::description().to_string(),
                     input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
                 }

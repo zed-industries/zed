@@ -559,7 +559,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
 
     let tool_use = LanguageModelToolUse {
         id: "tool_1".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
@@ -573,7 +573,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     let completion = fake_model.pending_completions().pop().unwrap();
     let tool_result = LanguageModelToolResult {
         tool_use_id: "tool_1".into(),
-        tool_name: EchoTool::name().into(),
+        tool_name: EchoTool::NAME.into(),
         is_error: false,
         content: "test".into(),
         output: Some("test".into()),
@@ -650,7 +650,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     // Test a tool calls that's likely to complete *after* streaming stops.
     let events = thread
         .update(cx, |thread, cx| {
-            thread.remove_tool(&EchoTool::name());
+            thread.remove_tool(&EchoTool::NAME);
             thread.add_tool(DelayTool);
             thread.send(
                 UserMessageId::new(),
@@ -754,7 +754,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_1".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -764,7 +764,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_2".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -796,14 +796,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_1.tool_call.tool_call_id.0.to_string().into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }),
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.tool_call_id.0.to_string().into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
                 output: Some("Permission to run tool denied by user".into())
@@ -815,7 +815,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_3".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -841,7 +841,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![language_model::MessageContent::ToolResult(
             LanguageModelToolResult {
                 tool_use_id: tool_call_auth_3.tool_call.tool_call_id.0.to_string().into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
@@ -853,7 +853,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_4".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -869,7 +869,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![language_model::MessageContent::ToolResult(
             LanguageModelToolResult {
                 tool_use_id: "tool_id_4".into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
@@ -1143,14 +1143,14 @@ async fn test_profiles(cx: &mut TestAppContext) {
                     "test-1": {
                         "name": "Test Profile 1",
                         "tools": {
-                            EchoTool::name(): true,
-                            DelayTool::name(): true,
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
                         }
                     },
                     "test-2": {
                         "name": "Test Profile 2",
                         "tools": {
-                            InfiniteTool::name(): true,
+                            InfiniteTool::NAME: true,
                         }
                     }
                 }
@@ -1179,7 +1179,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
         .iter()
         .map(|tool| tool.name.clone())
         .collect();
-    assert_eq!(tool_names, vec![DelayTool::name(), EchoTool::name()]);
+    assert_eq!(tool_names, vec![DelayTool::NAME, EchoTool::NAME]);
     fake_model.end_last_completion_stream();
 
     // Switch to test-2 profile, and verify that it has only the infinite tool.
@@ -1198,7 +1198,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
         .iter()
         .map(|tool| tool.name.clone())
         .collect();
-    assert_eq!(tool_names, vec![InfiniteTool::name()]);
+    assert_eq!(tool_names, vec![InfiniteTool::NAME]);
 }
 
 #[gpui::test]
@@ -1223,7 +1223,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                         "name": "Test Profile",
                         "enable_all_context_servers": true,
                         "tools": {
-                            EchoTool::name(): true,
+                            EchoTool::NAME: true,
                         }
                     },
                 }
@@ -1388,11 +1388,11 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                         "name": "Test Profile",
                         "enable_all_context_servers": true,
                         "tools": {
-                            EchoTool::name(): true,
-                            DelayTool::name(): true,
-                            WordListTool::name(): true,
-                            ToolRequiringPermission::name(): true,
-                            InfiniteTool::name(): true,
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
+                            WordListTool::NAME: true,
+                            ToolRequiringPermission::NAME: true,
+                            InfiniteTool::NAME: true,
                         }
                     },
                 }
@@ -2679,7 +2679,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
 
     let permission_tool_use = LanguageModelToolUse {
         id: "tool_id_1".into(),
-        name: ToolRequiringPermission::name().into(),
+        name: ToolRequiringPermission::NAME.into(),
         raw_input: "{}".into(),
         input: json!({}),
         is_input_complete: true,
@@ -2687,7 +2687,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
     };
     let echo_tool_use = LanguageModelToolUse {
         id: "tool_id_2".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
@@ -2890,7 +2890,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "1".into(),
-            name: ThinkingTool::name().into(),
+            name: ThinkingTool::NAME.into(),
             raw_input: input.to_string(),
             input,
             is_input_complete: false,
@@ -3085,7 +3085,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let tool_use_1 = LanguageModelToolUse {
         id: "tool_1".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
@@ -3253,13 +3253,13 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                     "test-profile": {
                         "name": "Test Profile",
                         "tools": {
-                            EchoTool::name(): true,
-                            DelayTool::name(): true,
-                            WordListTool::name(): true,
-                            ToolRequiringPermission::name(): true,
-                            InfiniteTool::name(): true,
-                            CancellationAwareTool::name(): true,
-                            ThinkingTool::name(): true,
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
+                            WordListTool::NAME: true,
+                            ToolRequiringPermission::NAME: true,
+                            InfiniteTool::NAME: true,
+                            CancellationAwareTool::NAME: true,
+                            ThinkingTool::NAME: true,
                             "terminal": true,
                         }
                     }
@@ -4794,7 +4794,7 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     let tool_use = LanguageModelToolUse {
         id: "tool_call_1".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "hello world"}).to_string(),
         input: json!({"text": "hello world"}),
         is_input_complete: true,

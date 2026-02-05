@@ -120,7 +120,7 @@ impl AgentTool for ToolRequiringPermission {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), "", settings);
+        let decision = decide_permission_from_settings(Self::NAME, "", settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
