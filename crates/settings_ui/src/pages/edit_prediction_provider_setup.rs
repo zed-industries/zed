@@ -1,3 +1,4 @@
+use codestral::{CODESTRAL_API_URL, codestral_api_key_state, codestral_api_url};
 use edit_prediction::{
     ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
@@ -6,7 +7,7 @@ use edit_prediction::{
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
-use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
+
 use settings::Settings as _;
 use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
 use workspace::AppState;
@@ -69,8 +70,8 @@ pub(crate) fn render_edit_prediction_setup_page(
                 IconName::AiMistral,
                 "Codestral",
                 "https://console.mistral.ai/codestral".into(),
-                codestral_api_key(cx),
-                |cx| language_models::MistralLanguageModelProvider::api_url(cx),
+                codestral_api_key_state(cx),
+                |cx| codestral_api_url(cx),
                 Some(
                     settings_window
                         .render_sub_page_items_section(

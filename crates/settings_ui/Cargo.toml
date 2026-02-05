@@ -21,6 +21,7 @@ agent_settings.workspace = true
 anyhow.workspace = true
 bm25 = "2.3.2"
 component.workspace = true
+codestral.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
 edit_prediction.workspace = true
