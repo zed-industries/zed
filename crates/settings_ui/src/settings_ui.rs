@@ -537,7 +537,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
-        .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
+        .add_basic_renderer::<settings::SemanticTokens>(render_dropdown_with_docs)
         // please semicolon stay on next line
         ;
 }
@@ -4123,6 +4123,59 @@ where
             .log_err(); // todo(settings_ui) don't log err
         }
     })
+    .tab_index(0)
+    .title_case(should_do_titlecase)
+    .into_any_element()
+}
+
+fn render_dropdown_with_docs<T>(
+    field: SettingField<T>,
+    file: SettingsUiFile,
+    metadata: Option<&SettingsFieldMetadata>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement
+where
+    T: strum::VariantArray
+        + strum::VariantNames
+        + strum::EnumMessage
+        + Copy
+        + PartialEq
+        + Send
+        + Sync
+        + 'static,
+{
+    let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
+    let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
+    let should_do_titlecase = metadata
+        .and_then(|metadata| metadata.should_do_titlecase)
+        .unwrap_or(true);
+
+    let descriptions: Vec<Option<&'static str>> =
+        variants().iter().map(|v| v.get_documentation()).collect();
+
+    let (_, current_value) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let current_value = current_value.copied().unwrap_or(variants()[0]);
+
+    EnumVariantDropdown::new("dropdown", current_value, variants(), labels(), {
+        move |value, window, cx| {
+            if value == current_value {
+                return;
+            }
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, _cx| {
+                    (field.write)(settings, Some(value));
+                },
+            )
+            .log_err(); // todo(settings_ui) don't log err
+        }
+    })
+    .descriptions(descriptions)
     .tab_index(0)
     .title_case(should_do_titlecase)
     .into_any_element()

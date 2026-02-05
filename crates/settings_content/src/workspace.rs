@@ -803,6 +803,7 @@ pub struct ProjectPanelIndentGuidesSettings {
     Deserialize,
     JsonSchema,
     MergeFrom,
+    strum::EnumMessage,
     strum::VariantArray,
     strum::VariantNames,
 )]

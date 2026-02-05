@@ -3,7 +3,8 @@ use std::rc::Rc;
 use gpui::{App, ElementId, IntoElement, RenderOnce};
 use heck::ToTitleCase as _;
 use ui::{
-    ButtonSize, ContextMenu, DropdownMenu, DropdownStyle, FluentBuilder as _, IconPosition, px,
+    ButtonSize, ContextMenu, ContextMenuEntry, DocumentationSide, DropdownMenu, DropdownStyle,
+    FluentBuilder as _, IconPosition, Label, px,
 };
 
 #[derive(IntoElement)]
@@ -15,6 +16,7 @@ where
     current_value: T,
     variants: &'static [T],
     labels: &'static [&'static str],
+    descriptions: Vec<Option<&'static str>>,
     should_do_title_case: bool,
     tab_index: Option<isize>,
     on_change: Rc<dyn Fn(T, &mut ui::Window, &mut App) + 'static>,
@@ -36,10 +38,16 @@ where
             current_value,
             variants,
             labels,
+            descriptions: Vec::new(),
             should_do_title_case: true,
             tab_index: None,
             on_change: Rc::new(on_change),
         }
+    }
+
+    pub fn descriptions(mut self, descriptions: Vec<Option<&'static str>>) -> Self {
+        self.descriptions = descriptions;
+        self
     }
 
     pub fn title_case(mut self, title_case: bool) -> Self {
@@ -66,22 +74,34 @@ where
 
         let context_menu = window.use_keyed_state(current_value_label, cx, |window, cx| {
             ContextMenu::new(window, cx, move |mut menu, _, _| {
-                for (&value, &label) in std::iter::zip(self.variants, self.labels) {
+                for (index, (&value, &label)) in
+                    std::iter::zip(self.variants, self.labels).enumerate()
+                {
                     let on_change = self.on_change.clone();
                     let current_value = self.current_value;
-                    menu = menu.toggleable_entry(
-                        if self.should_do_title_case {
-                            label.to_title_case()
-                        } else {
-                            label.to_string()
-                        },
-                        value == current_value,
-                        IconPosition::End,
-                        None,
-                        move |window, cx| {
+                    let display_label = if self.should_do_title_case {
+                        label.to_title_case()
+                    } else {
+                        label.to_string()
+                    };
+
+                    let description = self.descriptions.get(index).copied().flatten();
+
+                    let entry = ContextMenuEntry::new(display_label)
+                        .toggleable(IconPosition::End, value == current_value)
+                        .handler(move |window, cx| {
                             on_change(value, window, cx);
-                        },
-                    );
+                        });
+
+                    let entry = if let Some(description) = description {
+                        entry.documentation_aside(DocumentationSide::Left, move |_| {
+                            Label::new(description).into_any_element()
+                        })
+                    } else {
+                        entry
+                    };
+
+                    menu = menu.item(entry);
                 }
                 menu
             })
