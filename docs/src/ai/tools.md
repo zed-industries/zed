@@ -71,17 +71,3 @@ Moves or renames a file or directory in the project, performing a rename if only
 ### `terminal`
 
 Executes shell commands and returns the combined output, creating a new shell process for each invocation.
-
-### `save_file`
-
-Saves files that have unsaved changes. Used when files need to be saved before further edits can be applied.
-
-### `restore_file_from_disk`
-
-Discards unsaved changes in open buffers by reloading file contents from disk. Used to reset files to their on-disk state, for example when an edit went wrong and needs to be retried.
-
-## Other Tools
-
-### `subagent`
-
-Spawns a sub-agent with its own context window to perform a delegated task. Sub-agents can run in parallel (up to 8 concurrently) and have access to the same tools as the parent agent. Useful for running independent investigations or self-contained tasks concurrently.

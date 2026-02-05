@@ -136,7 +136,7 @@ Zed's Agent Panel provides the `agent.tool_permissions.default` setting to contr
 
 You can change this in either your `settings.json` or through the Agent Panel settings.
 
-Even with `default: "allow"`, [per-tool `always_deny` and `always_confirm` patterns](./agent-settings.md#per-tool-permission-rules) are still respected, allowing you to maintain safety guardrails for specific commands.
+Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
 ### External Agents
 

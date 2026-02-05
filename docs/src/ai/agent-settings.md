@@ -68,7 +68,7 @@ Here's how you can customize your `settings.json` to add this functionality:
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-5-mini"
+        "model": "gpt-4-mini"
       }
     ]
   }
@@ -92,7 +92,7 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-5-mini"
+        "model": "gpt-4-mini"
       },
       {
         "provider": "zed.dev",
@@ -108,27 +108,23 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
 Specify a custom temperature for a provider and/or model:
 
 ```json [settings]
-{
-  "agent": {
-    "model_parameters": [
-      // To set parameters for all requests to OpenAI models:
-      {
-        "provider": "openai",
-        "temperature": 0.5
-      },
-      // To set parameters for all requests in general:
-      {
-        "temperature": 0
-      },
-      // To set parameters for a specific provider and model:
-      {
-        "provider": "zed.dev",
-        "model": "claude-sonnet-4",
-        "temperature": 1.0
-      }
-    ]
+"model_parameters": [
+  // To set parameters for all requests to OpenAI models:
+  {
+    "provider": "openai",
+    "temperature": 0.5
+  },
+  // To set parameters for all requests in general:
+  {
+    "temperature": 0
+  },
+  // To set parameters for a specific provider and model:
+  {
+    "provider": "zed.dev",
+    "model": "claude-sonnet-4",
+    "temperature": 1.0
   }
-}
+],
 ```
 
 ## Agent Panel Settings {#agent-panel-settings}
@@ -150,11 +146,13 @@ You can choose between `thread` (the default) and `text_thread`:
 
 ### Font Size
 
-Use the `agent_ui_font_size` setting to change the font size of rendered agent responses in the panel.
+Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
 
 ```json [settings]
 {
-  "agent_ui_font_size": 18
+  "agent": {
+    "agent_font_size": 18
+  }
 }
 ```
 
@@ -180,108 +178,20 @@ Control the default behavior for tool actions. The default value is `"confirm"`.
 
 Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
 
-### Per-Tool Permission Rules
-
-The `tool_permissions.tools` setting is a map from tool ID to per-tool rules. Each tool can have its own default mode and pattern-based rules that control when it is allowed, denied, or requires confirmation.
-
-#### Supported Tool IDs
-
-Built-in tools: `terminal`, `edit_file`, `delete_path`, `move_path`, `create_directory`, `save_file`, `fetch`, `web_search`.
-
-MCP tools use the format `mcp:<server>:<tool>` (e.g., `mcp:my-server:run_query`).
-
-#### Per-Tool Structure
-
-Each tool entry supports the following fields:
-
-- `default` — Per-tool default mode (`"allow"`, `"deny"`, or `"confirm"`). Falls back to the global `tool_permissions.default` if not set.
-- `always_allow` — Array of regex rules. If **all** inputs match, the tool call is auto-approved.
-- `always_deny` — Array of regex rules. If **any** input matches, the tool call is blocked. Takes precedence over all other rules across all settings layers.
-- `always_confirm` — Array of regex rules. If **any** input matches, the user is always prompted. Takes precedence over `always_allow`.
-
-#### Regex Rule Format
-
-Each rule is an object with a `pattern` field and an optional `case_sensitive` field:
-
-```json [settings]
-{
-  "pattern": "^git\\s+status",
-  "case_sensitive": true
-}
-```
-
-- `pattern` — A regular expression using [Rust `regex` crate syntax](https://docs.rs/regex/latest/regex/#syntax).
-- `case_sensitive` — Optional, defaults to `false` (case-insensitive). Set to `true` for case-sensitive matching.
-
-If a pattern is invalid, the tool will be blocked entirely until the pattern is fixed.
-
-#### What Each Tool Matches Against
-
-- `terminal` — Matches against the command string
-- `edit_file`, `delete_path`, `move_path`, `create_directory`, `save_file` — Match against the file path
-- `fetch` — Matches against the URL
-- `web_search` — Matches against the search query
-
-#### Precedence Order
-
-Rules are evaluated in the following order (highest to lowest priority):
-
-1. **Hardcoded security rules** (e.g., blocking `rm -rf /`)
-2. **`always_deny`** — Any match blocks immediately
-3. **`always_confirm`** — Any match requires confirmation
-4. **`always_allow`** — All inputs must match for auto-approval
-5. **Per-tool `default`**
-6. **Global `tool_permissions.default`**
-
-#### Example
-
-The following configuration auto-approves common git and build commands, blocks destructive operations, requires confirmation for `git push`, and prevents edits to sensitive files:
-
-```json [settings]
-{
-  "agent": {
-    "tool_permissions": {
-      "default": "allow",
-      "tools": {
-        "terminal": {
-          "always_allow": [
-            { "pattern": "^git\\s+(status|log|diff|branch)" },
-            { "pattern": "^(cargo|npm|yarn)\\s+(build|test|check)" }
-          ],
-          "always_deny": [
-            { "pattern": "sudo" },
-            { "pattern": "rm\\s+(-[rf]+\\s+)*/\\s*$" }
-          ],
-          "always_confirm": [
-            { "pattern": "git\\s+push" }
-          ]
-        },
-        "edit_file": {
-          "always_deny": [
-            { "pattern": "\\.env($|\\.)" },
-            { "pattern": "\\.pem$" }
-          ]
-        }
-      }
-    }
-  }
-}
-```
-
 ### Single-file Review
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
-The default value is `true`.
+The default value is `false`.
 
 ```json [settings]
 {
   "agent": {
-    "single_file_review": false
+    "single_file_review": true
   }
 }
 ```
 
-When set to true (the default), these controls appear in both single-file editors and the multibuffer review tab. When set to false, these controls are only available in the multibuffer review tab.
+When set to false, these controls are only available in the multibuffer review tab.
 
 ### Sound Notification
 
