@@ -78,14 +78,14 @@ impl Display for DevContainerError {
             "{}",
             match self {
                 DevContainerError::DockerNotAvailable =>
-                    "Docker CLI not found on $PATH".to_string(),
+                    "docker CLI not found on $PATH".to_string(),
                 DevContainerError::DevContainerCliNotAvailable =>
-                    "Docker not found on path".to_string(),
-                DevContainerError::DevContainerUpFailed(message) => {
-                    format!("DevContainer creation failed with error: {}", message)
+                    "devcontainer CLI not found on path".to_string(),
+                DevContainerError::DevContainerUpFailed(_) => {
+                    "DevContainer creation failed".to_string()
                 }
-                DevContainerError::DevContainerTemplateApplyFailed(message) => {
-                    format!("DevContainer template apply failed with error: {}", message)
+                DevContainerError::DevContainerTemplateApplyFailed(_) => {
+                    "DevContainer template apply failed".to_string()
                 }
                 DevContainerError::DevContainerNotFound =>
                     "No valid dev container definition found in project".to_string(),
@@ -257,13 +257,6 @@ pub fn find_devcontainer_configs(cx: &mut AsyncWindowContext) -> Vec<DevContaine
     configs
 }
 
-pub async fn start_dev_container(
-    cx: &mut AsyncWindowContext,
-    node_runtime: NodeRuntime,
-) -> Result<(DevContainerConnection, String), DevContainerError> {
-    start_dev_container_with_config(cx, node_runtime, None).await
-}
-
 pub async fn start_dev_container_with_config(
     cx: &mut AsyncWindowContext,
     node_runtime: NodeRuntime,
@@ -341,6 +334,10 @@ fn dev_container_cli() -> String {
     "devcontainer.cmd".to_string()
 }
 
+fn dev_container_script() -> String {
+    "devcontainer.js".to_string()
+}
+
 async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
     let mut command = if use_podman {
         util::command::new_smol_command("podman")
@@ -378,7 +375,7 @@ async fn ensure_devcontainer_cli(
             .join("node_modules")
             .join("@devcontainers")
             .join("cli")
-            .join(format!("{}.js", &dev_container_cli()));
+            .join(&dev_container_script());
 
         log::debug!(
             "devcontainer not found in path, using local location: ${}",
@@ -479,7 +476,7 @@ async fn devcontainer_up(
                 parse_json_from_cli(&raw)
             } else {
                 let message = format!(
-                    "Non-success status running devcontainer up for workspace: out: {:?}, err: {:?}",
+                    "Non-success status running devcontainer up for workspace: out: {}, err: {}",
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
                 );

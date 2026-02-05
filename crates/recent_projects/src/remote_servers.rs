@@ -51,7 +51,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenOptions, Toast, Workspace,
+    ModalView, OpenLog, OpenOptions, Toast, Workspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -99,14 +99,17 @@ enum DevContainerCreationProgress {
 
 #[derive(Clone)]
 struct CreateRemoteDevContainer {
+    view_logs_entry: NavigableEntry,
     back_entry: NavigableEntry,
     progress: DevContainerCreationProgress,
 }
 
 impl CreateRemoteDevContainer {
     fn new(progress: DevContainerCreationProgress, cx: &mut Context<RemoteServerProjects>) -> Self {
+        let view_logs_entry = NavigableEntry::focusable(cx);
         let back_entry = NavigableEntry::focusable(cx);
         Self {
+            view_logs_entry,
             back_entry,
             progress,
         }
@@ -1293,6 +1296,12 @@ impl RemoteServerProjects {
                 self.mode = Mode::CreateRemoteServer(new_state);
                 cx.notify();
             }
+            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer {
+                progress: DevContainerCreationProgress::Error(_),
+                ..
+            }) => {
+                cx.emit(DismissEvent);
+            }
             _ => {
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
                 self.focus_handle(cx).focus(window, cx);
@@ -1839,23 +1848,24 @@ impl RemoteServerProjects {
                     Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
-                        entity
-                            .update_in(cx, |remote_server_projects, _window, cx| {
-                                remote_server_projects.mode =
-                                    Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
-                                        DevContainerCreationProgress::Error(format!("{:?}", e)),
-                                        cx,
-                                    ));
-                            })
-                            .log_err();
                         cx.prompt(
                             gpui::PromptLevel::Critical,
-                            "Failed to start Dev Container",
-                            Some(&format!("{:?}", e)),
+                            "Failed to start Dev Container. See logs for details",
+                            Some(&format!("{e}")),
                             &["Ok"],
                         )
                         .await
                         .ok();
+                        entity
+                            .update_in(cx, |remote_server_projects, window, cx| {
+                                remote_server_projects.mode =
+                                    Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
+                                        DevContainerCreationProgress::Error(format!("{e}")),
+                                        cx,
+                                    ));
+                                remote_server_projects.focus_handle(cx).focus(window, cx);
+                            })
+                            .ok();
                         return;
                     }
                 };
@@ -1899,69 +1909,83 @@ impl RemoteServerProjects {
     ) -> impl IntoElement {
         match &state.progress {
             DevContainerCreationProgress::Error(message) => {
-                self.focus_handle(cx).focus(window, cx);
-                div()
-                    .track_focus(&self.focus_handle(cx))
-                    .size_full()
-                    .child(
-                        v_flex()
-                            .py_1()
-                            .child(
-                                ListItem::new("Error")
-                                    .inset(true)
-                                    .selectable(false)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::XCircle).color(Color::Error))
-                                    .child(Label::new("Error Creating Dev Container:"))
-                                    .child(Label::new(message).buffer_font(cx)),
-                            )
-                            .child(ListSeparator)
-                            .child(
-                                div()
-                                    .id("devcontainer-go-back")
-                                    .track_focus(&state.back_entry.focus_handle)
-                                    .on_action(cx.listener(
-                                        |this, _: &menu::Confirm, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
-                                            cx.focus_self(window);
-                                            cx.notify();
-                                        },
-                                    ))
-                                    .child(
-                                        ListItem::new("li-devcontainer-go-back")
-                                            .toggle_state(
-                                                state
-                                                    .back_entry
-                                                    .focus_handle
-                                                    .contains_focused(window, cx),
-                                            )
-                                            .inset(true)
-                                            .spacing(ui::ListItemSpacing::Sparse)
-                                            .start_slot(
-                                                Icon::new(IconName::ArrowLeft).color(Color::Muted),
-                                            )
-                                            .child(Label::new("Go Back"))
-                                            .end_slot(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Cancel,
-                                                    &self.focus_handle,
-                                                    cx,
-                                                )
-                                                .size(rems_from_px(12.)),
-                                            )
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.mode = Mode::default_mode(
-                                                    &this.ssh_config_servers,
-                                                    cx,
-                                                );
-                                                cx.focus_self(window);
-                                                cx.notify();
-                                            })),
-                                    ),
+                let view = Navigable::new(
+                    div()
+                        .child(
+                            div().track_focus(&self.focus_handle(cx)).size_full().child(
+                                v_flex().py_1().child(
+                                    ListItem::new("Error")
+                                        .inset(true)
+                                        .selectable(false)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::XCircle).color(Color::Error),
+                                        )
+                                        .child(Label::new("Error Creating Dev Container:"))
+                                        .child(Label::new(message).buffer_font(cx)),
+                                ),
                             ),
-                    )
-                    .into_any_element()
+                        )
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .id("devcontainer-see-log")
+                                .track_focus(&state.view_logs_entry.focus_handle)
+                                .on_action(cx.listener(|_, _: &menu::Confirm, window, cx| {
+                                    window.dispatch_action(Box::new(OpenLog), cx);
+                                    cx.emit(DismissEvent);
+                                    cx.notify();
+                                }))
+                                .child(
+                                    ListItem::new("li-devcontainer-see-log")
+                                        .toggle_state(
+                                            state
+                                                .view_logs_entry
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::File).color(Color::Muted))
+                                        .child(Label::new("Open Zed Log"))
+                                        .on_click(cx.listener(|_, _, window, cx| {
+                                            window.dispatch_action(Box::new(OpenLog), cx);
+                                            cx.emit(DismissEvent);
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("devcontainer-go-back")
+                                .track_focus(&state.back_entry.focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    this.cancel(&menu::Cancel, window, cx);
+                                    cx.notify();
+                                }))
+                                .child(
+                                    ListItem::new("li-devcontainer-go-back")
+                                        .toggle_state(
+                                            state
+                                                .back_entry
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Exit).color(Color::Muted))
+                                        .child(Label::new("Exit"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.cancel(&menu::Cancel, window, cx);
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .into_any_element(),
+                )
+                .entry(state.view_logs_entry.clone())
+                .entry(state.back_entry.clone());
+                view.render(window, cx).into_any_element()
             }
             DevContainerCreationProgress::SelectingConfig => {
                 self.render_config_selection(window, cx).into_any_element()

@@ -639,11 +639,7 @@ impl Item for FileHistoryView {
         false
     }
 
-    fn breadcrumbs(
-        &self,
-        _theme: &theme::Theme,
-        _cx: &App,
-    ) -> Option<Vec<workspace::item::BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<workspace::item::BreadcrumbText>> {
         None
     }
 

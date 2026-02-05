@@ -463,7 +463,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.9.3", features = ["unstable"] }
+agent-client-protocol = { version = "=0.9.4", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "936aee8761a17affc84ab418ae21306c27c26221" }
 any_vec = "0.14"
@@ -561,7 +561,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "b71ab4eeb27d9758be8092020a46fe33fbca4e33" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "fb6bcad59522455a041b7eb9579f706e5cfb2d6f" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
@@ -804,6 +804,7 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Media",
 ]
 
 [patch.crates-io]

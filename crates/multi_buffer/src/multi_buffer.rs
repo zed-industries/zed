@@ -2607,6 +2607,13 @@ impl MultiBuffer {
 
     pub fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
         let buffer_id = diff.read(cx).buffer_id;
+
+        if let Some(existing_diff) = self.diff_for(buffer_id)
+            && diff.entity_id() == existing_diff.entity_id()
+        {
+            return;
+        }
+
         self.buffer_diff_changed(
             diff.clone(),
             text::Anchor::min_max_range_for_buffer(buffer_id),
@@ -3045,11 +3052,17 @@ impl MultiBuffer {
             *non_text_state_update_count += 1;
         }
 
-        for (id, diff) in diffs.iter() {
-            if buffer_diff.get(id).is_none() || diff.is_inverted {
-                buffer_diff.insert(*id, diff.snapshot(cx));
-            }
-        }
+        let diffs_to_add = diffs
+            .iter()
+            .filter_map(|(id, diff)| {
+                if diff.is_inverted || buffer_diff.get(id).is_none() {
+                    Some((*id, diff.snapshot(cx)))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        buffer_diff.extend(diffs_to_add);
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
 
@@ -6798,6 +6811,10 @@ impl MultiBufferSnapshot {
         self.diffs.get(&buffer_id).map(|diff| &diff.diff)
     }
 
+    pub fn all_diff_hunks_expanded(&self) -> bool {
+        self.all_diff_hunks_expanded
+    }
+
     /// Visually annotates a position or range with the `Debug` representation of a value. The
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
@@ -7425,6 +7442,12 @@ impl<'a> MultiBufferExcerpt<'a> {
     pub fn contains_buffer_range(&self, range: Range<BufferOffset>) -> bool {
         range.start >= self.excerpt.buffer_start_offset()
             && range.end <= self.excerpt.buffer_end_offset()
+    }
+
+    /// Returns true if any part of the given range is in the buffer's excerpt
+    pub fn contains_partial_buffer_range(&self, range: Range<BufferOffset>) -> bool {
+        range.start <= self.excerpt.buffer_end_offset()
+            && range.end >= self.excerpt.buffer_start_offset()
     }
 
     pub fn max_buffer_row(&self) -> u32 {

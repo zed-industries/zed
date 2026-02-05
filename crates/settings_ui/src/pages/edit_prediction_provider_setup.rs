@@ -1,16 +1,18 @@
 use edit_prediction::{
-    ApiKeyState, MercuryFeatureFlag, SweepFeatureFlag,
+    ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
 use settings::Settings as _;
 use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
 use workspace::AppState;
+
+const OLLAMA_API_URL_PLACEHOLDER: &str = "http://localhost:11434";
+const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -26,7 +28,7 @@ pub(crate) fn render_edit_prediction_setup_page(
     let providers = [
         Some(render_provider_dropdown(window, cx)),
         render_github_copilot_provider(window, cx).map(IntoElement::into_any_element),
-        cx.has_flag::<MercuryFeatureFlag>().then(|| {
+        Some(
             render_api_key_provider(
                 IconName::Inception,
                 "Mercury",
@@ -37,9 +39,9 @@ pub(crate) fn render_edit_prediction_setup_page(
                 window,
                 cx,
             )
-            .into_any_element()
-        }),
-        cx.has_flag::<SweepFeatureFlag>().then(|| {
+            .into_any_element(),
+        ),
+        Some(
             render_api_key_provider(
                 IconName::SweepAi,
                 "Sweep",
@@ -59,8 +61,9 @@ pub(crate) fn render_edit_prediction_setup_page(
                 window,
                 cx,
             )
-            .into_any_element()
-        }),
+            .into_any_element(),
+        ),
+        Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
                 IconName::AiMistral,
@@ -326,6 +329,135 @@ fn sweep_settings() -> Box<[SettingsPageItem]> {
         metadata: None,
         files: USER,
     })])
+}
+
+fn render_ollama_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let ollama_settings = ollama_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(ollama_settings.iter().enumerate(), true, window, cx)
+        .into_any_element();
+
+    v_flex()
+        .id("ollama")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("Ollama")
+                .icon(IconName::ZedPredict)
+                .no_padding(true),
+        )
+        .child(
+            Label::new("Configure the local Ollama server and model used for edit predictions.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(div().px_neg_8().child(additional_fields))
+}
+
+fn ollama_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The base URL of your Ollama server.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.ollama.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_API_URL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The Ollama model to use for edit predictions.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.ollama.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_MODEL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.ollama.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
 }
 
 fn codestral_settings() -> Box<[SettingsPageItem]> {

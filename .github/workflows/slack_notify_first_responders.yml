@@ -10,7 +10,7 @@ env:
 jobs:
   notify-slack:
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
 
     steps:
       - name: Check if label requires first responder notification
