@@ -60,6 +60,12 @@ fn migrate_agent_tool_permissions(agent: &mut Value) -> Result<()> {
             .entry("tool_permissions")
             .or_insert_with(|| Value::Object(Default::default()));
 
+        // If tool_permissions exists but isn't an object (e.g. null), replace it
+        // so we don't silently drop the user's always_allow preference.
+        if !tool_permissions.is_object() {
+            *tool_permissions = Value::Object(Default::default());
+        }
+
         let Some(tool_permissions_object) = tool_permissions.as_object_mut() else {
             return Ok(());
         };
