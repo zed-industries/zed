@@ -81,7 +81,7 @@ impl AgentTool for WebSearchTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "web_search".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.query.clone(),
                 };
                 Some(event_stream.authorize(

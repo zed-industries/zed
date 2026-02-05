@@ -155,7 +155,7 @@ impl AgentTool for FetchTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "fetch".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.url.clone(),
                 };
                 Some(event_stream.authorize(

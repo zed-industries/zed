@@ -1,3 +1,4 @@
+use super::edit_file_tool::EditFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
     decide_permission_from_settings, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
@@ -184,7 +185,7 @@ impl StreamingEditFileTool {
             component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
         }) {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: EditFileTool::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -198,7 +199,7 @@ impl StreamingEditFileTool {
             && canonical_path.starts_with(paths::config_dir())
         {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: EditFileTool::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -218,7 +219,7 @@ impl StreamingEditFileTool {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: EditFileTool::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             event_stream.authorize(&input.display_description, context, cx)

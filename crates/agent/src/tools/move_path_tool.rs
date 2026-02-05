@@ -116,7 +116,7 @@ impl AgentTool for MovePathTool {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
             let context = crate::ToolPermissionContext {
-                tool_name: "move_path".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: input.source_path.clone(),
             };
             Some(event_stream.authorize(format!("Move {src} to {dest}"), context, cx))

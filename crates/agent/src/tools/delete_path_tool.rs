@@ -85,7 +85,7 @@ impl AgentTool for DeletePathTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "delete_path".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: path.clone(),
                 };
                 Some(event_stream.authorize(

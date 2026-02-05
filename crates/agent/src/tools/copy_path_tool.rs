@@ -102,7 +102,7 @@ impl AgentTool for CopyPathTool {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
             let context = crate::ToolPermissionContext {
-                tool_name: "copy_path".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: input.source_path.clone(),
             };
             Some(event_stream.authorize(format!("Copy {src} to {dest}"), context, cx))

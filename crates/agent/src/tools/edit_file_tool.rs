@@ -179,7 +179,7 @@ impl EditFileTool {
             component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
         }) {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -196,7 +196,7 @@ impl EditFileTool {
             && canonical_path.starts_with(paths::config_dir())
         {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -220,7 +220,7 @@ impl EditFileTool {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             event_stream.authorize(&input.display_description, context, cx)

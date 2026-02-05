@@ -104,7 +104,7 @@ impl AgentTool for TerminalTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "terminal".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.command.clone(),
                 };
                 Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))

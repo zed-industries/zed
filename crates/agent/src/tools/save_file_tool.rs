@@ -111,7 +111,7 @@ impl AgentTool for SaveFileTool {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
             let context = crate::ToolPermissionContext {
-                tool_name: "save_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: first_path,
             };
             Some(event_stream.authorize(title, context, cx))
