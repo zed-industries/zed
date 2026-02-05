@@ -1,5 +1,6 @@
-use gpui::List;
+use gpui::{Corner, List};
 use settings::update_settings_file;
+use ui::SplitButton;
 
 use super::*;
 
@@ -2693,7 +2694,7 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> Option<IconButton> {
+    fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> Option<SplitButton> {
         if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
             return None;
         }
@@ -2715,32 +2716,58 @@ impl AcpThreadView {
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
-        Some(
-            IconButton::new("thinking-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .toggle_state(thinking)
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
-                })
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    if let Some(thread) = this.as_native_thread(cx) {
-                        thread.update(cx, |thread, cx| {
-                            let enable_thinking = !thread.thinking_enabled();
-                            thread.set_thinking_enabled(enable_thinking, cx);
+        let thinking_toggle = IconButton::new("thinking-mode", icon)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(thinking)
+            .tooltip(move |_, cx| {
+                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+            })
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |thread, cx| {
+                        let enable_thinking = !thread.thinking_enabled();
+                        thread.set_thinking_enabled(enable_thinking, cx);
 
-                            let fs = thread.project().read(cx).fs().clone();
-                            update_settings_file(fs, cx, move |settings, _| {
-                                if let Some(agent) = settings.agent.as_mut()
-                                    && let Some(default_model) = agent.default_model.as_mut()
-                                {
-                                    default_model.enable_thinking = enable_thinking;
-                                }
-                            });
+                        let fs = thread.project().read(cx).fs().clone();
+                        update_settings_file(fs, cx, move |settings, _| {
+                            if let Some(agent) = settings.agent.as_mut()
+                                && let Some(default_model) = agent.default_model.as_mut()
+                            {
+                                default_model.enable_thinking = enable_thinking;
+                            }
                         });
-                    }
-                })),
-        )
+                    });
+                }
+            }));
+
+        Some(SplitButton::new(
+            thinking_toggle,
+            self.render_effort_selector(cx).into_any_element(),
+        ))
+    }
+
+    fn render_effort_selector(&self, _cx: &App) -> impl IntoElement {
+        PopoverMenu::new("effort-selector")
+            .trigger(
+                ui::ButtonLike::new_rounded_right("effort-selector-trigger")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ui::ButtonSize::None)
+                    .child(
+                        div()
+                            .px_1()
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                    ),
+            )
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                    menu.action("low", gpui::NoAction.boxed_clone())
+                        .action("medium", gpui::NoAction.boxed_clone())
+                        .action("high", gpui::NoAction.boxed_clone())
+                        .action("max", gpui::NoAction.boxed_clone())
+                }))
+            })
+            .anchor(Corner::TopRight)
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {

@@ -797,6 +797,7 @@ pub struct Thread {
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
+    thinking_effort: Option<String>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -833,6 +834,10 @@ impl Thread {
             .default_model
             .as_ref()
             .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
@@ -865,6 +870,7 @@ impl Thread {
             model,
             summarization_model: None,
             thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -892,6 +898,10 @@ impl Thread {
             .default_model
             .as_ref()
             .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
@@ -932,6 +942,7 @@ impl Thread {
             model: Some(model),
             summarization_model: None,
             thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1079,6 +1090,10 @@ impl Thread {
             .default_model
             .as_ref()
             .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1136,6 +1151,7 @@ impl Thread {
             summarization_model: None,
             // TODO: Should we persist this on the `DbThread`?
             thinking_enabled: enable_thinking,
+            thinking_effort,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1240,6 +1256,11 @@ impl Thread {
 
     pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.thinking_enabled = enabled;
+        cx.notify();
+    }
+
+    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        self.thinking_effort = effort;
         cx.notify();
     }
 
