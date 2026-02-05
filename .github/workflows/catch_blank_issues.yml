@@ -1,0 +1,71 @@
+name: "Label new and reopened blank issues for triage"
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+
+permissions:
+  contents: read
+
+jobs:
+  add-triage-label:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: get-app-token
+        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - id: check-staff
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: context.payload.sender.login
+              });
+              return response.data.state === 'active';
+            } catch (error) {
+              if (error.status === 404) {
+                return false;
+              }
+              throw error;
+            }
+
+      - if: steps.check-staff.outputs.result == 'true'
+        run: |
+          echo "::notice::Skipping issue #${{ github.event.issue.number }} - actor is staff member"
+
+      - if: steps.check-staff.outputs.result == 'false'
+        id: add-label
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            const issue = context.payload.issue;
+            const hasTriageLabel = issue.labels.some(
+              label => label.name === 'state:needs triage'
+            );
+
+            if (hasTriageLabel) {
+              console.log('Issue already has state:needs triage, skipping');
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ['state:needs triage']
+            });
+
+            console.log(`Added state:needs triage to issue #${issue.number}`);

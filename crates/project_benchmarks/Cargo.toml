@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 clap.workspace = true
 client.workspace = true
 futures.workspace = true
@@ -14,6 +15,10 @@ http_client = { workspace = true, features = ["test-support"]}
 language.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+release_channel.workspace = true
+remote = { workspace = true, features = ["build-remote-server-binary"] }
+rpassword = "7.4"
+semver.workspace = true
 settings.workspace = true
 watch.workspace = true
 

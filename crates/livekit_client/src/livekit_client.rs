@@ -60,7 +60,7 @@ impl Room {
         config.connector = Some(connector);
         let (room, mut events) = Tokio::spawn(cx, async move {
             livekit::Room::connect(&url, &token, config).await
-        })?
+        })
         .await??;
 
         let (mut tx, rx) = mpsc::unbounded();
@@ -189,7 +189,7 @@ impl LocalParticipant {
         let participant = self.0.clone();
         Tokio::spawn(cx, async move {
             participant.publish_track(track, options).await
-        })?
+        })
         .await?
         .map(LocalTrackPublication)
         .context("publishing a track")
@@ -201,7 +201,7 @@ impl LocalParticipant {
         cx: &mut AsyncApp,
     ) -> Result<LocalTrackPublication> {
         let participant = self.0.clone();
-        Tokio::spawn(cx, async move { participant.unpublish_track(&sid).await })?
+        Tokio::spawn(cx, async move { participant.unpublish_track(&sid).await })
             .await?
             .map(LocalTrackPublication)
             .context("unpublishing a track")

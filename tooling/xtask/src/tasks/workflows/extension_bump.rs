@@ -223,8 +223,10 @@ pub(crate) fn generate_token(
                          permissions,
                      }| {
                         input
-                            .add("owner", owner)
-                            .add("repositories", repositories)
+                            .when_some(owner, |input, owner| input.add("owner", owner))
+                            .when_some(repositories, |input, repositories| {
+                                input.add("repositories", repositories)
+                            })
                             .when_some(permissions, |input, permissions| {
                                 permissions
                                     .into_iter()
@@ -315,16 +317,24 @@ fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> 
 }
 
 pub(crate) struct RepositoryTarget {
-    owner: String,
-    repositories: String,
+    owner: Option<String>,
+    repositories: Option<String>,
     permissions: Option<Vec<(String, Level)>>,
 }
 
 impl RepositoryTarget {
     pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
         Self {
-            owner: owner.to_string(),
-            repositories: repositories.join("\n"),
+            owner: Some(owner.to_string()),
+            repositories: Some(repositories.join("\n")),
+            permissions: None,
+        }
+    }
+
+    pub fn current() -> Self {
+        Self {
+            owner: None,
+            repositories: None,
             permissions: None,
         }
     }

@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 default = []
-stories = ["dep:story"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -26,6 +25,7 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "http_client/test-support",
+    "title_bar/test-support",
 ]
 
 [dependencies]
@@ -51,7 +51,6 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-story = { workspace = true, optional = true }
 telemetry.workspace = true
 theme.workspace = true
 time.workspace = true

@@ -166,15 +166,11 @@ impl Manager {
                                 log::info!("client reconnected, attempting to rejoin projects");
 
                                 let Some(this) = this.upgrade() else { break };
-                                match this.update(cx, |this, cx| this.reconnected(cx)) {
-                                    Ok(task) => {
-                                        if task.await.log_err().is_some() {
-                                            return true;
-                                        } else {
-                                            remaining_attempts -= 1;
-                                        }
-                                    }
-                                    Err(_app_dropped) => return false,
+                                let task = this.update(cx, |this, cx| this.reconnected(cx));
+                                if task.await.log_err().is_some() {
+                                    return true;
+                                } else {
+                                    remaining_attempts -= 1;
                                 }
                             } else if client_status.borrow().is_signed_out() {
                                 return false;
@@ -215,7 +211,7 @@ impl Manager {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, disconnecting projects");
-            this.update(cx, |this, cx| this.connection_lost(cx))?;
+            this.update(cx, |this, cx| this.connection_lost(cx));
         }
 
         Ok(())

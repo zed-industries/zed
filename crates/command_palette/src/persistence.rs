@@ -99,6 +99,13 @@ impl CommandPaletteDB {
         }
     }
 
+    #[cfg(test)]
+    query! {
+        pub(crate) async fn clear_all() -> Result<()> {
+            DELETE FROM command_invocations
+        }
+    }
+
     query! {
         pub fn get_command_usage(command: &str) -> Result<Option<SerializedCommandUsage>> {
             SELECT command_name, COUNT(1), MAX(last_invoked)

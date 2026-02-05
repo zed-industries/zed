@@ -217,6 +217,7 @@ impl Drop for ThreadTimings {
     }
 }
 
+#[allow(dead_code)] // Used by Linux and Windows dispatchers, not macOS
 pub(crate) fn add_task_timing(timing: TaskTiming) {
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();

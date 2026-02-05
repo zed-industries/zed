@@ -16,11 +16,11 @@ path = "src/cloud_llm_client.rs"
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }
 uuid = { workspace = true, features = ["serde"] }
+zeta_prompt.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -13,6 +13,9 @@
 {"Put":{"state":"ˇ-1"}}
 {"Key":"ctrl-a"}
 {"Get":{"state":"ˇ0","mode":"Normal"}}
+{"Put":{"state":"-ˇ1"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"ˇ0","mode":"Normal"}}
 {"Put":{"state":"banˇana"}}
 {"Key":"ctrl-a"}
 {"Get":{"state":"banˇana","mode":"Normal"}}

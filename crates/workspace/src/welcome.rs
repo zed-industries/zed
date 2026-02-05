@@ -376,11 +376,11 @@ impl Render for WelcomePage {
                     .relative()
                     .size_full()
                     .px_12()
-                    .py_40()
                     .max_w(px(1100.))
                     .child(
                         v_flex()
-                            .size_full()
+                            .flex_1()
+                            .justify_center()
                             .max_w_128()
                             .mx_auto()
                             .gap_6()
