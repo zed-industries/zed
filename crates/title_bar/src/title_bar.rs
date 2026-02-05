@@ -3,6 +3,7 @@ pub mod collab;
 mod onboarding_banner;
 mod project_dropdown;
 mod title_bar_settings;
+mod update_version;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -40,6 +41,7 @@ use ui::{
     Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
+use update_version::{SimulatedUpdateState, UpdateBanner, UpdateBannerEvent};
 use util::ResultExt;
 use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
@@ -61,7 +63,9 @@ actions!(
         /// Toggles the project menu dropdown.
         ToggleProjectMenu,
         /// Switches to a different git branch.
-        SwitchBranch
+        SwitchBranch,
+        /// A debug action to simulate an update being available to test the update banner UI.
+        SimulateUpdateAvailable
     ]
 );
 
@@ -74,6 +78,17 @@ pub fn init(cx: &mut App) {
         };
         let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
+
+        workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    titlebar.toggle_update_simulation(cx);
+                });
+            }
+        });
 
         workspace.register_action(|workspace, _: &SwitchProject, window, cx| {
             if let Some(titlebar) = workspace
@@ -144,6 +159,8 @@ pub struct TitleBar {
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
+    update_banner: Entity<UpdateBanner>,
+    update_banner_dismissed: bool,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     project_dropdown_handle: PopoverMenuHandle<ProjectDropdown>,
 }
@@ -213,6 +230,9 @@ impl Render for TitleBar {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
+                .when(self.should_show_update_banner(cx), |this| {
+                    this.child(self.update_banner.clone())
+                })
                 .when(
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
@@ -338,6 +358,20 @@ impl TitleBar {
             .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
         });
 
+        let update_banner = cx.new(|_cx| UpdateBanner::new());
+        subscriptions.push(
+            cx.subscribe(&update_banner, |this, _, event, cx| match event {
+                UpdateBannerEvent::Dismissed => {
+                    this.update_banner_dismissed = true;
+                    cx.notify();
+                }
+            }),
+        );
+
+        if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
+            subscriptions.push(cx.observe(&auto_updater, |_this, _, cx| cx.notify()));
+        }
+
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
         Self {
@@ -349,6 +383,8 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
+            update_banner,
+            update_banner_dismissed: false,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             project_dropdown_handle: PopoverMenuHandle::default(),
         }
@@ -356,6 +392,67 @@ impl TitleBar {
 
     fn worktree_count(&self, cx: &App) -> usize {
         self.project.read(cx).visible_worktrees(cx).count()
+    }
+
+    fn has_update_status(&self, cx: &mut App) -> bool {
+        if self.update_banner.read(cx).is_simulating() {
+            return true;
+        }
+        auto_update::AutoUpdater::get(cx)
+            .map(|au| !matches!(au.read(cx).status(), auto_update::AutoUpdateStatus::Idle))
+            .unwrap_or(false)
+    }
+
+    fn is_update_ready(&self, cx: &mut App) -> bool {
+        if self.update_banner.read(cx).is_simulating_updated() {
+            return true;
+        }
+        auto_update::AutoUpdater::get(cx)
+            .map(|au| au.read(cx).status().is_updated())
+            .unwrap_or(false)
+    }
+
+    /// Show banner if there's any status, UNLESS it's the "ready" state and user dismissed it
+    fn should_show_update_banner(&self, cx: &mut App) -> bool {
+        let has_status = self.has_update_status(cx);
+        let is_ready = self.is_update_ready(cx);
+        let is_dismissed = self.update_banner_dismissed;
+        let should_show = has_status && !(is_ready && is_dismissed);
+
+        should_show
+    }
+
+    fn toggle_update_simulation(&mut self, cx: &mut Context<Self>) {
+        self.update_banner.update(cx, |banner, _cx| {
+            let next_state = match banner.simulated_state() {
+                None => Some(SimulatedUpdateState::Checking),
+                Some(SimulatedUpdateState::Checking) => Some(SimulatedUpdateState::Downloading {
+                    version: "1.99.0".to_string(),
+                }),
+                Some(SimulatedUpdateState::Downloading { .. }) => {
+                    Some(SimulatedUpdateState::Installing {
+                        version: "1.99.0".to_string(),
+                    })
+                }
+                Some(SimulatedUpdateState::Installing { .. }) => {
+                    Some(SimulatedUpdateState::Updated {
+                        version: "1.99.0".to_string(),
+                    })
+                }
+                Some(SimulatedUpdateState::Updated { .. }) => Some(SimulatedUpdateState::Errored {
+                    error: "Network timeout".to_string(),
+                }),
+                Some(SimulatedUpdateState::Errored { .. }) => None,
+            };
+
+            if let Some(state) = next_state {
+                banner.simulate_state(state);
+            } else {
+                banner.clear_simulation();
+            }
+        });
+        self.update_banner_dismissed = false;
+        cx.notify();
     }
 
     pub fn show_project_dropdown(&self, window: &mut Window, cx: &mut App) {
@@ -927,6 +1024,8 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+        let show_update_badge = self.is_update_ready(cx) && self.update_banner_dismissed;
+
         let user_store = self.user_store.read(cx);
         let user = user_store.current_user();
 
@@ -990,6 +1089,26 @@ impl TitleBar {
                         )
                         .separator()
                     })
+                    .when(show_update_badge, |this| {
+                        this.custom_entry(
+                            move |_window, _cx| {
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::Download)
+                                            .size(IconSize::Small)
+                                            .color(Color::Accent),
+                                    )
+                                    .child(Label::new("Restart to update Zed").color(Color::Accent))
+                                    .into_any_element()
+                            },
+                            move |_, cx| {
+                                workspace::reload(cx);
+                            },
+                        )
+                        .separator()
+                    })
                     .action("Settings", zed_actions::OpenSettings.boxed_clone())
                     .action("Keymap", Box::new(zed_actions::OpenKeymap))
                     .action(
@@ -1013,9 +1132,25 @@ impl TitleBar {
             })
             .map(|this| {
                 if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
+                    let avatar =
+                        user_avatar
+                            .clone()
+                            .map(|avatar| Avatar::new(avatar))
+                            .map(|avatar| {
+                                if show_update_badge {
+                                    avatar.indicator(
+                                        div()
+                                            .absolute()
+                                            .bottom_0()
+                                            .right_0()
+                                            .child(Indicator::dot().color(Color::Accent)),
+                                    )
+                                } else {
+                                    avatar
+                                }
+                            });
                     this.trigger_with_tooltip(
-                        ButtonLike::new("user-menu")
-                            .children(user_avatar.clone().map(|avatar| Avatar::new(avatar))),
+                        ButtonLike::new("user-menu").children(avatar),
                         Tooltip::text("Toggle User Menu"),
                     )
                 } else {
