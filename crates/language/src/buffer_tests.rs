@@ -2771,14 +2771,11 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language(
-            language_registry
-                .language_for_name("HTML+ERB")
-                .now_or_never()
-                .unwrap()
-                .ok(),
-            cx,
-        );
+        let language = language_registry
+            .language_for_name("HTML+ERB")
+            .now_or_never()
+            .and_then(Result::ok);
+        buffer.set_language(language, cx);
 
         let snapshot = buffer.snapshot();
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
@@ -2894,15 +2891,80 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
+fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
     cx.new(|cx| {
+        // ERB template with HTML and Ruby content
         let text = r#"
-            ```html+erb
-            <div>Hello</div>
-            <%= link_to "Some", "https://zed.dev" %>
-            ```
+<div>Hello</div>
+<%= link_to "Click", url %>
+<p>World</p>
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(erb_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        let language = language_registry
+            .language_for_name("HTML+ERB")
+            .now_or_never()
+            .and_then(Result::ok);
+        buffer.set_language(language, cx);
+
+        let snapshot = buffer.snapshot();
+
+        // Test language_at for HTML content (line 0: "<div>Hello</div>")
+        let html_point = Point::new(0, 4);
+        let language = snapshot.language_at(html_point).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "HTML",
+            "Expected HTML at {:?}, got {}",
+            html_point,
+            language.name()
+        );
+
+        // Test language_at for Ruby code (line 1: "<%= link_to ... %>")
+        let ruby_point = Point::new(1, 6);
+        let language = snapshot.language_at(ruby_point).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "Ruby",
+            "Expected Ruby at {:?}, got {}",
+            ruby_point,
+            language.name()
+        );
+
+        // Test language_at for HTML after Ruby (line 2: "<p>World</p>")
+        let html_after_ruby = Point::new(2, 2);
+        let language = snapshot.language_at(html_after_ruby).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "HTML",
+            "Expected HTML at {:?}, got {}",
+            html_after_ruby,
+            language.name()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_languages_at_for_combined_injections(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        // ERB template with HTML and Ruby content
+        let text = r#"
+<div>Hello</div>
+<%= yield %>
+<p>World</p>
         "#
         .unindent();
 
@@ -2922,16 +2984,47 @@ fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
             cx,
         );
 
-        let snapshot = buffer.snapshot();
+        // Test languages_at for HTML content - should NOT include Ruby
+        let html_point = Point::new(0, 4);
+        let languages = buffer.languages_at(html_point);
+        let language_names: Vec<_> = languages.iter().map(|language| language.name()).collect();
+        assert!(
+            language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "HTML"),
+            "Expected HTML in languages at {:?}, got {:?}",
+            html_point,
+            language_names
+        );
+        assert!(
+            !language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "Ruby"),
+            "Did not expect Ruby in languages at {:?}, got {:?}",
+            html_point,
+            language_names
+        );
 
-        // Test points in the code line
-        let html_point = Point::new(1, 4);
-        let language = snapshot.language_at(html_point).unwrap();
-        assert_eq!(language.name().as_ref(), "HTML");
-
-        let ruby_point = Point::new(2, 6);
-        let language = snapshot.language_at(ruby_point).unwrap();
-        assert_eq!(language.name().as_ref(), "Ruby");
+        // Test languages_at for Ruby code - should NOT include HTML
+        let ruby_point = Point::new(1, 6);
+        let languages = buffer.languages_at(ruby_point);
+        let language_names: Vec<_> = languages.iter().map(|language| language.name()).collect();
+        assert!(
+            language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "Ruby"),
+            "Expected Ruby in languages at {:?}, got {:?}",
+            ruby_point,
+            language_names
+        );
+        assert!(
+            !language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "HTML"),
+            "Did not expect HTML in languages at {:?}, got {:?}",
+            ruby_point,
+            language_names
+        );
 
         buffer
     });
