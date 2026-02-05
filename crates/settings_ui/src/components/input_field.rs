@@ -16,6 +16,7 @@ pub struct SettingsInputField {
     use_buffer_font: bool,
     display_confirm_button: bool,
     display_clear_button: bool,
+    clear_on_confirm: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
 }
@@ -31,6 +32,7 @@ impl SettingsInputField {
             use_buffer_font: false,
             display_confirm_button: false,
             display_clear_button: false,
+            clear_on_confirm: false,
             action_slot: None,
             color: None,
         }
@@ -66,6 +68,11 @@ impl SettingsInputField {
 
     pub fn display_clear_button(mut self) -> Self {
         self.display_clear_button = true;
+        self
+    }
+
+    pub fn clear_on_confirm(mut self) -> Self {
+        self.clear_on_confirm = true;
         self
     }
 
@@ -141,6 +148,8 @@ impl RenderOnce for SettingsInputField {
         let weak_editor = editor.downgrade();
         let weak_editor_for_button = editor.downgrade();
         let weak_editor_for_clear = editor.downgrade();
+        let clear_on_confirm = self.clear_on_confirm;
+        let clear_on_confirm_for_button = self.clear_on_confirm;
 
         let theme_colors = cx.theme().colors();
 
@@ -214,6 +223,11 @@ impl RenderOnce for SettingsInputField {
                                         let new_value =
                                             (!new_value.is_empty()).then_some(new_value);
                                         confirm(new_value, window, cx);
+                                        if clear_on_confirm_for_button {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.set_text("", window, cx);
+                                            });
+                                        }
                                     }),
                             )
                         },
@@ -229,6 +243,11 @@ impl RenderOnce for SettingsInputField {
                         let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
                         let new_value = (!new_value.is_empty()).then_some(new_value);
                         confirm(new_value, window, cx);
+                        if clear_on_confirm {
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text("", window, cx);
+                            });
+                        }
                     }
                 })
             })

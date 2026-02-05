@@ -704,6 +704,7 @@ fn render_add_pattern_input(
         .with_buffer_font()
         .display_clear_button()
         .display_confirm_button()
+        .clear_on_confirm()
         .on_confirm(move |pattern, _window, cx| {
             if let Some(pattern) = pattern {
                 if !pattern.trim().is_empty() {
