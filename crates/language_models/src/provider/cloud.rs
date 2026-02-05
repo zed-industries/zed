@@ -584,6 +584,7 @@ impl LanguageModel for CloudLanguageModel {
             .map(|effort_level| LanguageModelEffortLevel {
                 name: effort_level.name.clone().into(),
                 value: effort_level.value.clone().into(),
+                is_default: effort_level.is_default.unwrap_or(false),
             })
             .collect()
     }

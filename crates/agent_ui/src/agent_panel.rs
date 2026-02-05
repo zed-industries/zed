@@ -1401,6 +1401,7 @@ impl AgentPanel {
                                 provider: LanguageModelProviderSetting(provider),
                                 model,
                                 enable_thinking: false,
+                                effort: None,
                             })
                     });
                 }
