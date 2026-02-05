@@ -257,12 +257,13 @@ pub async fn run_repair(
         .err()
         .map(|e| format!("Failed to parse repair response: {}", e));
 
-    let (actual_patch, actual_cursor_offset) = parse_result.ok().unzip();
+    let (actual_patch, actual_cursor) = parse_result.ok().unzip();
+    let actual_cursor = actual_cursor.flatten();
 
     example.predictions.push(ExamplePrediction {
         actual_patch,
         actual_output: response,
-        actual_cursor_offset: actual_cursor_offset.flatten(),
+        actual_cursor,
         error: err,
         provider: PredictionProvider::Repair,
     });
