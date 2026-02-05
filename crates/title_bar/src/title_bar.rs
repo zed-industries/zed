@@ -41,7 +41,7 @@ use ui::{
     Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
-use update_version::{SimulatedUpdateState, UpdateBanner, UpdateBannerEvent};
+use update_version::{SimulatedUpdateState, UpdateVersion, UpdateVersionEvent};
 use util::ResultExt;
 use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
@@ -159,8 +159,8 @@ pub struct TitleBar {
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
-    update_banner: Entity<UpdateBanner>,
-    update_banner_dismissed: bool,
+    update_version: Entity<UpdateVersion>,
+    update_version_notice_dismissed: bool,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     project_dropdown_handle: PopoverMenuHandle<ProjectDropdown>,
 }
@@ -231,7 +231,7 @@ impl Render for TitleBar {
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(self.should_show_update_banner(cx), |this| {
-                    this.child(self.update_banner.clone())
+                    this.child(self.update_version.clone())
                 })
                 .when(
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
@@ -358,11 +358,11 @@ impl TitleBar {
             .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
         });
 
-        let update_banner = cx.new(|_cx| UpdateBanner::new());
+        let update_version = cx.new(|_cx| UpdateVersion::new());
         subscriptions.push(
-            cx.subscribe(&update_banner, |this, _, event, cx| match event {
-                UpdateBannerEvent::Dismissed => {
-                    this.update_banner_dismissed = true;
+            cx.subscribe(&update_version, |this, _, event, cx| match event {
+                UpdateVersionEvent::Dismissed => {
+                    this.update_version_notice_dismissed = true;
                     cx.notify();
                 }
             }),
@@ -383,8 +383,8 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            update_banner,
-            update_banner_dismissed: false,
+            update_version,
+            update_version_notice_dismissed: false,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             project_dropdown_handle: PopoverMenuHandle::default(),
         }
@@ -395,7 +395,7 @@ impl TitleBar {
     }
 
     fn has_update_status(&self, cx: &mut App) -> bool {
-        if self.update_banner.read(cx).is_simulating() {
+        if self.update_version.read(cx).is_simulating() {
             return true;
         }
         auto_update::AutoUpdater::get(cx)
@@ -404,7 +404,7 @@ impl TitleBar {
     }
 
     fn is_update_ready(&self, cx: &mut App) -> bool {
-        if self.update_banner.read(cx).is_simulating_updated() {
+        if self.update_version.read(cx).is_simulating_updated() {
             return true;
         }
         auto_update::AutoUpdater::get(cx)
@@ -416,14 +416,14 @@ impl TitleBar {
     fn should_show_update_banner(&self, cx: &mut App) -> bool {
         let has_status = self.has_update_status(cx);
         let is_ready = self.is_update_ready(cx);
-        let is_dismissed = self.update_banner_dismissed;
+        let is_dismissed = self.update_version_notice_dismissed;
         let should_show = has_status && !(is_ready && is_dismissed);
 
         should_show
     }
 
     fn toggle_update_simulation(&mut self, cx: &mut Context<Self>) {
-        self.update_banner.update(cx, |banner, _cx| {
+        self.update_version.update(cx, |banner, _cx| {
             let next_state = match banner.simulated_state() {
                 None => Some(SimulatedUpdateState::Checking),
                 Some(SimulatedUpdateState::Checking) => Some(SimulatedUpdateState::Downloading {
@@ -451,7 +451,7 @@ impl TitleBar {
                 banner.clear_simulation();
             }
         });
-        self.update_banner_dismissed = false;
+        self.update_version_notice_dismissed = false;
         cx.notify();
     }
 
@@ -1024,7 +1024,7 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let show_update_badge = self.is_update_ready(cx) && self.update_banner_dismissed;
+        let show_update_badge = self.is_update_ready(cx) && self.update_version_notice_dismissed;
 
         let user_store = self.user_store.read(cx);
         let user = user_store.current_user();
