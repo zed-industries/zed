@@ -253,6 +253,10 @@ impl LanguageModel for DeepSeekLanguageModel {
         false
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("deepseek/{}", self.model.id())
     }

@@ -2280,6 +2280,22 @@ impl Thread {
             return;
         };
 
+        // Remove incomplete thinking blocks (those without a valid signature).
+        // This can happen when the user cancels a response mid-stream before
+        // the signature arrives. Without a valid signature, the thinking block
+        // cannot be sent back to the API for providers that require signatures
+        // (e.g., Anthropic, Google). Other providers (e.g., DeepSeek, OpenAI)
+        // ignore signatures entirely.
+        if self
+            .model
+            .as_ref()
+            .is_some_and(|model| model.requires_thinking_signature())
+        {
+            message.content.retain(|content| {
+                !matches!(content, AgentMessageContent::Thinking { signature, .. } if signature.is_none())
+            });
+        }
+
         if message.content.is_empty() {
             return;
         }

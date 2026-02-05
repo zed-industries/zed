@@ -499,6 +499,10 @@ impl LanguageModel for AnthropicModel {
         true
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

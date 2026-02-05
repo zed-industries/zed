@@ -111,6 +111,7 @@ pub struct FakeLanguageModel {
         )>,
     >,
     forbid_requests: AtomicBool,
+    requires_thinking_signature: AtomicBool,
 }
 
 impl Default for FakeLanguageModel {
@@ -120,6 +121,7 @@ impl Default for FakeLanguageModel {
             provider_name: LanguageModelProviderName::from("Fake".to_string()),
             current_completion_txs: Mutex::new(Vec::new()),
             forbid_requests: AtomicBool::new(false),
+            requires_thinking_signature: AtomicBool::new(false),
         }
     }
 }
@@ -131,6 +133,10 @@ impl FakeLanguageModel {
 
     pub fn forbid_requests(&self) {
         self.forbid_requests.store(true, SeqCst);
+    }
+
+    pub fn set_requires_thinking_signature(&self, value: bool) {
+        self.requires_thinking_signature.store(value, SeqCst);
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -240,6 +246,10 @@ impl LanguageModel for FakeLanguageModel {
 
     fn supports_images(&self) -> bool {
         false
+    }
+
+    fn requires_thinking_signature(&self) -> bool {
+        self.requires_thinking_signature.load(SeqCst)
     }
 
     fn telemetry_id(&self) -> String {

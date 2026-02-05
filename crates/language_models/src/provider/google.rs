@@ -283,6 +283,13 @@ impl LanguageModel for GoogleLanguageModel {
         self.model.supports_images()
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        // Google's Gemini 2.5 and 3 series models use thinking by default and return
+        // thought signatures that must be circulated back correctly. Even when thinking
+        // level is set to "minimal", signatures are still required for Gemini 3 models.
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

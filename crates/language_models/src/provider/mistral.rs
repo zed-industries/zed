@@ -281,6 +281,10 @@ impl LanguageModel for MistralLanguageModel {
         self.model.supports_images()
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }

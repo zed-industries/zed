@@ -739,6 +739,10 @@ impl language_model::LanguageModel for LanguageModelInterceptor {
         self.model.supports_images()
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        self.model.requires_thinking_signature()
+    }
+
     fn supports_tools(&self) -> bool {
         self.model.supports_tools()
     }

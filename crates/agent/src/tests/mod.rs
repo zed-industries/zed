@@ -378,7 +378,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
     cx.run_until_parked();
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Thinking {
         text: "Think".to_string(),
-        signature: None,
+        signature: Some("valid-signature".to_string()),
     });
     fake_model.send_last_completion_stream_text_chunk("Hello");
     fake_model
@@ -398,6 +398,145 @@ async fn test_thinking(cx: &mut TestAppContext) {
         )
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_cancelled_thinking_without_signature_excluded_from_request(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    fake_model.set_requires_thinking_signature(true);
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["First message"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Thinking {
+        text: "Thinking without signature...".to_string(),
+        signature: None,
+    });
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    cx.run_until_parked();
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Second message"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let pending_completions = fake_model.pending_completions();
+    for message in &pending_completions[0].messages {
+        for content in &message.content {
+            if let MessageContent::Thinking { signature, .. } = content {
+                assert!(
+                    signature.is_some(),
+                    "Unsigned thinking block in API request"
+                );
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_cancelled_thinking_without_signature_preserved_for_non_signature_providers(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["First message"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Thinking {
+        text: "Reasoning content without signature...".to_string(),
+        signature: None,
+    });
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    cx.run_until_parked();
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Second message"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let has_unsigned_thinking = fake_model.pending_completions()[0]
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .any(|content| {
+            matches!(content, MessageContent::Thinking { signature, .. } if signature.is_none())
+        });
+    assert!(
+        has_unsigned_thinking,
+        "Unsigned thinking blocks should be preserved for providers that don't require signatures"
+    );
+}
+
+#[gpui::test]
+#[ignore] // Requires ANTHROPIC_API_KEY environment variable
+async fn test_cancelled_thinking_with_real_api(cx: &mut TestAppContext) {
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        return;
+    }
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Think step by step about what 2+2 equals."],
+                cx,
+            )
+        })
+        .unwrap();
+
+    let mut saw_thinking = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        match events.next().await {
+            Some(Ok(ThreadEvent::AgentThinking(_))) => {
+                saw_thinking = true;
+                break;
+            }
+            Some(Ok(ThreadEvent::Stop(_))) | None => break,
+            Some(Err(e)) => panic!("Unexpected error: {e}"),
+            _ => {}
+        }
+    }
+    assert!(saw_thinking, "Response finished before thinking started");
+
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    cx.run_until_parked();
+
+    let events: Vec<_> = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Testing: reply with just 'OK' and nothing else."],
+                cx,
+            )
+        })
+        .unwrap()
+        .collect()
+        .await;
+
+    for event in &events {
+        if let Err(e) = event {
+            panic!("Second message failed: {e}");
+        }
+    }
 }
 
 #[gpui::test]
@@ -3228,6 +3367,7 @@ struct ThreadTest {
 
 enum TestModel {
     Sonnet4,
+    Sonnet4Thinking,
     Fake,
 }
 
@@ -3235,6 +3375,7 @@ impl TestModel {
     fn id(&self) -> LanguageModelId {
         match self {
             TestModel::Sonnet4 => LanguageModelId("claude-sonnet-4-latest".into()),
+            TestModel::Sonnet4Thinking => LanguageModelId("claude-sonnet-4-thinking-latest".into()),
             TestModel::Fake => unreachable!(),
         }
     }
@@ -3279,7 +3420,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
 
         match model {
             TestModel::Fake => {}
-            TestModel::Sonnet4 => {
+            TestModel::Sonnet4 | TestModel::Sonnet4Thinking => {
                 gpui_tokio::init(cx);
                 let http_client = ReqwestClient::user_agent("agent tests").unwrap();
                 cx.set_http_client(Arc::new(http_client));

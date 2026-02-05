@@ -672,6 +672,10 @@ mod tests {
             false
         }
 
+        fn requires_thinking_signature(&self) -> bool {
+            false
+        }
+
         fn telemetry_id(&self) -> String {
             format!("{}/{}", self.provider_id.0, self.name.0)
         }
