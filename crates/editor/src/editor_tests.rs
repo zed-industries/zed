@@ -29063,8 +29063,7 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
             e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
-            let style = e.style(cx).clone();
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), &style, cx)
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
                 .into_iter()
                 .map(
                     |StickyHeader {

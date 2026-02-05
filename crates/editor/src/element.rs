@@ -4457,7 +4457,6 @@ impl EditorElement {
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         text_hitbox: &Hitbox,
-        style: &EditorStyle,
         relative_line_numbers: RelativeLineNumbers,
         relative_to: Option<DisplayRow>,
         window: &mut Window,
@@ -4467,7 +4466,7 @@ impl EditorElement {
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
 
-        let rows = Self::sticky_headers(self.editor.read(cx), snapshot, style, cx);
+        let rows = Self::sticky_headers(self.editor.read(cx), snapshot);
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
@@ -4536,22 +4535,13 @@ impl EditorElement {
         })
     }
 
-    pub(crate) fn sticky_headers(
-        editor: &Editor,
-        snapshot: &EditorSnapshot,
-        style: &EditorStyle,
-        cx: &App,
-    ) -> Vec<StickyHeader> {
+    pub(crate) fn sticky_headers(editor: &Editor, snapshot: &EditorSnapshot) -> Vec<StickyHeader> {
         let scroll_top = snapshot.scroll_position().y;
 
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor
-            .sticky_headers(&snapshot.display_snapshot, style, cx)
-            .unwrap_or_default();
-
-        for item in items {
+        for item in editor.sticky_headers.iter().flatten() {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
@@ -4587,7 +4577,7 @@ impl EditorElement {
 
             end_rows.push(end_row);
             rows.push(StickyHeader {
-                item,
+                item: item.clone(),
                 sticky_row,
                 start_point,
                 offset,
@@ -8060,7 +8050,7 @@ pub(crate) fn render_buffer_header(
     let editor_handle: &dyn ItemHandle = editor;
 
     let breadcrumbs = if is_selected {
-        editor_read.breadcrumbs_inner(cx.theme(), cx)
+        editor_read.breadcrumbs_inner(cx)
     } else {
         None
     };
@@ -10283,7 +10273,6 @@ impl Element for EditorElement {
                             &gutter_dimensions,
                             &gutter_hitbox,
                             &text_hitbox,
-                            &style,
                             relative,
                             current_selection_head,
                             window,
