@@ -1161,16 +1161,37 @@ impl acp::Client for ClientDelegate {
         let options = acp_thread::PermissionOptions::Flat(arguments.options);
 
         let task = thread.update(cx, |thread, cx| {
-            let global_default = AgentSettings::get_global(cx).tool_permissions.default;
+            let tool_name = arguments
+                .tool_call
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get(acp_thread::TOOL_NAME_META_KEY))
+                .and_then(|v| v.as_str());
 
-            // Deny always takes effect, regardless of whether the external
-            // agent has its own permission system.
-            if global_default == ToolPermissionMode::Deny {
+            let settings = AgentSettings::get_global(cx);
+            let effective_default = tool_name
+                .and_then(|name| settings.tool_permissions.tools.get(name))
+                .and_then(|rules| rules.default)
+                .unwrap_or(settings.tool_permissions.default);
+
+            if effective_default == ToolPermissionMode::Deny {
                 thread.upsert_tool_call_inner(
                     arguments.tool_call,
                     acp_thread::ToolCallStatus::Rejected,
                     cx,
                 )?;
+                // Use Selected(deny_option) when available so external agents
+                // can distinguish "policy denied" from "prompt cancelled."
+                // Fall back to Cancelled if no deny option exists (ACP protocol
+                // limitation: there is no dedicated Denied/Rejected variant).
+                if let Some(deny_option) = options.deny_once_option_id() {
+                    return Ok(async {
+                        acp::RequestPermissionOutcome::Selected(
+                            acp::SelectedPermissionOutcome::new(deny_option),
+                        )
+                    }
+                    .boxed());
+                }
                 return Ok(async { acp::RequestPermissionOutcome::Cancelled }.boxed());
             }
 
@@ -1178,7 +1199,7 @@ impl acp::Client for ClientDelegate {
             // whether the external agent has its own permission system.
             // This is the default fallthrough behavior, so we only need to
             // handle the Allow case specially.
-            if global_default == ToolPermissionMode::Allow && !has_own_permission_modes {
+            if effective_default == ToolPermissionMode::Allow && !has_own_permission_modes {
                 if let Some(allow_once_option) = options.allow_once_option_id() {
                     thread.upsert_tool_call_inner(
                         arguments.tool_call,
