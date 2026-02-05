@@ -8984,6 +8984,7 @@ impl Editor {
                     };
 
                     window.focus(&editor.focus_handle(cx), cx);
+                    editor.update_breakpoint_collision_on_toggle(row, &edit_action);
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
@@ -11847,7 +11848,19 @@ impl Editor {
             return;
         }
 
+        let snapshot = self.snapshot(window, cx);
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            if self.gutter_breakpoint_indicator.0.is_some() {
+                let display_row = anchor
+                    .to_point(snapshot.buffer_snapshot())
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row();
+                self.update_breakpoint_collision_on_toggle(
+                    display_row,
+                    &BreakpointEditAction::Toggle,
+                );
+            }
+
             if let Some(breakpoint) = breakpoint {
                 self.edit_breakpoint_at_anchor(
                     anchor,
@@ -11862,6 +11875,21 @@ impl Editor {
                     BreakpointEditAction::Toggle,
                     cx,
                 );
+            }
+        }
+    }
+
+    fn update_breakpoint_collision_on_toggle(
+        &mut self,
+        display_row: DisplayRow,
+        edit_action: &BreakpointEditAction,
+    ) {
+        if let Some(ref mut breakpoint_indicator) = self.gutter_breakpoint_indicator.0 {
+            if breakpoint_indicator.display_row == display_row
+                && matches!(edit_action, BreakpointEditAction::Toggle)
+            {
+                breakpoint_indicator.collides_with_existing_breakpoint =
+                    !breakpoint_indicator.collides_with_existing_breakpoint;
             }
         }
     }
