@@ -25,6 +25,7 @@ pub struct Banner {
     severity: Severity,
     children: Vec<AnyElement>,
     action_slot: Option<AnyElement>,
+    wrap_content: bool,
 }
 
 impl Banner {
@@ -34,6 +35,7 @@ impl Banner {
             severity: Severity::Info,
             children: Vec::new(),
             action_slot: None,
+            wrap_content: false,
         }
     }
 
@@ -46,6 +48,12 @@ impl Banner {
     /// A slot for actions, such as CTA or dismissal buttons.
     pub fn action_slot(mut self, element: impl IntoElement) -> Self {
         self.action_slot = Some(element.into_any_element());
+        self
+    }
+
+    /// Sets whether the banner content should wrap.
+    pub fn wrap_content(mut self, wrap: bool) -> Self {
+        self.wrap_content = wrap;
         self
     }
 }
@@ -61,7 +69,7 @@ impl RenderOnce for Banner {
         let banner = h_flex()
             .py_0p5()
             .gap_1p5()
-            .flex_wrap()
+            .when(self.wrap_content, |this| this.flex_wrap())
             .justify_between()
             .rounded_sm()
             .border_1();
@@ -98,6 +106,7 @@ impl RenderOnce for Banner {
         let icon_and_child = h_flex()
             .items_start()
             .min_w_0()
+            .flex_1()
             .gap_1p5()
             .child(
                 h_flex()
@@ -105,7 +114,7 @@ impl RenderOnce for Banner {
                     .flex_shrink_0()
                     .child(Icon::new(icon).size(IconSize::XSmall).color(icon_color)),
             )
-            .child(div().min_w_0().children(self.children));
+            .child(div().min_w_0().flex_1().children(self.children));
 
         if let Some(action_slot) = self.action_slot {
             banner = banner

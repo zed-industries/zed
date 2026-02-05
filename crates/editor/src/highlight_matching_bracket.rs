@@ -1,10 +1,8 @@
-use crate::{Editor, RangeToAnchorExt};
+use crate::{Editor, HighlightKey, RangeToAnchorExt};
 use gpui::{Context, HighlightStyle, Window};
 use language::CursorShape;
 use multi_buffer::MultiBufferOffset;
 use theme::ActiveTheme;
-
-enum MatchingBracketHighlight {}
 
 impl Editor {
     #[ztracing::instrument(skip_all)]
@@ -13,7 +11,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Editor>,
     ) {
-        self.clear_highlights::<MatchingBracketHighlight>(cx);
+        self.clear_highlights(HighlightKey::MatchingBracket, cx);
 
         let snapshot = self.snapshot(window, cx);
         let buffer_snapshot = snapshot.buffer_snapshot();
@@ -41,7 +39,8 @@ impl Editor {
         if let Some((opening_range, closing_range)) =
             buffer_snapshot.innermost_enclosing_bracket_ranges(head..tail, None)
         {
-            self.highlight_text::<MatchingBracketHighlight>(
+            self.highlight_text(
+                HighlightKey::MatchingBracket,
                 vec![
                     opening_range.to_anchors(&buffer_snapshot),
                     closing_range.to_anchors(&buffer_snapshot),
@@ -118,33 +117,42 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights(
+            HighlightKey::MatchingBracket,
+            indoc! {r#"
             pub fn test«(»"Test argument"«)» {
                 another_test(1, 2, 3);
             }
-        "#});
+        "#},
+        );
 
         cx.set_state(indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, ˇ2, 3);
             }
         "#});
-        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights(
+            HighlightKey::MatchingBracket,
+            indoc! {r#"
             pub fn test("Test argument") {
                 another_test«(»1, 2, 3«)»;
             }
-        "#});
+        "#},
+        );
 
         cx.set_state(indoc! {r#"
             pub fn test("Test argument") {
                 anotherˇ_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights(
+            HighlightKey::MatchingBracket,
+            indoc! {r#"
             pub fn test("Test argument") «{»
                 another_test(1, 2, 3);
             «}»
-        "#});
+        "#},
+        );
 
         // positioning outside of brackets removes highlight
         cx.set_state(indoc! {r#"
@@ -152,11 +160,14 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights(
+            HighlightKey::MatchingBracket,
+            indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, 2, 3);
             }
-        "#});
+        "#},
+        );
 
         // non empty selection dismisses highlight
         cx.set_state(indoc! {r#"
@@ -164,10 +175,13 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights(
+            HighlightKey::MatchingBracket,
+            indoc! {r#"
             pub fn test«("Test argument") {
                 another_test(1, 2, 3);
             }
-        "#});
+        "#},
+        );
     }
 }

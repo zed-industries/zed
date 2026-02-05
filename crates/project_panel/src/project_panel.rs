@@ -23,9 +23,9 @@ use gpui::{
     DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
     FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
+    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
+    deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
     uniform_list,
 };
 use language::DiagnosticSeverity;
@@ -58,10 +58,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
+    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
+    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
+    WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -286,6 +286,8 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
+        /// Collapses the selected entry and its children in the project tree.
+        CollapseSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
         /// Creates a new directory.
@@ -304,6 +306,8 @@ actions!(
         Cut,
         /// Pastes the previously cut or copied item.
         Paste,
+        /// Downloads the selected remote file
+        DownloadFromRemote,
         /// Renames the selected file or directory.
         Rename,
         /// Opens the selected file in the editor.
@@ -1110,6 +1114,7 @@ impl ProjectPanel {
                     .is_some()
             };
 
+            let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
@@ -1160,6 +1165,10 @@ impl ProjectPanel {
                                 "Paste",
                                 Box::new(Paste),
                             )
+                            .when(is_remote, |menu| {
+                                menu.separator()
+                                    .action("Download...", Box::new(DownloadFromRemote))
+                            })
                             .separator()
                             .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
                             .action(
@@ -1193,9 +1202,23 @@ impl ProjectPanel {
                                     )
                                     .action("Remove from Project", Box::new(RemoveFromProject))
                             })
-                            .when(is_root, |menu| {
-                                menu.separator()
-                                    .action("Collapse All", Box::new(CollapseAllEntries))
+                            .when(is_dir && !is_root, |menu| {
+                                menu.separator().action(
+                                    "Collapse All",
+                                    Box::new(CollapseSelectedEntryAndChildren),
+                                )
+                            })
+                            .when(is_dir && is_root, |menu| {
+                                let entity = entity.clone();
+                                menu.separator().item(
+                                    ContextMenuEntry::new("Collapse All").handler(
+                                        move |window, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.collapse_all_for_root(window, cx);
+                                            });
+                                        },
+                                    ),
+                                )
                             })
                     }
                 })
@@ -1361,7 +1384,52 @@ impl ProjectPanel {
         }
     }
 
-    pub fn collapse_all_entries(
+    fn collapse_selected_entry_and_children(
+        &mut self,
+        _: &CollapseSelectedEntryAndChildren,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let worktree_id = worktree.id();
+            let entry_id = entry.id;
+
+            self.collapse_all_for_entry(worktree_id, entry_id, cx);
+
+            self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
+            cx.notify();
+        }
+    }
+
+    /// Handles "Collapse All" from the context menu when a root directory is selected.
+    /// With a single visible worktree, keeps the root expanded (matching CollapseAllEntries behavior).
+    /// With multiple visible worktrees, collapses the root and all its children.
+    fn collapse_all_for_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+
+        let is_root = worktree.root_entry().map(|e| e.id) == Some(entry.id);
+        if !is_root {
+            return;
+        }
+
+        let worktree_id = worktree.id();
+        let root_id = entry.id;
+
+        if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
+            if self.project.read(cx).visible_worktrees(cx).count() == 1 {
+                expanded_dir_ids.retain(|id| id == &root_id);
+            } else {
+                expanded_dir_ids.clear();
+            }
+        }
+
+        self.update_visible_entries(Some((worktree_id, root_id)), false, false, window, cx);
+        cx.notify();
+    }
+
+    fn collapse_all_entries(
         &mut self,
         _: &CollapseAllEntries,
         window: &mut Window,
@@ -1369,7 +1437,7 @@ impl ProjectPanel {
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
-        let multiple_worktrees = self.project.read(cx).worktrees(cx).count() > 1;
+        let multiple_worktrees = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let project = self.project.read(cx);
 
         self.state
@@ -3016,6 +3084,178 @@ impl ProjectPanel {
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
+    }
+
+    fn download_from_remote(
+        &mut self,
+        _: &DownloadFromRemote,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entries = self.effective_entries();
+        if entries.is_empty() {
+            return;
+        }
+
+        let project = self.project.read(cx);
+
+        // Collect file entries with their worktree_id, path, and relative path for destination
+        // For directories, we collect all files under them recursively
+        let mut files_to_download: Vec<(WorktreeId, Arc<RelPath>, PathBuf)> = Vec::new();
+
+        for selected in entries.iter() {
+            let Some(worktree) = project.worktree_for_id(selected.worktree_id, cx) else {
+                continue;
+            };
+            let worktree = worktree.read(cx);
+            let Some(entry) = worktree.entry_for_id(selected.entry_id) else {
+                continue;
+            };
+
+            if entry.is_file() {
+                // Single file: use just the filename
+                let filename = entry
+                    .path
+                    .file_name()
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                files_to_download.push((
+                    selected.worktree_id,
+                    entry.path.clone(),
+                    PathBuf::from(filename),
+                ));
+            } else if entry.is_dir() {
+                // Directory: collect all files recursively, preserving relative paths
+                let dir_name = entry
+                    .path
+                    .file_name()
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                let base_path = entry.path.clone();
+
+                // Use traverse_from_path to iterate all entries under this directory
+                let mut traversal = worktree.traverse_from_path(true, true, true, &entry.path);
+                while let Some(child_entry) = traversal.entry() {
+                    // Stop when we're no longer under the directory
+                    if !child_entry.path.starts_with(&base_path) {
+                        break;
+                    }
+
+                    if child_entry.is_file() {
+                        // Calculate relative path from the directory root
+                        let relative_path = child_entry
+                            .path
+                            .strip_prefix(&base_path)
+                            .map(|p| PathBuf::from(dir_name.clone()).join(p.as_unix_str()))
+                            .unwrap_or_else(|_| {
+                                PathBuf::from(
+                                    child_entry
+                                        .path
+                                        .file_name()
+                                        .map(str::to_string)
+                                        .unwrap_or_default(),
+                                )
+                            });
+                        files_to_download.push((
+                            selected.worktree_id,
+                            child_entry.path.clone(),
+                            relative_path,
+                        ));
+                    }
+                    traversal.advance();
+                }
+            }
+        }
+
+        if files_to_download.is_empty() {
+            return;
+        }
+
+        let total_files = files_to_download.len();
+        let workspace = self.workspace.clone();
+
+        let destination_dir = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Download".into()),
+        });
+
+        let fs = self.fs.clone();
+        let notification_id =
+            workspace::notifications::NotificationId::Named("download-progress".into());
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(mut paths))) = destination_dir.await {
+                if let Some(dest_dir) = paths.pop() {
+                    // Show initial toast
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!("Downloading 0/{} files...", total_files),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+
+                    for (index, (worktree_id, entry_path, relative_path)) in
+                        files_to_download.into_iter().enumerate()
+                    {
+                        // Update progress toast
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_toast(
+                                    workspace::Toast::new(
+                                        notification_id.clone(),
+                                        format!(
+                                            "Downloading {}/{} files...",
+                                            index + 1,
+                                            total_files
+                                        ),
+                                    ),
+                                    cx,
+                                );
+                            })
+                            .ok();
+
+                        let destination_path = dest_dir.join(&relative_path);
+
+                        // Create parent directories if needed
+                        if let Some(parent) = destination_path.parent() {
+                            if !parent.exists() {
+                                fs.create_dir(parent).await.log_err();
+                            }
+                        }
+
+                        let download_task = this.update(cx, |this, cx| {
+                            let project = this.project.clone();
+                            project.update(cx, |project, cx| {
+                                project.download_file(worktree_id, entry_path, destination_path, cx)
+                            })
+                        });
+                        if let Ok(task) = download_task {
+                            task.await.log_err();
+                        }
+                    }
+
+                    // Show completion toast
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!("Downloaded {} files", total_files),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
@@ -6039,6 +6279,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
@@ -6073,6 +6314,7 @@ impl Render for ProjectPanel {
                 })
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
+                        .on_action(cx.listener(Self::download_from_remote))
                 })
                 .track_focus(&self.focus_handle(cx))
                 .child(

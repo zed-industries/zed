@@ -145,7 +145,7 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        self.spawn_with_priority(Priority::default(), future)
+        self.spawn_with_priority(Priority::default(), future.boxed())
     }
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
@@ -409,7 +409,7 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        Task::from_scheduler(self.inner.spawn(future))
+        Task::from_scheduler(self.inner.spawn(future.boxed_local()))
     }
 
     /// Enqueues the given Task to run on the main thread with the given priority.

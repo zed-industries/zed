@@ -1,4 +1,4 @@
-use crate::acp::AcpThreadView;
+use crate::acp::AcpServerView;
 use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
@@ -843,7 +843,7 @@ impl Render for AcpThreadHistory {
 #[derive(IntoElement)]
 pub struct AcpHistoryEntryElement {
     entry: AgentSessionInfo,
-    thread_view: WeakEntity<AcpThreadView>,
+    thread_view: WeakEntity<AcpServerView>,
     selected: bool,
     hovered: bool,
     supports_delete: bool,
@@ -851,7 +851,7 @@ pub struct AcpHistoryEntryElement {
 }
 
 impl AcpHistoryEntryElement {
-    pub fn new(entry: AgentSessionInfo, thread_view: WeakEntity<AcpThreadView>) -> Self {
+    pub fn new(entry: AgentSessionInfo, thread_view: WeakEntity<AcpServerView>) -> Self {
         Self {
             entry,
             thread_view,
