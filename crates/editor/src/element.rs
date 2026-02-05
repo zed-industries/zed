@@ -9574,16 +9574,11 @@ impl Element for EditorElement {
                         ) {
                             snapshot
                         } else {
-                            let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
-                            let wrap_width = match editor.soft_wrap_mode(cx) {
-                                SoftWrap::GitDiff => None,
-                                SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
-                                SoftWrap::EditorWidth => Some(editor_width),
-                                SoftWrap::Column(column) => Some(wrap_width_for(column)),
-                                SoftWrap::Bounded(column) => {
-                                    Some(editor_width.min(wrap_width_for(column)))
-                                }
-                            };
+                            let wrap_width = calculate_wrap_width(
+                                editor.soft_wrap_mode(cx),
+                                editor_width,
+                                em_advance,
+                            );
 
                             if editor.set_wrap_width(wrap_width, cx) {
                                 editor.snapshot(window, cx)
@@ -12081,6 +12076,24 @@ pub fn register_action<T: Action>(
     })
 }
 
+/// Shared between `prepaint` and `compute_auto_height_layout` to ensure
+/// both full and auto-height editors compute wrap widths consistently.
+fn calculate_wrap_width(
+    soft_wrap: SoftWrap,
+    editor_width: Pixels,
+    em_width: Pixels,
+) -> Option<Pixels> {
+    let wrap_width_for = |column: u32| (column as f32 * em_width).ceil();
+
+    match soft_wrap {
+        SoftWrap::GitDiff => None,
+        SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
+        SoftWrap::EditorWidth => Some(editor_width),
+        SoftWrap::Column(column) => Some(wrap_width_for(column)),
+        SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
+    }
+}
+
 fn compute_auto_height_layout(
     editor: &mut Editor,
     min_lines: usize,
@@ -12115,9 +12128,8 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None)
-        && editor.set_wrap_width(Some(editor_width), cx)
-    {
+    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width);
+    if wrap_width.is_some() && editor.set_wrap_width(wrap_width, cx) {
         snapshot = editor.snapshot(window, cx);
     }
 
@@ -13275,5 +13287,40 @@ mod tests {
         let k = line_height / result;
         assert!(k - k.round() < 0.0000001); // approximately integer
         assert!((k.round() as u32).is_multiple_of(2));
+    }
+
+    #[test]
+    fn test_calculate_wrap_width() {
+        let editor_width = px(800.0);
+        let em_width = px(8.0);
+
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::GitDiff, editor_width, em_width),
+            None,
+        );
+
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::None, editor_width, em_width),
+            Some(px((MAX_LINE_LEN as f32 / 2.0 * 8.0).ceil())),
+        );
+
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::EditorWidth, editor_width, em_width),
+            Some(px(800.0)),
+        );
+
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::Column(72), editor_width, em_width),
+            Some(px((72.0 * 8.0_f32).ceil())),
+        );
+
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::Bounded(72), editor_width, em_width),
+            Some(px((72.0 * 8.0_f32).ceil())),
+        );
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
+            Some(px(400.0)),
+        );
     }
 }
