@@ -1,6 +1,8 @@
 #[cfg(debug_assertions)]
 mod div_inspector;
 #[cfg(debug_assertions)]
+mod inline_inspector;
+#[cfg(debug_assertions)]
 mod inspector;
 
 #[cfg(debug_assertions)]
