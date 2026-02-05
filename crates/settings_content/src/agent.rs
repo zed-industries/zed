@@ -553,8 +553,9 @@ pub struct ToolPermissionsContent {
     pub default: Option<ToolPermissionMode>,
 
     /// Per-tool permission rules.
-    /// Keys: terminal, edit_file, delete_path, move_path, create_directory,
-    ///       save_file, fetch, web_search
+    /// Keys are tool names (e.g. terminal, edit_file, fetch) including MCP
+    /// tools (e.g. mcp:server_name:tool_name). Any tool name is accepted;
+    /// even tools without meaningful text input can have a `default` set.
     #[serde(default)]
     pub tools: HashMap<Arc<str>, ToolRulesContent>,
 }
