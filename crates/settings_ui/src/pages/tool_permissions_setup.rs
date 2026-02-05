@@ -81,9 +81,6 @@ pub(crate) fn render_tool_permissions_setup_page(
         .map(|(i, tool)| render_tool_list_item(settings_window, tool, i, window, cx))
         .collect();
 
-    let page_description =
-        "Configure regex patterns to control which tool actions require confirmation.";
-
     let settings = AgentSettings::get_global(cx);
     let global_default = settings.tool_permissions.default;
 
@@ -114,12 +111,6 @@ pub(crate) fn render_tool_permissions_setup_page(
         .pb_16()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
-        .child(Label::new("Tool Permission Rules").size(LabelSize::Large))
-        .child(
-            Label::new(page_description)
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
         .child(
             v_flex()
                 .mt_2()
