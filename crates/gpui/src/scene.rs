@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Background, Bounds, ContentMask,
-    Corners, Edges, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
+    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
@@ -46,7 +46,7 @@ pub mod test_scene {
     ///
     /// When used as `Diagnostic<()>`, this matches the untyped/legacy diagnostic API.
     #[derive(Debug, Clone)]
-    pub struct Diagnostic<T = ()> {
+    pub struct Diagnostic<T> {
         /// A stable name that test code can filter by.
         pub name: SharedString,
         /// Bounds in logical pixels (not scaled).
