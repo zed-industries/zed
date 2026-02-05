@@ -388,7 +388,11 @@ async fn test_toggle_unique_deduplicates_files_by_path(cx: &mut gpui::TestAppCon
     let tab_switcher = open_tab_switcher_unique(&workspace, cx);
 
     tab_switcher.read_with(cx, |picker, _cx| {
-        assert_eq!(picker.delegate.matches.len(), 2, "should show 2 unique files despite 3 tabs");
+        assert_eq!(
+            picker.delegate.matches.len(),
+            2,
+            "should show 2 unique files despite 3 tabs"
+        );
     });
 }
 
@@ -438,7 +442,11 @@ async fn test_toggle_unique_clones_files_to_current_pane(cx: &mut gpui::TestAppC
             .expect("pane 2 should have editor")
     });
 
-    assert_ne!(editor_1.entity_id(), editor_2.entity_id(), "should clone to new instance");
+    assert_ne!(
+        editor_1.entity_id(),
+        editor_2.entity_id(),
+        "should clone to new instance"
+    );
 }
 
 #[gpui::test]
@@ -524,7 +532,10 @@ async fn test_toggle_unique_closes_file_in_all_panes(cx: &mut gpui::TestAppConte
     cx.run_until_parked();
 
     for pane in &panes {
-        assert_eq!(pane.read_with(cx, |pane, _| pane.items_len()), 0, "all panes should be empty");
+        assert_eq!(
+            pane.read_with(cx, |pane, _| pane.items_len()),
+            0,
+            "all panes should be empty"
+        );
     }
 }
-

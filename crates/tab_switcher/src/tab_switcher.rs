@@ -585,7 +585,9 @@ impl TabSwitcherDelegate {
             return;
         };
 
-        if self.is_unique && let Some(project_path) = tab_match.item.project_path(cx) {
+        if self.is_unique
+            && let Some(project_path) = tab_match.item.project_path(cx)
+        {
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
