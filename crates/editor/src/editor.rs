@@ -26418,6 +26418,8 @@ pub trait SemanticsProvider {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
+
     fn document_highlights(
         &self,
         buffer: &Entity<Buffer>,
@@ -26941,6 +26943,14 @@ impl SemanticsProvider for Entity<Project> {
 
             buffer.update(cx, |buffer, cx| {
                 project.any_language_server_supports_inlay_hints(buffer, cx)
+            })
+        })
+    }
+
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+        self.update(cx, |project, cx| {
+            buffer.update(cx, |buffer, cx| {
+                project.any_language_server_supports_semantic_tokens(buffer, cx)
             })
         })
     }

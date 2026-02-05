@@ -3,7 +3,7 @@ use std::{collections::hash_map, sync::Arc, time::Duration};
 use collections::HashSet;
 use futures::future::join_all;
 use gpui::{
-    Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
+    App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools as _;
 use language::language_settings::language_settings;
@@ -22,6 +22,21 @@ use crate::{
 };
 
 impl Editor {
+    pub fn supports_semantic_tokens(&self, cx: &mut App) -> bool {
+        let Some(provider) = self.semantics_provider.as_ref() else {
+            return false;
+        };
+
+        let mut supports = false;
+        self.buffer().update(cx, |this, cx| {
+            this.for_each_buffer(|buffer| {
+                supports |= provider.supports_semantic_tokens(buffer, cx);
+            });
+        });
+
+        supports
+    }
+
     pub fn semantic_highlights_enabled(&self) -> bool {
         self.semantic_tokens_enabled
     }
@@ -211,7 +226,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
     all_excerpts: &'a [multi_buffer::ExcerptId],
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
-    cx: &'a gpui::App,
+    cx: &'a App,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
     buffer_tokens.iter().filter_map(|token| {
         let multi_buffer_start = all_excerpts
