@@ -874,9 +874,8 @@ impl Item for ProjectDiff {
         Some("Project Diff Opened")
     }
 
-    fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        // TODO(split-diff) SplitEditor should be searchable
-        Some(Box::new(self.editor.read(cx).rhs_editor().clone()))
+    fn as_searchable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
