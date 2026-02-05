@@ -2806,7 +2806,7 @@ mod tests {
             ),
         );
 
-        // Case 9: Graceful fallback when tool_permissions is not an object (null)
+        // Case 9: When tool_permissions is null, replace it so always_allow is preserved
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -2824,7 +2824,9 @@ mod tests {
                 &r#"
                 {
                     "agent": {
-                        "tool_permissions": null
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
                     }
                 }
                 "#
