@@ -547,11 +547,6 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
                         .when(pattern.is_overridden, |this| this.strikethrough()),
                 )
                 .child(
-                    Icon::new(IconName::Dash)
-                        .size(IconSize::Small)
-                        .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.4))),
-                )
-                .child(
                     Label::new(type_label)
                         .size(LabelSize::XSmall)
                         .color(type_color)
