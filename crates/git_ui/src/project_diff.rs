@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
+    Addon, DiffViewStyle, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -280,7 +280,7 @@ impl ProjectDiff {
         });
 
         let editor = cx.new(|cx| {
-            let diff_display_editor = SplittableEditor::new_unsplit(
+            let mut diff_display_editor = SplittableEditor::new_unsplit(
                 multibuffer.clone(),
                 project.clone(),
                 workspace.clone(),
@@ -312,6 +312,9 @@ impl ProjectDiff {
                     }
                 }
             });
+            if EditorSettings::get_global(cx).diff_view_style == DiffViewStyle::SideBySide {
+                diff_display_editor.split(&Default::default(), window, cx);
+            }
             diff_display_editor
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);

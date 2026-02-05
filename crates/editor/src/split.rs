@@ -259,7 +259,7 @@ impl FeatureFlag for SplitDiffFeatureFlag {
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
-struct SplitDiff;
+pub struct SplitDiff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
@@ -395,7 +395,7 @@ impl SplittableEditor {
         }
     }
 
-    fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
         if !cx.has_flag::<SplitDiffFeatureFlag>() {
             return;
         }
