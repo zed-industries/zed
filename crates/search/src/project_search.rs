@@ -1485,7 +1485,7 @@ impl ProjectSearchView {
         } else {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx);
+                editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
             });
         }
 
