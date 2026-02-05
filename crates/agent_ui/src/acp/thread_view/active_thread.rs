@@ -1,5 +1,5 @@
 use gpui::List;
-use settings::{LanguageModelSelection, update_settings_file};
+use settings::update_settings_file;
 
 use super::*;
 

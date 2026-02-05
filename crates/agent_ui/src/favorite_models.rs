@@ -9,7 +9,7 @@ fn language_model_to_selection(model: &Arc<dyn LanguageModel>) -> LanguageModelS
     LanguageModelSelection {
         provider: model.provider_id().to_string().into(),
         model: model.id().0.to_string(),
-        enable_thinking: model.supports_thinking(),
+        enable_thinking: false,
     }
 }
 
