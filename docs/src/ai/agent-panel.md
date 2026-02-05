@@ -173,15 +173,15 @@ To delete a custom profile, open the Agent Profile modal, select the profile you
 
 Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior:
 
-- `"confirm"` (default) - Prompts for approval before running any tool action
-- `"allow"` - Auto-approves tool actions without prompting
-- `"deny"` - Blocks all tool actions
+- `"confirm"` (default) — Prompts for approval before running any tool action
+- `"allow"` — Auto-approves tool actions without prompting
+- `"deny"` — Blocks all tool actions
 
 You can change this in either your `settings.json` or via the Agent Panel's settings view.
 
-Even with `default: "allow"`, you can configure per-tool rules using `always_deny` and `always_confirm` patterns to maintain safety guardrails for specific commands. For example, you can auto-approve most actions while still requiring confirmation for `sudo` commands.
+For more granular control, you can configure per-tool permission rules using regex patterns to auto-approve trusted actions, block dangerous ones, or always require confirmation for sensitive operations. See [Tool Permissions](./tool-permissions.md) for details.
 
-You can also give more granular permissions through the dropdown that appears in the UI whenever the agent requests authorization to run a tool call.
+When the agent requests permission for an action, the confirmation dialog includes options to allow or deny once, as well as "Always allow" and "Always deny" options that automatically add the appropriate pattern to your settings.
 
 ### Model Support {#model-support}
 

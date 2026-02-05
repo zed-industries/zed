@@ -13,6 +13,7 @@
 - [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [Tool Permissions](./ai/tool-permissions.md)
   - [External Agents](./ai/external-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)

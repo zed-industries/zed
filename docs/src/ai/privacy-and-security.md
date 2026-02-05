@@ -12,6 +12,8 @@ Zed, including AI features, works without sharing data with us and without authe
 
 ## Documentation
 
+- [Tool Permissions](./tool-permissions.md): Configure granular rules to control which agent actions are auto-approved, blocked, or require confirmation.
+
 - [Worktree trust](../worktree-trust.md): How Zed opens files and directories in restricted mode.
 
 - [Telemetry](../telemetry.md): How Zed collects general telemetry data.

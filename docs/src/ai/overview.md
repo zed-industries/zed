@@ -20,6 +20,8 @@ Zed integrates AI throughout the editor: agentic coding, inline transformations,
 
 - [Tools](./tools.md): The built-in capabilities agents use: file operations, terminal commands, web search.
 
+- [Tool Permissions](./tool-permissions.md): Configure granular permission rules for agent tool actions.
+
 - [Model Context Protocol](./mcp.md): Extend agents with custom tools via MCP servers.
 
 - [Inline Assistant](./inline-assistant.md): Transform selected code or terminal output with `ctrl-enter`.
