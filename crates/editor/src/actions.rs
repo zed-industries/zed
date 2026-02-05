@@ -858,6 +858,12 @@ actions!(
         ToggleSoftWrap,
         /// Toggles the tab bar display.
         ToggleTabBar,
+        /// Toggles the file filters panel in multibuffer views.
+        ToggleMultibufferFilters,
+        /// Focuses the include filter input in multibuffer views.
+        FocusMultibufferIncludeFilter,
+        /// Focuses the exclude filter input in multibuffer views.
+        FocusMultibufferExcludeFilter,
         /// Transposes characters around cursor.
         Transpose,
         /// Undoes the last edit.

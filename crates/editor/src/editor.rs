@@ -32,6 +32,8 @@ mod lsp_colors;
 mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
+mod multibuffer_filter;
+pub mod multibuffer_filter_bar;
 mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
@@ -76,6 +78,8 @@ pub use multi_buffer::{
     ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferSnapshot, PathKey, RowInfo, ToOffset, ToPoint,
 };
+pub use multibuffer_filter::FilterableMultibufferState;
+pub use multibuffer_filter_bar::MultibufferFilterBar;
 pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
@@ -339,6 +343,25 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file_horizontal);
             workspace.register_action(Editor::cancel_language_server_work);
             workspace.register_action(Editor::toggle_focus);
+
+            register_multibuffer_filter_action(
+                workspace,
+                |filter_bar, _: &ToggleMultibufferFilters, window, cx| {
+                    filter_bar.toggle_filters(window, cx);
+                },
+            );
+            register_multibuffer_filter_action(
+                workspace,
+                |filter_bar, _: &FocusMultibufferIncludeFilter, window, cx| {
+                    filter_bar.focus_include_editor(window, cx);
+                },
+            );
+            register_multibuffer_filter_action(
+                workspace,
+                |filter_bar, _: &FocusMultibufferExcludeFilter, window, cx| {
+                    filter_bar.focus_exclude_editor(window, cx);
+                },
+            );
         },
     )
     .detach();
@@ -382,6 +405,35 @@ pub fn init(cx: &mut App) {
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
+}
+
+fn register_multibuffer_filter_action<A: Action>(
+    workspace: &mut Workspace,
+    callback: fn(&mut MultibufferFilterBar, &A, &mut Window, &mut Context<MultibufferFilterBar>),
+) {
+    workspace.register_action(move |workspace, action: &A, window, cx| {
+        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+            cx.propagate();
+            return;
+        }
+
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                if let Some(filter_bar) = toolbar.item_of_type::<MultibufferFilterBar>() {
+                    filter_bar.update(cx, |filter_bar, cx| {
+                        if filter_bar.has_filterable_editor() {
+                            callback(filter_bar, action, window, cx);
+                            cx.notify();
+                        } else {
+                            cx.propagate();
+                        }
+                    });
+                } else {
+                    cx.propagate();
+                }
+            });
+        })
+    });
 }
 
 pub trait DiagnosticRenderer {
@@ -1345,6 +1397,7 @@ pub struct Editor {
     outline_symbols: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
+    pub filterable_state: Option<Entity<FilterableMultibufferState>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -2600,6 +2653,7 @@ impl Editor {
             outline_symbols: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
+            filterable_state: None,
         };
 
         if is_minimap {
@@ -18524,6 +18578,34 @@ impl Editor {
         }))
     }
 
+    /// Rebuilds the multibuffer from a new set of locations.
+    /// Used by the filter bar to update the visible locations without re-querying the LSP.
+    pub fn rebuild_multibuffer_from_locations(
+        &mut self,
+        locations: HashMap<Entity<Buffer>, Vec<Range<Point>>>,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer.update(cx, |multibuffer, cx| {
+            multibuffer.clear(cx);
+
+            for (buffer, mut ranges_for_buffer) in locations {
+                ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+                multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer.clone(),
+                    ranges_for_buffer,
+                    multibuffer_context_lines(cx),
+                    cx,
+                );
+            }
+
+            multibuffer.set_title(title, cx);
+        });
+
+        cx.notify();
+    }
+
     /// Opens a multibuffer with the given project locations in it.
     pub fn open_locations_in_multibuffer(
         workspace: &mut Workspace,
@@ -18539,6 +18621,13 @@ impl Editor {
             log::error!("bug: open_locations_in_multibuffer called with empty list of locations");
             return None;
         }
+
+        // Clone locations for filterable state before consuming in the loop
+        let locations_for_filter: HashMap<Entity<Buffer>, Vec<Range<Point>>> = locations
+            .iter()
+            .map(|(buffer, ranges)| (buffer.clone(), ranges.clone()))
+            .collect();
+        let title_for_filter = title.clone();
 
         let capability = workspace.project().read(cx).capability();
         let mut ranges = <Vec<Range<Anchor>>>::new();
@@ -18591,6 +18680,22 @@ impl Editor {
                 editor
             })
         });
+
+        // Store filterable state for the filter bar (only for new editors)
+        if !was_existing {
+            let editor_weak = editor.downgrade();
+            let filterable_state = cx.new(|cx| {
+                FilterableMultibufferState::new(
+                    locations_for_filter,
+                    title_for_filter,
+                    editor_weak,
+                    cx,
+                )
+            });
+            editor.update(cx, |editor, _cx| {
+                editor.filterable_state = Some(filterable_state);
+            });
+        }
         editor.update(cx, |editor, cx| match multibuffer_selection_mode {
             MultibufferSelectionMode::First => {
                 if let Some(first_range) = ranges.first() {
