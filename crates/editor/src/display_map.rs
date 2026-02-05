@@ -230,7 +230,7 @@ pub struct DisplayMap {
 // test change
 
 pub(crate) struct Companion {
-    pub(crate) rhs_display_map_id: EntityId,
+    rhs_display_map_id: EntityId,
     rhs_folded_buffers: HashSet<BufferId>,
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
     lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
@@ -238,8 +238,8 @@ pub(crate) struct Companion {
     lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
     lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
-    pub(crate) rhs_custom_blocks_to_lhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
-    pub(crate) lhs_custom_blocks_to_rhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
+    rhs_custom_blocks_to_lhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
+    lhs_custom_blocks_to_rhs_custom_blocks: HashMap<CustomBlockId, CustomBlockId>,
 }
 
 impl Companion {

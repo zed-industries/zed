@@ -1470,7 +1470,6 @@ impl BlockMap {
         companion_snapshot: &MultiBufferSnapshot,
         companion: &mut Companion,
     ) {
-        use gpui::{Element, InteractiveElement, Styled, div, pattern_slash, white};
         let their_anchor = block.placement.start();
         let their_point = their_anchor.to_point(companion_snapshot);
         let my_patches = companion.convert_rows_to_companion(
@@ -1489,17 +1488,13 @@ impl BlockMap {
             height: Some(height),
             style: BlockStyle::Sticky,
             render: Arc::new(move |cx| {
-                div()
-                    .id(cx.block_id)
-                    .w_full()
-                    .h(Pixels::from(cx.line_height * cx.height as f32))
-                    .bg(pattern_slash(white(), 8.0, 8.0))
-                    // .bg(pattern_slash(
-                    //     cx.theme().colors().panel_background,
-                    //     8.0,
-                    //     8.0,
-                    // ))
-                    .into_any()
+                crate::EditorElement::render_spacer_block(
+                    cx.block_id,
+                    cx.height,
+                    cx.line_height,
+                    cx.window,
+                    cx.app,
+                )
             }),
             priority: 0,
         };
