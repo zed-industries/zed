@@ -6077,7 +6077,12 @@ impl EditorElement {
         }
     }
 
-    fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_gutter_diff_hunks(
+        layout: &mut EditorLayout,
+        split_side: Option<SplitSide>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -6104,37 +6109,37 @@ impl EditorElement {
                         status,
                         display_row_range,
                         ..
-                    } => hitbox.as_ref().map(|hunk_hitbox| match status.kind {
-                        DiffHunkStatusKind::Added => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_added,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Modified => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_modified,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
-                            hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_deleted,
-                            Corners::all(px(0.)),
-                            *status,
-                        ),
-                        DiffHunkStatusKind::Deleted => (
-                            Bounds::new(
-                                point(
-                                    hunk_hitbox.origin.x - hunk_hitbox.size.width,
-                                    hunk_hitbox.origin.y,
+                    } => hitbox.as_ref().map(|hunk_hitbox| {
+                        let color = match split_side {
+                            Some(SplitSide::Left) => cx.theme().colors().version_control_deleted,
+                            Some(SplitSide::Right) => cx.theme().colors().version_control_added,
+                            None => match status.kind {
+                                DiffHunkStatusKind::Added => {
+                                    cx.theme().colors().version_control_added
+                                }
+                                DiffHunkStatusKind::Modified => {
+                                    cx.theme().colors().version_control_modified
+                                }
+                                DiffHunkStatusKind::Deleted => {
+                                    cx.theme().colors().version_control_deleted
+                                }
+                            },
+                        };
+                        match status.kind {
+                            DiffHunkStatusKind::Deleted if display_row_range.is_empty() => (
+                                Bounds::new(
+                                    point(
+                                        hunk_hitbox.origin.x - hunk_hitbox.size.width,
+                                        hunk_hitbox.origin.y,
+                                    ),
+                                    size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
                                 ),
-                                size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
+                                color,
+                                Corners::all(1. * line_height),
+                                *status,
                             ),
-                            cx.theme().colors().version_control_deleted,
-                            Corners::all(1. * line_height),
-                            *status,
-                        ),
+                            _ => (hunk_hitbox.bounds, color, Corners::all(px(0.)), *status),
+                        }
                     }),
                 };
 
@@ -6320,8 +6325,8 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter && self.split_side.is_none() {
-            Self::paint_gutter_diff_hunks(layout, window, cx)
+        if show_git_gutter {
+            Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;

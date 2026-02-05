@@ -6807,6 +6807,10 @@ impl MultiBufferSnapshot {
         self.diffs.get(&buffer_id).map(|diff| &diff.diff)
     }
 
+    pub fn all_diff_hunks_expanded(&self) -> bool {
+        self.all_diff_hunks_expanded
+    }
+
     /// Visually annotates a position or range with the `Debug` representation of a value. The
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]

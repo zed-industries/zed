@@ -27095,12 +27095,20 @@ impl EditorSnapshot {
         self.buffer_snapshot()
             .diff_hunks_in_range(buffer_start..buffer_end)
             .filter_map(|hunk| {
-                if folded_buffers.contains(&hunk.buffer_id) {
+                if folded_buffers.contains(&hunk.buffer_id)
+                    || (hunk.row_range.is_empty() && self.buffer.all_diff_hunks_expanded())
+                {
                     return None;
                 }
 
                 let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
-                let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
+                let hunk_end_point = if hunk.row_range.end > hunk.row_range.start {
+                    let last_row = MultiBufferRow(hunk.row_range.end.0 - 1);
+                    let line_len = self.buffer_snapshot().line_len(last_row);
+                    Point::new(last_row.0, line_len)
+                } else {
+                    Point::new(hunk.row_range.end.0, 0)
+                };
 
                 let hunk_display_start = self.point_to_display_point(hunk_start_point, Bias::Left);
                 let hunk_display_end = self.point_to_display_point(hunk_end_point, Bias::Right);
@@ -27111,7 +27119,7 @@ impl EditorSnapshot {
                     }
                 } else {
                     let mut end_row = hunk_display_end.row();
-                    if hunk_display_end.column() > 0 {
+                    if hunk.row_range.end > hunk.row_range.start || hunk_display_end.column() > 0 {
                         end_row.0 += 1;
                     }
                     let is_created_file = hunk.is_created_file();
