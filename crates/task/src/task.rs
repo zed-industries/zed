@@ -318,7 +318,22 @@ pub struct TaskContext {
 }
 
 /// A shared reference to a [`TaskContext`], used to avoid cloning the context multiple times.
-pub type SharedTaskContext = Arc<TaskContext>;
+#[derive(Clone, Debug, Default)]
+pub struct SharedTaskContext(Arc<TaskContext>);
+
+impl std::ops::Deref for SharedTaskContext {
+    type Target = TaskContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<TaskContext> for SharedTaskContext {
+    fn from(context: TaskContext) -> Self {
+        Self(Arc::new(context))
+    }
+}
 
 /// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.
 #[derive(Clone, Debug)]

@@ -1316,7 +1316,7 @@ mod tests {
             .clone();
 
         inventory.update(cx, |this, _| {
-            this.scenario_scheduled(scenario.clone(), TaskContext::default(), None, None);
+            this.scenario_scheduled(scenario.clone(), SharedTaskContext::default(), None, None);
         });
 
         assert_eq!(

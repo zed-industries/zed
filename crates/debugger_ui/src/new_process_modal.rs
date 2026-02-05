@@ -361,8 +361,11 @@ impl NewProcessModal {
             return;
         };
 
-        let task_context: SharedTaskContext =
-            Arc::new(task_contexts.active_context().cloned().unwrap_or_default());
+        let task_context = task_contexts
+            .active_context()
+            .cloned()
+            .unwrap_or_default()
+            .into();
         let worktree_id = task_contexts.worktree();
         let mode = self.mode;
         cx.spawn_in(window, async move |this, cx| {
@@ -1234,7 +1237,7 @@ impl PickerDelegate for DebugDelegate {
             .as_ref()
             .and_then(|task_contexts| {
                 Some((
-                    Arc::new(task_contexts.active_context().cloned()?),
+                    SharedTaskContext::from(task_contexts.active_context().cloned()?),
                     task_contexts.worktree(),
                 ))
             })
@@ -1360,7 +1363,7 @@ impl PickerDelegate for DebugDelegate {
                 .as_ref()
                 .and_then(|task_contexts| {
                     Some(DebugScenarioContext {
-                        task_context: Arc::new(task_contexts.active_context().cloned()?),
+                        task_context: task_contexts.active_context().cloned()?.into(),
                         active_buffer: None,
                         worktree_id: task_contexts.worktree(),
                     })

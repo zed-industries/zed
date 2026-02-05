@@ -43,11 +43,12 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     .into_iter()
     .collect();
 
-    let task_context: SharedTaskContext = Arc::new(TaskContext {
+    let task_context: SharedTaskContext = TaskContext {
         cwd: None,
         task_variables: test_variables,
         project_env: Default::default(),
-    });
+    }
+    .into();
 
     let home_dir = paths::home_dir();
 
