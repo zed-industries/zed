@@ -46,7 +46,7 @@ fn check_hardcoded_security_rules(
     shell_kind: ShellKind,
 ) -> Option<ToolPermissionDecision> {
     // Currently only terminal tool has hardcoded rules
-    if tool_name != TerminalTool::name() {
+    if tool_name != TerminalTool::NAME {
         return None;
     }
 
@@ -165,7 +165,7 @@ impl ToolPermissionDecision {
         //
         // If parsing fails or the shell syntax is unsupported, always_allow is
         // disabled for this command (we set allow_enabled to false to signal this).
-        if tool_name == TerminalTool::name() {
+        if tool_name == TerminalTool::NAME {
             // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
             // See the doc comment above for the list of compatible/incompatible shells.
             if !shell_kind.supports_posix_chaining() {
@@ -306,7 +306,9 @@ pub fn decide_permission_from_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AgentTool;
     use crate::pattern_extraction::extract_terminal_pattern;
+    use crate::tools::{EditFileTool, TerminalTool};
     use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
     use std::sync::Arc;
 
@@ -332,7 +334,7 @@ mod tests {
     impl PermTest {
         fn new(input: &'static str) -> Self {
             Self {
-                tool: "terminal",
+                tool: TerminalTool::NAME,
                 input,
                 mode: ToolPermissionMode::Confirm,
                 allow: vec![],
@@ -444,7 +446,7 @@ mod tests {
 
     fn no_rules(input: &str, global: bool) -> ToolPermissionDecision {
         ToolPermissionDecision::from_input(
-            "terminal",
+            TerminalTool::NAME,
             input,
             &ToolPermissions {
                 tools: collections::HashMap::default(),
@@ -666,7 +668,7 @@ mod tests {
     fn other_tool_not_affected() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Deny,
                 always_allow: vec![],
@@ -676,7 +678,7 @@ mod tests {
             },
         );
         tools.insert(
-            Arc::from("edit_file"),
+            Arc::from(EditFileTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -688,16 +690,28 @@ mod tests {
         let p = ToolPermissions { tools };
         // With always_allow_tool_actions=true, even default_mode: Deny is overridden
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix),
+            ToolPermissionDecision::from_input(TerminalTool::NAME, "x", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
         // With always_allow_tool_actions=false, default_mode: Deny is respected
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                EditFileTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Allow
         );
     }
@@ -718,7 +732,13 @@ mod tests {
         let p = ToolPermissions { tools };
         // "terminal" should not match "term" rules, so falls back to Confirm (no rules)
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Confirm
         );
     }
@@ -728,7 +748,7 @@ mod tests {
     fn invalid_pattern_blocks() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Allow,
                 always_allow: vec![CompiledRegex::new("echo", false).unwrap()],
@@ -746,12 +766,24 @@ mod tests {
         };
         // With global=true, all checks are bypassed including invalid pattern check
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, true, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "echo hi",
+                &p,
+                true,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Allow
         ));
         // With global=false, invalid patterns block the tool
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "echo hi",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Deny(_)
         ));
     }
@@ -928,7 +960,7 @@ mod tests {
     fn mcp_doesnt_collide_with_builtin() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Deny,
                 always_allow: vec![],
@@ -949,7 +981,13 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
@@ -1035,7 +1073,7 @@ mod tests {
     fn multiple_invalid_patterns_pluralizes_message() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -1057,8 +1095,13 @@ mod tests {
         );
         let p = ToolPermissions { tools };
 
-        let result =
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix);
+        let result = ToolPermissionDecision::from_input(
+            TerminalTool::NAME,
+            "echo hi",
+            &p,
+            false,
+            ShellKind::Posix,
+        );
         match result {
             ToolPermissionDecision::Deny(msg) => {
                 assert!(
