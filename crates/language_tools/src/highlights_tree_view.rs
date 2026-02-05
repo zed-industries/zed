@@ -443,7 +443,7 @@ impl HighlightsTreeView {
 
     fn render_entry(&self, entry: &HighlightEntry, selected: bool, cx: &App) -> Div {
         let colors = cx.theme().colors();
-        let style_preview = render_style_preview(entry.style, cx);
+        let style_preview = render_style_preview(entry.style, selected, cx);
 
         h_flex()
             .gap_1()
@@ -979,7 +979,7 @@ fn format_anchor_range(
     }
 }
 
-fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
+fn render_style_preview(style: HighlightStyle, selected: bool, cx: &App) -> Div {
     let colors = cx.theme().colors();
 
     let display_color = style.color.or(style.background_color);
@@ -987,7 +987,11 @@ fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
     let mut preview = div().px_1().rounded_sm();
 
     if let Some(color) = display_color {
-        preview = preview.bg(color);
+        if selected {
+            preview = preview.border_1().border_color(color).text_color(color);
+        } else {
+            preview = preview.bg(color);
+        }
     } else {
         preview = preview.bg(colors.element_background);
     }
@@ -1016,7 +1020,10 @@ fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
         parts.join(" ")
     };
 
-    preview.child(Label::new(label_text).size(LabelSize::Small))
+    preview.child(Label::new(label_text).size(LabelSize::Small).when_some(
+        display_color.filter(|_| selected),
+        |label, display_color| label.color(Color::Custom(display_color)),
+    ))
 }
 
 fn format_hsla_as_hex(color: Hsla) -> String {
