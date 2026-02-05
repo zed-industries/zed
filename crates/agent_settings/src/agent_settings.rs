@@ -326,6 +326,14 @@ fn compile_regex_rules(
     let mut errors = Vec::new();
 
     for rule in rules {
+        if rule.pattern.is_empty() {
+            errors.push(InvalidRegexPattern {
+                pattern: rule.pattern,
+                rule_type: rule_type.to_string(),
+                error: "empty regex patterns are not allowed".to_string(),
+            });
+            continue;
+        }
         let case_sensitive = rule.case_sensitive.unwrap_or(false);
         match CompiledRegex::try_new(&rule.pattern, case_sensitive) {
             Ok(regex) => compiled.push(regex),
@@ -438,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_rules_default_returns_confirm() {
+    fn test_tool_rules_default_is_none() {
         let default_rules = ToolRules::default();
         assert_eq!(default_rules.default, None);
         assert!(default_rules.always_allow.is_empty());
@@ -553,6 +561,48 @@ mod tests {
         // ToolPermissions helper methods should work
         assert!(permissions.has_invalid_patterns());
         assert_eq!(permissions.invalid_patterns().len(), 2);
+    }
+
+    #[test]
+    fn test_empty_regex_pattern_is_invalid() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_deny": [
+                        { "pattern": "" },
+                        { "pattern": "valid_pattern" }
+                    ],
+                    "always_allow": [
+                        { "case_sensitive": true }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        // Valid patterns should still be compiled
+        assert_eq!(terminal.always_deny.len(), 1);
+        assert!(terminal.always_deny[0].is_match("valid_pattern"));
+
+        // Empty patterns should not be compiled (they would match everything)
+        assert!(terminal.always_allow.is_empty());
+
+        // Both empty patterns should be tracked as invalid
+        assert_eq!(terminal.invalid_patterns.len(), 2);
+        for invalid in &terminal.invalid_patterns {
+            assert_eq!(invalid.pattern, "");
+            assert!(
+                invalid.error.contains("empty"),
+                "error should mention 'empty': {}",
+                invalid.error
+            );
+        }
+
+        assert!(permissions.has_invalid_patterns());
     }
 
     #[test]
