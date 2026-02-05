@@ -290,6 +290,8 @@ MCP tools can also have per-tool defaults using the key format `mcp:server_name:
 
 For MCP tools, only the `default` key is meaningful. Pattern-based rules (`always_allow`, `always_deny`, `always_confirm`) are evaluated against the tool call's title (which is set by the MCP server), not the raw tool input.
 
+> **Note:** For external (MCP/ACP) tools, permission patterns are matched against the tool call's **title** as provided by the server, not the raw tool input. This means pattern matching for external tools is best-effort and depends on the server providing descriptive titles.
+
 ### Single-file Review
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
