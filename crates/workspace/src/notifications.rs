@@ -9,11 +9,13 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
+use telemetry;
 use theme::ThemeSettings;
 
+use std::any::TypeId;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
-use std::{any::TypeId, time::Duration};
+use std::time::Duration;
 use ui::{CopyButton, Tooltip, prelude::*};
 use util::ResultExt;
 
@@ -68,6 +70,85 @@ pub trait Notification:
 
 pub struct SuppressEvent;
 
+#[derive(Clone)]
+struct NotificationTelemetry {
+    notification_type: &'static str,
+    source: &'static str,
+    lsp_name: Option<String>,
+    level: Option<&'static str>,
+    has_actions: bool,
+    notification_id: String,
+    is_auto_dismissing: bool,
+}
+
+impl NotificationTelemetry {
+    fn for_language_server_prompt(prompt: &LanguageServerPrompt, id: &NotificationId) -> Self {
+        let (level, has_actions, lsp_name) = prompt
+            .request
+            .as_ref()
+            .map(|req| {
+                let level = match req.level {
+                    PromptLevel::Critical => "critical",
+                    PromptLevel::Warning => "warning",
+                    PromptLevel::Info => "info",
+                };
+                (
+                    Some(level),
+                    !req.actions.is_empty(),
+                    Some(req.lsp_name.clone()),
+                )
+            })
+            .unwrap_or((None, false, None));
+
+        Self {
+            notification_type: "error",
+            source: "lsp",
+            lsp_name,
+            level,
+            has_actions,
+            notification_id: format!("{:?}", id),
+            is_auto_dismissing: !has_actions,
+        }
+    }
+
+    fn for_error_message_prompt(id: &NotificationId) -> Self {
+        Self {
+            notification_type: "error",
+            source: "system",
+            lsp_name: None,
+            level: Some("critical"),
+            has_actions: false,
+            notification_id: format!("{:?}", id),
+            is_auto_dismissing: false,
+        }
+    }
+
+    fn for_message_notification(id: &NotificationId) -> Self {
+        Self {
+            notification_type: "notification",
+            source: "system",
+            lsp_name: None,
+            level: None,
+            has_actions: false,
+            notification_id: format!("{:?}", id),
+            is_auto_dismissing: false,
+        }
+    }
+
+    fn report(self) {
+        telemetry::event!(
+            "Notification Shown",
+            notification_type = self.notification_type,
+            source = self.source,
+            lsp_name = self.lsp_name,
+            level = self.level,
+            has_actions = self.has_actions,
+            notification_id = self.notification_id,
+            is_auto_dismissing = self.is_auto_dismissing,
+        );
+    }
+}
+
 impl Workspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn notification_ids(&self) -> Vec<NotificationId> {
@@ -84,6 +165,8 @@ impl Workspace {
         cx: &mut Context<Self>,
         build_notification: impl FnOnce(&mut Context<Self>) -> Entity<V>,
     ) {
+        let mut telemetry_data: Option<NotificationTelemetry> = None;
+
         self.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
             let notification = build_notification(cx);
             cx.subscribe(&notification, {
@@ -104,6 +187,11 @@ impl Workspace {
             if let Ok(prompt) =
                 AnyEntity::from(notification.clone()).downcast::<LanguageServerPrompt>()
             {
+                telemetry_data = Some(NotificationTelemetry::for_language_server_prompt(
+                    prompt.read(cx),
+                    &id,
+                ));
+
                 let is_prompt_without_actions = prompt
                     .read(cx)
                     .request
@@ -133,9 +221,24 @@ impl Workspace {
                         });
                     }
                 }
+            } else if AnyEntity::from(notification.clone())
+                .downcast::<ErrorMessagePrompt>()
+                .is_ok()
+            {
+                telemetry_data = Some(NotificationTelemetry::for_error_message_prompt(&id));
+            } else if AnyEntity::from(notification.clone())
+                .downcast::<simple_message_notification::MessageNotification>()
+                .is_ok()
+            {
+                telemetry_data = Some(NotificationTelemetry::for_message_notification(&id));
             }
+
             notification.into()
         });
+
+        if let Some(telemetry) = telemetry_data {
+            telemetry.report();
+        }
     }
 
     /// Shows a notification in this workspace's window. Caller must handle dismiss.
@@ -1005,6 +1108,36 @@ pub fn show_app_notification<V: Notification + 'static>(
     cx: &mut App,
     build_notification: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static + Send + Sync,
 ) {
+    let telemetry_id = format!("{:?}", id);
+    let telemetry_data = if TypeId::of::<V>() == TypeId::of::<ErrorMessagePrompt>() {
+        Some(NotificationTelemetry {
+            notification_type: "error",
+            source: "system",
+            lsp_name: None,
+            level: Some("critical"),
+            has_actions: false,
+            notification_id: telemetry_id,
+            is_auto_dismissing: false,
+        })
+    } else if TypeId::of::<V>() == TypeId::of::<simple_message_notification::MessageNotification>()
+    {
+        Some(NotificationTelemetry {
+            notification_type: "notification",
+            source: "system",
+            lsp_name: None,
+            level: None,
+            has_actions: false,
+            notification_id: telemetry_id,
+            is_auto_dismissing: false,
+        })
+    } else {
+        None
+    };
+
+    if let Some(telemetry) = telemetry_data {
+        telemetry.report();
+    }
+
     // Defer notification creation so that windows on the stack can be returned to GPUI
     cx.defer(move |cx| {
         // Handle dismiss events by removing the notification from all workspaces.
