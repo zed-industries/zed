@@ -20,6 +20,44 @@ use crate::{
 use anyhow::{Context as _, Result};
 use std::sync::OnceLock;
 
+/// Print a summary report of repair results across all examples.
+pub fn print_report(examples: &[Example], confidence_threshold: u8) {
+    let total = examples.len();
+    let mut no_repair_needed = 0;
+    let mut repaired = 0;
+    let mut repair_failed = 0;
+
+    for example in examples {
+        if !needs_repair(example, confidence_threshold) {
+            no_repair_needed += 1;
+            continue;
+        }
+
+        if has_successful_repair(example) {
+            repaired += 1;
+        } else {
+            repair_failed += 1;
+        }
+    }
+
+    let needed_repair = total - no_repair_needed;
+
+    eprintln!();
+    eprintln!("Repair summary ({total} examples):");
+    eprintln!(
+        "  {no_repair_needed}/{total} didn't need repair (confidence > {confidence_threshold})"
+    );
+    if needed_repair > 0 {
+        eprintln!("  {needed_repair}/{total} needed repair:");
+        if repaired > 0 {
+            eprintln!("    {repaired} repaired successfully");
+        }
+        if repair_failed > 0 {
+            eprintln!("    {repair_failed} failed to repair");
+        }
+    }
+}
+
 /// Arguments for the repair command.
 #[derive(Debug, Clone, clap::Args)]
 pub struct RepairArgs {
