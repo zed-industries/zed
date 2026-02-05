@@ -827,7 +827,12 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
@@ -859,7 +864,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -881,7 +886,12 @@ impl Thread {
         parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
@@ -921,7 +931,7 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1061,9 +1071,14 @@ impl Thread {
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = AgentSettings::get_global(cx);
         let profile_id = db_thread
             .profile
-            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+            .unwrap_or_else(|| settings.default_profile.clone());
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1119,8 +1134,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            // TODO: Persist this on the `DbThread`.
-            thinking_enabled: true,
+            // TODO: Should we persist this on the `DbThread`?
+            thinking_enabled: enable_thinking,
             project,
             action_log,
             updated_at: db_thread.updated_at,
