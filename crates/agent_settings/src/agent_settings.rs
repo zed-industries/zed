@@ -417,6 +417,24 @@ mod tests {
     fn test_tool_permissions_empty() {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
+        assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+    }
+
+    #[test]
+    fn test_tool_permissions_explicit_global_default() {
+        let allow_content = ToolPermissionsContent {
+            default: Some(ToolPermissionMode::Allow),
+            tools: Default::default(),
+        };
+        let allow_permissions = compile_tool_permissions(Some(allow_content));
+        assert_eq!(allow_permissions.default, ToolPermissionMode::Allow);
+
+        let deny_content = ToolPermissionsContent {
+            default: Some(ToolPermissionMode::Deny),
+            tools: Default::default(),
+        };
+        let deny_permissions = compile_tool_permissions(Some(deny_content));
+        assert_eq!(deny_permissions.default, ToolPermissionMode::Deny);
     }
 
     #[test]
