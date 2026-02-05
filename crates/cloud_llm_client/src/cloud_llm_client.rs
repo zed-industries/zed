@@ -173,8 +173,6 @@ pub enum EditPredictionRejectReason {
     /// The current prediction was discarded
     #[default]
     Discarded,
-    /// The current prediction was explicitly rejected by the user
-    Rejected,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]

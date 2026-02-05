@@ -334,11 +334,11 @@ impl LspAdapter for GoLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        symbol: &language::Symbol,
+        name: &str,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
+        let (text, filter_range, display_range) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();

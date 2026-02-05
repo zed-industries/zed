@@ -833,7 +833,6 @@ pub struct Symbol {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
-    pub container_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]

@@ -572,11 +572,11 @@ impl LspAdapter for RustLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        symbol: &language::Symbol,
+        name: &str,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let name = &symbol.name;
-        let (prefix, suffix) = match symbol.kind {
+        let (prefix, suffix) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
             lsp::SymbolKind::STRUCT => ("struct ", ";"),
             lsp::SymbolKind::ENUM => ("enum ", "{}"),
@@ -1826,14 +1826,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol(
-                    &language::Symbol {
-                        name: "hello".to_string(),
-                        kind: lsp::SymbolKind::FUNCTION,
-                        container_name: None,
-                    },
-                    &language
-                )
+                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
                 .await,
             Some(CodeLabel::new(
                 "fn hello".to_string(),
@@ -1844,14 +1837,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol(
-                    &language::Symbol {
-                        name: "World".to_string(),
-                        kind: lsp::SymbolKind::TYPE_PARAMETER,
-                        container_name: None,
-                    },
-                    &language
-                )
+                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
                 .await,
             Some(CodeLabel::new(
                 "type World".to_string(),
@@ -1862,14 +1848,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol(
-                    &language::Symbol {
-                        name: "zed".to_string(),
-                        kind: lsp::SymbolKind::PACKAGE,
-                        container_name: None,
-                    },
-                    &language
-                )
+                .label_for_symbol("zed", lsp::SymbolKind::PACKAGE, &language)
                 .await,
             Some(CodeLabel::new(
                 "extern crate zed".to_string(),
@@ -1880,14 +1859,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol(
-                    &language::Symbol {
-                        name: "Variant".to_string(),
-                        kind: lsp::SymbolKind::ENUM_MEMBER,
-                        container_name: None,
-                    },
-                    &language
-                )
+                .label_for_symbol("Variant", lsp::SymbolKind::ENUM_MEMBER, &language)
                 .await,
             Some(CodeLabel::new(
                 "Variant".to_string(),

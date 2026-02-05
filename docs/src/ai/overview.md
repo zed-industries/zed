@@ -1,33 +1,33 @@
 # AI
 
-Zed integrates AI throughout the editor: agentic coding, inline transformations, edit prediction, and direct model conversations.
+Learn how to get started using AI with Zed and all its capabilities.
 
-## Setting Up AI
+## Setting up AI in Zed
 
-- [Configuration](./configuration.md): Connect to Anthropic, OpenAI, Ollama, Google AI, or other LLM providers.
+- [Configuration](./configuration.md): Learn how to set up different language model providers like Anthropic, OpenAI, Ollama, Google AI, and more.
 
-- [External Agents](./external-agents.md): Run Claude Code, Codex, Aider, or other external agents inside Zed.
+- [External Agents](./external-agents.md): Learn how to plug in your favorite agent into Zed.
 
-- [Subscription](./subscription.md): Zed's hosted models and billing.
+- [Subscription](./subscription.md): Learn about Zed's hosted models and other billing-related information.
 
-- [Privacy and Security](./privacy-and-security.md): How Zed handles data when using AI features.
+- [Privacy and Security](./privacy-and-security.md): Understand how Zed handles privacy and security with AI features.
 
 ## Agentic Editing
 
-- [Agent Panel](./agent-panel.md): Chat with AI agents that can read, write, and run code in your project.
+- [Agent Panel](./agent-panel.md): Create and manage interactions with LLM agents.
 
-- [Rules](./rules.md): Define specific instructions for AI behavior.
+- [Rules](./rules.md): How to define rules for AI interactions.
 
-- [Tools](./tools.md): The built-in capabilities agents use: file operations, terminal commands, web search.
+- [Tools](./tools.md): Explore the tools that power Zed's built-in agent.
 
-- [Model Context Protocol](./mcp.md): Extend agents with custom tools via MCP servers.
+- [Model Context Protocol](./mcp.md): Learn about how to configure and use MCP servers.
 
-- [Inline Assistant](./inline-assistant.md): Transform selected code or terminal output with `ctrl-enter`.
+- [Inline Assistant](./inline-assistant.md): Discover how to use AI to generate inline transformations directly within a file or terminal.
 
 ## Edit Prediction
 
-- [Edit Prediction](./edit-prediction.md): AI-powered autocomplete that predicts multi-line edits as you type.
+- [Edit Prediction](./edit-prediction.md): Learn about Zed's AI prediction feature that helps autocomplete your code.
 
 ## Text Threads
 
-- [Text Threads](./text-threads.md): Lightweight conversations with models inside any buffer.
+- [Text Threads](./text-threads.md): Learn about an editor-based interface for interacting with language models.

@@ -11,7 +11,8 @@ When using AI in Zed, you can configure multiple dimensions:
 
 ## Turning AI Off Entirely
 
-To disable all AI features, add the following to your `settings.json`:
+We want to respect users who want to use Zed without interacting with AI whatsoever.
+To do that, add the following key to your `settings.json`:
 
 ```json [settings]
 {
@@ -19,4 +20,4 @@ To disable all AI features, add the following to your `settings.json`:
 }
 ```
 
-See [this blog post](https://zed.dev/blog/disable-ai-features) for background on this option.
+Read [the following blog post](https://zed.dev/blog/disable-ai-features) to learn more about our motivation to promote this, as much as we also encourage users to explore AI-assisted programming.

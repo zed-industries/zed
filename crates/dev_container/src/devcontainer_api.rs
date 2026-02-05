@@ -334,10 +334,6 @@ fn dev_container_cli() -> String {
     "devcontainer.cmd".to_string()
 }
 
-fn dev_container_script() -> String {
-    "devcontainer.js".to_string()
-}
-
 async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
     let mut command = if use_podman {
         util::command::new_smol_command("podman")
@@ -375,7 +371,7 @@ async fn ensure_devcontainer_cli(
             .join("node_modules")
             .join("@devcontainers")
             .join("cli")
-            .join(&dev_container_script());
+            .join(format!("{}.js", &dev_container_cli()));
 
         log::debug!(
             "devcontainer not found in path, using local location: ${}",

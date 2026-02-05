@@ -323,8 +323,8 @@ impl Item for FileDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(cx)
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(

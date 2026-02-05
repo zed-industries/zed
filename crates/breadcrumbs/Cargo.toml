@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 editor.workspace = true
 gpui.workspace = true
+theme.workspace = true
 ui.workspace = true
 workspace.workspace = true
 

@@ -47,8 +47,8 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, pattern_slash, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
 use itertools::Itertools;
@@ -60,7 +60,6 @@ use multi_buffer::{
 };
 
 use edit_prediction_types::EditPredictionGranularity;
-
 use project::{
     DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -4008,11 +4007,11 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .bg(checkerboard(cx.theme().colors().panel_background, {
-                    let target_size = 16.0;
-                    let scale = window.scale_factor();
-                    Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale)
-                }))
+                .bg(pattern_slash(
+                    cx.theme().colors().panel_background,
+                    8.0,
+                    8.0,
+                ))
                 .into_any(),
         };
 
@@ -4072,24 +4071,6 @@ impl EditorElement {
         }
 
         Some((element, final_size, row, x_offset))
-    }
-
-    /// The checkerboard pattern height must be an even factor of the line
-    /// height, so that two consecutive spacer blocks can render contiguously
-    /// without an obvious break in the pattern.
-    fn checkerboard_size(line_height: f32, target_height: f32) -> f32 {
-        let k_approx = line_height / (2.0 * target_height);
-        let k_floor = (k_approx.floor() as u32).max(1);
-        let k_ceil = (k_approx.ceil() as u32).max(1);
-
-        let size_floor = line_height / (2 * k_floor) as f32;
-        let size_ceil = line_height / (2 * k_ceil) as f32;
-
-        if (size_floor - target_height).abs() <= (size_ceil - target_height).abs() {
-            size_floor
-        } else {
-            size_ceil
-        }
     }
 
     fn render_buffer_header(
@@ -4457,6 +4438,7 @@ impl EditorElement {
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         text_hitbox: &Hitbox,
+        style: &EditorStyle,
         relative_line_numbers: RelativeLineNumbers,
         relative_to: Option<DisplayRow>,
         window: &mut Window,
@@ -4466,7 +4448,7 @@ impl EditorElement {
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
 
-        let rows = Self::sticky_headers(self.editor.read(cx), snapshot);
+        let rows = Self::sticky_headers(self.editor.read(cx), snapshot, style, cx);
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
@@ -4535,13 +4517,22 @@ impl EditorElement {
         })
     }
 
-    pub(crate) fn sticky_headers(editor: &Editor, snapshot: &EditorSnapshot) -> Vec<StickyHeader> {
+    pub(crate) fn sticky_headers(
+        editor: &Editor,
+        snapshot: &EditorSnapshot,
+        style: &EditorStyle,
+        cx: &App,
+    ) -> Vec<StickyHeader> {
         let scroll_top = snapshot.scroll_position().y;
 
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        for item in editor.sticky_headers.iter().flatten() {
+        let items = editor
+            .sticky_headers(&snapshot.display_snapshot, style, cx)
+            .unwrap_or_default();
+
+        for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
@@ -4577,7 +4568,7 @@ impl EditorElement {
 
             end_rows.push(end_row);
             rows.push(StickyHeader {
-                item: item.clone(),
+                item,
                 sticky_row,
                 start_point,
                 offset,
@@ -6067,12 +6058,7 @@ impl EditorElement {
         }
     }
 
-    fn paint_gutter_diff_hunks(
-        layout: &mut EditorLayout,
-        split_side: Option<SplitSide>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn paint_gutter_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -6099,37 +6085,37 @@ impl EditorElement {
                         status,
                         display_row_range,
                         ..
-                    } => hitbox.as_ref().map(|hunk_hitbox| {
-                        let color = match split_side {
-                            Some(SplitSide::Left) => cx.theme().colors().version_control_deleted,
-                            Some(SplitSide::Right) => cx.theme().colors().version_control_added,
-                            None => match status.kind {
-                                DiffHunkStatusKind::Added => {
-                                    cx.theme().colors().version_control_added
-                                }
-                                DiffHunkStatusKind::Modified => {
-                                    cx.theme().colors().version_control_modified
-                                }
-                                DiffHunkStatusKind::Deleted => {
-                                    cx.theme().colors().version_control_deleted
-                                }
-                            },
-                        };
-                        match status.kind {
-                            DiffHunkStatusKind::Deleted if display_row_range.is_empty() => (
-                                Bounds::new(
-                                    point(
-                                        hunk_hitbox.origin.x - hunk_hitbox.size.width,
-                                        hunk_hitbox.origin.y,
-                                    ),
-                                    size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
+                    } => hitbox.as_ref().map(|hunk_hitbox| match status.kind {
+                        DiffHunkStatusKind::Added => (
+                            hunk_hitbox.bounds,
+                            cx.theme().colors().version_control_added,
+                            Corners::all(px(0.)),
+                            *status,
+                        ),
+                        DiffHunkStatusKind::Modified => (
+                            hunk_hitbox.bounds,
+                            cx.theme().colors().version_control_modified,
+                            Corners::all(px(0.)),
+                            *status,
+                        ),
+                        DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
+                            hunk_hitbox.bounds,
+                            cx.theme().colors().version_control_deleted,
+                            Corners::all(px(0.)),
+                            *status,
+                        ),
+                        DiffHunkStatusKind::Deleted => (
+                            Bounds::new(
+                                point(
+                                    hunk_hitbox.origin.x - hunk_hitbox.size.width,
+                                    hunk_hitbox.origin.y,
                                 ),
-                                color,
-                                Corners::all(1. * line_height),
-                                *status,
+                                size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
                             ),
-                            _ => (hunk_hitbox.bounds, color, Corners::all(px(0.)), *status),
-                        }
+                            cx.theme().colors().version_control_deleted,
+                            Corners::all(1. * line_height),
+                            *status,
+                        ),
                     }),
                 };
 
@@ -6315,8 +6301,8 @@ impl EditorElement {
                     GitGutterSetting::TrackedFiles
                 )
             });
-        if show_git_gutter {
-            Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
+        if show_git_gutter && self.split_side.is_none() {
+            Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -8050,7 +8036,7 @@ pub(crate) fn render_buffer_header(
     let editor_handle: &dyn ItemHandle = editor;
 
     let breadcrumbs = if is_selected {
-        editor_read.breadcrumbs_inner(cx)
+        editor_read.breadcrumbs_inner(cx.theme(), cx)
     } else {
         None
     };
@@ -9564,11 +9550,16 @@ impl Element for EditorElement {
                         ) {
                             snapshot
                         } else {
-                            let wrap_width = calculate_wrap_width(
-                                editor.soft_wrap_mode(cx),
-                                editor_width,
-                                em_advance,
-                            );
+                            let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
+                            let wrap_width = match editor.soft_wrap_mode(cx) {
+                                SoftWrap::GitDiff => None,
+                                SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
+                                SoftWrap::EditorWidth => Some(editor_width),
+                                SoftWrap::Column(column) => Some(wrap_width_for(column)),
+                                SoftWrap::Bounded(column) => {
+                                    Some(editor_width.min(wrap_width_for(column)))
+                                }
+                            };
 
                             if editor.set_wrap_width(wrap_width, cx) {
                                 editor.snapshot(window, cx)
@@ -10268,6 +10259,7 @@ impl Element for EditorElement {
                             &gutter_dimensions,
                             &gutter_hitbox,
                             &text_hitbox,
+                            &style,
                             relative,
                             current_selection_head,
                             window,
@@ -12065,24 +12057,6 @@ pub fn register_action<T: Action>(
     })
 }
 
-/// Shared between `prepaint` and `compute_auto_height_layout` to ensure
-/// both full and auto-height editors compute wrap widths consistently.
-fn calculate_wrap_width(
-    soft_wrap: SoftWrap,
-    editor_width: Pixels,
-    em_width: Pixels,
-) -> Option<Pixels> {
-    let wrap_width_for = |column: u32| (column as f32 * em_width).ceil();
-
-    match soft_wrap {
-        SoftWrap::GitDiff => None,
-        SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
-        SoftWrap::EditorWidth => Some(editor_width),
-        SoftWrap::Column(column) => Some(wrap_width_for(column)),
-        SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
-    }
-}
-
 fn compute_auto_height_layout(
     editor: &mut Editor,
     min_lines: usize,
@@ -12117,8 +12091,9 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width);
-    if wrap_width.is_some() && editor.set_wrap_width(wrap_width, cx) {
+    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None)
+        && editor.set_wrap_width(Some(editor_width), cx)
+    {
         snapshot = editor.snapshot(window, cx);
     }
 
@@ -12148,7 +12123,6 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
-    use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
 
@@ -13249,67 +13223,5 @@ mod tests {
             assert_eq!(out[2].color, text_color);
             assert_eq!(out[3].color, adjusted_bg1);
         }
-    }
-
-    #[test]
-    fn test_checkerboard_size() {
-        // line height is smaller than target height, so we just return half the line height
-        assert_eq!(EditorElement::checkerboard_size(10.0, 20.0), 5.0);
-
-        // line height is exactly half the target height, perfect match
-        assert_eq!(EditorElement::checkerboard_size(20.0, 10.0), 10.0);
-
-        // line height is close to half the target height
-        assert_eq!(EditorElement::checkerboard_size(20.0, 9.0), 10.0);
-
-        // line height is close to 1/4 the target height
-        assert_eq!(EditorElement::checkerboard_size(20.0, 4.8), 5.0);
-    }
-
-    #[gpui::test(iterations = 100)]
-    fn test_random_checkerboard_size(mut rng: StdRng) {
-        let line_height = rng.next_u32() as f32;
-        let target_height = rng.next_u32() as f32;
-
-        let result = EditorElement::checkerboard_size(line_height, target_height);
-
-        let k = line_height / result;
-        assert!(k - k.round() < 0.0000001); // approximately integer
-        assert!((k.round() as u32).is_multiple_of(2));
-    }
-
-    #[test]
-    fn test_calculate_wrap_width() {
-        let editor_width = px(800.0);
-        let em_width = px(8.0);
-
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::GitDiff, editor_width, em_width),
-            None,
-        );
-
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::None, editor_width, em_width),
-            Some(px((MAX_LINE_LEN as f32 / 2.0 * 8.0).ceil())),
-        );
-
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::EditorWidth, editor_width, em_width),
-            Some(px(800.0)),
-        );
-
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::Column(72), editor_width, em_width),
-            Some(px((72.0 * 8.0_f32).ceil())),
-        );
-
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::Bounded(72), editor_width, em_width),
-            Some(px((72.0 * 8.0_f32).ceil())),
-        );
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
-            Some(px(400.0)),
-        );
     }
 }

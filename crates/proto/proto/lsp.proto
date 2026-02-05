@@ -109,7 +109,6 @@ message Symbol {
   PointUtf16 end = 8;
   bytes signature = 9;
   uint64 language_server_id = 10;
-  optional string container_name = 11;
 }
 
 message GetDocumentSymbols {

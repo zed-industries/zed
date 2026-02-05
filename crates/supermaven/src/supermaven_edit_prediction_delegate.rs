@@ -1,8 +1,6 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use edit_prediction_types::{
-    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
-};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate, EditPredictionIconSet};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Anchor, Buffer, BufferSnapshot};
@@ -203,7 +201,7 @@ impl EditPredictionDelegate for SupermavenEditPredictionDelegate {
         reset_completion_cache(self, _cx);
     }
 
-    fn discard(&mut self, _reason: EditPredictionDiscardReason, _cx: &mut Context<Self>) {
+    fn discard(&mut self, _cx: &mut Context<Self>) {
         reset_completion_cache(self, _cx);
     }
 

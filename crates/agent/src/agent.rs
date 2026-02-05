@@ -34,7 +34,7 @@ use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
@@ -47,9 +47,11 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 use util::ResultExt;
 use util::rel_path::RelPath;
 
@@ -68,7 +70,7 @@ struct Session {
     /// The internal thread that processes messages
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
-    acp_thread: WeakEntity<acp_thread::AcpThread>,
+    acp_thread: Entity<acp_thread::AcpThread>,
     pending_save: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -364,11 +366,13 @@ impl NativeAgent {
         let registry = LanguageModelRegistry::read_global(cx);
         let summarization_model = registry.thread_summary_model().map(|c| c.model);
 
+        let weak = cx.weak_entity();
         thread_handle.update(cx, |thread, cx| {
             thread.set_summarization_model(summarization_model, cx);
             thread.add_default_tools(
-                Rc::new(AcpThreadEnvironment {
+                Rc::new(NativeThreadEnvironment {
                     acp_thread: acp_thread.downgrade(),
+                    agent: weak,
                 }) as _,
                 cx,
             )
@@ -389,7 +393,7 @@ impl NativeAgent {
             session_id,
             Session {
                 thread: thread_handle,
-                acp_thread: acp_thread.downgrade(),
+                acp_thread: acp_thread.clone(),
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(()),
             },
@@ -580,7 +584,7 @@ impl NativeAgent {
             return;
         };
         let thread = thread.downgrade();
-        let acp_thread = session.acp_thread.clone();
+        let acp_thread = session.acp_thread.downgrade();
         cx.spawn(async move |_, cx| {
             let title = thread.read_with(cx, |thread, _| thread.title())?;
             let task = acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
@@ -598,12 +602,9 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(thread.read(cx).id()) else {
             return;
         };
-        session
-            .acp_thread
-            .update(cx, |acp_thread, cx| {
-                acp_thread.update_token_usage(usage.0.clone(), cx);
-            })
-            .ok();
+        session.acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.update_token_usage(usage.0.clone(), cx);
+        });
     }
 
     fn handle_project_event(
@@ -689,18 +690,16 @@ impl NativeAgent {
     fn update_available_commands(&self, cx: &mut Context<Self>) {
         let available_commands = self.build_available_commands(cx);
         for session in self.sessions.values() {
-            if let Some(acp_thread) = session.acp_thread.upgrade() {
-                acp_thread.update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(
-                            acp::SessionUpdate::AvailableCommandsUpdate(
-                                acp::AvailableCommandsUpdate::new(available_commands.clone()),
-                            ),
-                            cx,
-                        )
-                        .log_err();
-                });
-            }
+            session.acp_thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::AvailableCommandsUpdate(
+                            acp::AvailableCommandsUpdate::new(available_commands.clone()),
+                        ),
+                        cx,
+                    )
+                    .log_err();
+            });
         }
     }
 
@@ -796,6 +795,10 @@ impl NativeAgent {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
+        if let Some(session) = self.sessions.get(&id) {
+            return Task::ready(Ok(session.acp_thread.clone()));
+        }
+
         let task = self.load_thread(id, cx);
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
@@ -906,7 +909,7 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                        })?;
+                        });
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_user_block(id, [block], path_style, cx);
@@ -920,7 +923,7 @@ impl NativeAgent {
                                 true,
                                 cx,
                             );
-                        })?;
+                        });
 
                         thread.update(cx, |thread, cx| {
                             thread.push_acp_agent_block(block, cx);
@@ -941,7 +944,11 @@ impl NativeAgent {
             })?;
 
             cx.update(|cx| {
-                NativeAgentConnection::handle_thread_events(response_stream, acp_thread, cx)
+                NativeAgentConnection::handle_thread_events(
+                    response_stream,
+                    acp_thread.downgrade(),
+                    cx,
+                )
             })
             .await
         })
@@ -986,7 +993,7 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread, cx)
+        Self::handle_thread_events(response_stream, acp_thread.downgrade(), cx)
     }
 
     fn handle_thread_events(
@@ -1352,7 +1359,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             agent.sessions.get(session_id).map(|session| {
                 Rc::new(NativeAgentSessionTruncate {
                     thread: session.thread.clone(),
-                    acp_thread: session.acp_thread.clone(),
+                    acp_thread: session.acp_thread.downgrade(),
                 }) as _
             })
         })
@@ -1540,11 +1547,12 @@ impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
     }
 }
 
-pub struct AcpThreadEnvironment {
+pub struct NativeThreadEnvironment {
+    agent: WeakEntity<NativeAgent>,
     acp_thread: WeakEntity<AcpThread>,
 }
 
-impl ThreadEnvironment for AcpThreadEnvironment {
+impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
@@ -1577,6 +1585,230 @@ impl ThreadEnvironment for AcpThreadEnvironment {
             Ok(Rc::new(handle) as _)
         })
     }
+
+    fn create_subagent(
+        &self,
+        parent_thread: Entity<Thread>,
+        label: String,
+        initial_prompt: String,
+        timeout_ms: Option<u64>,
+        allowed_tools: Option<Vec<String>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let parent_thread = parent_thread.read(cx);
+        let current_depth = parent_thread.depth();
+
+        if current_depth >= MAX_SUBAGENT_DEPTH {
+            return Err(anyhow!(
+                "Maximum subagent depth ({}) reached",
+                MAX_SUBAGENT_DEPTH
+            ));
+        }
+
+        let running_count = parent_thread.running_subagent_count();
+        if running_count >= MAX_PARALLEL_SUBAGENTS {
+            return Err(anyhow!(
+                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
+                MAX_PARALLEL_SUBAGENTS
+            ));
+        }
+
+        let parent_model = parent_thread.model().cloned();
+        let Some(model) = parent_model else {
+            return Err(anyhow!("No model configured"));
+        };
+
+        let parent_thread_id = parent_thread.id().clone();
+        let project = parent_thread.project.clone();
+        let project_context = parent_thread.project_context().clone();
+        let context_server_registry = parent_thread.context_server_registry.clone();
+        let templates = parent_thread.templates.clone();
+        let parent_tools = parent_thread.tools.clone();
+
+        let agent = self.agent.clone();
+
+        let subagent_context = SubagentContext {
+            parent_thread_id: parent_thread_id.clone(),
+            depth: current_depth + 1,
+        };
+
+        // Determine which tools this subagent gets
+        let subagent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> =
+            if let Some(ref allowed) = allowed_tools {
+                let allowed_set: HashSet<&str> = allowed.iter().map(|s| s.as_str()).collect();
+                parent_tools
+                    .iter()
+                    .filter(|(name, _)| allowed_set.contains(name.as_ref()))
+                    .map(|(name, tool)| (name.clone(), tool.clone()))
+                    .collect()
+            } else {
+                parent_tools.clone()
+            };
+
+        let subagent_thread: Entity<Thread> = cx.new(|cx| {
+            let mut thread = Thread::new_subagent(
+                project.clone(),
+                project_context.clone(),
+                context_server_registry.clone(),
+                templates.clone(),
+                model.clone(),
+                subagent_context,
+                subagent_tools,
+                cx,
+            );
+            thread.set_title(label.into(), cx);
+            thread
+        });
+
+        let acp_thread = agent.update(cx, |agent, cx| {
+            agent.register_session(subagent_thread.clone(), cx)
+        })?;
+
+        let mut prompt_rx = subagent_thread.update(cx, |thread, cx| {
+            thread.submit_user_message(initial_prompt, cx)
+        })?;
+        let wait_for_prompt_to_complete = cx.background_spawn(async move {
+                if let Some(timeout) = timeout_ms {
+                    futures::select! {
+                        _ = future::FutureExt::fuse(smol::Timer::after(Duration::from_millis(timeout))) => SubagentInitialPromptResult::Timeout,
+                        _ = wait_until_stop(&mut prompt_rx).fuse() => SubagentInitialPromptResult::Completed,
+                    }
+                } else {
+                    wait_until_stop(&mut prompt_rx).await;
+                    SubagentInitialPromptResult::Completed
+                }
+            }).shared();
+
+        let mut user_stop_rx: watch::Receiver<bool> =
+            acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
+
+        //todo: Handle user cancellation from event stream and investigate if we need this
+        let wait_for_user_stop = async move {
+            loop {
+                if *user_stop_rx.borrow() {
+                    return;
+                }
+                if user_stop_rx.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+
+        let user_cancelled = cx
+            .background_spawn(async move {
+                futures::select! {
+                    // _ = event_stream.cancelled_by_user().fuse() => {
+                    //     let _ = subagent_thread.update(cx, |thread, cx| {
+                    //         thread.cancel(cx).detach();
+                    //     });
+                    //     Err(anyhow!("Subagent cancelled by user"))
+                    // }
+                    _ = wait_for_user_stop.fuse() => {}
+                }
+            })
+            .shared();
+
+        Ok(Rc::new(NativeSubagentHandle {
+            thread: subagent_thread,
+            wait_for_prompt_to_complete,
+            user_cancelled,
+        }) as _)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SubagentInitialPromptResult {
+    Completed,
+    Timeout,
+}
+
+pub struct NativeSubagentHandle {
+    thread: Entity<Thread>,
+    wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
+    user_cancelled: Shared<Task<()>>,
+}
+
+impl SubagentHandle for NativeSubagentHandle {
+    fn id(&self, cx: &AsyncApp) -> acp::SessionId {
+        self.thread.read_with(cx, |thread, _cx| thread.id().clone())
+    }
+
+    fn wait_for_summary(
+        &self,
+        summary_prompt: String,
+        context_low_prompt: String,
+        cx: &AsyncApp,
+    ) -> Task<Result<String>> {
+        /// When a subagent's remaining context window falls below this fraction (25%),
+        /// the "context running out" prompt is sent to encourage the subagent to wrap up.
+        const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
+
+        let thread = self.thread.clone();
+        let wait_for_prompt = self.wait_for_prompt_to_complete.clone();
+
+        let wait_for_summary_task = cx.spawn(async move |cx| {
+            let timed_out = match wait_for_prompt.await {
+                SubagentInitialPromptResult::Completed => false,
+                SubagentInitialPromptResult::Timeout => true,
+            };
+
+            let should_interrupt =
+                timed_out || check_context_low(&thread, CONTEXT_LOW_THRESHOLD, cx);
+
+            if should_interrupt {
+                thread.update(cx, |thread, cx| thread.cancel(cx));
+                let mut events_rx = thread.update(cx, |thread, cx| {
+                    thread.submit_user_message(context_low_prompt, cx)
+                })?;
+                wait_until_stop(&mut events_rx).await;
+            } else {
+                let mut events_rx = thread.update(cx, |thread, cx| {
+                    thread.submit_user_message(summary_prompt, cx)
+                })?;
+                wait_until_stop(&mut events_rx).await;
+            }
+
+            thread.read_with(cx, |thread, _cx| {
+                thread
+                    .last_message()
+                    .map(|m| m.to_markdown())
+                    .context("No response from subagent")
+            })
+        });
+
+        let user_cancelled = self.user_cancelled.clone();
+        let thread = self.thread.clone();
+        cx.spawn(async move |cx| {
+            futures::select! {
+                result = wait_for_summary_task.fuse() => result,
+                _ = user_cancelled.fuse() => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx).detach());
+                    Err(anyhow!("User cancelled"))
+                },
+            }
+        })
+    }
+}
+
+async fn wait_until_stop(events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>) {
+    while let Some(event) = events_rx.next().await {
+        match event {
+            Ok(ThreadEvent::Stop(_)) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+}
+
+fn check_context_low(thread: &Entity<Thread>, threshold: f32, cx: &mut AsyncApp) -> bool {
+    thread.read_with(cx, |thread, _| {
+        if let Some(usage) = thread.latest_token_usage() {
+            let remaining_ratio = 1.0 - (usage.used_tokens as f32 / usage.max_tokens as f32);
+            remaining_ratio <= threshold
+        } else {
+            false
+        }
+    })
 }
 
 pub struct AcpTerminalHandle {

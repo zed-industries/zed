@@ -1,6 +1,6 @@
 # Key bindings
 
-Zed's key binding system is fully customizable. You can rebind any action, create key sequences, and define context-specific bindings.
+Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
 
 ## Predefined Keymaps
 

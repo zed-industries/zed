@@ -1,13 +1,26 @@
 # Configuring Supported Languages
 
-Zed's language support is built on two technologies:
+Zed offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
 
-1. **Tree-sitter** handles syntax highlighting and structure-based features like the outline panel.
-2. **Language Server Protocol (LSP)** provides semantic features: code completion, diagnostics, go-to-definition, and refactoring.
+Zed's language support is built on two main technologies:
 
-This page covers language-specific settings, file associations, language server configuration, formatting, linting, and syntax highlighting.
+1. Tree-sitter: This handles syntax highlighting and structure-based features like the outline panel.
+2. Language Server Protocol (LSP): This provides semantic features such as code completion and diagnostics.
 
-For a list of supported languages, see [Supported Languages](./languages.md). To add support for new languages, see [Language Extensions](./extensions/languages.md).
+These components work together to provide Zed's language capabilities.
+
+In this guide, we'll cover:
+
+- Language-specific settings
+- File associations
+- Working with language servers
+- Formatting and linting configuration
+- Customizing syntax highlighting and themes
+- Advanced language features
+
+By the end of this guide, you should know how to configure and customize supported languages in Zed.
+
+For a comprehensive list of languages supported by Zed and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./extensions/languages.md) guide.
 
 ## Language-specific Settings
 

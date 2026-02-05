@@ -68,17 +68,8 @@ pub struct SubagentContext {
     /// ID of the parent thread
     pub parent_thread_id: acp::SessionId,
 
-    /// ID of the tool call that spawned this subagent
-    pub tool_use_id: LanguageModelToolUseId,
-
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
-
-    /// Prompt to send when subagent completes successfully
-    pub summary_prompt: String,
-
-    /// Prompt to send when context is running low (≤25% remaining)
-    pub context_low_prompt: String,
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -587,6 +578,16 @@ pub trait TerminalHandle {
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
 }
 
+pub trait SubagentHandle {
+    fn id(&self, cx: &AsyncApp) -> acp::SessionId;
+    fn wait_for_summary(
+        &self,
+        summary_prompt: String,
+        context_low_prompt: String,
+        cx: &AsyncApp,
+    ) -> Task<Result<String>>;
+}
+
 pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
@@ -595,6 +596,16 @@ pub trait ThreadEnvironment {
         output_byte_limit: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+
+    fn create_subagent(
+        &self,
+        parent_thread: Entity<Thread>,
+        label: String,
+        initial_prompt: String,
+        timeout_ms: Option<u64>,
+        allowed_tools: Option<Vec<String>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>>;
 }
 
 #[derive(Debug)]
@@ -1280,7 +1291,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
+            self.add_tool(SubagentTool::new(cx.weak_entity()));
         }
     }
 
@@ -2458,31 +2469,6 @@ impl Thread {
         }));
         cx.notify();
         self.send_existing(cx)
-    }
-
-    pub fn interrupt_for_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.context_low_prompt.clone();
-        self.cancel(cx).detach();
-        self.submit_user_message(prompt, cx)
-    }
-
-    pub fn request_final_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.summary_prompt.clone();
-        self.submit_user_message(prompt, cx)
     }
 
     fn build_request_messages(

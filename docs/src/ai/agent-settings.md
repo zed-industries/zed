@@ -1,6 +1,6 @@
 # Agent Settings
 
-Settings for Zed's Agent Panel, including model selection, UI preferences, and tool permissions.
+Learn about all the settings you can customize in Zed's Agent Panel.
 
 ## Model Settings {#model-settings}
 
@@ -214,7 +214,8 @@ It is set to `4` by default, and the max number of lines is always double of the
 
 ### Modifier to Send
 
-Require a modifier (`cmd` on macOS, `ctrl` on Linux) to send messages. Prevents accidental sends while editing.
+Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.
+This is encouraged for more thoughtful prompt crafting.
 The default value is `false`.
 
 ```json [settings]

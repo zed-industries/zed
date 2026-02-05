@@ -728,11 +728,10 @@ impl ProjectSearchView {
         if let Some(query) = query {
             let query = query.with_replacement(self.replacement(cx));
 
-            let mat = self.entity.read(cx).match_ranges.get(active_index).cloned();
+            // TODO: Do we need the clone here?
+            let mat = self.entity.read(cx).match_ranges[active_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                if let Some(mat) = mat.as_ref() {
-                    editor.replace(mat, &query, window, cx);
-                }
+                editor.replace(&mat, &query, window, cx);
             });
             self.select_match(Direction::Next, window, cx)
         }

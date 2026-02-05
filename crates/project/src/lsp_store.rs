@@ -3993,7 +3993,6 @@ struct CoreSymbol {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
-    pub container_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -7948,7 +7947,7 @@ impl LspStore {
                 server_id: LanguageServerId,
                 lsp_adapter: Arc<CachedLspAdapter>,
                 worktree: WeakEntity<Worktree>,
-                lsp_symbols: Vec<(String, SymbolKind, lsp::Location, Option<String>)>,
+                lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
             }
 
             let mut requests = Vec::new();
@@ -8011,7 +8010,6 @@ impl LspStore {
                                                     lsp_symbol.name,
                                                     lsp_symbol.kind,
                                                     lsp_symbol.location,
-                                                    lsp_symbol.container_name,
                                                 )
                                             })
                                             .collect::<Vec<_>>()
@@ -8031,12 +8029,7 @@ impl LspStore {
                                                         return None;
                                                     }
                                                 };
-                                                Some((
-                                                    lsp_symbol.name,
-                                                    lsp_symbol.kind,
-                                                    location,
-                                                    lsp_symbol.container_name,
-                                                ))
+                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
                                             })
                                             .collect::<Vec<_>>()
                                     }
@@ -8066,39 +8059,36 @@ impl LspStore {
                         result
                             .lsp_symbols
                             .into_iter()
-                            .filter_map(
-                                |(symbol_name, symbol_kind, symbol_location, container_name)| {
-                                    let abs_path = symbol_location.uri.to_file_path().ok()?;
-                                    let source_worktree = result.worktree.upgrade()?;
-                                    let source_worktree_id = source_worktree.read(cx).id();
+                            .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let source_worktree = result.worktree.upgrade()?;
+                                let source_worktree_id = source_worktree.read(cx).id();
 
-                                    let path = if let Some((tree, rel_path)) =
-                                        this.worktree_store.read(cx).find_worktree(&abs_path, cx)
-                                    {
-                                        let worktree_id = tree.read(cx).id();
-                                        SymbolLocation::InProject(ProjectPath {
-                                            worktree_id,
-                                            path: rel_path,
-                                        })
-                                    } else {
-                                        SymbolLocation::OutsideProject {
-                                            signature: this.symbol_signature(&abs_path),
-                                            abs_path: abs_path.into(),
-                                        }
-                                    };
-
-                                    Some(CoreSymbol {
-                                        source_language_server_id: result.server_id,
-                                        language_server_name: result.lsp_adapter.name.clone(),
-                                        source_worktree_id,
-                                        path,
-                                        kind: symbol_kind,
-                                        name: symbol_name,
-                                        range: range_from_lsp(symbol_location.range),
-                                        container_name,
+                                let path = if let Some((tree, rel_path)) =
+                                    this.worktree_store.read(cx).find_worktree(&abs_path, cx)
+                                {
+                                    let worktree_id = tree.read(cx).id();
+                                    SymbolLocation::InProject(ProjectPath {
+                                        worktree_id,
+                                        path: rel_path,
                                     })
-                                },
-                            )
+                                } else {
+                                    SymbolLocation::OutsideProject {
+                                        signature: this.symbol_signature(&abs_path),
+                                        abs_path: abs_path.into(),
+                                    }
+                                };
+
+                                Some(CoreSymbol {
+                                    source_language_server_id: result.server_id,
+                                    language_server_name: result.lsp_adapter.name.clone(),
+                                    source_worktree_id,
+                                    path,
+                                    kind: symbol_kind,
+                                    name: symbol_name,
+                                    range: range_from_lsp(symbol_location.range),
+                                })
+                            })
                             .collect::<Vec<_>>()
                     });
 
@@ -10723,7 +10713,6 @@ impl LspStore {
                         kind: symbol.kind,
                         range: symbol.range,
                         label: CodeLabel::default(),
-                        container_name: symbol.container_name,
                     },
                     cx,
                 )
@@ -12224,7 +12213,6 @@ impl LspStore {
             worktree_id: Default::default(),
             path: Default::default(),
             signature: Default::default(),
-            container_name: symbol.container_name.clone(),
         };
         match &symbol.path {
             SymbolLocation::InProject(path) => {
@@ -12276,7 +12264,6 @@ impl LspStore {
             range: Unclipped(PointUtf16::new(start.row, start.column))
                 ..Unclipped(PointUtf16::new(end.row, end.column)),
             kind,
-            container_name: serialized_symbol.container_name,
         })
     }
 
@@ -14716,11 +14703,11 @@ async fn populate_labels_for_symbols(
     let mut label_params = Vec::new();
     for (language, mut symbols) in symbols_by_language {
         label_params.clear();
-        label_params.extend(symbols.iter_mut().map(|symbol| language::Symbol {
-            name: mem::take(&mut symbol.name),
-            kind: symbol.kind,
-            container_name: symbol.container_name.take(),
-        }));
+        label_params.extend(
+            symbols
+                .iter_mut()
+                .map(|symbol| (mem::take(&mut symbol.name), symbol.kind)),
+        );
 
         let mut labels = Vec::new();
         if let Some(language) = language {
@@ -14739,17 +14726,7 @@ async fn populate_labels_for_symbols(
             }
         }
 
-        for (
-            (
-                symbol,
-                language::Symbol {
-                    name,
-                    container_name,
-                    ..
-                },
-            ),
-            label,
-        ) in symbols
+        for ((symbol, (name, _)), label) in symbols
             .into_iter()
             .zip(label_params.drain(..))
             .zip(labels.into_iter().chain(iter::repeat(None)))
@@ -14763,7 +14740,6 @@ async fn populate_labels_for_symbols(
                 name,
                 kind: symbol.kind,
                 range: symbol.range,
-                container_name,
             });
         }
     }

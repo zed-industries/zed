@@ -39,6 +39,7 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, BufferSnapshot, Selection};
+use theme::Theme;
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
@@ -977,9 +978,9 @@ impl Item for Editor {
     }
 
     // In a non-singleton case, the breadcrumbs are actually shown on sticky file headers of the multibuffer.
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         if self.buffer.read(cx).is_singleton() {
-            self.breadcrumbs_inner(cx)
+            self.breadcrumbs_inner(variant, cx)
         } else {
             None
         }

@@ -287,11 +287,11 @@ impl super::LspAdapter for CLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        symbol: &language::Symbol,
+        name: &str,
+        kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
+        let (text, filter_range, display_range) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("void {} () {{}}", name);
                 let filter_range = 0..name.len();

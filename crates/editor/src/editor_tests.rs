@@ -29063,10 +29063,8 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
             e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
-        });
-        cx.run_until_parked();
-        cx.update_editor(|e, window, cx| {
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+            let style = e.style(cx).clone();
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), &style, cx)
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -29293,7 +29291,6 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                 cx,
             );
         });
-        cx.run_until_parked();
         cx.simulate_click(
             gpui::Point {
                 x: px(0.),
@@ -29301,9 +29298,9 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
             },
             Modifiers::none(),
         );
-        cx.run_until_parked();
         cx.update_editor(|e, _, cx| (e.scroll_position(cx), display_ranges(e, cx)))
     };
+
     assert_eq!(
         scroll_and_click(
             4.5, // impl Bar is halfway off the screen
