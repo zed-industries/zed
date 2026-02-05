@@ -65,7 +65,7 @@ impl AgentTool for OpenTool {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
         let context = crate::ToolPermissionContext {
-            tool_name: "open".to_string(),
+            tool_name: Self::NAME.to_string(),
             input_value: input.path_or_url.clone(),
         };
         let authorize =

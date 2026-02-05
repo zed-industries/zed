@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_subagent_tool_name() {
-        assert_eq!(SubagentTool::name(), "subagent");
+        assert_eq!(SubagentTool::NAME, "subagent");
     }
 
     #[test]
@@ -540,7 +540,7 @@ struct SubagentDisplayConnection;
 
 impl AgentConnection for SubagentDisplayConnection {
     fn telemetry_id(&self) -> SharedString {
-        "subagent".into()
+        acp_thread::SUBAGENT_TOOL_NAME.into()
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {

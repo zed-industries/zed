@@ -71,7 +71,7 @@ impl AgentTool for CreateDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.path, settings);
+        let decision = decide_permission_from_settings(Self::NAME, &input.path, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -80,7 +80,7 @@ impl AgentTool for CreateDirectoryTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "create_directory".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.path.clone(),
                 };
                 Some(event_stream.authorize(
