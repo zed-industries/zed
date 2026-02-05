@@ -55,9 +55,7 @@ impl AgentTool for CopyPathTool {
     type Input = CopyPathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "copy_path"
-    }
+    const NAME: &'static str = "copy_path";
 
     fn kind() -> ToolKind {
         ToolKind::Move

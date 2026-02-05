@@ -41,9 +41,7 @@ impl AgentTool for SaveFileTool {
     type Input = SaveFileToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "save_file"
-    }
+    const NAME: &'static str = "save_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other

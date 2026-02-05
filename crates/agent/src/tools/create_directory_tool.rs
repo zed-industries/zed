@@ -46,9 +46,7 @@ impl AgentTool for CreateDirectoryTool {
     type Input = CreateDirectoryToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "create_directory"
-    }
+    const NAME: &'static str = "create_directory";
 
     fn kind() -> ToolKind {
         ToolKind::Read

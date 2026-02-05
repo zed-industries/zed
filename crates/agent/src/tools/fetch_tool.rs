@@ -122,9 +122,7 @@ impl AgentTool for FetchTool {
     type Input = FetchToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "fetch"
-    }
+    const NAME: &'static str = "fetch";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch

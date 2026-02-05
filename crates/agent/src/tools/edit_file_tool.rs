@@ -232,9 +232,7 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name() -> &'static str {
-        "edit_file"
-    }
+    const NAME: &'static str = "edit_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit

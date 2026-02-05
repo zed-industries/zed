@@ -49,6 +49,11 @@ pub use web_search_tool::*;
 
 macro_rules! tools {
     ($($tool:ty),* $(,)?) => {
+        /// Every built-in tool name, determined at compile time.
+        pub const ALL_TOOL_NAMES: &[&str] = &[
+            $(<$tool>::NAME,)*
+        ];
+
         /// A list of all built-in tool names
         pub fn supported_built_in_tool_names(provider: Option<language_model::LanguageModelProviderId>, cx: &App) -> Vec<String> {
             let mut tools: Vec<String> = [

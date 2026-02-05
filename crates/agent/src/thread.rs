@@ -2687,7 +2687,11 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name() -> &'static str;
+    const NAME: &'static str;
+
+    fn name() -> &'static str {
+        Self::NAME
+    }
 
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);

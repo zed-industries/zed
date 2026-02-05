@@ -49,9 +49,7 @@ impl AgentTool for DeletePathTool {
     type Input = DeletePathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "delete_path"
-    }
+    const NAME: &'static str = "delete_path";
 
     fn kind() -> ToolKind {
         ToolKind::Delete
