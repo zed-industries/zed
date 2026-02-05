@@ -1145,16 +1145,14 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
-        let auto_approve_from_settings;
+        let has_own_permission_modes;
         let thread;
         {
             let sessions_ref = self.sessions.borrow();
             let session = sessions_ref
                 .get(&arguments.session_id)
                 .context("Failed to get session")?;
-            // Only respect the user's default setting when the external agent
-            // doesn't have its own permission modes.
-            auto_approve_from_settings = session.session_modes.is_none();
+            has_own_permission_modes = session.session_modes.is_some();
             thread = session.thread.clone();
         }
 
@@ -1163,24 +1161,36 @@ impl acp::Client for ClientDelegate {
         let options = acp_thread::PermissionOptions::Flat(arguments.options);
 
         let task = thread.update(cx, |thread, cx| {
-            // For external agents that don't have their own permission modes,
-            // auto-approve if the user has set tool_permissions.default to "allow".
-            if auto_approve_from_settings {
-                let global_default = AgentSettings::get_global(cx).tool_permissions.default;
-                if global_default == ToolPermissionMode::Allow {
-                    if let Some(allow_once_option) = options.allow_once_option_id() {
-                        thread.upsert_tool_call_inner(
-                            arguments.tool_call,
-                            acp_thread::ToolCallStatus::Pending,
-                            cx,
-                        )?;
-                        return Ok(async {
-                            acp::RequestPermissionOutcome::Selected(
-                                acp::SelectedPermissionOutcome::new(allow_once_option),
-                            )
-                        }
-                        .boxed());
+            let global_default = AgentSettings::get_global(cx).tool_permissions.default;
+
+            // Deny always takes effect, regardless of whether the external
+            // agent has its own permission system.
+            if global_default == ToolPermissionMode::Deny {
+                thread.upsert_tool_call_inner(
+                    arguments.tool_call,
+                    acp_thread::ToolCallStatus::Rejected,
+                    cx,
+                )?;
+                return Ok(async { acp::RequestPermissionOutcome::Cancelled }.boxed());
+            }
+
+            // Confirm always shows the Zed confirmation UI, regardless of
+            // whether the external agent has its own permission system.
+            // This is the default fallthrough behavior, so we only need to
+            // handle the Allow case specially.
+            if global_default == ToolPermissionMode::Allow && !has_own_permission_modes {
+                if let Some(allow_once_option) = options.allow_once_option_id() {
+                    thread.upsert_tool_call_inner(
+                        arguments.tool_call,
+                        acp_thread::ToolCallStatus::Pending,
+                        cx,
+                    )?;
+                    return Ok(async {
+                        acp::RequestPermissionOutcome::Selected(
+                            acp::SelectedPermissionOutcome::new(allow_once_option),
+                        )
                     }
+                    .boxed());
                 }
             }
 
