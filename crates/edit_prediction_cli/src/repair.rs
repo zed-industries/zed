@@ -10,7 +10,7 @@ use crate::{
     BatchProvider, PredictionProvider,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
-    format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example},
+    format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example, extract_last_codeblock},
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
@@ -19,6 +19,8 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use std::sync::OnceLock;
+
+const KEEP_PREVIOUS: &str = "KEEP_PREVIOUS";
 
 /// Print a summary report of repair results across all examples.
 pub fn print_report(examples: &[Example], confidence_threshold: u8) {
@@ -139,9 +141,8 @@ fn build_score_feedback(example: &Example) -> Option<String> {
         feedback.push_str(&format!("- {issue}\n"));
     }
     feedback.push_str(
-        "\nRemember, it is perfectly fine to generate no prediction (output the original \
-         editable region unchanged) if the previous prediction was actually correct or if \
-         you are unsure how to improve it.",
+        "\nRemember: if the previous prediction was actually correct, output `KEEP_PREVIOUS`. \
+         If no edits should be made at all and you are unsure how to improve it, output `NO_EDITS`.",
     );
 
     Some(feedback)
@@ -353,22 +354,37 @@ pub async fn run_repair(
         }
     };
 
-    let parse_result = TeacherPrompt::parse(example, &response);
-    let err = parse_result
-        .as_ref()
-        .err()
-        .map(|e| format!("Failed to parse repair response: {}", e));
+    let last_codeblock = extract_last_codeblock(&response);
+    if last_codeblock.trim() == KEEP_PREVIOUS {
+        let original = example
+            .predictions
+            .first()
+            .context("no original prediction to keep")?;
+        example.predictions.push(ExamplePrediction {
+            actual_patch: original.actual_patch.clone(),
+            actual_output: response,
+            actual_cursor: original.actual_cursor.clone(),
+            error: None,
+            provider: PredictionProvider::Repair,
+        });
+    } else {
+        let parse_result = TeacherPrompt::parse(example, &response);
+        let err = parse_result
+            .as_ref()
+            .err()
+            .map(|e| format!("Failed to parse repair response: {}", e));
 
-    let (actual_patch, actual_cursor) = parse_result.ok().unzip();
-    let actual_cursor = actual_cursor.flatten();
+        let (actual_patch, actual_cursor) = parse_result.ok().unzip();
+        let actual_cursor = actual_cursor.flatten();
 
-    example.predictions.push(ExamplePrediction {
-        actual_patch,
-        actual_output: response,
-        actual_cursor,
-        error: err,
-        provider: PredictionProvider::Repair,
-    });
+        example.predictions.push(ExamplePrediction {
+            actual_patch,
+            actual_output: response,
+            actual_cursor,
+            error: err,
+            provider: PredictionProvider::Repair,
+        });
+    }
 
     Ok(())
 }

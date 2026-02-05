@@ -421,7 +421,7 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     Some(result)
 }
 
-fn extract_last_codeblock(text: &str) -> String {
+pub(crate) fn extract_last_codeblock(text: &str) -> String {
     let mut last_block = None;
     let mut search_start = 0;
 
