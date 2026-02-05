@@ -23,22 +23,22 @@ pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock
     HardcodedSecurityRules {
         terminal_deny: vec![
             // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
-            CompiledRegex::new(&format!(r"rm\s+{FLAGS}/\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}/\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
             // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
-            CompiledRegex::new(&format!(r"rm\s+{FLAGS}~/?\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}~/?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
             // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
             CompiledRegex::new(
-                &format!(r"rm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
+                &format!(r"\brm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
                 false,
             )
             .expect("hardcoded regex should compile"),
             // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
-            CompiledRegex::new(&format!(r"rm\s+{FLAGS}\./?\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
             // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
-            CompiledRegex::new(&format!(r"rm\s+{FLAGS}\.\./?\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\.\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
         ],
     }
@@ -1360,5 +1360,13 @@ mod tests {
         t("rm --recursive --force ./build")
             .mode(ToolPermissionMode::Allow)
             .is_allow();
+    }
+
+    #[test]
+    fn hardcoded_does_not_block_words_containing_rm() {
+        // Words like "storm", "inform" contain "rm" but should not be blocked
+        t("storm -rf /").mode(ToolPermissionMode::Allow).is_allow();
+        t("inform -rf /").mode(ToolPermissionMode::Allow).is_allow();
+        t("gorm -rf ~").mode(ToolPermissionMode::Allow).is_allow();
     }
 }
