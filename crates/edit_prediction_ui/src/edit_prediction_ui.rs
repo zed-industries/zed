@@ -16,7 +16,9 @@ use std::any::{Any as _, TypeId};
 use ui::{App, prelude::*};
 use workspace::{SplitDirection, Workspace};
 
-pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
+pub use edit_prediction_button::{
+    EditPredictionButton, ToggleMenu, get_available_providers, set_completion_provider,
+};
 
 use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 

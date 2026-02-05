@@ -139,6 +139,7 @@ pub struct Buffer {
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
     has_bom: bool,
+    reload_with_encoding_txns: HashMap<TransactionId, (&'static Encoding, bool)>,
 }
 
 #[derive(Debug)]
@@ -917,6 +918,12 @@ impl EditPreview {
         })
     }
 
+    pub fn anchor_to_offset_in_result(&self, anchor: Anchor) -> usize {
+        anchor
+            .bias_right(&self.old_snapshot)
+            .to_offset(&self.applied_edits_snapshot)
+    }
+
     pub fn compute_visible_range<T>(&self, edits: &[(Range<Anchor>, T)]) -> Option<Range<Point>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
@@ -1147,6 +1154,7 @@ impl Buffer {
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
+            reload_with_encoding_txns: HashMap::default(),
         }
     }
 
@@ -1535,31 +1543,86 @@ impl Buffer {
 
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
+        self.reload_impl(None, cx)
+    }
+
+    /// Reloads the contents of the buffer from disk using the specified encoding.
+    ///
+    /// This bypasses automatic encoding detection heuristics (like BOM checks) for non-Unicode encodings,
+    /// allowing users to force a specific interpretation of the bytes.
+    pub fn reload_with_encoding(
+        &mut self,
+        encoding: &'static Encoding,
+        cx: &Context<Self>,
+    ) -> oneshot::Receiver<Option<Transaction>> {
+        self.reload_impl(Some(encoding), cx)
+    }
+
+    fn reload_impl(
+        &mut self,
+        force_encoding: Option<&'static Encoding>,
+        cx: &Context<Self>,
+    ) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
+
         self.reload_task = Some(cx.spawn(async move |this, cx| {
-            let Some((new_mtime, load_bytes_task, encoding)) = this.update(cx, |this, cx| {
-                let file = this.file.as_ref()?.as_local()?;
-                Some((
-                    file.disk_state().mtime(),
-                    file.load_bytes(cx),
-                    this.encoding,
-                ))
-            })?
+            let Some((new_mtime, load_bytes_task, current_encoding)) =
+                this.update(cx, |this, cx| {
+                    let file = this.file.as_ref()?.as_local()?;
+                    Some((
+                        file.disk_state().mtime(),
+                        file.load_bytes(cx),
+                        this.encoding,
+                    ))
+                })?
             else {
                 return Ok(());
             };
 
-            let bytes = load_bytes_task.await?;
-            let (cow, _encoding_used, _has_errors) = encoding.decode(&bytes);
-            let new_text = cow.into_owned();
+            let target_encoding = force_encoding.unwrap_or(current_encoding);
+
+            let is_unicode = target_encoding == encoding_rs::UTF_8
+                || target_encoding == encoding_rs::UTF_16LE
+                || target_encoding == encoding_rs::UTF_16BE;
+
+            let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
+                let bytes = load_bytes_task.await?;
+                let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
+                (cow.into_owned(), false, target_encoding)
+            } else {
+                let bytes = load_bytes_task.await?;
+                let (cow, used_enc, _had_errors) = target_encoding.decode(&bytes);
+
+                let actual_has_bom = if used_enc == encoding_rs::UTF_8 {
+                    bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+                } else if used_enc == encoding_rs::UTF_16LE {
+                    bytes.starts_with(&[0xFF, 0xFE])
+                } else if used_enc == encoding_rs::UTF_16BE {
+                    bytes.starts_with(&[0xFE, 0xFF])
+                } else {
+                    false
+                };
+                (cow.into_owned(), actual_has_bom, used_enc)
+            };
 
             let diff = this.update(cx, |this, cx| this.diff(new_text, cx))?.await;
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
+                    let old_encoding = this.encoding;
+                    let old_has_bom = this.has_bom;
                     this.apply_diff(diff, cx);
-                    tx.send(this.finalize_last_transaction().cloned()).ok();
+                    this.encoding = encoding_used;
+                    this.has_bom = has_bom;
+                    let transaction = this.finalize_last_transaction().cloned();
+                    if let Some(ref txn) = transaction {
+                        if old_encoding != encoding_used || old_has_bom != has_bom {
+                            this.reload_with_encoding_txns
+                                .insert(txn.id, (old_encoding, old_has_bom));
+                        }
+                    }
+                    tx.send(transaction).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
                 } else {
@@ -1779,7 +1842,7 @@ impl Buffer {
                 language.clone(),
                 sync_parse_timeout,
             ) {
-                self.did_finish_parsing(syntax_snapshot, Duration::from_millis(300), cx);
+                self.did_finish_parsing(syntax_snapshot, Some(Duration::from_millis(300)), cx);
                 self.reparse = None;
                 return;
             }
@@ -1811,7 +1874,7 @@ impl Buffer {
                 let parse_again = this.version.changed_since(&parsed_version)
                     || language_registry_changed()
                     || grammar_changed();
-                this.did_finish_parsing(new_syntax_map, Duration::ZERO, cx);
+                this.did_finish_parsing(new_syntax_map, None, cx);
                 this.reparse = None;
                 if parse_again {
                     this.reparse(cx, false);
@@ -1824,7 +1887,7 @@ impl Buffer {
     fn did_finish_parsing(
         &mut self,
         syntax_snapshot: SyntaxSnapshot,
-        block_budget: Duration,
+        block_budget: Option<Duration>,
         cx: &mut Context<Self>,
     ) {
         self.non_text_state_update_count += 1;
@@ -1888,9 +1951,19 @@ impl Buffer {
         }
     }
 
-    fn request_autoindent(&mut self, cx: &mut Context<Self>, block_budget: Duration) {
+    fn request_autoindent(&mut self, cx: &mut Context<Self>, block_budget: Option<Duration>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
             let indent_sizes = cx.background_spawn(indent_sizes);
+            let Some(block_budget) = block_budget else {
+                self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
+                    let indent_sizes = indent_sizes.await;
+                    this.update(cx, |this, cx| {
+                        this.apply_autoindents(indent_sizes, cx);
+                    })
+                    .ok();
+                }));
+                return;
+            };
             match cx
                 .foreground_executor()
                 .block_with_timeout(block_budget, indent_sizes)
@@ -2798,7 +2871,7 @@ impl Buffer {
             is_block_mode: false,
             ignore_empty_lines: true,
         }));
-        self.request_autoindent(cx, Duration::from_micros(300));
+        self.request_autoindent(cx, Some(Duration::from_micros(300)));
     }
 
     // Inserts newlines at the given position to create an empty line, returning the start of the new line.
@@ -3044,6 +3117,7 @@ impl Buffer {
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
+            self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
             None
@@ -3103,9 +3177,28 @@ impl Buffer {
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
+            self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    fn restore_encoding_for_transaction(&mut self, transaction_id: TransactionId, was_dirty: bool) {
+        if let Some((old_encoding, old_has_bom)) =
+            self.reload_with_encoding_txns.get(&transaction_id)
+        {
+            let current_encoding = self.encoding;
+            let current_has_bom = self.has_bom;
+            self.encoding = *old_encoding;
+            self.has_bom = *old_has_bom;
+            if !was_dirty {
+                self.saved_version = self.version.clone();
+                self.has_unsaved_edits
+                    .set((self.saved_version.clone(), false));
+            }
+            self.reload_with_encoding_txns
+                .insert(transaction_id, (current_encoding, current_has_bom));
         }
     }
 

@@ -19,6 +19,7 @@ pub trait ErasedEditor: 'static {
     fn clear(&self, window: &mut Window, cx: &mut App);
     fn set_placeholder_text(&self, text: &str, window: &mut Window, _: &mut App);
     fn move_selection_to_end(&self, window: &mut Window, _: &mut App);
+    fn set_masked(&self, masked: bool, window: &mut Window, cx: &mut App);
 
     fn focus_handle(&self, cx: &App) -> FocusHandle;
 

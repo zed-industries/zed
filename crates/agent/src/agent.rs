@@ -4,6 +4,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod shell_parser;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -303,6 +304,36 @@ impl NativeAgent {
                 _subscriptions: subscriptions,
             }
         }))
+    }
+
+    fn new_session(
+        &mut self,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Entity<AcpThread> {
+        // Create Thread
+        // Fetch default model from registry settings
+        let registry = LanguageModelRegistry::read_global(cx);
+        // Log available models for debugging
+        let available_count = registry.available_models(cx).count();
+        log::debug!("Total available models: {}", available_count);
+
+        let default_model = registry.default_model().and_then(|default_model| {
+            self.models
+                .model_from_id(&LanguageModels::model_id(&default_model.model))
+        });
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                self.project_context.clone(),
+                self.context_server_registry.clone(),
+                self.templates.clone(),
+                default_model,
+                cx,
+            )
+        });
+
+        self.register_session(thread, cx)
     }
 
     fn register_session(
@@ -1186,38 +1217,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        let agent = self.0.clone();
-        log::debug!("Creating new thread for project at: {:?}", cwd);
-
-        cx.spawn(async move |cx| {
-            log::debug!("Starting thread creation in async context");
-
-            // Create Thread
-            let thread = agent.update(cx, |agent, cx| {
-                // Fetch default model from registry settings
-                let registry = LanguageModelRegistry::read_global(cx);
-                // Log available models for debugging
-                let available_count = registry.available_models(cx).count();
-                log::debug!("Total available models: {}", available_count);
-
-                let default_model = registry.default_model().and_then(|default_model| {
-                    agent
-                        .models
-                        .model_from_id(&LanguageModels::model_id(&default_model.model))
-                });
-                cx.new(|cx| {
-                    Thread::new(
-                        project.clone(),
-                        agent.project_context.clone(),
-                        agent.context_server_registry.clone(),
-                        agent.templates.clone(),
-                        default_model,
-                        cx,
-                    )
-                })
-            });
-            Ok(agent.update(cx, |agent, cx| agent.register_session(thread, cx)))
-        })
+        log::debug!("Creating new thread for project at: {cwd:?}");
+        Task::ready(Ok(self
+            .0
+            .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
     fn supports_load_session(&self, _cx: &App) -> bool {
@@ -1399,6 +1402,7 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
+    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
     updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
@@ -1406,11 +1410,15 @@ pub struct NativeAgentSessionList {
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
         let (tx, rx) = smol::channel::unbounded();
+        let this_tx = tx.clone();
         let subscription = cx.observe(&thread_store, move |_, _| {
-            tx.try_send(acp_thread::SessionListUpdate::Refresh).ok();
+            this_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .ok();
         });
         Self {
             thread_store,
+            updates_tx: tx,
             updates_rx: rx,
             _subscription: subscription,
         }
@@ -1465,6 +1473,12 @@ impl AgentSessionList for NativeAgentSessionList {
         _cx: &mut App,
     ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
+    }
+
+    fn notify_refresh(&self) {
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::Refresh)
+            .ok();
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

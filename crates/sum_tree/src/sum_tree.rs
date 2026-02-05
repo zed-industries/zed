@@ -613,6 +613,10 @@ impl<T: Item> SumTree<T> {
         self.rightmost_leaf().0.items().last()
     }
 
+    pub fn last_summary(&self) -> Option<&T::Summary> {
+        self.rightmost_leaf().0.child_summaries().last()
+    }
+
     pub fn update_last(
         &mut self,
         f: impl FnOnce(&mut T),

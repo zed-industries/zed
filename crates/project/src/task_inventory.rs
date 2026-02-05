@@ -21,8 +21,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables,
-    VariableName,
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
+    TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
@@ -32,7 +32,7 @@ use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
-    pub task_context: TaskContext,
+    pub task_context: SharedTaskContext,
     pub worktree_id: Option<WorktreeId>,
     pub active_buffer: Option<WeakEntity<Buffer>>,
 }
@@ -252,7 +252,7 @@ impl Inventory {
     pub fn scenario_scheduled(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         worktree_id: Option<WorktreeId>,
         active_buffer: Option<WeakEntity<Buffer>>,
     ) {
@@ -512,6 +512,7 @@ impl Inventory {
             let new_resolved_tasks = worktree_tasks
                 .flat_map(|(kind, task)| {
                     let id_base = kind.to_id_base();
+
                     if let TaskSourceKind::Worktree { id, .. } = &kind {
                         None.or_else(|| {
                             let (_, _, item_context) =
@@ -660,8 +661,31 @@ impl Inventory {
                 });
             }
         };
+
+        let mut validation_errors = Vec::new();
         let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+            let template = serde_json::from_value::<TaskTemplate>(raw_template).log_err()?;
+
+            // Validate the variable names used in the `TaskTemplate`.
+            let unknown_variables = template.unknown_variables();
+            if !unknown_variables.is_empty() {
+                let variables_list = unknown_variables
+                    .iter()
+                    .map(|variable| format!("${variable}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                validation_errors.push(format!(
+                    "Task '{}' uses unknown variables: {}",
+                    template.label, variables_list
+                ));
+
+                // Skip this template, since it uses unknown variable names, but
+                // continue processing others.
+                return None;
+            }
+
+            Some(template)
         });
 
         let parsed_templates = &mut self.templates_from_settings;
@@ -708,6 +732,18 @@ impl Inventory {
                     }
                 });
             }
+        }
+
+        if !validation_errors.is_empty() {
+            return Err(InvalidSettingsError::Tasks {
+                path: match &location {
+                    TaskSettingsLocation::Global(path) => path.to_path_buf(),
+                    TaskSettingsLocation::Worktree(location) => {
+                        location.path.as_std_path().join(task_file_name())
+                    }
+                },
+                message: validation_errors.join("\n"),
+            });
         }
 
         Ok(())

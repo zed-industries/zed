@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use collections::{BTreeMap, HashMap};
+use gpui::Rgba;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_json::parse_json_with_comments;
@@ -193,7 +194,7 @@ pub struct FetchSettings {
 
 /// Common language server settings.
 #[with_fallible_options]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GlobalLspSettingsContent {
     /// Whether to show the LSP servers button in the status bar.
     ///
@@ -201,6 +202,8 @@ pub struct GlobalLspSettingsContent {
     pub button: Option<bool>,
     /// Settings for language server notifications
     pub notifications: Option<LspNotificationSettingsContent>,
+    /// Rules for rendering LSP semantic tokens.
+    pub semantic_token_rules: Option<SemanticTokenRules>,
 }
 
 #[with_fallible_options]
@@ -211,6 +214,84 @@ pub struct LspNotificationSettingsContent {
     ///
     /// Default: 5000
     pub dismiss_timeout_ms: Option<u64>,
+}
+
+/// Custom rules for rendering LSP semantic tokens.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(transparent)]
+pub struct SemanticTokenRules {
+    pub rules: Vec<SemanticTokenRule>,
+}
+
+impl crate::merge_from::MergeFrom for SemanticTokenRules {
+    fn merge_from(&mut self, other: &Self) {
+        self.rules.splice(0..0, other.rules.iter().cloned());
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SemanticTokenRule {
+    pub token_type: Option<String>,
+    #[serde(default)]
+    pub token_modifiers: Vec<String>,
+    #[serde(default)]
+    pub style: Vec<String>,
+    pub foreground_color: Option<Rgba>,
+    pub background_color: Option<Rgba>,
+    pub underline: Option<SemanticTokenColorOverride>,
+    pub strikethrough: Option<SemanticTokenColorOverride>,
+    pub font_weight: Option<SemanticTokenFontWeight>,
+    pub font_style: Option<SemanticTokenFontStyle>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum SemanticTokenColorOverride {
+    InheritForeground(bool),
+    Replace(Rgba),
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticTokenFontWeight {
+    #[default]
+    Normal,
+    Bold,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticTokenFontStyle {
+    #[default]
+    Normal,
+    Italic,
 }
 
 #[with_fallible_options]
@@ -526,6 +607,8 @@ pub struct DiagnosticsSettingsContent {
     pub button: Option<bool>,
 
     /// Whether or not to include warning diagnostics.
+    ///
+    /// Default: true
     pub include_warnings: Option<bool>,
 
     /// Settings for using LSP pull diagnostics mechanism in Zed.

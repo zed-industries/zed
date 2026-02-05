@@ -271,27 +271,35 @@ impl GlobalCopilotAuth {
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         cx: &mut App,
-    ) {
+    ) -> GlobalCopilotAuth {
         let auth =
             GlobalCopilotAuth(cx.new(|cx| Copilot::new(None, server_id, fs, node_runtime, cx)));
-        cx.set_global(auth);
+        cx.set_global(auth.clone());
+        auth
     }
     pub fn try_global(cx: &mut App) -> Option<&GlobalCopilotAuth> {
         cx.try_global()
     }
 
-    pub fn get_or_init(cx: &mut App) -> Option<GlobalCopilotAuth> {
-        if let Some(copilot) = cx.try_global::<Self>() {
-            Some(copilot.clone())
-        } else {
-            let app_state = AppState::global(cx).upgrade()?;
-            Self::set_global(
+    pub fn try_get_or_init(app_state: Arc<AppState>, cx: &mut App) -> Option<GlobalCopilotAuth> {
+        let ai_enabled = !DisableAiSettings::get(None, cx).disable_ai;
+
+        if let Some(copilot) = cx.try_global::<Self>().cloned() {
+            if ai_enabled {
+                Some(copilot)
+            } else {
+                cx.remove_global::<Self>();
+                None
+            }
+        } else if ai_enabled {
+            Some(Self::set_global(
                 app_state.languages.next_language_server_id(),
                 app_state.fs.clone(),
                 app_state.node_runtime.clone(),
                 cx,
-            );
-            cx.try_global::<Self>().cloned()
+            ))
+        } else {
+            None
         }
     }
 }
@@ -624,7 +632,7 @@ impl Copilot {
 
             let server = cx
                 .update(|cx| {
-                    let mut params = server.default_initialize_params(false, cx);
+                    let mut params = server.default_initialize_params(false, false, cx);
                     params.initialization_options = Some(editor_info_json);
                     params
                         .capabilities

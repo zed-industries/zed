@@ -1,0 +1,150 @@
+[
+  {
+    "token_type": "angle",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "arithmetic",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "attribute",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "attributeBracket",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "bitwise",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "boolean",
+    "style": ["boolean"]
+  },
+  {
+    "token_type": "brace",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "bracket",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "builtinAttribute",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "builtinType",
+    "style": ["type"]
+  },
+  {
+    "token_type": "character",
+    "style": ["text.literal"]
+  },
+  {
+    "token_type": "colon",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "comma",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "comparison",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "constParameter",
+    "style": ["constant"]
+  },
+  {
+    "token_type": "const",
+    "style": ["constant"]
+  },
+  {
+    "token_type": "derive",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "deriveHelper",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "dot",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "escapeSequence",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "formatSpecifier",
+    "style": ["string.special"]
+  },
+  {
+    "token_type": "invalidEscapeSequence",
+    "style": ["string.escape"]
+  },
+  {
+    "token_type": "label",
+    "style": ["lifetime"]
+  },
+  {
+    "token_type": "lifetime",
+    "style": ["lifetime"]
+  },
+  {
+    "token_type": "logical",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "macroBang",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "parenthesis",
+    "style": ["punctuation.bracket"]
+  },
+  {
+    "token_type": "procMacro",
+    "style": ["function"]
+  },
+  {
+    "token_type": "punctuation",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "operator",
+    "style": ["operator"]
+  },
+  {
+    "token_type": "selfKeyword",
+    "style": ["variable.special"]
+  },
+  {
+    "token_type": "selfTypeKeyword",
+    "style": ["type"]
+  },
+  {
+    "token_type": "semicolon",
+    "style": ["punctuation"]
+  },
+  {
+    "token_type": "static",
+    "style": ["constant"]
+  },
+  {
+    "token_type": "toolModule",
+    "style": ["attribute", "decorator"]
+  },
+  {
+    "token_type": "typeAlias",
+    "style": ["type"]
+  },
+  {
+    "token_type": "union",
+    "style": ["type"]
+  }
+]
