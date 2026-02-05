@@ -60,12 +60,21 @@ fn migrate_agent_tool_permissions(agent: &mut Value) -> Result<()> {
         return Ok(());
     };
 
-    let should_migrate_always_allow = agent_object
-        .get("always_allow_tool_actions")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    agent_object.remove("always_allow_tool_actions");
+    let should_migrate_always_allow = match agent_object.get("always_allow_tool_actions") {
+        Some(Value::Bool(true)) => {
+            agent_object.remove("always_allow_tool_actions");
+            true
+        }
+        Some(Value::Bool(false)) | Some(Value::Null) | None => {
+            agent_object.remove("always_allow_tool_actions");
+            false
+        }
+        Some(_) => {
+            // Non-boolean value — leave it in place so the schema validator
+            // can report it, rather than silently dropping user data.
+            false
+        }
+    };
 
     if should_migrate_always_allow {
         let tool_permissions = agent_object

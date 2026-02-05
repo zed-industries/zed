@@ -3105,5 +3105,38 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        // Case 17: Non-boolean always_allow_tool_actions (string "true") is left in place
+        // so the schema validator can report it, rather than silently dropping user data.
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": "true"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // Case 18: null always_allow_tool_actions is removed (treated as false)
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": null
+                }
+            }
+            "#
+            .unindent(),
+            Some(&"{\n    \"agent\": {\n        \n    }\n}\n"),
+        );
     }
 }
