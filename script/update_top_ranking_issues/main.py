@@ -93,7 +93,7 @@ def get_section_to_issues(
             "q": query,
             "sort": "reactions-+1",
             "order": "desc",
-            "per_page": ISSUES_TO_FETCH, # this will work as long as it's ≤ 100
+            "per_page": ISSUES_TO_FETCH,  # this will work as long as it's ≤ 100
         }
 
         # we are only fetching one page on purpose
@@ -106,11 +106,13 @@ def get_section_to_issues(
             reactions = item["reactions"]
             score = reactions["+1"] - reactions["-1"]
             if score > 0:
-                issues.append({
-                    "url": item["html_url"],
-                    "score": score,
-                    "created_at": item["created_at"],
-                })
+                issues.append(
+                    {
+                        "url": item["html_url"],
+                        "score": score,
+                        "created_at": item["created_at"],
+                    }
+                )
 
         if not issues:
             continue

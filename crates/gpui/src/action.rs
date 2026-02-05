@@ -397,6 +397,16 @@ impl ActionRegistry {
             .collect::<Vec<_>>()
     }
 
+    pub fn action_schema_by_name(
+        &self,
+        name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<Option<schemars::Schema>> {
+        self.by_name
+            .get(name)
+            .map(|action_data| (action_data.json_schema)(generator))
+    }
+
     pub fn deprecated_aliases(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecated_aliases
     }

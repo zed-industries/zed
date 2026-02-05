@@ -1,4 +1,3 @@
-pub mod contributors;
 pub mod events;
 pub mod extensions;
 
@@ -91,7 +90,6 @@ pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
-        .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(rpc_server))

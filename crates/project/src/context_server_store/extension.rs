@@ -38,14 +38,14 @@ fn extension_project(
     worktree_store: Entity<WorktreeStore>,
     cx: &mut AsyncApp,
 ) -> Result<Arc<ExtensionProject>> {
-    worktree_store.update(cx, |worktree_store, cx| {
+    Ok(worktree_store.update(cx, |worktree_store, cx| {
         Arc::new(ExtensionProject {
             worktree_ids: worktree_store
                 .visible_worktrees(cx)
                 .map(|worktree| worktree.read(cx).id().to_proto())
                 .collect(),
         })
-    })
+    }))
 }
 
 impl registry::ContextServerDescriptor for ContextServerDescriptor {

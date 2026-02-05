@@ -443,7 +443,7 @@ pub(crate) fn handle_from(
                 };
             }
 
-            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot()).ok()?;
+            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot());
 
             let Some(edit_behavior_state) =
                 should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close_config)
@@ -567,11 +567,9 @@ pub(crate) fn handle_from(
                 }
             }
 
-            buffer
-                .update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                })
-                .ok()?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
 
             if any_selections_need_update {
                 let multi_buffer_snapshot = this

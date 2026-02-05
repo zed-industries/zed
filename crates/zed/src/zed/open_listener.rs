@@ -13,7 +13,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use git_ui::file_diff_view::FileDiffView;
+use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
@@ -37,6 +37,7 @@ pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub diff_all: bool,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
@@ -48,7 +49,12 @@ pub enum OpenRequestKind {
     Extension {
         extension_id: String,
     },
-    AgentPanel,
+    AgentPanel {
+        initial_prompt: Option<String>,
+    },
+    SharedAgentThread {
+        session_id: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -72,6 +78,7 @@ impl OpenRequest {
         let mut this = Self::default();
 
         this.diff_paths = request.diff_paths;
+        this.diff_all = request.diff_all;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -105,8 +112,16 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if url == "zed://agent" {
-                this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
+            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
+                if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                    this.kind = Some(OpenRequestKind::SharedAgentThread {
+                        session_id: session_id_str.to_string(),
+                    });
+                } else {
+                    log::error!("Invalid session ID in URL: {}", session_id_str);
+                }
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -147,6 +162,17 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_agent_url(&mut self, agent_path: &str) {
+        // Format: "" or "?prompt=<text>"
+        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find_map(|(key, value)| (key == "prompt").then_some(value))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.into_owned())
+        });
+        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -229,6 +255,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub diff_all: bool,
     pub wsl: Option<String>,
 }
 
@@ -305,6 +332,7 @@ fn connect_to_cli(
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
     diff_paths: &[[String; 2]],
+    diff_all: bool,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
@@ -330,17 +358,28 @@ pub async fn open_paths_with_positions(
         .collect::<Vec<_>>();
 
     let (workspace, mut items) = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
+        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
-    for diff_pair in diff_paths {
-        let old_path = Path::new(&diff_pair[0]).canonicalize()?;
-        let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+    if diff_all && !diff_paths.is_empty() {
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            FileDiffView::open(old_path, new_path, workspace, window, cx)
-        }) && let Some(diff_view) = diff_view.await.log_err()
-        {
-            items.push(Some(Ok(Box::new(diff_view))))
+            MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
+        }) {
+            if let Some(diff_view) = diff_view.await.log_err() {
+                items.push(Some(Ok(Box::new(diff_view))));
+            }
+        }
+    } else {
+        for diff_pair in diff_paths {
+            let old_path = Path::new(&diff_pair[0]).canonicalize()?;
+            let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+            if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
+                FileDiffView::open(old_path, new_path, workspace, window, cx)
+            }) {
+                if let Some(diff_view) = diff_view.await.log_err() {
+                    items.push(Some(Ok(Box::new(diff_view))))
+                }
+            }
         }
     }
 
@@ -380,6 +419,7 @@ pub async fn handle_cli_connection(
                 urls,
                 paths,
                 diff_paths,
+                diff_all,
                 wait,
                 wsl,
                 open_new_workspace,
@@ -393,6 +433,7 @@ pub async fn handle_cli_connection(
                             RawOpenRequest {
                                 urls,
                                 diff_paths,
+                                diff_all,
                                 wsl,
                             },
                             cx,
@@ -410,14 +451,14 @@ pub async fn handle_cli_connection(
                                 responses.send(CliResponse::Exit { status: 1 }).log_err();
                             }
                         };
-                    })
-                    .log_err();
+                    });
                     return;
                 }
 
                 let open_workspace_result = open_workspaces(
                     paths,
                     diff_paths,
+                    diff_all,
                     open_new_workspace,
                     reuse,
                     &responses,
@@ -438,6 +479,7 @@ pub async fn handle_cli_connection(
 async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
     open_new_workspace: Option<bool>,
     reuse: bool,
     responses: &IpcSender<CliResponse>,
@@ -446,27 +488,31 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let grouped_locations = if paths.is_empty() && diff_paths.is_empty() {
-        // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
-        if open_new_workspace == Some(true) {
-            Vec::new()
+    let grouped_locations: Vec<(SerializedWorkspaceLocation, PathList)> =
+        if paths.is_empty() && diff_paths.is_empty() {
+            if open_new_workspace == Some(true) {
+                Vec::new()
+            } else {
+                // The workspace_id from the database is not used;
+                // open_paths will assign a new WorkspaceId when opening the workspace.
+                restorable_workspace_locations(cx, &app_state)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_workspace_id, location, paths)| (location, paths))
+                    .collect()
+            }
         } else {
-            restorable_workspace_locations(cx, &app_state)
-                .await
-                .unwrap_or_default()
-        }
-    } else {
-        vec![(
-            SerializedWorkspaceLocation::Local,
-            PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
-        )]
-    };
+            vec![(
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
+            )]
+        };
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_onboarding_view(app_state, cx).detach())
-                .log_err();
+            cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
         else {
@@ -479,8 +525,7 @@ async fn open_workspaces(
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 })
                 .detach();
-            })
-            .log_err();
+            });
         }
     } else {
         // If there are paths to open, open a workspace for each grouping of paths
@@ -498,6 +543,7 @@ async fn open_workspaces(
                     let workspace_failed_to_open = open_local_workspace(
                         workspace_paths,
                         diff_paths.clone(),
+                        diff_all,
                         open_new_workspace,
                         reuse,
                         wait,
@@ -518,7 +564,7 @@ async fn open_workspaces(
                         cx.update(|cx| {
                             RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
-                        })?;
+                        });
                     }
                     cx.spawn(async move |cx| {
                         open_remote_project(
@@ -545,6 +591,7 @@ async fn open_workspaces(
 async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
     open_new_workspace: Option<bool>,
     reuse: bool,
     wait: bool,
@@ -560,9 +607,7 @@ async fn open_local_workspace(
     let (open_new_workspace, replace_window) = if reuse {
         (
             Some(true),
-            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
-                .ok()
-                .flatten(),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next()),
         )
     } else {
         (open_new_workspace, None)
@@ -571,6 +616,7 @@ async fn open_local_workspace(
     let (workspace, items) = match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
+        diff_all,
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
@@ -626,14 +672,14 @@ async fn open_local_workspace(
                 if wait {
                     let (release_tx, release_rx) = oneshot::channel();
                     item_release_futures.push(release_rx);
-                    subscriptions.push(cx.update(|cx| {
+                    subscriptions.push(Ok(cx.update(|cx| {
                         item.on_release(
                             cx,
                             Box::new(move |_| {
                                 release_tx.send(()).ok();
                             }),
                         )
-                    }));
+                    })));
                 }
             }
             Some(Err(err)) => {
@@ -910,6 +956,7 @@ mod tests {
                 let errored = open_local_workspace(
                     workspace_paths,
                     vec![],
+                    false,
                     None,
                     false,
                     true,
@@ -1001,6 +1048,7 @@ mod tests {
                 open_local_workspace(
                     workspace_paths,
                     vec![],
+                    false,
                     open_new_workspace,
                     false,
                     false,
@@ -1074,6 +1122,7 @@ mod tests {
                     open_local_workspace(
                         workspace_paths,
                         vec![],
+                        false,
                         None,
                         false,
                         false,
@@ -1098,6 +1147,7 @@ mod tests {
                     open_local_workspace(
                         workspace_paths_reuse,
                         vec![],
+                        false,
                         None, // open_new_workspace will be overridden by reuse logic
                         true, // reuse = true
                         false,

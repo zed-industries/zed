@@ -18,7 +18,7 @@ use workspace::{ModalView, Workspace};
 
 fn single_line_input(
     label: impl Into<SharedString>,
-    placeholder: impl Into<SharedString>,
+    placeholder: &str,
     text: Option<&str>,
     tab_index: isize,
     window: &mut Window,
@@ -31,9 +31,7 @@ fn single_line_input(
             .tab_stop(true);
 
         if let Some(text) = text {
-            input
-                .editor()
-                .update(cx, |editor, cx| editor.set_text(text, window, cx));
+            input.set_text(text, window, cx);
         }
         input
     })
@@ -262,7 +260,7 @@ fn save_provider_to_settings(
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
     cx.spawn(async move |cx| {
         task.await
-            .map_err(|_| "Failed to write API key to keychain")?;
+            .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
         cx.update(|cx| {
             update_settings_file(fs, cx, |settings, _cx| {
                 settings
@@ -278,8 +276,7 @@ fn save_provider_to_settings(
                         },
                     );
             });
-        })
-        .ok();
+        });
         Ok(())
     })
 }
@@ -722,9 +719,7 @@ mod tests {
         cx.update(|window, cx| {
             let model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
             assert_eq!(
                 model_input.capabilities.supports_tools,
@@ -763,9 +758,7 @@ mod tests {
         cx.update(|window, cx| {
             let mut model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
 
             model_input.capabilities.supports_tools = ToggleState::Unselected;
@@ -790,9 +783,7 @@ mod tests {
         cx.update(|window, cx| {
             let mut model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
 
             model_input.capabilities.supports_tools = ToggleState::Selected;
@@ -818,6 +809,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
 
             language_model::init_settings(cx);
+            editor::init(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -838,9 +830,7 @@ mod tests {
     ) -> Option<SharedString> {
         fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
             input.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text(text, window, cx);
-                });
+                input.set_text(text, window, cx);
             });
         }
 

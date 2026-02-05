@@ -334,6 +334,33 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }),
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
+                    InlayId::ReplResult(_) => {
+                        let text = inlay.text().to_string();
+                        renderer = Some(ChunkRenderer {
+                            id: ChunkRendererId::Inlay(inlay.id),
+                            render: Arc::new(move |cx| {
+                                let colors = cx.theme().colors();
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .child(div().w_4())
+                                    .child(
+                                        div()
+                                            .px_1()
+                                            .rounded_sm()
+                                            .bg(colors.surface_background)
+                                            .text_color(colors.text_muted)
+                                            .text_xs()
+                                            .child(text.trim().to_string()),
+                                    )
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                            measured_width: None,
+                        });
+                        self.highlight_styles.inlay_hint
+                    }
                     InlayId::Color(_) => {
                         if let InlayContent::Color(color) = inlay.content {
                             renderer = Some(ChunkRenderer {
@@ -1131,6 +1158,7 @@ impl InlaySnapshot {
             buffer_range,
             language_aware,
             highlights.text_highlights,
+            highlights.semantic_token_highlights,
             &self.buffer,
         );
 
@@ -1256,7 +1284,7 @@ mod tests {
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
+    use std::{cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::{Patch, Rope};
     use util::RandomCharIter;
@@ -1825,7 +1853,7 @@ mod tests {
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
-                HighlightKey::Type(TypeId::of::<()>()),
+                HighlightKey::ColorizeBracket(0),
                 Arc::new((
                     HighlightStyle::default(),
                     text_highlight_ranges
@@ -1879,7 +1907,7 @@ mod tests {
                         .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight))),
                 );
                 log::info!("highlighting inlay ranges {new_highlights:?}");
-                inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
+                inlay_highlights.insert(HighlightKey::Editor, new_highlights);
             }
 
             for _ in 0..5 {
@@ -2150,7 +2178,7 @@ mod tests {
         inlay_id: InlayId,
         highlight_range: Range<usize>,
         position: Anchor,
-    ) -> TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+    ) -> TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let mut inlay_highlights = TreeMap::default();
         let mut type_highlights = TreeMap::default();
         type_highlights.insert(
@@ -2164,7 +2192,7 @@ mod tests {
                 },
             ),
         );
-        inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
+        inlay_highlights.insert(HighlightKey::Editor, type_highlights);
         inlay_highlights
     }
 
@@ -2200,6 +2228,7 @@ mod tests {
         let highlights = crate::display_map::Highlights {
             text_highlights: None,
             inlay_highlights: Some(&inlay_highlights),
+            semantic_token_highlights: None,
             styles: crate::display_map::HighlightStyles::default(),
         };
 
@@ -2315,6 +2344,7 @@ mod tests {
             let highlights = crate::display_map::Highlights {
                 text_highlights: None,
                 inlay_highlights: Some(&inlay_highlights),
+                semantic_token_highlights: None,
                 styles: crate::display_map::HighlightStyles::default(),
             };
 

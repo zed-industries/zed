@@ -29,8 +29,6 @@ pub enum Relation {
     HostedProjects,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     ChannelMemberships,
-    #[sea_orm(has_one = "super::contributor::Entity")]
-    Contributor,
 }
 
 impl Related<super::access_token::Entity> for Entity {

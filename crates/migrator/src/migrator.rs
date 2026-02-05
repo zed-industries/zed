@@ -191,10 +191,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_05_08,
         ),
         MigrationType::TreeSitter(
-            migrations::m_2025_05_29::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_05_29,
-        ),
-        MigrationType::TreeSitter(
             migrations::m_2025_06_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_16,
         ),
@@ -236,6 +232,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
+        MigrationType::Json(
+            migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+        ),
+        MigrationType::Json(migrations::m_2026_02_03::migrate_experimental_sweep_mercury),
     ];
     run_migrations(text, migrations)
 }
@@ -329,10 +329,6 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_05_08,
     migrations::m_2025_05_08::SETTINGS_PATTERNS
-);
-define_query!(
-    SETTINGS_QUERY_2025_05_29,
-    migrations::m_2025_05_29::SETTINGS_PATTERNS
 );
 define_query!(
     SETTINGS_QUERY_2025_06_16,
@@ -658,21 +654,23 @@ mod tests {
     #[test]
     fn test_nested_string_replace_for_settings() {
         assert_migrate_settings(
-            r#"
-                {
-                    "features": {
-                        "inline_completion_provider": "zed"
-                    },
-                }
-            "#,
+            &r#"
+            {
+                "features": {
+                    "inline_completion_provider": "zed"
+                },
+            }
+            "#
+            .unindent(),
             Some(
-                r#"
+                &r#"
                 {
-                    "features": {
-                        "edit_prediction_provider": "zed"
-                    },
+                    "edit_predictions": {
+                        "provider": "zed"
+                    }
                 }
-            "#,
+                "#
+                .unindent(),
             ),
         )
     }
@@ -964,67 +962,6 @@ mod tests {
     }
 
     #[test]
-    fn test_preferred_completion_mode_migration() {
-        assert_migrate_settings(
-            r#"{
-                "agent": {
-                    "preferred_completion_mode": "max",
-                    "enabled": true
-                }
-            }"#,
-            Some(
-                r#"{
-                "agent": {
-                    "preferred_completion_mode": "burn",
-                    "enabled": true
-                }
-            }"#,
-            ),
-        );
-
-        assert_migrate_settings(
-            r#"{
-                "agent": {
-                    "preferred_completion_mode": "normal",
-                    "enabled": true
-                }
-            }"#,
-            None,
-        );
-
-        assert_migrate_settings(
-            r#"{
-                "agent": {
-                    "preferred_completion_mode": "burn",
-                    "enabled": true
-                }
-            }"#,
-            None,
-        );
-
-        assert_migrate_settings(
-            r#"{
-                "other_section": {
-                    "preferred_completion_mode": "max"
-                },
-                "agent": {
-                    "preferred_completion_mode": "max"
-                }
-            }"#,
-            Some(
-                r#"{
-                "other_section": {
-                    "preferred_completion_mode": "max"
-                },
-                "agent": {
-                    "preferred_completion_mode": "burn"
-                }
-            }"#,
-            ),
-        );
-    }
-
-    #[test]
     fn test_mcp_settings_migration() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::TreeSitter(
@@ -1299,7 +1236,6 @@ mod tests {
     "agent": {
         "version": "2",
         "enabled": true,
-        "preferred_completion_mode": "normal",
         "button": true,
         "dock": "right",
         "default_width": 640,
@@ -1322,7 +1258,6 @@ mod tests {
     },
     "agent": {
         "enabled": true,
-        "preferred_completion_mode": "normal",
         "button": true,
         "dock": "right",
         "default_width": 640,
@@ -2429,6 +2364,232 @@ mod tests {
                 "#
                 .unindent(),
             ),
+        );
+    }
+
+    #[test]
+    fn test_move_edit_prediction_provider_to_edit_predictions() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "zed"
+                },
+                "edit_predictions": {
+                    "mode": "eager"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "zed",
+                        "mode": "eager"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "supermaven"
+                },
+                "edit_predictions": {
+                    "provider": "copilot"
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": "zed"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_migrate_experimental_sweep_mercury() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "sweep"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "sweep"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "mercury"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "mercury"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": {
+                        "experimental": "sweep"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "features": {
+                        "edit_prediction_provider": "sweep"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": "zed"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "zeta2"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            None,
         );
     }
 }

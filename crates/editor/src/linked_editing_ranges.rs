@@ -49,7 +49,7 @@ pub(super) fn refresh_linked_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
-    if editor.ignore_lsp_data() || editor.pending_rename.is_some() {
+    if !editor.mode().is_full() || editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project()?.downgrade();
@@ -99,9 +99,7 @@ pub(super) fn refresh_linked_ranges(
                     let cx = cx.to_async();
                     let highlights = async move {
                         let edits = linked_edits_task.await.log_err()?;
-                        let snapshot = cx
-                            .read_entity(&buffer, |buffer, _| buffer.snapshot())
-                            .ok()?;
+                        let snapshot = cx.read_entity(&buffer, |buffer, _| buffer.snapshot());
                         let buffer_id = snapshot.remote_id();
 
                         // Find the range containing our current selection.

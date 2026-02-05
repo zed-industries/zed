@@ -1,6 +1,6 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, Hover,
+    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
@@ -165,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone());
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content =
                     parse_blocks(&blocks, Some(&language_registry), None, cx).await;
@@ -217,7 +217,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
 
-    editor.clear_background_highlights::<HoverState>(cx);
+    editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
     if did_hide {
         cx.notify();
@@ -513,10 +513,11 @@ fn show_hover(
 
             this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
-                    editor.clear_background_highlights::<HoverState>(cx);
+                    editor.clear_background_highlights(HighlightKey::HoverState, cx);
                 } else {
                     // Highlight the selected symbol using a background highlight
-                    editor.highlight_background::<HoverState>(
+                    editor.highlight_background(
+                        HighlightKey::HoverState,
                         &hover_highlights,
                         |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
@@ -987,17 +988,17 @@ impl DiagnosticPopover {
             })
             .child(
                 div()
+                    .relative()
                     .py_1()
-                    .px_2()
+                    .pl_2()
+                    .pr_8()
                     .bg(self.background_color)
                     .border_1()
                     .border_color(self.border_color)
                     .rounded_lg()
                     .child(
-                        h_flex()
+                        div()
                             .id("diagnostic-content-container")
-                            .gap_1()
-                            .items_start()
                             .max_w(max_size.width)
                             .max_h(max_size.height)
                             .overflow_y_scroll()
@@ -1023,12 +1024,12 @@ impl DiagnosticPopover {
                                         }
                                     },
                                 ),
-                            )
-                            .child({
-                                let message = self.local_diagnostic.diagnostic.message.clone();
-                                CopyButton::new(message).tooltip_label("Copy Diagnostic")
-                            }),
+                            ),
                     )
+                    .child(div().absolute().top_1().right_1().child({
+                        let message = self.local_diagnostic.diagnostic.message.clone();
+                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
+                    }))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
                             .tracked_scroll_handle(&self.scroll_handle),
