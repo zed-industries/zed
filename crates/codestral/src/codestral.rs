@@ -1,6 +1,8 @@
 use anyhow::Result;
 use edit_prediction::cursor_excerpt;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate, EditPredictionIconSet};
+use edit_prediction_types::{
+    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
+};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
@@ -313,7 +315,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         self.current_completion = None;
     }
 
-    fn discard(&mut self, _cx: &mut Context<Self>) {
+    fn discard(&mut self, _reason: EditPredictionDiscardReason, _cx: &mut Context<Self>) {
         log::debug!("Codestral: Completion discarded");
         self.pending_request = None;
         self.current_completion = None;

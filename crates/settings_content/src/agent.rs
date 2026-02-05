@@ -71,8 +71,9 @@ pub struct AgentSettingsContent {
     /// that you allow it, always choose to allow it.
     ///
     /// **Security note**: Even with this enabled, Zed's built-in security rules
-    /// still block some tool actions, such as the terminal tool running `rm -rf /` or `rm -rf ~`,
-    /// to prevent certain classes of failures from happening.
+    /// still block some tool actions, such as the terminal tool running `rm -rf /`, `rm -rf ~`,
+    /// `rm -rf $HOME`, `rm -rf .`, or `rm -rf ..`, to prevent certain classes of failures
+    /// from happening.
     ///
     /// This setting has no effect on external agents that support permission modes, such as Claude Code.
     ///

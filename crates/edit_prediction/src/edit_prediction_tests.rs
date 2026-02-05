@@ -93,8 +93,8 @@ async fn test_current_state(cx: &mut TestAppContext) {
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
 
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
 
     // Prediction for diagnostic in another file
@@ -1125,16 +1125,18 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            cx,
         );
     });
 
@@ -1164,12 +1166,13 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     );
 
     // Reaching batch size limit sends without debounce
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         for i in 0..70 {
             ep_store.reject_prediction(
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                cx,
             );
         }
     });
@@ -1195,11 +1198,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     assert_eq!(reject_request.rejections[19].request_id, "batch-69");
 
     // Request failure
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
     });
 
@@ -1213,11 +1217,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     drop(_respond_tx);
 
     // Add another rejection
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
     });
 

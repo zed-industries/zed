@@ -3562,6 +3562,68 @@ async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_collapse_all_entries_with_invisible_worktree(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project_root",
+        json!({
+            "dir_1": {
+                "nested_dir": {
+                    "file_a.py": "# File contents",
+                },
+                "file_1.py": "# File contents",
+            },
+            "dir_2": {
+                "file_1.py": "# File contents",
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/external",
+        json!({
+            "external_file.py": "# External file",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    let (_invisible_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/external/external_file.py", false, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v project_root", "    > dir_1", "    > dir_2",],
+        "invisible worktree should not appear in project panel"
+    );
+
+    toggle_expand_dir(&panel, "project_root/dir_1", cx);
+    cx.executor().run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v project_root", "    > dir_1  <== selected", "    > dir_2",],
+        "with single visible worktree, root should stay expanded even if invisible worktrees exist"
+    );
+}
+
+#[gpui::test]
 async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

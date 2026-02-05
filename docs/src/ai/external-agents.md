@@ -2,7 +2,7 @@
 
 Zed supports many external agents, including CLI-based ones, through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-You can interact with agents like [Gemini CLI](https://github.com/google-gemini/gemini-cli) (that servers as the reference ACP implementation), as well as [Claude Code](https://www.anthropic.com/claude-code), [Codex](https://developers.openai.com/codex), [GitHub Copilot](https://github.com/github/copilot-language-server-release), and many others that [you can add](#add-more-agents).
+Zed supports [Gemini CLI](https://github.com/google-gemini/gemini-cli) (the reference ACP implementation), [Claude Code](https://www.anthropic.com/claude-code), [Codex](https://developers.openai.com/codex), [GitHub Copilot](https://github.com/github/copilot-language-server-release), and [additional agents](#add-more-agents) you can configure.
 
 > Note that Zed's interaction with external agents is strictly UI-based; the billing, legal, and terms arrangement is directly between you and the agent provider.
 > Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
@@ -64,11 +64,9 @@ For more information, see the [Gemini CLI docs](https://github.com/google-gemini
 
 ### Usage
 
-Similar to Zed's first-party agent, you can use Gemini CLI to do anything that you need.
-And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
+Gemini CLI supports the same workflows as Zed's first-party agent: code generation, refactoring, debugging, and Q&A. Add context by @-mentioning files, recent threads, or symbols.
 
-> Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, and checkpointing.
-> We hope to add these features in the near future.
+> Some agent panel features are not yet available with Gemini CLI: editing past messages, resuming threads from history, and checkpointing.
 
 ## Claude Code
 
@@ -122,8 +120,7 @@ If you want to override the executable used by the adapter, you can set the `CLA
 
 ### Usage
 
-Similar to Zed's first-party agent, you can use Claude Code to do anything that you need.
-And to give it context, you can @-mention files, recent threads, diagnostics, symbols, and more.
+Claude Code supports the same workflows as Zed's first-party agent. Add context by @-mentioning files, recent threads, diagnostics, or symbols.
 
 In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview) to support some of its specific features.
 However, the SDK doesn't yet expose everything needed to fully support all of them:
@@ -132,8 +129,7 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 - [Subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) are supported.
 - [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks-guide) are currently _not_ supported.
 
-> Also note that some [first-party agent](./agent-panel.md) features don't yet work with Claude Code: editing past messages, resuming threads from history, and checkpointing.
-> We hope to add these features in the near future.
+> Some [agent panel](./agent-panel.md) features are not yet available with Claude Code: editing past messages, resuming threads from history, and checkpointing.
 
 #### CLAUDE.md
 
@@ -188,11 +184,9 @@ Zed will always use this managed version of Codex even if you have it installed 
 
 ### Usage
 
-Similar to Zed's first-party agent, you can use Codex to do anything that you need.
-And to give it context, you can @-mention files, symbols, or fetch the web.
+Codex supports the same workflows as Zed's first-party agent. Add context by @-mentioning files or symbols.
 
-> Note that some first-party agent features don't yet work with Codex: editing past messages, resuming threads from history, and checkpointing.
-> We hope to add these features in the near future.
+> Some agent panel features are not yet available with Codex: editing past messages, resuming threads from history, and checkpointing.
 
 ## Add More Agents {#add-more-agents}
 
@@ -216,8 +210,7 @@ See what agents are available by filtering for "Agent Servers" in the extensions
 
 As mentioned above, the Agent Server extensions will be deprecated in the near future to give room to the ACP Registry.
 
-[The ACP Registry](https://github.com/agentclientprotocol/registry) is an easy way for developers to distribute their ACP-compatible agents to any client that speaks the protocol.
-And for clients, it's the easiest way to find and install agents while keeping their version always up-to-date.
+[The ACP Registry](https://github.com/agentclientprotocol/registry) lets developers distribute ACP-compatible agents to any client that implements the protocol. Agents installed from the registry update automatically.
 
 At the moment, the registry is a curated set of agents, including only the ones that [support authentication](https://agentclientprotocol.com/rfds/auth-methods).
 

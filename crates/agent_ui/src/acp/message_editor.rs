@@ -31,9 +31,10 @@ use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Wor
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
+use std::{cell::RefCell, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
 use ui::{ButtonLike, ButtonStyle, ContextMenu, Disclosure, ElevationIndex, prelude::*};
+use util::paths::PathStyle;
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, PasteRaw};
@@ -735,13 +736,94 @@ impl MessageEditor {
             }
             return;
         }
+        // Handle text paste with potential markdown mention links.
+        // This must be checked BEFORE paste_images_as_context because that function
+        // returns a task even when there are no images in the clipboard.
+        if let Some(clipboard_text) = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| match entry {
+                ClipboardEntry::String(text) => Some(text.text().to_string()),
+                _ => None,
+            })
+        {
+            let path_style = workspace.read(cx).project().read(cx).path_style(cx);
+
+            // Parse markdown mention links in format: [@name](uri)
+            let parsed_mentions = parse_mention_links(&clipboard_text, path_style);
+
+            if !parsed_mentions.is_empty() {
+                cx.stop_propagation();
+
+                let insertion_offset = self.editor.update(cx, |editor, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    editor.selections.newest_anchor().start.to_offset(&snapshot)
+                });
+
+                // Insert the raw text first
+                self.editor.update(cx, |editor, cx| {
+                    editor.insert(&clipboard_text, window, cx);
+                });
+
+                let supports_images = self.prompt_capabilities.borrow().image;
+                let http_client = workspace.read(cx).client().http_client();
+
+                // Now create creases for each mention and load their content
+                let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+                for (range, mention_uri) in parsed_mentions {
+                    let start_offset = insertion_offset.0 + range.start;
+                    let anchor = snapshot.anchor_before(MultiBufferOffset(start_offset));
+                    let content_len = range.end - range.start;
+
+                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                        anchor.excerpt_id,
+                        anchor.text_anchor,
+                        content_len,
+                        mention_uri.name().into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        self.editor.clone(),
+                        window,
+                        cx,
+                    ) else {
+                        continue;
+                    };
+
+                    // Create the confirmation task based on the mention URI type.
+                    // This properly loads file content, fetches URLs, etc.
+                    let task = self.mention_set.update(cx, |mention_set, cx| {
+                        mention_set.confirm_mention_for_uri(
+                            mention_uri.clone(),
+                            supports_images,
+                            http_client.clone(),
+                            cx,
+                        )
+                    });
+                    let task = cx
+                        .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                        .shared();
+
+                    self.mention_set.update(cx, |mention_set, _cx| {
+                        mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                    });
+
+                    // Drop the tx after inserting to signal the crease is ready
+                    drop(tx);
+                }
+                return;
+            }
+        }
 
         if self.prompt_capabilities.borrow().image
             && let Some(task) =
                 paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
         {
             task.detach();
+            return;
         }
+
+        // Fall through to default editor paste
+        cx.propagate();
     }
 
     fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
@@ -1283,6 +1365,69 @@ impl Addon for MessageEditorAddon {
     }
 }
 
+/// Parses markdown mention links in the format `[@name](uri)` from text.
+/// Returns a vector of (range, MentionUri) pairs where range is the byte range in the text.
+fn parse_mention_links(text: &str, path_style: PathStyle) -> Vec<(Range<usize>, MentionUri)> {
+    let mut mentions = Vec::new();
+    let mut search_start = 0;
+
+    while let Some(link_start) = text[search_start..].find("[@") {
+        let absolute_start = search_start + link_start;
+
+        // Find the matching closing bracket for the name, handling nested brackets.
+        // Start at the '[' character so find_matching_bracket can track depth correctly.
+        let Some(name_end) = find_matching_bracket(&text[absolute_start..], '[', ']') else {
+            search_start = absolute_start + 2;
+            continue;
+        };
+        let name_end = absolute_start + name_end;
+
+        // Check for opening parenthesis immediately after
+        if text.get(name_end + 1..name_end + 2) != Some("(") {
+            search_start = name_end + 1;
+            continue;
+        }
+
+        // Find the matching closing parenthesis for the URI, handling nested parens
+        let uri_start = name_end + 2;
+        let Some(uri_end_relative) = find_matching_bracket(&text[name_end + 1..], '(', ')') else {
+            search_start = uri_start;
+            continue;
+        };
+        let uri_end = name_end + 1 + uri_end_relative;
+        let link_end = uri_end + 1;
+
+        let uri_str = &text[uri_start..uri_end];
+
+        // Try to parse the URI as a MentionUri
+        if let Ok(mention_uri) = MentionUri::parse(uri_str, path_style) {
+            mentions.push((absolute_start..link_end, mention_uri));
+        }
+
+        search_start = link_end;
+    }
+
+    mentions
+}
+
+/// Finds the position of the matching closing bracket, handling nested brackets.
+/// The input `text` should start with the opening bracket.
+/// Returns the index of the matching closing bracket relative to `text`.
+fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0;
+    for (index, character) in text.char_indices() {
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
@@ -1308,10 +1453,102 @@ mod tests {
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
-        message_editor::{Mention, MessageEditor},
+        message_editor::{Mention, MessageEditor, parse_mention_links},
         thread_view::tests::init_test,
     };
     use crate::completion_provider::{PromptCompletionProviderDelegate, PromptContextType};
+
+    #[test]
+    fn test_parse_mention_links() {
+        // Single file mention
+        let text = "[@bundle-mac](file:///Users/test/zed/script/bundle-mac)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].0, 0..text.len());
+        assert!(matches!(mentions[0].1, MentionUri::File { .. }));
+
+        // Multiple mentions
+        let text = "Check [@file1](file:///path/to/file1) and [@file2](file:///path/to/file2)!";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 2);
+
+        // Text without mentions
+        let text = "Just some regular text without mentions";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Malformed mentions (should be skipped)
+        let text = "[@incomplete](invalid://uri) and [@missing](";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Mixed content with valid mention
+        let text = "Before [@valid](file:///path/to/file) after";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].0.start, 7);
+
+        // HTTP URL mention (Fetch)
+        let text = "Check out [@docs](https://example.com/docs) for more info";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert!(matches!(mentions[0].1, MentionUri::Fetch { .. }));
+
+        // Directory mention (trailing slash)
+        let text = "[@src](file:///path/to/src/)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert!(matches!(mentions[0].1, MentionUri::Directory { .. }));
+
+        // Multiple different mention types
+        let text = "File [@f](file:///a) and URL [@u](https://b.com) and dir [@d](file:///c/)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 3);
+        assert!(matches!(mentions[0].1, MentionUri::File { .. }));
+        assert!(matches!(mentions[1].1, MentionUri::Fetch { .. }));
+        assert!(matches!(mentions[2].1, MentionUri::Directory { .. }));
+
+        // Adjacent mentions without separator
+        let text = "[@a](file:///a)[@b](file:///b)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 2);
+
+        // Regular markdown link (not a mention) should be ignored
+        let text = "[regular link](https://example.com)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Incomplete mention link patterns
+        let text = "[@name] without url and [@name( malformed";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Nested brackets in name portion
+        let text = "[@name [with brackets]](file:///path/to/file)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].0, 0..text.len());
+
+        // Deeply nested brackets
+        let text = "[@outer [inner [deep]]](file:///path)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+
+        // Unbalanced brackets should fail gracefully
+        let text = "[@unbalanced [bracket](file:///path)";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 0);
+
+        // Nested parentheses in URI (common in URLs with query params)
+        let text = "[@wiki](https://en.wikipedia.org/wiki/Rust_(programming_language))";
+        let mentions = parse_mention_links(text, PathStyle::local());
+        assert_eq!(mentions.len(), 1);
+        if let MentionUri::Fetch { url } = &mentions[0].1 {
+            assert!(url.as_str().contains("Rust_(programming_language)"));
+        } else {
+            panic!("Expected Fetch URI");
+        }
+    }
 
     #[gpui::test]
     async fn test_at_mention_removal(cx: &mut TestAppContext) {
