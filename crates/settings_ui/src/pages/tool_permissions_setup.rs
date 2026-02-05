@@ -447,6 +447,25 @@ fn find_matched_patterns(
     let rules = settings.tool_permissions.tools.get(tool_id);
 
     let mut matched = Vec::new();
+
+    // Check hardcoded security rules first (highest priority, terminal only)
+    let mut hardcoded_denied = false;
+    if tool_id == "terminal" {
+        for pattern in &HARDCODED_SECURITY_RULES.terminal_deny {
+            if pattern.is_match(input) {
+                hardcoded_denied = true;
+                matched.push(MatchedPattern {
+                    label: "This command is always denied for safety, regardless of settings"
+                        .to_string(),
+                    rule_type: RuleType::Deny,
+                    is_overridden: false,
+                    is_regex: false,
+                });
+                break;
+            }
+        }
+    }
+
     let mut has_deny_match = false;
     let mut has_confirm_match = false;
     let mut has_allow_match = false;
@@ -458,7 +477,7 @@ fn find_matched_patterns(
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
                     rule_type: RuleType::Deny,
-                    is_overridden: false,
+                    is_overridden: hardcoded_denied,
                     is_regex: true,
                 });
             }
@@ -470,7 +489,7 @@ fn find_matched_patterns(
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
                     rule_type: RuleType::Confirm,
-                    is_overridden: has_deny_match,
+                    is_overridden: hardcoded_denied || has_deny_match,
                     is_regex: true,
                 });
             }
@@ -482,14 +501,15 @@ fn find_matched_patterns(
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
                     rule_type: RuleType::Allow,
-                    is_overridden: has_deny_match || has_confirm_match,
+                    is_overridden: hardcoded_denied || has_deny_match || has_confirm_match,
                     is_regex: true,
                 });
             }
         }
     }
 
-    let any_pattern_matched = has_deny_match || has_confirm_match || has_allow_match;
+    let anything_matched =
+        hardcoded_denied || has_deny_match || has_confirm_match || has_allow_match;
     let tool_specific_default = rules.and_then(|r| r.default);
     let global_default = settings.tool_permissions.default;
     let has_tool_default = tool_specific_default.is_some();
@@ -498,7 +518,7 @@ fn find_matched_patterns(
         matched.push(MatchedPattern {
             label: format!("Default permission for {} tool", tool_name.to_lowercase()),
             rule_type: mode_to_rule_type(tool_default),
-            is_overridden: any_pattern_matched,
+            is_overridden: anything_matched,
             is_regex: false,
         });
     }
@@ -506,7 +526,7 @@ fn find_matched_patterns(
     matched.push(MatchedPattern {
         label: "Default permission for all tools".to_string(),
         rule_type: mode_to_rule_type(global_default),
-        is_overridden: any_pattern_matched || has_tool_default,
+        is_overridden: anything_matched || has_tool_default,
         is_regex: false,
     });
 
