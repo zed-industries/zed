@@ -16,23 +16,29 @@ pub struct HardcodedSecurityRules {
 }
 
 pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
+    // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
+    // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
+    const FLAGS: &str = r"(--[a-z][-a-z]*\s+|-[a-zA-Z]+\s+)*";
+
     HardcodedSecurityRules {
-        // Case-insensitive; `(-[rf]+\s+)*` handles `-rf`, `-fr`, `-RF`, `-r -f`, etc.
         terminal_deny: vec![
-            // Recursive deletion of root - "rm -rf /" or "rm -rf / "
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*/\s*$", false)
+            // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
+            CompiledRegex::new(&format!(r"rm\s+{FLAGS}/\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" (but not ~/subdir)
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*~/?\s*$", false)
+            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
+            CompiledRegex::new(&format!(r"rm\s+{FLAGS}~/?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}"
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*(\$HOME|\$\{HOME\})/?\s*$", false)
+            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
+            CompiledRegex::new(
+                &format!(r"rm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
+            CompiledRegex::new(&format!(r"rm\s+{FLAGS}\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./"
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\./?\s*$", false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../"
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\.\./?\s*$", false)
+            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
+            CompiledRegex::new(&format!(r"rm\s+{FLAGS}\.\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
         ],
     }
@@ -1231,5 +1237,56 @@ mod tests {
         t("echo hello; rm -rf $HOME").is_deny();
         t("echo hello; rm -rf .").is_deny();
         t("echo hello; rm -rf ..").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_with_extra_flags() {
+        // Extra flags like -v, -i should not bypass the security rules
+        t("rm -rfv /").is_deny();
+        t("rm -v -rf /").is_deny();
+        t("rm -rfi /").is_deny();
+        t("rm -rfv ~").is_deny();
+        t("rm -rfv ~/").is_deny();
+        t("rm -rfv $HOME").is_deny();
+        t("rm -rfv .").is_deny();
+        t("rm -rfv ./").is_deny();
+        t("rm -rfv ..").is_deny();
+        t("rm -rfv ../").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_with_long_flags() {
+        t("rm --recursive --force /").is_deny();
+        t("rm --force --recursive /").is_deny();
+        t("rm --recursive --force ~").is_deny();
+        t("rm --recursive --force ~/").is_deny();
+        t("rm --recursive --force $HOME").is_deny();
+        t("rm --recursive --force .").is_deny();
+        t("rm --recursive --force ..").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_with_glob_star() {
+        // rm -rf /* is equally catastrophic to rm -rf /
+        t("rm -rf /*").is_deny();
+        t("rm -rf ~/*").is_deny();
+        t("rm -rf $HOME/*").is_deny();
+        t("rm -rf ${HOME}/*").is_deny();
+        t("rm -rf ./*").is_deny();
+        t("rm -rf ../*").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_extra_flags_allow_safe_rm() {
+        // Extra flags on specific paths should NOT be blocked
+        t("rm -rfv ~/somedir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rfv /tmp/test")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm --recursive --force ./build")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 }
