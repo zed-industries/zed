@@ -441,21 +441,22 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
-            | Self::ClaudeOpus4_6_1mContext
-            | Self::ClaudeOpus4_6_1mContextThinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::Claude3_5Haiku => 8_192,
-            Self::ClaudeHaiku4_5 | Self::ClaudeHaiku4_5Thinking => 64_000,
+            Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku4_5Thinking => 64_000,
+            Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking => 128_000,
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
