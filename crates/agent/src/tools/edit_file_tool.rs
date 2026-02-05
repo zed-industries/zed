@@ -162,13 +162,18 @@ impl EditFileTool {
         let path_str = input.path.to_string_lossy();
         let settings = agent_settings::AgentSettings::get_global(cx);
         let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+        let allow_if_safe;
 
         match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Allow => {
+                allow_if_safe = true;
+            }
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => {}
+            ToolPermissionDecision::Confirm => {
+                allow_if_safe = false;
+            }
         }
 
         // If any path component matches the local settings folder, then this could affect
@@ -216,7 +221,7 @@ impl EditFileTool {
 
         // If the path is inside the project, and it's not one of the above edge cases,
         // then no confirmation is necessary. Otherwise, confirmation is necessary.
-        if project_path.is_some() {
+        if project_path.is_some() && allow_if_safe {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
