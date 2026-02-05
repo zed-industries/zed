@@ -184,6 +184,11 @@ impl AcpServerView {
         }
     }
 
+    pub fn thread_view(&self, session_id: &acp::SessionId) -> Option<Entity<AcpThreadView>> {
+        let connected = self.as_connected()?;
+        connected.threads.get(session_id).cloned()
+    }
+
     pub fn as_connected(&self) -> Option<&ConnectedServerState> {
         match &self.server_state {
             ServerState::Connected(connected) => Some(connected),
@@ -239,6 +244,12 @@ struct LoadingView {
 impl ConnectedServerState {
     pub fn has_thread_error(&self, cx: &App) -> bool {
         self.current.read(cx).thread_error.is_some()
+    }
+
+    pub fn navigate_to_session(&mut self, session_id: &acp::SessionId) {
+        if let Some(session) = self.threads.get(session_id) {
+            self.current = session.clone();
+        }
     }
 }
 
@@ -638,11 +649,6 @@ impl AcpServerView {
         let mut subscriptions = vec![
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
             cx.observe(&action_log, |_, _, cx| cx.notify()),
-            // cx.subscribe_in(
-            //     &entry_view_state,
-            //     window,
-            //     Self::handle_entry_view_event,
-            // ),
         ];
 
         let title_editor = if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
@@ -910,11 +916,12 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let thread_id = thread.read(cx).session_id().clone();
         match event {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
@@ -930,7 +937,7 @@ impl AcpServerView {
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 if let Some(entry_view_state) = self
-                    .as_active_thread()
+                    .thread_view(&thread_id)
                     .map(|active| active.read(cx).entry_view_state.clone())
                 {
                     entry_view_state.update(cx, |view_state, cx| {
@@ -939,7 +946,7 @@ impl AcpServerView {
                 }
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
@@ -953,14 +960,14 @@ impl AcpServerView {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             AcpThreadEvent::Retry(retry) => {
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status = Some(retry.clone());
                     });
                 }
             }
             AcpThreadEvent::Stopped => {
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status.take();
                     });
@@ -1008,7 +1015,7 @@ impl AcpServerView {
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, cx| {
                         active.handle_thread_error(error, cx);
                         active.thread_retry_status.take();
@@ -1020,7 +1027,7 @@ impl AcpServerView {
                 self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
             }
             AcpThreadEvent::Error => {
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status.take();
                     });
@@ -1052,7 +1059,7 @@ impl AcpServerView {
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
                 if let Some(title_editor) = self
-                    .as_active_thread()
+                    .thread_view(&thread_id)
                     .and_then(|active| active.read(cx).title_editor.clone())
                 {
                     title_editor.update(cx, |editor, cx| {
@@ -1064,7 +1071,7 @@ impl AcpServerView {
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active
                             .prompt_capabilities

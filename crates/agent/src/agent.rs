@@ -1666,17 +1666,26 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             agent.register_session(subagent_thread.clone(), cx)
         })?;
 
-        let mut prompt_rx = subagent_thread.update(cx, |thread, cx| {
-            thread.submit_user_message(initial_prompt, cx)
-        })?;
+        let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));
+
+        // let initial_prompt_rx = subagent_thread.update(cx, |thread, cx| {
+        //     thread.send(UserMessageId::new(), [initial_prompt], cx)
+        // })?;
+
+        // let task = NativeAgentConnection::handle_thread_events(
+        //     initial_prompt_rx,
+        //     acp_thread.downgrade(),
+        //     cx,
+        // );
+
         let wait_for_prompt_to_complete = cx.background_spawn(async move {
                 if let Some(timeout) = timeout_ms {
                     futures::select! {
                         _ = future::FutureExt::fuse(smol::Timer::after(Duration::from_millis(timeout))) => SubagentInitialPromptResult::Timeout,
-                        _ = wait_until_stop(&mut prompt_rx).fuse() => SubagentInitialPromptResult::Completed,
+                        _ = task.fuse() => SubagentInitialPromptResult::Completed,
                     }
                 } else {
-                    wait_until_stop(&mut prompt_rx).await;
+                    task.await.log_err();
                     SubagentInitialPromptResult::Completed
                 }
             }).shared();
@@ -1713,6 +1722,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         Ok(Rc::new(NativeSubagentHandle {
             session_id,
             thread: subagent_thread,
+            acp_thread,
             wait_for_prompt_to_complete,
             user_cancelled,
         }) as _)
@@ -1728,6 +1738,7 @@ enum SubagentInitialPromptResult {
 pub struct NativeSubagentHandle {
     session_id: acp::SessionId,
     thread: Entity<Thread>,
+    acp_thread: Entity<AcpThread>,
     wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
     user_cancelled: Shared<Task<()>>,
 }
@@ -1748,6 +1759,7 @@ impl SubagentHandle for NativeSubagentHandle {
         const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 
         let thread = self.thread.clone();
+        let acp_thread = self.acp_thread.clone();
         let wait_for_prompt = self.wait_for_prompt_to_complete.clone();
 
         let wait_for_summary_task = cx.spawn(async move |cx| {
@@ -1761,15 +1773,17 @@ impl SubagentHandle for NativeSubagentHandle {
 
             if should_interrupt {
                 thread.update(cx, |thread, cx| thread.cancel(cx).detach());
-                let mut events_rx = thread.update(cx, |thread, cx| {
-                    thread.submit_user_message(context_low_prompt, cx)
-                })?;
-                wait_until_stop(&mut events_rx).await;
+                acp_thread
+                    .update(cx, |thread, cx| {
+                        thread.send(vec![context_low_prompt.into()], cx)
+                    })
+                    .await?;
             } else {
-                let mut events_rx = thread.update(cx, |thread, cx| {
-                    thread.submit_user_message(summary_prompt, cx)
-                })?;
-                wait_until_stop(&mut events_rx).await;
+                acp_thread
+                    .update(cx, |thread, cx| {
+                        thread.send(vec![summary_prompt.into()], cx)
+                    })
+                    .await?;
             }
 
             thread.read_with(cx, |thread, _cx| {
@@ -1791,16 +1805,6 @@ impl SubagentHandle for NativeSubagentHandle {
                 },
             }
         })
-    }
-}
-
-async fn wait_until_stop(events_rx: &mut mpsc::UnboundedReceiver<Result<ThreadEvent>>) {
-    while let Some(event) = events_rx.next().await {
-        match event {
-            Ok(ThreadEvent::Stop(_)) => break,
-            Ok(_) => {}
-            Err(_) => break,
-        }
     }
 }
 

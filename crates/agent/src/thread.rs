@@ -2460,20 +2460,6 @@ impl Thread {
         self.running_turn.is_none()
     }
 
-    pub fn submit_user_message(
-        &mut self,
-        content: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let content = content.into();
-        self.messages.push(Message::User(UserMessage {
-            id: UserMessageId::new(),
-            content: vec![UserMessageContent::Text(content)],
-        }));
-        cx.notify();
-        self.send_existing(cx)
-    }
-
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,
@@ -3044,19 +3030,6 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateSubagentThread {
-                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
-                    thread,
-                }
-                .into(),
-            )))
-            .ok();
-    }
-
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
@@ -3351,6 +3324,12 @@ impl std::ops::DerefMut for ToolCallEventStreamReceiver {
 impl From<&str> for UserMessageContent {
     fn from(text: &str) -> Self {
         Self::Text(text.into())
+    }
+}
+
+impl From<String> for UserMessageContent {
+    fn from(text: String) -> Self {
+        Self::Text(text)
     }
 }
 

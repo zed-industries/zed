@@ -4387,11 +4387,16 @@ impl AcpThreadView {
 
         let is_edit =
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
-        let is_subagent = tool_call.is_subagent();
 
         // For subagent tool calls, render the subagent cards directly without wrapper
-        if is_subagent {
-            return self.render_subagent_tool_call(entry_ix, tool_call, window, cx);
+        if let Some(subagent_session_id) = tool_call.subagent_session_id.clone() {
+            return self.render_subagent_tool_call(
+                entry_ix,
+                tool_call,
+                subagent_session_id,
+                window,
+                cx,
+            );
         }
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
@@ -5310,10 +5315,6 @@ impl AcpThreadView {
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(entry_ix, terminal, tool_call, window, cx)
             }
-            ToolCallContent::SubagentThread(_thread) => {
-                // Subagent threads are rendered by render_subagent_tool_call, not here
-                Empty.into_any_element()
-            }
         }
     }
 
@@ -5547,36 +5548,33 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         tool_call: &ToolCall,
+        subagent_session_id: acp::SessionId,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let subagent_threads: Vec<_> = tool_call
-            .content
-            .iter()
-            .filter_map(|c| c.subagent_thread().cloned())
-            .collect();
-
         let tool_call_status = &tool_call.status;
+
+        let acp_thread_view = self
+            .server_view
+            .upgrade()
+            .unwrap()
+            .read(cx)
+            .as_connected()
+            .unwrap()
+            .threads
+            .get(&subagent_session_id);
+
+        let Some(acp_thread_view) = acp_thread_view else {
+            return div().child("Loading subagent...");
+        };
+
+        let thread = acp_thread_view.read(cx).thread.clone();
 
         v_flex()
             .mx_5()
             .my_1p5()
             .gap_3()
-            .children(
-                subagent_threads
-                    .into_iter()
-                    .enumerate()
-                    .map(|(context_ix, thread)| {
-                        self.render_subagent_card(
-                            entry_ix,
-                            context_ix,
-                            &thread,
-                            tool_call_status,
-                            window,
-                            cx,
-                        )
-                    }),
-            )
+            .child(self.render_subagent_card(entry_ix, 0, &thread, tool_call_status, window, cx))
     }
 
     fn render_subagent_card(
@@ -5686,6 +5684,34 @@ impl AcpThreadView {
                     .child(
                         h_flex()
                             .gap_1p5()
+                            .child(
+                                Button::new(
+                                    SharedString::from(format!(
+                                        "expand-subagent-{}-{}",
+                                        entry_ix, context_ix
+                                    )),
+                                    "Expand",
+                                )
+                                .icon(IconName::ExpandVertical)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .label_size(LabelSize::Small)
+                                .tooltip(Tooltip::text("Expand this subagent"))
+                                .on_click({
+                                    let session_id = thread.read(cx).session_id().clone();
+                                    cx.listener(move |this, _event, _window, cx| {
+                                        this.server_view
+                                            .update(cx, |this, cx| {
+                                                if let Some(connected) = this.as_connected_mut() {
+                                                    connected.navigate_to_session(&session_id);
+                                                    cx.notify();
+                                                }
+                                            })
+                                            .ok();
+                                    })
+                                }),
+                            )
                             .when(is_running, |buttons| {
                                 buttons.child(
                                     Button::new(
