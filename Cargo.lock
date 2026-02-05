@@ -7273,7 +7273,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "feature_flags",
  "futures 0.3.31",
  "fuzzy",
  "git",
