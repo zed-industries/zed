@@ -372,8 +372,8 @@ fn render_verification_section(
     let (decision, matched_patterns) = if current_text.is_empty() {
         (None, Vec::new())
     } else {
-        let matches = find_matched_patterns(tool_id, &current_text, cx);
         let decision = evaluate_test_input(tool_id, &current_text, cx);
+        let matches = find_matched_patterns(tool_id, &current_text, cx);
         (Some(decision), matches)
     };
 
@@ -410,76 +410,95 @@ fn render_verification_section(
                         .child(editor),
                 )
                 .when(decision.is_some(), |this| {
-                    if matched_patterns.is_empty() {
-                        let action_name = match &decision {
-                            Some(ToolPermissionDecision::Allow) => "allow",
-                            Some(ToolPermissionDecision::Deny(_)) => "deny",
-                            Some(ToolPermissionDecision::Confirm) | None => "confirm",
-                        };
-                        this.child(
-                            Label::new(format!(
-                                "No regex matches, using the default action ({action_name})."
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                        )
-                    } else {
-                        this.child(render_matched_patterns(&matched_patterns, cx))
-                    }
+                    this.child(render_matched_patterns(&matched_patterns, cx))
                 }),
         )
         .into_any_element()
 }
 
+fn mode_to_rule_type(mode: ToolPermissionMode) -> RuleType {
+    match mode {
+        ToolPermissionMode::Allow => RuleType::Allow,
+        ToolPermissionMode::Deny => RuleType::Deny,
+        ToolPermissionMode::Confirm => RuleType::Confirm,
+    }
+}
+
 #[derive(Clone, Debug)]
 struct MatchedPattern {
-    pattern: String,
+    label: String,
     rule_type: RuleType,
     is_overridden: bool,
+    is_regex: bool,
 }
 
 fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPattern> {
     let settings = AgentSettings::get_global(cx);
-    let rules = match settings.tool_permissions.tools.get(tool_id) {
-        Some(rules) => rules,
-        None => return Vec::new(),
-    };
+    let rules = settings.tool_permissions.tools.get(tool_id);
 
     let mut matched = Vec::new();
     let mut has_deny_match = false;
     let mut has_confirm_match = false;
+    let mut has_allow_match = false;
 
-    for rule in &rules.always_deny {
-        if rule.is_match(input) {
-            has_deny_match = true;
-            matched.push(MatchedPattern {
-                pattern: rule.pattern.clone(),
-                rule_type: RuleType::Deny,
-                is_overridden: false,
-            });
+    if let Some(rules) = rules {
+        for rule in &rules.always_deny {
+            if rule.is_match(input) {
+                has_deny_match = true;
+                matched.push(MatchedPattern {
+                    label: rule.pattern.clone(),
+                    rule_type: RuleType::Deny,
+                    is_overridden: false,
+                    is_regex: true,
+                });
+            }
+        }
+
+        for rule in &rules.always_confirm {
+            if rule.is_match(input) {
+                has_confirm_match = true;
+                matched.push(MatchedPattern {
+                    label: rule.pattern.clone(),
+                    rule_type: RuleType::Confirm,
+                    is_overridden: has_deny_match,
+                    is_regex: true,
+                });
+            }
+        }
+
+        for rule in &rules.always_allow {
+            if rule.is_match(input) {
+                has_allow_match = true;
+                matched.push(MatchedPattern {
+                    label: rule.pattern.clone(),
+                    rule_type: RuleType::Allow,
+                    is_overridden: has_deny_match || has_confirm_match,
+                    is_regex: true,
+                });
+            }
         }
     }
 
-    for rule in &rules.always_confirm {
-        if rule.is_match(input) {
-            has_confirm_match = true;
-            matched.push(MatchedPattern {
-                pattern: rule.pattern.clone(),
-                rule_type: RuleType::Confirm,
-                is_overridden: has_deny_match,
-            });
-        }
+    let any_pattern_matched = has_deny_match || has_confirm_match || has_allow_match;
+    let tool_specific_default = rules.and_then(|r| r.default);
+    let global_default = settings.tool_permissions.default;
+    let has_tool_default = tool_specific_default.is_some();
+
+    if let Some(tool_default) = tool_specific_default {
+        matched.push(MatchedPattern {
+            label: "Tool Default".to_string(),
+            rule_type: mode_to_rule_type(tool_default),
+            is_overridden: any_pattern_matched,
+            is_regex: false,
+        });
     }
 
-    for rule in &rules.always_allow {
-        if rule.is_match(input) {
-            matched.push(MatchedPattern {
-                pattern: rule.pattern.clone(),
-                rule_type: RuleType::Allow,
-                is_overridden: has_deny_match || has_confirm_match,
-            });
-        }
-    }
+    matched.push(MatchedPattern {
+        label: "Global Default".to_string(),
+        rule_type: mode_to_rule_type(global_default),
+        is_overridden: any_pattern_matched || has_tool_default,
+        is_regex: false,
+    });
 
     matched
 }
@@ -488,10 +507,18 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
     v_flex()
         .gap_1()
         .children(patterns.iter().map(|pattern| {
-            let (type_label, color) = match pattern.rule_type {
-                RuleType::Deny => ("Always Deny", Color::Error),
-                RuleType::Confirm => ("Always Confirm", Color::Warning),
-                RuleType::Allow => ("Always Allow", Color::Success),
+            let (type_label, color) = if pattern.is_regex {
+                match pattern.rule_type {
+                    RuleType::Deny => ("Always Deny", Color::Error),
+                    RuleType::Confirm => ("Always Confirm", Color::Warning),
+                    RuleType::Allow => ("Always Allow", Color::Success),
+                }
+            } else {
+                match pattern.rule_type {
+                    RuleType::Deny => ("Deny", Color::Error),
+                    RuleType::Confirm => ("Confirm", Color::Warning),
+                    RuleType::Allow => ("Allow", Color::Success),
+                }
             };
 
             let type_color = if pattern.is_overridden {
@@ -503,10 +530,10 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
             h_flex()
                 .gap_1()
                 .child(
-                    Label::new(pattern.pattern.clone())
+                    Label::new(pattern.label.clone())
                         .size(LabelSize::Small)
                         .color(Color::Muted)
-                        .buffer_font(cx)
+                        .when(pattern.is_regex, |this| this.buffer_font(cx))
                         .when(pattern.is_overridden, |this| this.strikethrough()),
                 )
                 .child(
