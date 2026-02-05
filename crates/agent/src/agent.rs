@@ -1158,7 +1158,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         update_settings_file(
             self.connection.0.read(cx).fs.clone(),
             cx,
-            move |settings, _cx| {
+            move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
                 settings
@@ -1167,6 +1167,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
                     .set_model(LanguageModelSelection {
                         provider: provider.into(),
                         model,
+                        enable_thinking: thread.read(cx).thinking_enabled(),
                     });
             },
         );
