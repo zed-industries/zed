@@ -49,9 +49,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub inline_assistant_use_streaming_tools: Option<bool>,
-    /// Model to use for generating git commit messages.
-    ///
-    /// Default: true
+    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -573,16 +571,22 @@ pub struct ToolRulesContent {
 
     /// Regexes for inputs to auto-approve.
     /// For terminal: matches command. For file tools: matches path. For fetch: matches URL.
+    /// Patterns accumulate across settings layers (user, project, profile) and cannot be
+    /// removed by a higher-priority layer—only new patterns can be added.
     /// Default: []
     pub always_allow: Option<ExtendingVec<ToolRegexRule>>,
 
     /// Regexes for inputs to auto-reject.
     /// **SECURITY**: These take precedence over ALL other rules, across ALL settings layers.
+    /// Patterns accumulate across settings layers (user, project, profile) and cannot be
+    /// removed by a higher-priority layer—only new patterns can be added.
     /// Default: []
     pub always_deny: Option<ExtendingVec<ToolRegexRule>>,
 
     /// Regexes for inputs that must always prompt.
     /// Takes precedence over always_allow but not always_deny.
+    /// Patterns accumulate across settings layers (user, project, profile) and cannot be
+    /// removed by a higher-priority layer—only new patterns can be added.
     /// Default: []
     pub always_confirm: Option<ExtendingVec<ToolRegexRule>>,
 }

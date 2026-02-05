@@ -181,7 +181,7 @@ Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patter
 ### Single-file Review
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
-The default value is `false`.
+The default value is `true`.
 
 ```json [settings]
 {
