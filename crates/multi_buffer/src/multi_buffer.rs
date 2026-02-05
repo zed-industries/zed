@@ -3013,6 +3013,21 @@ impl MultiBuffer {
         *has_deleted_file = false;
         *has_conflict = false;
 
+        if !diffs.is_empty() {
+            let mut diffs_to_add = Vec::new();
+            for (id, diff) in diffs {
+                if diff.is_inverted || buffer_diff.get(id).is_none() {
+                    if diffs_to_add.capacity() == 0 {
+                        // we'd rather overallocate than reallocate as buffer diffs are quite big
+                        // meaning re-allocations will be fairly expensive
+                        diffs_to_add.reserve(diffs.len());
+                    }
+                    diffs_to_add.push((*id, diff.snapshot(cx)));
+                }
+            }
+            buffer_diff.extend(diffs_to_add);
+        }
+
         let mut excerpts_to_edit = Vec::new();
         let mut non_text_state_updated = false;
         let mut edited = false;
@@ -3052,19 +3067,7 @@ impl MultiBuffer {
             *non_text_state_update_count += 1;
         }
 
-        let diffs_to_add = diffs
-            .iter()
-            .filter_map(|(id, diff)| {
-                if diff.is_inverted || buffer_diff.get(id).is_none() {
-                    Some((*id, diff.snapshot(cx)))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        buffer_diff.extend(diffs_to_add);
-
-        excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
+        excerpts_to_edit.sort_unstable_by_key(|&(locator, _, _)| locator);
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::default();
@@ -3075,7 +3078,6 @@ impl MultiBuffer {
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer.read(cx);
             let buffer_id = buffer.remote_id();
-
             let mut new_excerpt;
             if buffer_edited {
                 edits.extend(
