@@ -19,8 +19,116 @@ use std::sync::Arc;
 use ui::prelude::*;
 
 pub const HANDLE_HITBOX_SIZE: f32 = 4.0;
+const CORNER_HITBOX_SIZE: f32 = HANDLE_HITBOX_SIZE * 2.0;
 const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
+
+/// Represents a divider line between panes within a PaneAxis
+#[derive(Clone, Debug)]
+struct DividerLine {
+    /// Start point of the divider line
+    start: Point<Pixels>,
+    /// End point of the divider line
+    end: Point<Pixels>,
+    /// The axis that owns this divider (Horizontal axis has vertical dividers, Vertical has horizontal)
+    owner_axis: Axis,
+    /// Flexes array to modify when resizing
+    flexes: Arc<Mutex<Vec<f32>>>,
+    /// Index of the child before this divider
+    child_index: usize,
+    /// Total container size for flex calculations
+    container_size: gpui::Size<Pixels>,
+}
+
+/// A corner intersection where two dividers meet, allowing diagonal resize
+#[derive(Clone, Debug)]
+struct CornerIntersection {
+    /// Hitbox bounds for mouse detection
+    hitbox_bounds: Bounds<Pixels>,
+    /// The horizontal divider (from a vertical axis - controls row heights)
+    horizontal_divider: DividerLine,
+    /// The vertical divider (from a horizontal axis - controls column widths)
+    vertical_divider: DividerLine,
+}
+
+fn find_corner_intersections(dividers: &[DividerLine]) -> Vec<CornerIntersection> {
+    let mut corners = Vec::new();
+    let tolerance = px(HANDLE_HITBOX_SIZE);
+
+    let horizontal_dividers: Vec<_> = dividers
+        .iter()
+        .filter(|d| d.owner_axis == Axis::Vertical)
+        .collect();
+    let vertical_dividers: Vec<_> = dividers
+        .iter()
+        .filter(|d| d.owner_axis == Axis::Horizontal)
+        .collect();
+
+    for h_div in &horizontal_dividers {
+        for v_div in &vertical_dividers {
+            let h_y = h_div.start.y;
+            let v_x = v_div.start.x;
+
+            let x_in_range = v_x >= h_div.start.x.min(h_div.end.x) - tolerance
+                && v_x <= h_div.start.x.max(h_div.end.x) + tolerance;
+            let y_in_range = h_y >= v_div.start.y.min(v_div.end.y) - tolerance
+                && h_y <= v_div.start.y.max(v_div.end.y) + tolerance;
+
+            if x_in_range && y_in_range {
+                let half_size = px(CORNER_HITBOX_SIZE / 2.0);
+
+                corners.push(CornerIntersection {
+                    hitbox_bounds: Bounds {
+                        origin: Point::new(v_x - half_size, h_y - half_size),
+                        size: size(px(CORNER_HITBOX_SIZE), px(CORNER_HITBOX_SIZE)),
+                    },
+                    horizontal_divider: (*h_div).clone(),
+                    vertical_divider: (*v_div).clone(),
+                });
+            }
+        }
+    }
+
+    corners
+}
+
+fn resize_divider(divider: &DividerLine, pixel_delta: Pixels) {
+    let min_size = match divider.owner_axis {
+        Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
+        Axis::Vertical => px(VERTICAL_MIN_SIZE),
+    };
+
+    let mut flexes = divider.flexes.lock();
+    let ix = divider.child_index;
+
+    if ix + 1 >= flexes.len() {
+        return;
+    }
+
+    let container_along = divider.container_size.along(divider.owner_axis);
+    if container_along == px(0.0) {
+        return;
+    }
+
+    let size_of = |ix: usize, flexes: &[f32]| container_along * (flexes[ix] / flexes.len() as f32);
+
+    let current_size = size_of(ix, &flexes);
+    let next_size = size_of(ix + 1, &flexes);
+
+    if current_size < min_size - px(1.0) || next_size < min_size - px(1.0) {
+        return;
+    }
+
+    let new_current_size = (current_size + pixel_delta).max(min_size);
+    let new_next_size = (current_size + next_size - new_current_size).max(min_size);
+    let actual_current_size = current_size + next_size - new_next_size;
+
+    // Convert pixel sizes back to flex values
+    // flex = size / container * num_flexes (since each flex unit = container / num_flexes pixels)
+    let num_flexes = flexes.len() as f32;
+    flexes[ix] = (actual_current_size / container_along) * num_flexes;
+    flexes[ix + 1] = (new_next_size / container_along) * num_flexes;
+}
 
 /// One or many panes, arranged in a horizontal or vertical axis due to a split.
 /// Panes have all their tabs and capabilities preserved, and can be split again or resized.
@@ -310,6 +418,57 @@ impl Member {
                 pane.is_upper_left = is_upper_left;
                 pane.is_upper_right = is_upper_right;
             }),
+        }
+    }
+
+    fn collect_divider_lines(&self, parent_bounds: Bounds<Pixels>, lines: &mut Vec<DividerLine>) {
+        if let Member::Axis(axis) = self {
+            let bounding_boxes = axis.bounding_boxes.lock();
+
+            let container_size = bounding_boxes
+                .iter()
+                .filter_map(|b| *b)
+                .reduce(|a, b| a.union(&b))
+                .map(|b| b.size)
+                .unwrap_or(parent_bounds.size);
+
+            for (ix, child_bounds) in bounding_boxes.iter().enumerate() {
+                if ix < bounding_boxes.len() - 1 {
+                    if let Some(bounds) = child_bounds {
+                        let (start, end) = match axis.axis {
+                            Axis::Horizontal => {
+                                let x = bounds.right();
+                                (
+                                    Point::new(x, parent_bounds.top()),
+                                    Point::new(x, parent_bounds.bottom()),
+                                )
+                            }
+                            Axis::Vertical => {
+                                let y = bounds.bottom();
+                                (
+                                    Point::new(parent_bounds.left(), y),
+                                    Point::new(parent_bounds.right(), y),
+                                )
+                            }
+                        };
+
+                        lines.push(DividerLine {
+                            start,
+                            end,
+                            owner_axis: axis.axis,
+                            flexes: axis.flexes.clone(),
+                            child_index: ix,
+                            container_size,
+                        });
+                    }
+                }
+            }
+
+            for (ix, child) in axis.members.iter().enumerate() {
+                if let Some(child_bounds) = bounding_boxes.get(ix).and_then(|b| *b) {
+                    child.collect_divider_lines(child_bounds, lines);
+                }
+            }
         }
     }
 }
@@ -933,7 +1092,7 @@ impl PaneAxis {
             })
             .collect::<Vec<_>>();
 
-        let element = pane_axis(
+        let mut element = pane_axis(
             self.axis,
             basis,
             self.flexes.clone(),
@@ -941,9 +1100,14 @@ impl PaneAxis {
             render_cx.workspace().clone(),
         )
         .with_is_leaf_pane_mask(is_leaf_pane)
-        .children(rendered_children)
-        .with_active_pane(active_pane_ix)
-        .into_any_element();
+        .with_active_pane(active_pane_ix);
+
+        // Pass root member reference for corner detection (only at basis 1, the root level)
+        if basis == 1 {
+            element = element.with_root_member(Member::Axis(self.clone()));
+        }
+
+        let element = element.children(rendered_children).into_any_element();
 
         PaneRenderResult {
             element,
@@ -1065,7 +1229,10 @@ mod element {
 
     use crate::WorkspaceSettings;
 
-    use super::{HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, VERTICAL_MIN_SIZE};
+    use super::{
+        CornerIntersection, HANDLE_HITBOX_SIZE, HORIZONTAL_MIN_SIZE, Member, VERTICAL_MIN_SIZE,
+        find_corner_intersections, resize_divider,
+    };
 
     const DIVIDER_SIZE: f32 = 1.0;
 
@@ -1085,6 +1252,7 @@ mod element {
             active_pane_ix: None,
             workspace,
             is_leaf_pane_mask: Vec::new(),
+            root_member: None,
         }
     }
 
@@ -1100,10 +1268,21 @@ mod element {
         workspace: WeakEntity<Workspace>,
         // Track which children are leaf panes (Member::Pane) vs axes (Member::Axis)
         is_leaf_pane_mask: Vec<bool>,
+        // Root member for corner detection (only set at root level)
+        root_member: Option<Member>,
+    }
+
+    #[derive(Clone)]
+    struct DraggedCornerState {
+        corner_index: usize,
+        last_position: Point<Pixels>,
     }
 
     pub struct PaneAxisLayout {
         dragged_handle: Rc<RefCell<Option<usize>>>,
+        dragged_corner: Rc<RefCell<Option<DraggedCornerState>>>,
+        corners: Vec<CornerIntersection>,
+        corner_hitboxes: Vec<Hitbox>,
         children: Vec<PaneAxisChildLayout>,
     }
 
@@ -1127,6 +1306,11 @@ mod element {
 
         pub fn with_is_leaf_pane_mask(mut self, mask: Vec<bool>) -> Self {
             self.is_leaf_pane_mask = mask;
+            self
+        }
+
+        pub fn with_root_member(mut self, member: Member) -> Self {
+            self.root_member = Some(member);
             self
         }
 
@@ -1309,6 +1493,14 @@ mod element {
                     (state.clone(), state)
                 },
             );
+            let dragged_corner = window
+                .with_element_state::<Rc<RefCell<Option<DraggedCornerState>>>, _>(
+                    global_id.unwrap(),
+                    |state, _cx| {
+                        let state = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
+                        (state.clone(), state)
+                    },
+                );
             let flexes = self.flexes.lock().clone();
             let len = self.children.len();
             debug_assert!(flexes.len() == len);
@@ -1322,10 +1514,7 @@ mod element {
             let mut bounding_boxes = self.bounding_boxes.lock();
             bounding_boxes.clear();
 
-            let mut layout = PaneAxisLayout {
-                dragged_handle,
-                children: Vec::new(),
-            };
+            let mut children_layout = Vec::new();
             for (ix, mut child) in mem::take(&mut self.children).into_iter().enumerate() {
                 let child_flex = flexes[ix];
 
@@ -1347,7 +1536,7 @@ mod element {
 
                 let is_leaf_pane = self.is_leaf_pane_mask.get(ix).copied().unwrap_or(true);
 
-                layout.children.push(PaneAxisChildLayout {
+                children_layout.push(PaneAxisChildLayout {
                     bounds: child_bounds,
                     element: child,
                     handle: None,
@@ -1355,7 +1544,10 @@ mod element {
                 })
             }
 
-            for (ix, child_layout) in layout.children.iter_mut().enumerate() {
+            // Drop the bounding_boxes lock before collecting divider lines to avoid deadlock
+            drop(bounding_boxes);
+
+            for (ix, child_layout) in children_layout.iter_mut().enumerate() {
                 if ix < len - 1 {
                     child_layout.handle = Some(Self::layout_handle(
                         self.axis,
@@ -1366,7 +1558,30 @@ mod element {
                 }
             }
 
-            layout
+            // Detect corner intersections at root level
+            // At this point, all child elements have been prepainted and their bounding boxes populated
+            let corners = if let Some(root_member) = &self.root_member {
+                let mut divider_lines = Vec::new();
+                root_member.collect_divider_lines(bounds, &mut divider_lines);
+                find_corner_intersections(&divider_lines)
+            } else {
+                Vec::new()
+            };
+
+            let corner_hitboxes: Vec<Hitbox> = corners
+                .iter()
+                .map(|corner| {
+                    window.insert_hitbox(corner.hitbox_bounds, HitboxBehavior::BlockMouse)
+                })
+                .collect();
+
+            PaneAxisLayout {
+                dragged_handle,
+                dragged_corner,
+                corners,
+                corner_hitboxes,
+                children: children_layout,
+            }
         }
 
         fn paint(
@@ -1504,11 +1719,99 @@ mod element {
                 }
             }
 
+            // Handle corner resize events
+            for (corner_ix, (corner, hitbox)) in layout
+                .corners
+                .iter()
+                .zip(&layout.corner_hitboxes)
+                .enumerate()
+            {
+                // Set cursor for corner (diagonal resize cursor)
+                if layout
+                    .dragged_corner
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|state| state.corner_index == corner_ix)
+                {
+                    window.set_window_cursor_style(CursorStyle::ResizeUpLeftDownRight);
+                } else {
+                    window.set_cursor_style(CursorStyle::ResizeUpLeftDownRight, hitbox);
+                }
+
+                // MouseDown on corner
+                window.on_mouse_event({
+                    let dragged_corner = layout.dragged_corner.clone();
+                    let dragged_handle = layout.dragged_handle.clone();
+                    let hitbox = hitbox.clone();
+                    let h_flexes = corner.horizontal_divider.flexes.clone();
+                    let v_flexes = corner.vertical_divider.flexes.clone();
+                    let workspace = self.workspace.clone();
+                    move |e: &MouseDownEvent, phase, window, cx| {
+                        if phase.bubble() && hitbox.is_hovered(window) {
+                            // Prevent single-axis handle from also activating
+                            dragged_handle.replace(None);
+                            dragged_corner.replace(Some(DraggedCornerState {
+                                corner_index: corner_ix,
+                                last_position: e.position,
+                            }));
+
+                            if e.click_count >= 2 {
+                                // Reset both axes on double-click
+                                {
+                                    let mut h_borrow = h_flexes.lock();
+                                    *h_borrow = vec![1.; h_borrow.len()];
+                                }
+                                {
+                                    let mut v_borrow = v_flexes.lock();
+                                    *v_borrow = vec![1.; v_borrow.len()];
+                                }
+                                workspace
+                                    .update(cx, |this, cx| this.serialize_workspace(window, cx))
+                                    .log_err();
+                                window.refresh();
+                            }
+
+                            cx.stop_propagation();
+                        }
+                    }
+                });
+
+                // MouseMove for corner drag
+                window.on_mouse_event({
+                    let dragged_corner = layout.dragged_corner.clone();
+                    let corner = corner.clone();
+                    let workspace = self.workspace.clone();
+                    move |e: &MouseMoveEvent, phase, window, cx| {
+                        let mut state = dragged_corner.borrow_mut();
+                        if phase.bubble()
+                            && state.as_ref().is_some_and(|s| s.corner_index == corner_ix)
+                        {
+                            let last_pos = state.as_ref().unwrap().last_position;
+                            let delta = e.position - last_pos;
+
+                            // Resize both dividers
+                            resize_divider(&corner.horizontal_divider, delta.y);
+                            resize_divider(&corner.vertical_divider, delta.x);
+
+                            workspace
+                                .update(cx, |this, cx| this.serialize_workspace(window, cx))
+                                .log_err();
+
+                            state.as_mut().unwrap().last_position = e.position;
+                            cx.stop_propagation();
+                            window.refresh();
+                        }
+                    }
+                });
+            }
+
             window.on_mouse_event({
                 let dragged_handle = layout.dragged_handle.clone();
+                let dragged_corner = layout.dragged_corner.clone();
                 move |_: &MouseUpEvent, phase, _window, _cx| {
                     if phase.bubble() {
                         dragged_handle.replace(None);
+                        dragged_corner.replace(None);
                     }
                 }
             });
