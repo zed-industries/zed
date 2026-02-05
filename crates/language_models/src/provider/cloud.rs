@@ -19,11 +19,11 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh, PaymentRequiredError,
-    RateLimiter, RefreshLlmTokenListener,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -575,6 +575,17 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|effort_level| LanguageModelEffortLevel {
+                name: effort_level.name.clone().into(),
+                value: effort_level.value.clone().into(),
+            })
+            .collect()
     }
 
     fn supports_streaming_tools(&self) -> bool {

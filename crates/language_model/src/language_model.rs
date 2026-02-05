@@ -573,6 +573,12 @@ impl Default for LanguageModelTextStream {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LanguageModelEffortLevel {
+    pub name: SharedString,
+    pub value: SharedString,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -591,9 +597,14 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    /// Whether this model supports extended thinking.
+    /// Whether this model supports thinking.
     fn supports_thinking(&self) -> bool {
         false
+    }
+
+    /// Returns the list of supported effort levels that can be used when thinking.
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        Vec::new()
     }
 
     /// Whether this model supports images
