@@ -30,7 +30,8 @@ use crate::{
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
-    layer_shell::LayerShellNotSupportedError, px, size,
+    layer_shell::{Anchor, LayerShellNotSupportedError},
+    px, size,
 };
 use crate::{
     Capslock,
@@ -145,9 +146,24 @@ impl WaylandSurfaceState {
                 surface.id(),
             );
 
-            let width = params.bounds.size.width.0;
-            let height = params.bounds.size.height.0;
-            layer_surface.set_size(width as u32, height as u32);
+            // According to wlr-layer-shell protocol, when anchored to opposite edges,
+            // the dimension should be 0 to let the compositor stretch the surface.
+            let anchored_horizontally =
+                options.anchor.contains(Anchor::LEFT) && options.anchor.contains(Anchor::RIGHT);
+            let anchored_vertically =
+                options.anchor.contains(Anchor::TOP) && options.anchor.contains(Anchor::BOTTOM);
+
+            let width = if anchored_horizontally {
+                0
+            } else {
+                params.bounds.size.width.0 as u32
+            };
+            let height = if anchored_vertically {
+                0
+            } else {
+                params.bounds.size.height.0 as u32
+            };
+            layer_surface.set_size(width, height);
 
             layer_surface.set_anchor(options.anchor.into());
             layer_surface.set_keyboard_interactivity(options.keyboard_interactivity.into());
@@ -328,10 +344,17 @@ impl WaylandWindowState {
                     .display_ptr()
                     .cast::<c_void>(),
             };
+            // For layer shell surfaces anchored to opposite edges, the compositor
+            // will determine the size via configure events. Use minimum 1x1 for
+            // initial renderer creation to avoid Vulkan errors.
+
+            let width = (options.bounds.size.width.0 as u32).max(1);
+            let height = (options.bounds.size.height.0 as u32).max(1);
+
             let config = BladeSurfaceConfig {
                 size: gpu::Extent {
-                    width: options.bounds.size.width.0 as u32,
-                    height: options.bounds.size.height.0 as u32,
+                    width: width,
+                    height: height,
                     depth: 1,
                 },
                 transparent: true,
