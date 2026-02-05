@@ -14,6 +14,7 @@ use release_channel::AppVersion;
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{CURSOR_MARKER, ZetaFormat, clean_zeta2_model_output, format_zeta_prompt};
+use zeta_prompt::{format_zeta_prompt, get_prefill};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
 
@@ -88,6 +89,8 @@ pub fn request_prediction_with_zeta2(
 
             let (request_id, output_text, usage) = if let Some(config) = &raw_config {
                 let prompt = format_zeta_prompt(&prompt_input, config.format);
+                let prefill = get_prefill(&prompt_input, config.format);
+                let prompt = format!("{prompt}{prefill}");
                 let request = RawCompletionRequest {
                     model: config.model_id.clone().unwrap_or_default(),
                     prompt,
@@ -108,7 +111,8 @@ pub fn request_prediction_with_zeta2(
 
                 let request_id = EditPredictionId(response.id.clone().into());
                 let output_text = response.choices.pop().map(|choice| {
-                    clean_zeta2_model_output(&choice.text, config.format).to_string()
+                    let response = format!("{prefill}{choice.text}");
+                    clean_zeta2_model_output(&response, config.format).to_string()
                 });
 
                 (request_id, output_text, usage)

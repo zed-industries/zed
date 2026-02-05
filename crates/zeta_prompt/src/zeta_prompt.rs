@@ -9,6 +9,11 @@ use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
 
+/// Use up to this amount of editable region for prefill.
+/// Larger values may resul in more robust generation, but
+/// this region becomes non-editable.
+pub const PREFILL_RATIO: f64 = 0.1; // 10%
+
 fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
@@ -193,6 +198,16 @@ fn format_zeta_prompt_with_budget(
     prompt
 }
 
+pub fn get_prefill(input: &ZetaPromptInput, version: ZetaVersion) -> String {
+    match version {
+        ZetaVersion::V0112MiddleAtEnd
+        | ZetaVersion::V0113Ordered
+        | ZetaVersion::V0114180EditableRegion
+        | ZetaVersion::V0120GitMergeMarkers
+        | ZetaVersion::V0131GitMergeMarkersPrefix => v0113_ordered::get_prefill(input),
+    }
+}
+
 fn format_edit_history_within_budget(events: &[Arc<Event>], max_tokens: usize) -> String {
     let header = "<|file_sep|>edit history\n";
     let header_tokens = estimate_tokens(header.len());
@@ -371,6 +386,21 @@ mod v0113_ordered {
         }
 
         prompt.push_str("<|fim_middle|>updated\n");
+    }
+
+    pub fn get_prefill(input: &ZetaPromptInput) -> String {
+        let editable_region = &input.cursor_excerpt
+            [input.editable_range_in_excerpt.start..input.editable_range_in_excerpt.end];
+
+        let prefill_len = (editable_region.len() as f64 * PREFILL_RATIO) as usize;
+        let prefill_len = editable_region.floor_char_boundary(prefill_len);
+
+        // Truncate at the last whitespace boundary to avoid splitting tokens
+        let prefill = &editable_region[..prefill_len];
+        match prefill.rfind([' ', '\n']) {
+            Some(pos) => prefill[..pos].to_string(),
+            None => prefill.to_string(),
+        }
     }
 }
 
