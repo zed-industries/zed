@@ -447,6 +447,14 @@ fn find_matched_patterns(
 
     let mut matched = Vec::new();
 
+    // For terminal commands, parse chained commands (&&, ||, ;) so the preview
+    // matches the real permission engine's behavior.
+    let inputs_to_check: Vec<String> = if tool_id == TerminalTool::NAME {
+        extract_commands(input).unwrap_or_else(|| vec![input.to_string()])
+    } else {
+        vec![input.to_string()]
+    };
+
     // Check hardcoded security rules first (highest priority, terminal only)
     let mut hardcoded_denied = false;
     if tool_id == "terminal" {
