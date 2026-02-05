@@ -9,6 +9,7 @@ pub enum BedrockModelMode {
     Thinking {
         budget_tokens: Option<u64>,
     },
+    AdaptiveThinking,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -604,10 +605,10 @@ impl Model {
             }
             Model::ClaudeOpus4Thinking
             | Model::ClaudeOpus4_1Thinking
-            | Model::ClaudeOpus4_5Thinking
-            | Model::ClaudeOpus4_6Thinking => BedrockModelMode::Thinking {
+            | Model::ClaudeOpus4_5Thinking => BedrockModelMode::Thinking {
                 budget_tokens: Some(4096),
             },
+            Model::ClaudeOpus4_6Thinking => BedrockModelMode::AdaptiveThinking,
             _ => BedrockModelMode::Default,
         }
     }
