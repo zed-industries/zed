@@ -590,7 +590,7 @@ mod tests {
 
     use super::*;
     use git::{Oid, stash::StashEntry};
-    use gpui::{TestAppContext, rems};
+    use gpui::{TestAppContext, VisualTestContext, rems};
     use picker::PickerDelegate;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
@@ -606,29 +606,31 @@ mod tests {
         })
     }
 
+    /// Convenience function for creating `StashEntry` instances during tests.
+    /// Feel free to update in case you need to provide extra fields.
+    fn stash_entry(index: usize, message: &str, branch: Option<&str>) -> StashEntry {
+        let oid = Oid::from_str(&format!("{:0>40x}", index)).unwrap();
+
+        StashEntry {
+            index,
+            oid,
+            message: message.to_string(),
+            branch: branch.map(Into::into),
+            timestamp: 1000 - index as i64,
+        }
+    }
+
     #[gpui::test]
-    async fn test_show_stash_dimisses(cx: &mut TestAppContext) {
+    async fn test_show_stash_dismisses(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
-
-        let entries = vec![
-            StashEntry {
-                index: 0,
-                oid: Oid::from_str("0").unwrap(),
-                message: "Stash #0".to_string(),
-                branch: Some("main".to_string()),
-                timestamp: 1000,
-            },
-            StashEntry {
-                index: 1,
-                oid: Oid::from_str("1").unwrap(),
-                message: "Save progress".to_string(),
-                branch: Some("develop".to_string()),
-                timestamp: 900,
-            },
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let stash_entries = vec![
+            stash_entry(0, "stash #0", Some("main")),
+            stash_entry(1, "stash #1", Some("develop")),
         ];
 
         let stash_list = workspace
@@ -636,13 +638,7 @@ mod tests {
                 let weak_workspace = workspace.weak_handle();
 
                 workspace.toggle_modal(window, cx, move |window, cx| {
-                    let stash_list = StashList::new(None, weak_workspace, rems(34.), window, cx);
-
-                    stash_list.picker.update(cx, |picker, _| {
-                        picker.delegate.all_stash_entries = Some(entries);
-                    });
-
-                    stash_list
+                    StashList::new(None, weak_workspace, rems(34.), window, cx)
                 });
 
                 assert!(workspace.active_modal::<StashList>(cx).is_some());
@@ -650,24 +646,26 @@ mod tests {
             })
             .unwrap();
 
-        workspace
-            .update(cx, |_, window, cx| {
-                stash_list.update(cx, |stash_list, cx| {
-                    stash_list.picker.update(cx, |picker, cx| {
-                        picker.delegate.update_matches(String::new(), window, cx)
-                    })
+        cx.run_until_parked();
+        stash_list.update(cx, |stash_list, cx| {
+            stash_list.picker.update(cx, |picker, _| {
+                picker.delegate.all_stash_entries = Some(stash_entries);
+            });
+        });
+
+        stash_list
+            .update_in(cx, |stash_list, window, cx| {
+                stash_list.picker.update(cx, |picker, cx| {
+                    picker.delegate.update_matches(String::new(), window, cx)
                 })
             })
-            .unwrap()
             .await;
 
-        workspace
-            .update(cx, |_, window, cx| {
-                stash_list.update(cx, |stash_list, cx| {
-                    stash_list.handle_show_stash(&Default::default(), window, cx);
-                })
-            })
-            .unwrap();
+        cx.run_until_parked();
+        stash_list.update_in(cx, |stash_list, window, cx| {
+            assert_eq!(stash_list.picker.read(cx).delegate.matches.len(), 2);
+            stash_list.handle_show_stash(&Default::default(), window, cx);
+        });
 
         workspace
             .update(cx, |workspace, _, cx| {
