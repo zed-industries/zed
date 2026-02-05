@@ -353,8 +353,8 @@ impl SplittableEditor {
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
-        let subscriptions =
-            vec![cx.subscribe(
+        let subscriptions = vec![
+            cx.subscribe(
                 &rhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::ExpandExcerptsRequested {
@@ -366,7 +366,11 @@ impl SplittableEditor {
                     }
                     _ => cx.emit(event.clone()),
                 },
-            )];
+            ),
+            cx.subscribe(&rhs_editor, |_, _, event: &SearchEvent, cx| {
+                cx.emit(event.clone());
+            }),
+        ];
 
         window.defer(cx, {
             let workspace = workspace.downgrade();
@@ -473,7 +477,11 @@ impl SplittableEditor {
                     }
                     _ => cx.emit(event.clone()),
                 },
-            )];
+            ),
+            cx.subscribe(&lhs_editor, |_, _, event: &SearchEvent, cx| {
+                cx.emit(event.clone());
+            }),
+        ];
 
         let lhs_focus_handle = lhs_editor.read(cx).focus_handle(cx);
         subscriptions.push(cx.on_focus_in(&lhs_focus_handle, window, |this, _window, cx| {
