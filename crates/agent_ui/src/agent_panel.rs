@@ -65,9 +65,10 @@ use ui::{
     Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab,
     TabBar, TabCloseSide, TabPosition, Tooltip, prelude::*, utils::WithRemSize,
 };
+use terminal_view::TerminalView;
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+    CollaboratorId, DraggedSelection, DraggedTab, Item, ToggleZoom, ToolbarItemView, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -249,6 +250,32 @@ struct OpenTab {
     view: TabView,
 }
 
+/// Represents a tab being dragged in the agent panel.
+#[derive(Clone)]
+struct DraggedAgentPanelTab {
+    #[allow(dead_code)]
+    panel: WeakEntity<AgentPanel>,
+    tab_id: usize,
+    tab_index: usize,
+    title: SharedString,
+    is_active: bool,
+}
+
+impl Render for DraggedAgentPanelTab {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Tab::new(("dragged-tab", self.tab_id))
+            .toggle_state(self.is_active)
+            .child(
+                div()
+                    .max_w(px(150.))
+                    .overflow_x_hidden()
+                    .text_ellipsis()
+                    .child(Label::new(self.title.clone()).size(LabelSize::Small)),
+            )
+            .into_any_element()
+    }
+}
+
 /// The view content of a tab.
 #[allow(dead_code)]
 enum TabView {
@@ -260,6 +287,9 @@ enum TabView {
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
     },
+    Terminal {
+        terminal_view: Entity<TerminalView>,
+    },
 }
 
 impl OpenTab {
@@ -268,6 +298,9 @@ impl OpenTab {
             TabView::AgentThread { thread_view } => thread_view.read(cx).title(cx),
             TabView::TextThread { text_thread_editor, .. } => {
                 text_thread_editor.read(cx).title(cx).into()
+            }
+            TabView::Terminal { terminal_view } => {
+                terminal_view.read(cx).tab_content_text(0, cx)
             }
         }
     }
@@ -278,6 +311,7 @@ impl OpenTab {
             TabView::TextThread { text_thread_editor, .. } => {
                 text_thread_editor.read(cx).focus_handle(cx)
             }
+            TabView::Terminal { terminal_view } => terminal_view.read(cx).focus_handle(cx),
         }
     }
 }
@@ -292,6 +326,9 @@ enum ActiveView {
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
+    },
+    Terminal {
+        terminal_view: Entity<TerminalView>,
     },
     History {
         kind: HistoryKind,
@@ -358,7 +395,8 @@ impl ActiveView {
         match self {
             ActiveView::Uninitialized
             | ActiveView::AgentThread { .. }
-            | ActiveView::History { .. } => WhichFontSize::AgentFont,
+            | ActiveView::History { .. }
+            | ActiveView::Terminal { .. } => WhichFontSize::AgentFont,
             ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
         }
@@ -900,6 +938,42 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Adds a new tab with a terminal view
+    fn add_terminal_tab(
+        &mut self,
+        terminal_view: Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        cx.observe_in(&terminal_view, window, |this, _, _, cx| {
+            cx.notify();
+            this.serialize(cx);
+        })
+        .detach();
+
+        let tab = OpenTab {
+            id: tab_id,
+            view: TabView::Terminal {
+                terminal_view: terminal_view.clone(),
+            },
+        };
+
+        self.open_tabs.push(tab);
+        self.active_tab_index = Some(self.open_tabs.len() - 1);
+
+        self.set_active_view(
+            ActiveView::Terminal { terminal_view },
+            true,
+            window,
+            cx,
+        );
+
+        cx.notify();
+    }
+
     /// Activates a tab by index
     fn activate_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.open_tabs.len() {
@@ -928,6 +1002,11 @@ impl AgentPanel {
                         window,
                         cx,
                     );
+                }
+                TabView::Terminal { terminal_view } => {
+                    self.active_view = ActiveView::Terminal {
+                        terminal_view: terminal_view.clone(),
+                    };
                 }
             }
             tab.focus_handle(cx).focus(window, cx);
@@ -961,6 +1040,35 @@ impl AgentPanel {
             }
         }
 
+        cx.notify();
+    }
+
+    /// Moves a tab from one index to another
+    fn move_tab(&mut self, from_index: usize, to_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if from_index == to_index || from_index >= self.open_tabs.len() || to_index > self.open_tabs.len() {
+            return;
+        }
+
+        let tab = self.open_tabs.remove(from_index);
+        let insert_index = if to_index > from_index {
+            to_index - 1
+        } else {
+            to_index
+        };
+        self.open_tabs.insert(insert_index, tab);
+
+        // Update active_tab_index to follow the moved tab if it was active
+        if let Some(active_idx) = self.active_tab_index {
+            if active_idx == from_index {
+                self.active_tab_index = Some(insert_index);
+            } else if from_index < active_idx && insert_index >= active_idx {
+                self.active_tab_index = Some(active_idx - 1);
+            } else if from_index > active_idx && insert_index <= active_idx {
+                self.active_tab_index = Some(active_idx + 1);
+            }
+        }
+
+        self.activate_tab(insert_index, window, cx);
         cx.notify();
     }
 
@@ -1058,6 +1166,11 @@ impl AgentPanel {
                         });
                     });
                 }
+                TabView::Terminal { terminal_view } => {
+                    terminal_view.update(cx, |view, cx| {
+                        view.set_custom_title(Some(new_title.to_string()), cx);
+                    });
+                }
             }
         }
 
@@ -1077,6 +1190,7 @@ impl AgentPanel {
             ActiveView::AgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::Uninitialized
             | ActiveView::TextThread { .. }
+            | ActiveView::Terminal { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => None,
         }
@@ -1380,6 +1494,9 @@ impl AgentPanel {
                         } => {
                             text_thread_editor.focus_handle(cx).focus(window, cx);
                         }
+                        ActiveView::Terminal { terminal_view } => {
+                            terminal_view.focus_handle(cx).focus(window, cx);
+                        }
                         ActiveView::Uninitialized
                         | ActiveView::History { .. }
                         | ActiveView::Configuration => {}
@@ -1554,6 +1671,7 @@ impl AgentPanel {
             }
             ActiveView::Uninitialized
             | ActiveView::TextThread { .. }
+            | ActiveView::Terminal { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => {}
         }
@@ -2022,6 +2140,34 @@ impl AgentPanel {
         }
     }
 
+    pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = project
+                .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+                .await?;
+
+            this.update_in(cx, |this, window, cx| {
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace.clone(),
+                        None,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+                this.add_terminal_tab(terminal_view, window, cx);
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn load_agent_thread(
         &mut self,
         thread: AgentSessionInfo,
@@ -2088,6 +2234,7 @@ impl Focusable for AgentPanel {
             ActiveView::TextThread {
                 text_thread_editor, ..
             } => text_thread_editor.focus_handle(cx),
+            ActiveView::Terminal { terminal_view } => terminal_view.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -2310,6 +2457,11 @@ impl AgentPanel {
                     HistoryKind::TextThreads => "Text Thread History",
                 };
                 Label::new(title).truncate().into_any_element()
+            }
+            ActiveView::Terminal { terminal_view } => {
+                Label::new(terminal_view.read(cx).tab_content_text(0, cx))
+                    .truncate()
+                    .into_any_element()
             }
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
             ActiveView::Uninitialized => Label::new("Agent").truncate().into_any_element(),
@@ -2539,6 +2691,7 @@ impl AgentPanel {
         let active_index = self.active_tab_index.unwrap_or(0);
         let tab_count = self.open_tabs.len();
         let renaming_index = self.renaming_tab_index;
+        let panel = cx.entity().downgrade();
 
         Some(
             TabBar::new("agent-panel-tab-bar")
@@ -2579,7 +2732,7 @@ impl AgentPanel {
                             .max_w(px(150.))
                             .overflow_x_hidden()
                             .text_ellipsis()
-                            .child(Label::new(title).size(LabelSize::Small))
+                            .child(Label::new(title.clone()).size(LabelSize::Small))
                             .into_any_element()
                     };
 
@@ -2608,6 +2761,33 @@ impl AgentPanel {
                                 }
                             })
                         })
+                        .on_drag(
+                            DraggedAgentPanelTab {
+                                panel: panel.clone(),
+                                tab_id,
+                                tab_index: index,
+                                title: title.clone(),
+                                is_active,
+                            },
+                            |tab, _, _, cx| cx.new(|_| tab.clone()),
+                        )
+                        .drag_over::<DraggedAgentPanelTab>(move |tab, dragged_tab: &DraggedAgentPanelTab, _, cx| {
+                            let mut styled_tab = tab
+                                .bg(cx.theme().colors().drop_target_background)
+                                .border_color(cx.theme().colors().drop_target_border)
+                                .border_0();
+
+                            if index < dragged_tab.tab_index {
+                                styled_tab = styled_tab.border_l_2();
+                            } else if index > dragged_tab.tab_index {
+                                styled_tab = styled_tab.border_r_2();
+                            }
+
+                            styled_tab
+                        })
+                        .on_drop(cx.listener(move |this, dragged_tab: &DraggedAgentPanelTab, window, cx| {
+                            this.move_tab(dragged_tab.tab_index, index, window, cx);
+                        }))
                 }))
         )
     }
@@ -2633,6 +2813,7 @@ impl AgentPanel {
             ActiveView::AgentThread { thread_view } => thread_view.read(cx).as_native_thread(cx),
             ActiveView::Uninitialized
             | ActiveView::TextThread { .. }
+            | ActiveView::Terminal { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => None,
         };
@@ -2746,6 +2927,27 @@ impl AgentPanel {
                                                                 window,
                                                                 cx,
                                                             );
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Terminal")
+                                    .icon(IconName::Terminal)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_terminal(window, cx);
                                                         });
                                                     }
                                                 });
@@ -3033,6 +3235,7 @@ impl AgentPanel {
             }
             ActiveView::Uninitialized
             | ActiveView::AgentThread { .. }
+            | ActiveView::Terminal { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => return false,
         }
@@ -3061,7 +3264,10 @@ impl AgentPanel {
         }
 
         match &self.active_view {
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
+            ActiveView::Uninitialized
+            | ActiveView::Terminal { .. }
+            | ActiveView::History { .. }
+            | ActiveView::Configuration => {
                 false
             }
             ActiveView::AgentThread { thread_view, .. }
@@ -3328,7 +3534,10 @@ impl AgentPanel {
                     );
                 });
             }
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {}
+            ActiveView::Uninitialized
+            | ActiveView::Terminal { .. }
+            | ActiveView::History { .. }
+            | ActiveView::Configuration => {}
         }
     }
 
@@ -3370,6 +3579,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::AgentThread { .. } => key_context.add("acp_thread"),
             ActiveView::TextThread { .. } => key_context.add("text_thread"),
+            ActiveView::Terminal { .. } => key_context.add("terminal"),
             ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {}
         }
         key_context
@@ -3460,6 +3670,9 @@ impl Render for AgentPanel {
                             window,
                             cx,
                         ))
+                }
+                ActiveView::Terminal { terminal_view } => {
+                    parent.child(terminal_view.clone())
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })

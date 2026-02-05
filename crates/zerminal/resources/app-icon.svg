@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Zerminal app icon with Zed mark">
+  <defs>
+    <radialGradient id="g" cx="0.35" cy="0.3" r="1">
+      <stop offset="0" stop-color="#0E1A22"/>
+      <stop offset="1" stop-color="#051018"/>
+    </radialGradient>
+<!--subtle drop shadow for the Z mark-->
+    <filter id="drop" x="-50%" y="-50%" width="200%" height="200%">
+      <feOffset in="SourceAlpha" dx="0" dy="6" result="off"/>
+      <feGaussianBlur in="off" stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.35 0" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+<!--Background & outer stroke-->
+  <rect width="1024" height="1024" rx="220" fill="url(#g)"/>
+  <rect x="28" y="28" width="968" height="968" rx="210" fill="none" stroke="#07121A" stroke-width="4"/>
+<!--主标记：大 chevron prompt + 方块光标（保持你给的颜色/位置）-->
+  <g transform="translate(180,160)" fill="#00E97B">
+<!--stylized chevron-->
+<!--<path d="M120 200 L320 360 L120 520 L160 560 L380 360 L160 160 Z"/>-->
+<!--underscore / block cursor-->
+    <rect x="0" y="0" width="40" height="560" rx="12"/>
+    <rect x="0" y="0" width="700" height="40" rx="12"/>
+    <line x1="690" y1="20" x2="20" y2="660" stroke="#00E97B" stroke-width="40" stroke-linecap="round"/>
+    <line x1="140" y1="140" x2="140" y2="420" stroke="#00E97B" stroke-width="40"/>
+    <line x1="140" y1="140" x2="560" y2="140" stroke="#00E97B" stroke-width="40" stroke-linecap="round"/>
+    <line x1="240" y1="240" x2="460" y2="240" stroke="#00E97B" stroke-width="40" stroke-linecap="round"/>
+    <line x1="240" y1="240" x2="240" y2="280" stroke="#00E97B" stroke-width="40"/>
+  </g>
+  <g transform="translate(450,570) scale(12)">
+    <path id="dollor" d="M13.5,11H13V6h.5A2.5,2.5,0,0,1,16,8.5a1,1,0,0,0,2,0A4.51,4.51,0,0,0,13.5,4H13V3a1,1,0,0,0-2,0V4h-.5a4.5,4.5,0,0,0,0,9H11v5h-.5A2.5,2.5,0,0,1,8,15.5a1,1,0,0,0-2,0A4.51,4.51,0,0,0,10.5,20H11v1a1,1,0,0,0,2,0V20h.5a4.5,4.5,0,0,0,0-9Zm-3,0a2.5,2.5,0,0,1,0-5H11v5Zm3,7H13V13h.5a2.5,2.5,0,0,1,0,5Z" fill="#00E97B" width="2"/>
+    <line x1="22" y1="22" x2="32" y2="22" stroke="#00E97B" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

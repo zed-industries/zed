@@ -21335,6 +21335,57 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6df3dc4292935e51816d896edcd52aa30bc297907c26167fec31e2b0c6a32524"
 
 [[package]]
+name = "zerminal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "clap",
+ "cli",
+ "client",
+ "collections",
+ "command_palette",
+ "crashes",
+ "db",
+ "fs",
+ "futures 0.3.31",
+ "git",
+ "gpui",
+ "gpui_tokio",
+ "language",
+ "log",
+ "menu",
+ "node_runtime",
+ "parking_lot",
+ "paths",
+ "platform_title_bar",
+ "project",
+ "rayon",
+ "release_channel",
+ "reqwest_client",
+ "schemars",
+ "serde",
+ "session",
+ "settings",
+ "shellexpand 2.1.2",
+ "terminal",
+ "terminal_view",
+ "theme",
+ "theme_selector",
+ "ui",
+ "util",
+ "uuid",
+ "vim",
+ "watch",
+ "windows 0.61.3",
+ "workspace",
+ "zed_actions",
+ "zlog",
+ "zlog_settings",
+ "ztracing",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"

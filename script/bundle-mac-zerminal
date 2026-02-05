@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+build_flag="--release"
+target_dir="release"
+open_result=false
+local_install=false
+
+help_info() {
+  echo "
+Usage: ${0##*/} [options] [architecture=host]
+Build the Zerminal application bundle for macOS.
+
+Options:
+  -d    Compile in debug mode
+  -o    Open dir with the resulting app or launch the app itself in local mode.
+  -i    Install the resulting app into /Applications.
+  -h    Display this help and exit.
+  "
+}
+
+while getopts 'dloih' flag
+do
+    case "${flag}" in
+        o) open_result=true;;
+        d)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            build_flag=""
+            target_dir="debug"
+            ;;
+        i) local_install=true;;
+        h)
+           help_info
+           exit 0
+           ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+# Get release channel
+pushd crates/zerminal
+channel=$(<RELEASE_CHANNEL)
+export ZED_RELEASE_CHANNEL="${channel}"
+popd
+
+export ZED_BUNDLE=true
+
+cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
+    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+fi
+
+# Deal with versions of macOS that don't include libstdc++ headers
+export CXXFLAGS="-stdlib=libc++"
+
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+target_triple=${host_line#*: }
+if [[ $# -gt 0 && -n "$1" ]]; then
+    target_triple="$1"
+fi
+
+if [[ "$target_triple" != "x86_64-apple-darwin" && "$target_triple" != "aarch64-apple-darwin" ]]; then
+    echo "Unsupported architecture $target_triple"
+    exit 1
+fi
+
+rustup target add $target_triple
+
+echo "Compiling Zerminal binary"
+cargo build ${build_flag} --package zerminal --package cli --target $target_triple
+
+echo "Creating application bundle"
+pushd crates/zerminal
+cp Cargo.toml Cargo.toml.backup
+sed \
+    -i.backup \
+    "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+    Cargo.toml
+
+app_path=$(cargo bundle ${build_flag} --target $target_triple --select-workspace-root | xargs)
+
+mv Cargo.toml.backup Cargo.toml
+popd
+echo "Bundled ${app_path}"
+
+# Copy CLI to bundle (as a separate binary for command-line access)
+cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/zerminal-cli"
+
+# Sign the bundle (basic signing for local development)
+codesign --force --deep --sign - "${app_path}" -v
+
+bundle_name=$(basename "$app_path")
+
+if [ "$local_install" = true ]; then
+    rm -rf "/Applications/$bundle_name"
+    mv "$app_path" "/Applications/$bundle_name"
+    echo "Installed application bundle: /Applications/$bundle_name"
+    if [ "$open_result" = true ]; then
+        echo "Opening /Applications/$bundle_name"
+        open "/Applications/$bundle_name"
+    fi
+elif [ "$open_result" = true ]; then
+    open "$app_path"
+else
+    echo "Created application bundle:"
+    echo "$app_path"
+fi

@@ -1,0 +1,110 @@
+[package]
+description = "Zerminal - A terminal-focused application built on Zed."
+edition.workspace = true
+name = "zerminal"
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+authors = ["Zed Team <hi@zed.dev>"]
+default-run = "zerminal"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "zerminal"
+path = "src/main.rs"
+
+[lib]
+path = "src/zed_terminal.rs"
+doctest = false
+
+[dependencies]
+# Core
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+schemars.workspace = true
+serde.workspace = true
+uuid.workspace = true
+
+# CLI
+clap.workspace = true
+cli.workspace = true
+
+# GPUI
+gpui = { workspace = true, features = [
+    "wayland",
+    "x11",
+    "font-kit",
+    "windows-manifest",
+] }
+gpui_tokio.workspace = true
+
+# Assets and UI
+assets.workspace = true
+menu.workspace = true
+platform_title_bar.workspace = true
+theme.workspace = true
+theme_selector.workspace = true
+ui.workspace = true
+
+# Infrastructure
+client.workspace = true
+collections.workspace = true
+crashes.workspace = true
+db.workspace = true
+fs.workspace = true
+git.workspace = true
+language.workspace = true
+node_runtime.workspace = true
+paths.workspace = true
+project.workspace = true
+release_channel.workspace = true
+reqwest_client.workspace = true
+session.workspace = true
+settings.workspace = true
+shellexpand.workspace = true
+util.workspace = true
+watch.workspace = true
+
+# Terminal
+terminal.workspace = true
+terminal_view.workspace = true
+
+# Workspace
+workspace.workspace = true
+
+# Actions and commands
+command_palette.workspace = true
+vim.workspace = true
+zed_actions.workspace = true
+
+# Logging
+zlog.workspace = true
+zlog_settings.workspace = true
+ztracing.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[package.metadata.bundle-dev]
+icon = ["resources/app-icon-terminal-dev@2x.png", "resources/app-icon-terminal-dev.png"]
+identifier = "dev.zed.Zerminal-Dev"
+name = "Zerminal Dev"
+osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zerminal"]
+
+[package.metadata.bundle-stable]
+icon = ["resources/app-icon-terminal@2x.png", "resources/app-icon-terminal.png"]
+identifier = "dev.zed.Zerminal"
+name = "Zerminal"
+osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zerminal"]
+
+[package.metadata.cargo-machete]
+ignored = ["ztracing"]

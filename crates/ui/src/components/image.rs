@@ -24,6 +24,7 @@ pub enum VectorName {
     ProUserStamp,
     ZedLogo,
     ZedXCopilot,
+    ZerminalLogo,
 }
 
 impl VectorName {
