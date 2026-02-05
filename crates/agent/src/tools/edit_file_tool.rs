@@ -162,18 +162,9 @@ impl EditFileTool {
         let path_str = input.path.to_string_lossy();
         let settings = agent_settings::AgentSettings::get_global(cx);
         let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
-        let allow_if_safe;
 
-        match decision {
-            ToolPermissionDecision::Allow => {
-                allow_if_safe = true;
-            }
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {
-                allow_if_safe = false;
-            }
+        if let ToolPermissionDecision::Deny(reason) = decision {
+            return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         // If any path component matches the local settings folder, then this could affect
@@ -221,7 +212,7 @@ impl EditFileTool {
 
         // If the path is inside the project, and it's not one of the above edge cases,
         // then no confirmation is necessary. Otherwise, confirmation is necessary.
-        if project_path.is_some() && allow_if_safe {
+        if project_path.is_some() {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
@@ -1246,15 +1237,17 @@ mod tests {
             Some("test 4 (local settings)".into())
         );
 
-        // Test 5: When global default is allow, no confirmation needed
+        // Test 5: When global default is allow, sensitive and outside-project
+        // paths still require confirmation
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
+        // 5.1: .zed/settings.json is a sensitive path — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
+        let _auth = cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
                     display_description: "test 5.1".into(),
@@ -1264,17 +1257,36 @@ mod tests {
                 &stream_tx,
                 cx,
             )
-        })
-        .await
-        .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 5.1 (local settings)".into())
+        );
 
+        // 5.2: /etc/hosts is outside the project — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
+        let _auth = cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
                     display_description: "test 5.2".into(),
                     path: "/etc/hosts".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(event.tool_call.fields.title, Some("test 5.2".into()));
+
+        // 5.3: Normal in-project path with allow — no confirmation needed
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.3".into(),
+                    path: "root/src/main.rs".into(),
                     mode: EditFileMode::Edit,
                 },
                 &stream_tx,

@@ -171,18 +171,9 @@ impl StreamingEditFileTool {
         let settings = agent_settings::AgentSettings::get_global(cx);
         // Use "edit_file" for permission lookup so users' edit_file rules apply to both variants
         let decision = decide_permission_from_settings(EditFileTool::NAME, &path_str, settings);
-        let allow_if_safe;
 
-        match decision {
-            ToolPermissionDecision::Allow => {
-                allow_if_safe = true;
-            }
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {
-                allow_if_safe = false;
-            }
+        if let ToolPermissionDecision::Deny(reason) = decision {
+            return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         let local_settings_folder = paths::local_settings_folder_name();
@@ -221,7 +212,7 @@ impl StreamingEditFileTool {
             return Task::ready(Err(anyhow!("thread was dropped")));
         };
 
-        if project_path.is_some() && allow_if_safe {
+        if project_path.is_some() {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
