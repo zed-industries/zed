@@ -7,7 +7,7 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::render_edit_prediction_setup_page,
+    pages::{render_edit_prediction_setup_page, render_tool_permissions_setup_page},
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -68,7 +68,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 8] {
+    fn general_settings_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -184,6 +184,30 @@ fn general_page() -> SettingsPage {
                     }
                     .unimplemented(),
                 ),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Semantic Tokens",
+                description: "If semantic tokens from language servers should be rendered.",
+                field: Box::new(SettingField {
+                    json_path: Some("semantic_tokens"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .semantic_tokens
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .semantic_tokens = value;
+                    },
+                }),
                 metadata: None,
                 files: USER,
             }),
@@ -4230,7 +4254,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 20] {
+    fn project_panel_section() -> [SettingsPageItem; 21] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4453,6 +4477,28 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .auto_fold_dirs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Bold Folder Labels",
+                description: "Whether to show folder names with bold text in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.bold_folder_labels"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .bold_folder_labels
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .bold_folder_labels = value;
                     },
                 }),
                 metadata: None,
@@ -5740,6 +5786,9 @@ fn terminal_page() -> SettingsPage {
                                     .working_directory
                                     .get_or_insert_with(|| settings::WorkingDirectory::CurrentProjectDirectory);
                                 *settings_value = match value {
+                                    settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => {
+                                        settings::WorkingDirectory::CurrentFileDirectory
+                                    },
                                     settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
                                         settings::WorkingDirectory::CurrentProjectDirectory
                                     }
@@ -5775,6 +5824,7 @@ fn terminal_page() -> SettingsPage {
                     fields: dynamic_variants::<settings::WorkingDirectory>()
                         .into_iter()
                         .map(|variant| match variant {
+                            settings::WorkingDirectoryDiscriminants::CurrentFileDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
@@ -6843,7 +6893,7 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
+    fn agent_configuration_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6867,6 +6917,15 @@ fn ai_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Configure Tool Rules".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.tool_permissions"),
+                description: Some("Set up regex patterns to auto-allow, auto-deny, or always prompt for specific tool inputs.".into()),
+                in_json: true,
+                files: USER,
+                render: render_tool_permissions_setup_page,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",

@@ -156,6 +156,7 @@ pub fn capture_example(
                 cursor_offset: full_cursor_offset,
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
+                excerpt_start_row: Some(0),
                 events: captured_events,
                 related_files: captured_related_files,
             }
@@ -175,6 +176,8 @@ pub fn capture_example(
             rejected_patch,
             captured_prompt_input: prompt_input,
             telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
         spec.set_cursor_excerpt(
             &cursor_excerpt,
@@ -606,6 +609,8 @@ mod tests {
                 ),
                 captured_prompt_input: example.captured_prompt_input.clone(),
                 telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
             }
         );
 

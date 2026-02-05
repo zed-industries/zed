@@ -29,6 +29,7 @@ mod stack_trace_view;
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
 
+// Let's see the diff-test in action.
 actions!(
     debugger,
     [
@@ -90,11 +91,10 @@ actions!(
     ]
 );
 
-/// Extends selection down by a specified number of lines.
+/// Set a data breakpoint on the selected variable or memory region.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = debugger)]
 #[serde(deny_unknown_fields)]
-/// Set a data breakpoint on the selected variable or memory region.
 pub struct ToggleDataBreakpoint {
     /// The type of data breakpoint
     /// Read & Write

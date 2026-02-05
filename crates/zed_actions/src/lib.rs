@@ -128,7 +128,7 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
-/// Increases the font size in the editor buffer.
+/// Opens the settings editor at a specific path.
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -512,7 +512,7 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
-    /// Spawns a task by the name given.
+    /// Spawns a task by the tag given.
     ByTag {
         task_tag: String,
         #[serde(default)]
@@ -649,5 +649,35 @@ pub mod wsl_actions {
     pub struct OpenWsl {
         #[serde(default)]
         pub create_new_window: bool,
+    }
+}
+
+pub mod preview {
+    pub mod markdown {
+        use gpui::actions;
+
+        actions!(
+            markdown,
+            [
+                /// Opens a markdown preview for the current file.
+                OpenPreview,
+                /// Opens a markdown preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+
+    pub mod svg {
+        use gpui::actions;
+
+        actions!(
+            svg,
+            [
+                /// Opens an SVG preview for the current file.
+                OpenPreview,
+                /// Opens an SVG preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
     }
 }

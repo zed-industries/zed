@@ -76,7 +76,6 @@ members = [
     "crates/file_icons",
     "crates/fs",
     "crates/fs_benchmarks",
-    "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
     "crates/git_graph",
@@ -145,6 +144,7 @@ members = [
     "crates/release_channel",
     "crates/scheduler",
     "crates/remote",
+    "crates/remote_connection",
     "crates/remote_server",
     "crates/repl",
     "crates/reqwest_client",
@@ -315,7 +315,6 @@ feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
-fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
@@ -387,6 +386,7 @@ recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
+remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
@@ -461,7 +461,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.9.3", features = ["unstable"] }
+agent-client-protocol = { version = "=0.9.4", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "936aee8761a17affc84ab418ae21306c27c26221" }
 any_vec = "0.14"
@@ -500,6 +500,7 @@ brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
+brush-parser = "0.3"
 cfg-if = "1.0.3"
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -552,14 +553,14 @@ inventory = "0.3.19"
 itertools = "0.14.0"
 json_dotpath = "1.1"
 jsonschema = "0.37.0"
-jsonwebtoken = "9.3"
+jsonwebtoken = "10.0"
 jupyter-protocol = "0.10.0"
 jupyter-websocket-client = "0.15.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "b71ab4eeb27d9758be8092020a46fe33fbca4e33" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "fb6bcad59522455a041b7eb9579f706e5cfb2d6f" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
@@ -736,7 +737,7 @@ wasmtime = { version = "33", default-features = false, features = [
     "parallel-compilation",
 ] }
 wasmtime-wasi = "33"
-wax = "0.6"
+wax = "0.7"
 which = "6.0.0"
 windows-core = "0.61"
 yawc = "0.2.5"
@@ -793,6 +794,7 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Media",
 ]
 
 [patch.crates-io]
@@ -837,7 +839,6 @@ command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
-fsevent = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
 edit_prediction_ui = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }

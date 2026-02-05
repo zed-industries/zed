@@ -20,6 +20,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
+        Media::{timeBeginPeriod, timeEndPeriod},
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -97,6 +98,10 @@ impl WindowsPlatform {
     pub(crate) fn new(headless: bool) -> Result<Self> {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
+            // Set the system timer resolution to 1ms so that short timeouts
+            // (e.g. in Scheduler::block) are not rounded up to the default
+            // ~15.6ms tick interval.
+            timeBeginPeriod(1);
         }
         let (directx_devices, text_system, direct_write_text_system) = if !headless {
             let devices = DirectXDevices::new().context("Creating DirectX devices")?;
@@ -240,14 +245,25 @@ impl WindowsPlatform {
             }
         });
         self.inner.state.jump_list.borrow_mut().dock_menus = actions;
-        update_jump_list(&self.inner.state.jump_list.borrow()).log_err();
+        let borrow = self.inner.state.jump_list.borrow();
+        let dock_menus = borrow
+            .dock_menus
+            .iter()
+            .map(|menu| (menu.name.clone(), menu.description.clone()))
+            .collect::<Vec<_>>();
+        let recent_workspaces = borrow.recent_workspaces.clone();
+        self.background_executor
+            .spawn(async move {
+                update_jump_list(&recent_workspaces, &dock_menus).log_err();
+            })
+            .detach();
     }
 
     fn update_jump_list(
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
             if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
@@ -256,8 +272,18 @@ impl WindowsPlatform {
         });
         let mut jump_list = self.inner.state.jump_list.borrow_mut();
         jump_list.dock_menus = actions;
-        jump_list.recent_workspaces = entries;
-        update_jump_list(&jump_list).log_err().unwrap_or_default()
+        jump_list.recent_workspaces = entries.into();
+        let dock_menus = jump_list
+            .dock_menus
+            .iter()
+            .map(|menu| (menu.name.clone(), menu.description.clone()))
+            .collect::<Vec<_>>();
+        let recent_workspaces = jump_list.recent_workspaces.clone();
+        self.background_executor.spawn(async move {
+            update_jump_list(&recent_workspaces, &dock_menus)
+                .log_err()
+                .unwrap_or_default()
+        })
     }
 
     fn find_current_active_window(&self) -> Option<HWND> {
@@ -760,7 +786,7 @@ impl Platform for WindowsPlatform {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.update_jump_list(menus, entries)
     }
 }
@@ -959,6 +985,7 @@ impl WindowsPlatformInner {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            timeEndPeriod(1);
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();

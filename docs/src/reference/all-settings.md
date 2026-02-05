@@ -2592,6 +2592,7 @@ The following settings can be overridden for each specific language:
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
+- [`semantic_tokens`](#semantic-tokens)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
 - [`whitespace_map`](#whitespace-map)
@@ -2667,13 +2668,16 @@ Configuration for various AI model providers including API URLs and authenticati
 
 ## LSP Document Colors
 
-- Description: Whether to show document color information from the language server
+- Description: How to render LSP `textDocument/documentColor` colors in the editor
 - Setting: `lsp_document_colors`
-- Default: `true`
+- Default: `inlay`
 
 **Options**
 
-`boolean` values
+1. `inlay`: Render document colors as inlay hints near the color text.
+2. `background`: Draw a background behind the color text.
+3. `border`: Draw a border around the color text.
+4. `none`: Do not query and render document colors.
 
 ## Max Tabs
 
@@ -3293,6 +3297,40 @@ Non-negative `integer` values
 1. `always` always populate the search query with the word under the cursor
 2. `selection` only populate the search query when there is text selected
 3. `never` never populate the search query
+
+## Semantic Tokens
+
+- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Setting: `semantic_tokens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not request semantic tokens from language servers.
+2. `combined`: Use LSP semantic tokens together with tree-sitter highlighting.
+3. `full`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+
+To enable semantic tokens globally:
+
+```json [settings]
+{
+  "semantic_tokens": "combined"
+}
+```
+
+To enable semantic tokens for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "semantic_tokens": "full"
+    }
+  }
+}
+```
+
+May require language server restart to properly apply.
 
 ## Use Smartcase Search
 
@@ -4109,7 +4147,17 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
+1. Use the current file's directory, falling back to the project directory, then the first project in the workspace.
+
+```json [settings]
+{
+  "terminal": {
+    "working_directory": "current_file_directory"
+  }
+}
+```
+
+2. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4119,7 +4167,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
+3. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4129,7 +4177,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory if it can be found.
+4. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4139,7 +4187,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-4. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
+5. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
 
 ```json [settings]
 {
@@ -4376,6 +4424,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "indent_size": 20,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
+    "bold_folder_labels": false,
     "drag_and_drop": true,
     "scrollbar": {
       "show": null
@@ -4525,6 +4574,30 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "auto_fold_dirs": false
+}
+```
+
+### Bold Folder Labels
+
+- Description: Whether to show folder names with bold text in the project panel.
+- Setting: `bold_folder_labels`
+- Default: `false`
+
+**Options**
+
+1. Enable bold folder labels
+
+```json [settings]
+{
+  "bold_folder_labels": true
+}
+```
+
+2. Disable bold folder labels
+
+```json [settings]
+{
+  "bold_folder_labels": false
 }
 ```
 

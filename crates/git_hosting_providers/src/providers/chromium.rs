@@ -169,6 +169,7 @@ impl GitHostingProvider for Chromium {
         _repo_owner: &str,
         repo: &str,
         commit: SharedString,
+        _author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();

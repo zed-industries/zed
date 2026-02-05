@@ -1,9 +1,14 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     rc::Rc,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+
+use language::language_settings::{EditPredictionProvider, all_language_settings};
 
 use client::proto;
 use collections::HashSet;
@@ -41,13 +46,93 @@ pub struct LspButton {
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Debug)]
 struct LanguageServerState {
     items: Vec<LspMenuItem>,
     workspace: WeakEntity<Workspace>,
     lsp_store: WeakEntity<LspStore>,
     active_editor: Option<ActiveEditor>,
     language_servers: LanguageServers,
+    process_memory_cache: Rc<RefCell<ProcessMemoryCache>>,
+}
+
+impl std::fmt::Debug for LanguageServerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LanguageServerState")
+            .field("items", &self.items)
+            .field("workspace", &self.workspace)
+            .field("lsp_store", &self.lsp_store)
+            .field("active_editor", &self.active_editor)
+            .field("language_servers", &self.language_servers)
+            .finish_non_exhaustive()
+    }
+}
+
+const PROCESS_MEMORY_CACHE_DURATION: Duration = Duration::from_secs(5);
+
+struct ProcessMemoryCache {
+    system: System,
+    memory_usage: HashMap<u32, u64>,
+    last_refresh: Option<Instant>,
+}
+
+impl ProcessMemoryCache {
+    fn new() -> Self {
+        Self {
+            system: System::new(),
+            memory_usage: HashMap::new(),
+            last_refresh: None,
+        }
+    }
+
+    fn get_memory_usage(&mut self, process_id: u32) -> u64 {
+        let cache_expired = self
+            .last_refresh
+            .map(|last| last.elapsed() >= PROCESS_MEMORY_CACHE_DURATION)
+            .unwrap_or(true);
+
+        if cache_expired {
+            let refresh_kind = RefreshKind::nothing()
+                .with_processes(ProcessRefreshKind::nothing().without_tasks().with_memory());
+            self.system.refresh_specifics(refresh_kind);
+            self.memory_usage.clear();
+            self.last_refresh = Some(Instant::now());
+        }
+
+        if let Some(&memory) = self.memory_usage.get(&process_id) {
+            return memory;
+        }
+
+        let root_pid = Pid::from_u32(process_id);
+
+        let parent_map: HashMap<Pid, Pid> = self
+            .system
+            .processes()
+            .iter()
+            .filter_map(|(&pid, process)| Some((pid, process.parent()?)))
+            .collect();
+
+        let total_memory = self
+            .system
+            .processes()
+            .iter()
+            .filter(|(pid, _)| self.is_descendant_of(**pid, root_pid, &parent_map))
+            .map(|(_, process)| process.memory())
+            .sum();
+
+        self.memory_usage.insert(process_id, total_memory);
+        total_memory
+    }
+
+    fn is_descendant_of(&self, pid: Pid, root_pid: Pid, parent_map: &HashMap<Pid, Pid>) -> bool {
+        let mut current = pid;
+        while current != root_pid {
+            match parent_map.get(&current) {
+                Some(&parent) => current = parent,
+                None => return false,
+            }
+        }
+        true
+    }
 }
 
 struct ActiveEditor {
@@ -143,12 +228,15 @@ impl LanguageServerState {
                             (
                                 status.server_version.clone(),
                                 status.binary.as_ref().map(|b| b.path.clone()),
+                                status.process_id,
                             ),
                         )
                     })
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
+
+        let process_memory_cache = self.process_memory_cache.clone();
 
         let mut first_button_encountered = false;
         for item in &self.items {
@@ -168,52 +256,7 @@ impl LanguageServerState {
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 if restart {
-                                    let Some(workspace) = state.read(cx).workspace.upgrade() else {
-                                        return;
-                                    };
-                                    let project = workspace.read(cx).project().clone();
-                                    let path_style = project.read(cx).path_style(cx);
-                                    let buffer_store = project.read(cx).buffer_store().clone();
-                                    let buffers = state
-                                        .read(cx)
-                                        .language_servers
-                                        .servers_per_buffer_abs_path
-                                        .iter()
-                                        .filter_map(|(abs_path, servers)| {
-                                            let worktree =
-                                                servers.worktree.as_ref()?.upgrade()?.read(cx);
-                                            let relative_path =
-                                                abs_path.strip_prefix(&worktree.abs_path()).ok()?;
-                                            let relative_path =
-                                                RelPath::new(relative_path, path_style)
-                                                    .log_err()?;
-                                            let entry = worktree.entry_for_path(&relative_path)?;
-                                            let project_path =
-                                                project.read(cx).path_for_entry(entry.id, cx)?;
-                                            buffer_store.read(cx).get_by_path(&project_path)
-                                        })
-                                        .collect();
-                                    let selectors = state
-                                        .read(cx)
-                                        .items
-                                        .iter()
-                                        // Do not try to use IDs as we have stopped all servers already, when allowing to restart them all
-                                        .flat_map(|item| match item {
-                                            LspMenuItem::Header { .. } => None,
-                                            LspMenuItem::ToggleServersButton { .. } => None,
-                                            LspMenuItem::WithHealthCheck { health, .. } => Some(
-                                                LanguageServerSelector::Name(health.name.clone()),
-                                            ),
-                                            LspMenuItem::WithBinaryStatus {
-                                                server_name, ..
-                                            } => Some(LanguageServerSelector::Name(
-                                                server_name.clone(),
-                                            )),
-                                        })
-                                        .collect();
-                                    lsp_store.restart_language_servers_for_buffers(
-                                        buffers, selectors, cx,
-                                    );
+                                    lsp_store.restart_all_language_servers(cx);
                                 } else {
                                     lsp_store.stop_all_language_servers(cx);
                                 }
@@ -274,16 +317,17 @@ impl LanguageServerState {
                 .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
                 .cloned();
 
-            let (server_version, binary_path) = server_metadata
+            let (server_version, binary_path, process_id) = server_metadata
                 .get(&server_info.id)
-                .map(|(version, path)| {
+                .map(|(version, path, process_id)| {
                     (
                         version.clone(),
                         path.as_ref()
                             .map(|p| SharedString::from(p.compact().to_string_lossy().to_string())),
+                        *process_id,
                     )
                 })
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
 
             let truncated_message = message.as_ref().and_then(|message| {
                 message
@@ -292,17 +336,6 @@ impl LanguageServerState {
                     .map(SharedString::new)
                     .next()
             });
-
-            let metadata_label = match (&server_version, &truncated_message) {
-                (None, None) => None,
-                (Some(version), None) => Some(SharedString::from(format!("v{}", version.as_ref()))),
-                (None, Some(message)) => Some(message.clone()),
-                (Some(version), Some(message)) => Some(SharedString::from(format!(
-                    "v{}\n\n{}",
-                    version.as_ref(),
-                    message.as_ref()
-                ))),
-            };
 
             let submenu_server_name = server_info.name.clone();
             let submenu_server_info = server_info.clone();
@@ -319,6 +352,7 @@ impl LanguageServerState {
                     let lsp_store = self.lsp_store.clone();
                     let state = cx.entity().downgrade();
                     let can_stop = submenu_server_info.can_stop();
+                    let process_memory_cache = process_memory_cache.clone();
 
                     move |menu, _window, _cx| {
                         let mut submenu = menu;
@@ -509,9 +543,55 @@ impl LanguageServerState {
                         }
 
                         submenu = submenu.separator().custom_row({
-                            let metadata_label = metadata_label.clone();
                             let binary_path = binary_path.clone();
+                            let server_version = server_version.clone();
+                            let truncated_message = truncated_message.clone();
+                            let process_memory_cache = process_memory_cache.clone();
                             move |_, _| {
+                                let memory_usage = process_id.map(|pid| {
+                                    process_memory_cache.borrow_mut().get_memory_usage(pid)
+                                });
+
+                                let memory_label = memory_usage.map(|bytes| {
+                                    if bytes >= 1024 * 1024 * 1024 {
+                                        format!(
+                                            "{:.1} GB",
+                                            bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+                                        )
+                                    } else {
+                                        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+                                    }
+                                });
+
+                                let metadata_label =
+                                    match (&server_version, &memory_label, &truncated_message) {
+                                        (None, None, None) => None,
+                                        (Some(version), None, None) => {
+                                            Some(format!("v{}", version.as_ref()))
+                                        }
+                                        (None, Some(memory), None) => Some(memory.clone()),
+                                        (Some(version), Some(memory), None) => {
+                                            Some(format!("v{} • {}", version.as_ref(), memory))
+                                        }
+                                        (None, None, Some(message)) => Some(message.to_string()),
+                                        (Some(version), None, Some(message)) => Some(format!(
+                                            "v{}\n\n{}",
+                                            version.as_ref(),
+                                            message.as_ref()
+                                        )),
+                                        (None, Some(memory), Some(message)) => {
+                                            Some(format!("{}\n\n{}", memory, message.as_ref()))
+                                        }
+                                        (Some(version), Some(memory), Some(message)) => {
+                                            Some(format!(
+                                                "v{} • {}\n\n{}",
+                                                version.as_ref(),
+                                                memory,
+                                                message.as_ref()
+                                            ))
+                                        }
+                                    };
+
                                 h_flex()
                                     .id("metadata-container")
                                     .ml_neg_1()
@@ -744,6 +824,7 @@ impl LspButton {
             lsp_store: lsp_store.downgrade(),
             active_editor: None,
             language_servers,
+            process_memory_cache: Rc::new(RefCell::new(ProcessMemoryCache::new())),
         });
 
         let mut lsp_button = Self {
@@ -1172,10 +1253,16 @@ impl Render for LspButton {
             return div().hidden();
         }
 
+        let state = self.server_state.read(cx);
+        let is_via_ssh = state
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
+            .unwrap_or(false);
+
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
-        let state = self.server_state.read(cx);
         for binary_status in state.language_servers.binary_statuses.values() {
             has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
             has_other_notifications |= binary_status.message.is_some();
@@ -1215,6 +1302,16 @@ impl Render for LspButton {
 
         div().child(
             PopoverMenu::new("lsp-tool")
+                .on_open(Rc::new(move |_window, cx| {
+                    let copilot_enabled = all_language_settings(None, cx).edit_predictions.provider
+                        == EditPredictionProvider::Copilot;
+                    telemetry::event!(
+                        "Toolbar Menu Opened",
+                        name = "Language Servers",
+                        copilot_enabled,
+                        is_via_ssh,
+                    );
+                }))
                 .menu(move |_, cx| {
                     lsp_button
                         .read_with(cx, |lsp_button, _| lsp_button.lsp_menu.clone())

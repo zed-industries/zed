@@ -156,7 +156,7 @@ impl Application {
         ))
     }
 
-    /// Assign
+    /// Assigns the source of assets for the application.
     pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
         let mut context_lock = self.0.borrow_mut();
         let asset_source = Arc::new(asset_source);
@@ -1462,29 +1462,33 @@ impl App {
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            cx.window_update_stack.pop();
+            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
 
-            if window.removed {
-                cx.window_handles.remove(&id);
-                cx.windows.remove(id);
+                if window.removed {
+                    cx.window_handles.remove(&id);
+                    cx.windows.remove(id);
 
-                cx.window_closed_observers.clone().retain(&(), |callback| {
-                    callback(cx);
-                    true
-                });
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx);
+                        true
+                    });
 
-                let quit_on_empty = match cx.quit_mode {
-                    QuitMode::Explicit => false,
-                    QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => cfg!(not(target_os = "macos")),
-                };
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
 
-                if quit_on_empty && cx.windows.is_empty() {
-                    cx.quit();
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(id)?.replace(window);
                 }
-            } else {
-                cx.windows.get_mut(id)?.replace(window);
+                Some(())
             }
+            trail(id, window, cx)?;
 
             Some(result)
         })
@@ -1529,7 +1533,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Spawns the future returned by the given function on the main thread with
@@ -1547,7 +1551,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn_with_priority(priority, async move { f(&mut cx).await })
+            .spawn_with_priority(priority, async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -2010,7 +2014,7 @@ impl App {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.platform.update_jump_list(menus, entries)
     }
 

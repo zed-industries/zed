@@ -3692,8 +3692,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by deny rule"
         );
+        let err_msg = result.unwrap_err().to_string().to_lowercase();
         assert!(
-            result.unwrap_err().to_string().contains("blocked"),
+            err_msg.contains("blocked"),
             "error should mention the command was blocked"
         );
     }
@@ -4293,19 +4294,8 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
         )
     });
 
-    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
-        std::collections::BTreeMap::new();
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx, mut cancellation_tx) =
         crate::ToolCallEventStream::test_with_cancellation();
@@ -4589,25 +4579,12 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         thread
     });
 
-    let mut parent_tools: std::collections::BTreeMap<
-        gpui::SharedString,
-        Arc<dyn crate::AnyAgentTool>,
-    > = std::collections::BTreeMap::new();
-    parent_tools.insert("echo".into(), EchoTool.erase());
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project,
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
-    let result = tool.validate_allowed_tools(&allowed_tools);
+    let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx));
+
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4910,19 +4887,8 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         );
     });
 
-    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
-        std::collections::BTreeMap::new();
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -4983,22 +4949,8 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         thread
     });
 
-    let mut parent_tools: std::collections::BTreeMap<
-        gpui::SharedString,
-        Arc<dyn crate::AnyAgentTool>,
-    > = std::collections::BTreeMap::new();
-    parent_tools.insert("echo".into(), EchoTool.erase());
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
