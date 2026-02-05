@@ -2164,48 +2164,59 @@ impl Workspace {
             return Task::ready(Ok(()));
         };
 
-        let entry = pane_entity.update(cx, |pane, _cx| {
+        let Some(entry) = pane_entity.update(cx, |pane, _cx| {
             pane.nav_history_mut().pop_change(direction)
-        });
-
-        let Some(entry) = entry else {
+        }) else {
             return Task::ready(Ok(()));
         };
 
+        Self::focus_and_navigate(&pane_entity, &entry, window, cx)
+            .or_else(|| self.reopen_and_navigate(pane_entity, pane, entry, window, cx))
+            .unwrap_or_else(|| Task::ready(Ok(())))
+    }
+
+    fn focus_and_navigate(
+        pane_entity: &Entity<Pane>,
+        entry: &ChangeStackEntry,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Task<Result<()>>> {
+        let (item, index) = entry.item.upgrade().and_then(|item| {
+            let index = pane_entity.read(cx).index_for_item(item.as_ref())?;
+            Some((item, index))
+        })?;
+
         window.focus(&pane_entity.read(cx).focus_handle(cx), cx);
+        pane_entity.update(cx, |pane, cx| {
+            pane.activate_item(index, true, true, window, cx);
+        });
+        item.navigate_to_position(entry.data.clone(), window, cx);
+        Some(Task::ready(Ok(())))
+    }
 
-        if let Some(item) = entry.item.upgrade() {
-            if let Some(index) = pane_entity.read(cx).index_for_item(item.as_ref()) {
-                pane_entity.update(cx, |pane, cx| {
-                    pane.activate_item(index, true, true, window, cx);
-                });
-
-                if let Some(active_item) = pane_entity.read(cx).active_item() {
-                    active_item.navigate_to_position(entry.data, window, cx);
-                }
-                return Task::ready(Ok(()));
-            }
-        }
-
-        let project_path = pane_entity
+    fn reopen_and_navigate(
+        &mut self,
+        pane_entity: Entity<Pane>,
+        pane: WeakEntity<Pane>,
+        entry: ChangeStackEntry,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let (project_path, _abs_path) = pane_entity
             .read(cx)
             .nav_history()
-            .path_for_item(entry.item.id());
+            .path_for_item(entry.item.id())?;
 
-        if let Some((project_path, _abs_path)) = project_path {
-            let open_task = self.open_path(project_path, Some(pane.clone()), true, window, cx);
-            let data = entry.data;
+        let open_task = self.open_path(project_path, Some(pane.clone()), true, window, cx);
+        let data = entry.data;
 
-            cx.spawn_in(window, async move |_workspace, cx| {
-                let item = open_task.await?;
-                pane.update_in(cx, |_pane, window, cx| {
-                    item.navigate_to_position(data, window, cx);
-                })?;
-                Ok(())
-            })
-        } else {
-            Task::ready(Ok(()))
-        }
+        Some(cx.spawn_in(window, async move |_workspace, cx| {
+            let item = open_task.await?;
+            pane.update_in(cx, |_pane, window, cx| {
+                item.navigate_to_position(data, window, cx);
+            })?;
+            Ok(())
+        }))
     }
 
     fn navigate_history_impl(
