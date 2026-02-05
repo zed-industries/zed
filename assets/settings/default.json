@@ -952,9 +952,16 @@
       //   "temperature": 1.0
       // }
     ],
-    // Per-tool permission rules for granular control over tool actions.
-    // This setting only applies to the native Zed agent.
-    // External agent servers have their own permission systems.
+    // Permission rules for tool actions.
+    //
+    // The "default" setting applies to both the native Zed agent and external
+    // agent servers (e.g. Claude Code) that don't define their own permission
+    // modes. For external agents that do define their own permission modes,
+    // "deny" and "confirm" still take precedence — the external agent's
+    // permission system is only used when Zed would allow the action.
+    //
+    // Per-tool regex patterns ("tools" below) only apply to the native Zed
+    // agent, since external agents handle tool input differently.
     "tool_permissions": {
       // Global default permission when no tool-specific rules match.
       // "allow" - Auto-approve without prompting
