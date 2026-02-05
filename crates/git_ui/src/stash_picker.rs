@@ -183,7 +183,8 @@ impl StashList {
                 .delegate
                 .show_stash_at(picker.delegate.selected_index(), window, cx);
         });
-        cx.notify();
+
+        cx.emit(DismissEvent);
     }
 
     pub fn handle_modifiers_changed(
@@ -580,5 +581,98 @@ impl PickerDelegate for StashListDelegate {
                 )
                 .into_any(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use git::{Oid, stash::StashEntry};
+    use gpui::{TestAppContext, rems};
+    use picker::PickerDelegate;
+    use project::{FakeFs, Project};
+    use settings::SettingsStore;
+    use workspace::Workspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        })
+    }
+
+    #[gpui::test]
+    async fn test_show_stash_dimisses(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let entries = vec![
+            StashEntry {
+                index: 0,
+                oid: Oid::from_str("0").unwrap(),
+                message: "Stash #0".to_string(),
+                branch: Some("main".to_string()),
+                timestamp: 1000,
+            },
+            StashEntry {
+                index: 1,
+                oid: Oid::from_str("1").unwrap(),
+                message: "Save progress".to_string(),
+                branch: Some("develop".to_string()),
+                timestamp: 900,
+            },
+        ];
+
+        let stash_list = workspace
+            .update(cx, |workspace, window, cx| {
+                let weak_workspace = workspace.weak_handle();
+
+                workspace.toggle_modal(window, cx, move |window, cx| {
+                    let stash_list = StashList::new(None, weak_workspace, rems(34.), window, cx);
+
+                    stash_list.picker.update(cx, |picker, _| {
+                        picker.delegate.all_stash_entries = Some(entries);
+                    });
+
+                    stash_list
+                });
+
+                assert!(workspace.active_modal::<StashList>(cx).is_some());
+                workspace.active_modal::<StashList>(cx).unwrap()
+            })
+            .unwrap();
+
+        workspace
+            .update(cx, |_, window, cx| {
+                stash_list.update(cx, |stash_list, cx| {
+                    stash_list.picker.update(cx, |picker, cx| {
+                        picker.delegate.update_matches(String::new(), window, cx)
+                    })
+                })
+            })
+            .unwrap()
+            .await;
+
+        workspace
+            .update(cx, |_, window, cx| {
+                stash_list.update(cx, |stash_list, cx| {
+                    stash_list.handle_show_stash(&Default::default(), window, cx);
+                })
+            })
+            .unwrap();
+
+        workspace
+            .update(cx, |workspace, _, cx| {
+                assert!(workspace.active_modal::<StashList>(cx).is_none());
+            })
+            .unwrap();
     }
 }
