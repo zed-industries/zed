@@ -2293,7 +2293,7 @@ pub(crate) mod tests {
         AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
     };
     use action_log::ActionLog;
-    use agent::ToolPermissionContext;
+    use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
@@ -4056,8 +4056,9 @@ pub(crate) mod tests {
         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
             .kind(acp::ToolKind::Edit);
 
-        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4163,8 +4164,8 @@ pub(crate) mod tests {
         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
             .kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+        let permission_options = ToolPermissionContext::new(EditFileTool::NAME, "src/main.rs")
+            .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4251,7 +4252,8 @@ pub(crate) mod tests {
             .kind(acp::ToolKind::Fetch);
 
         let permission_options =
-            ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+            ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui")
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4338,8 +4340,9 @@ pub(crate) mod tests {
             .kind(acp::ToolKind::Edit);
 
         // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
-        let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4437,7 +4440,7 @@ pub(crate) mod tests {
             acp::ToolCall::new(tool_call_id.clone(), "Run `cargo test`").kind(acp::ToolKind::Edit);
 
         let permission_options =
-            ToolPermissionContext::new("terminal", "cargo test").build_permission_options();
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo test").build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4520,8 +4523,8 @@ pub(crate) mod tests {
         let tool_call =
             acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+        let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "npm install")
+            .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4609,8 +4612,8 @@ pub(crate) mod tests {
         let tool_call =
             acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build`").kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("terminal", "cargo build").build_permission_options();
+        let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "cargo build")
+            .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4688,8 +4691,8 @@ pub(crate) mod tests {
         let tool_call =
             acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+        let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "npm install")
+            .build_permission_options();
 
         // Verify we have the expected options
         let PermissionOptions::Dropdown(choices) = &permission_options else {
@@ -4791,7 +4794,7 @@ pub(crate) mod tests {
             acp::ToolCall::new(tool_call_id.clone(), "Run `git push`").kind(acp::ToolKind::Edit);
 
         let permission_options =
-            ToolPermissionContext::new("terminal", "git push").build_permission_options();
+            ToolPermissionContext::new(TerminalTool::NAME, "git push").build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4850,8 +4853,9 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_option_id_transformation_for_allow() {
-        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+                .build_permission_options();
 
         let PermissionOptions::Dropdown(choices) = permission_options else {
             panic!("Expected dropdown permission options");
@@ -4874,8 +4878,9 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_option_id_transformation_for_deny() {
-        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+                .build_permission_options();
 
         let PermissionOptions::Dropdown(choices) = permission_options else {
             panic!("Expected dropdown permission options");

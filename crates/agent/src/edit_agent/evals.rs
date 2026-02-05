@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    AgentTool, EditFileMode, EditFileTool, EditFileToolInput, GrepToolInput,
-    ListDirectoryToolInput, ReadFileToolInput,
+    AgentTool, EditFileMode, EditFileTool, EditFileToolInput, GrepTool, GrepToolInput,
+    ListDirectoryTool, ListDirectoryToolInput, ReadFileTool, ReadFileToolInput,
 };
 use Role::*;
 use client::{Client, UserStore};
@@ -120,7 +120,7 @@ fn eval_extract_handle_command_output() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -130,13 +130,17 @@ fn eval_extract_handle_command_output() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -181,7 +185,7 @@ fn eval_delete_run_git_blame() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -191,13 +195,17 @@ fn eval_delete_run_git_blame() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -242,7 +250,7 @@ fn eval_translate_doc_comments() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -252,13 +260,17 @@ fn eval_translate_doc_comments() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -319,7 +331,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: Some(971),
@@ -331,7 +343,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     User,
                     [tool_result(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 971..1050),
                     )],
                 ),
@@ -339,7 +351,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: Some(1050),
@@ -351,7 +363,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     User,
                     [tool_result(
                         "tool_2",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 1050..1100),
                     )],
                 ),
@@ -359,7 +371,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_3",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: Some(1100),
@@ -371,7 +383,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     User,
                     [tool_result(
                         "tool_3",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 1100..1150),
                     )],
                 ),
@@ -379,7 +391,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_4",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -426,7 +438,7 @@ fn eval_disable_cursor_blinking() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "blink".into(),
                             include_pattern: None,
@@ -439,7 +451,7 @@ fn eval_disable_cursor_blinking() {
                     User,
                     [tool_result(
                         "tool_1",
-                        "grep",
+                        GrepTool::NAME,
                         [
                             lines(input_file_content, 100..400),
                             lines(input_file_content, 800..1300),
@@ -465,7 +477,7 @@ fn eval_disable_cursor_blinking() {
                     Assistant,
                     [tool_use(
                         "tool_4",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -517,7 +529,7 @@ fn eval_from_pixels_constructor() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -527,13 +539,17 @@ fn eval_from_pixels_constructor() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "mod\\s+tests".into(),
                             include_pattern: Some("font-kit/src/canvas.rs".into()),
@@ -542,12 +558,15 @@ fn eval_from_pixels_constructor() {
                         },
                     )],
                 ),
-                message(User, [tool_result("tool_2", "grep", "No matches found")]),
+                message(
+                    User,
+                    [tool_result("tool_2", GrepTool::NAME, "No matches found")],
+                ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_3",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "mod\\s+tests".into(),
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
@@ -556,12 +575,15 @@ fn eval_from_pixels_constructor() {
                         },
                     )],
                 ),
-                message(User, [tool_result("tool_3", "grep", "No matches found")]),
+                message(
+                    User,
+                    [tool_result("tool_3", GrepTool::NAME, "No matches found")],
+                ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_4",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "#\\[test\\]".into(),
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
@@ -574,7 +596,7 @@ fn eval_from_pixels_constructor() {
                     User,
                     [tool_result(
                         "tool_4",
-                        "grep",
+                        GrepTool::NAME,
                         indoc! {"
                                 Found 6 matches:
 
@@ -668,7 +690,7 @@ fn eval_from_pixels_constructor() {
                     Assistant,
                     [tool_use(
                         "tool_5",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -711,7 +733,7 @@ fn eval_zode() {
                     [
                         tool_use(
                             "tool_1",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: "root/eval/react.py".into(),
                                 start_line: None,
@@ -720,7 +742,7 @@ fn eval_zode() {
                         ),
                         tool_use(
                             "tool_2",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: "root/eval/react_test.py".into(),
                                 start_line: None,
@@ -734,12 +756,12 @@ fn eval_zode() {
                     [
                         tool_result(
                             "tool_1",
-                            "read_file",
+                            ReadFileTool::NAME,
                             include_str!("evals/fixtures/zode/react.py"),
                         ),
                         tool_result(
                             "tool_2",
-                            "read_file",
+                            ReadFileTool::NAME,
                             include_str!("evals/fixtures/zode/react_test.py"),
                         ),
                     ],
@@ -752,7 +774,7 @@ fn eval_zode() {
                         ),
                         tool_use(
                             "tool_3",
-                            "edit_file",
+                            EditFileTool::NAME,
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
@@ -822,7 +844,7 @@ fn eval_add_overwrite_test() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -834,7 +856,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         indoc! {"
                                 pub struct ActionLog [L13-20]
                                  tracked_buffers [L15]
@@ -921,7 +943,7 @@ fn eval_add_overwrite_test() {
                         ),
                         tool_use(
                             "tool_2",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: input_file_path.into(),
                                 start_line: Some(953),
@@ -934,7 +956,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_2",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 953..1010),
                     )],
                 ),
@@ -946,7 +968,7 @@ fn eval_add_overwrite_test() {
                         ),
                         tool_use(
                             "tool_3",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: input_file_path.into(),
                                 start_line: Some(1012),
@@ -959,7 +981,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_3",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 1012..1120),
                     )],
                 ),
@@ -969,7 +991,7 @@ fn eval_add_overwrite_test() {
                         text("Now let's look at how `buffer_created` is implemented:"),
                         tool_use(
                             "tool_4",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: input_file_path.into(),
                                 start_line: Some(271),
@@ -982,7 +1004,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_4",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 271..276),
                     )],
                 ),
@@ -1003,7 +1025,7 @@ fn eval_add_overwrite_test() {
                             "}),
                         tool_use(
                             "tool_5",
-                            "edit_file",
+                            EditFileTool::NAME,
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
@@ -1057,7 +1079,7 @@ fn eval_create_empty_file() {
                             "}),
                         tool_use(
                             "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                            "list_directory",
+                            ListDirectoryTool::NAME,
                             ListDirectoryToolInput {
                                 path: "root".to_string(),
                             },
@@ -1068,7 +1090,7 @@ fn eval_create_empty_file() {
                     User,
                     [tool_result(
                         "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                        "list_directory",
+                        ListDirectoryTool::NAME,
                         "root/TODO\nroot/TODO2\nroot/new.txt\n",
                     )],
                 ),
@@ -1080,7 +1102,7 @@ fn eval_create_empty_file() {
                         "}),
                         tool_use(
                             "toolu_01Tb3iQ9griqSYMmVuykQPWU",
-                            "edit_file",
+                            EditFileTool::NAME,
                             EditFileToolInput {
                                 display_description: "Create empty TODO3 file".to_string(),
                                 mode: EditFileMode::Create,
