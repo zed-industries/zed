@@ -1,4 +1,4 @@
-use gpui::{List, rgb};
+use gpui::List;
 
 use super::*;
 
@@ -164,7 +164,7 @@ impl DiffStats {
 
 pub struct AcpThreadView {
     pub id: acp::SessionId,
-    pub parent_id: Option<acp::SessionId>, 
+    pub parent_id: Option<acp::SessionId>,
     pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
     pub server_view: WeakEntity<AcpServerView>,
@@ -2281,23 +2281,29 @@ impl AcpThreadView {
             )
     }
 
-    pub(crate) fn maybe_render_go_to_parent_button(&mut self) -> AnyElement {
+    pub(crate) fn maybe_render_go_to_parent_button(&mut self, cx: &App) -> AnyElement {
         if !self.is_subagent() {
             return div().into_any_element();
         };
 
+        let parent_id = self.parent_id.clone();
         let server_view = self.server_view.clone();
+        let colors = cx.theme().colors();
 
         h_flex()
-            .child("Go to parent")
-            .bg(rgb(0xFF0000))
+            .child("Back to parent")
+            .p_4()
+            .bg(colors.panel_background)
+            .border_1()
+            .border_color(colors.border)
+            .hover(|style| style.bg(colors.panel_overlay_hover))
             .on_mouse_down(gpui::MouseButton::Left, move |_event, _window, cx| {
-                let _ = server_view.update(cx, |server_view, cx| {
-                    let Some(connected) = server_view.as_connected_mut() else {
-                        return;
+                let _ = server_view.update(cx, |server_view, _cx| {
+                    if let Some(connected) = server_view.as_connected_mut()
+                        && let Some(parent_id) = parent_id.clone()
+                    {
+                        connected.navigate_to_session(parent_id);
                     };
-
-                    connected.navigate_to_parent(cx);
                 });
             })
             .into_any_element()
@@ -5733,7 +5739,7 @@ impl AcpThreadView {
                                             .update(cx, |this, cx| {
                                                 if let Some(connected) = this.as_connected_mut() {
                                                     connected
-                                                        .navigate_to_subagent(session_id.clone());
+                                                        .navigate_to_session(session_id.clone());
                                                     cx.notify();
                                                 }
                                             })
@@ -6989,7 +6995,7 @@ impl Render for AcpThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
-            .child(self.maybe_render_go_to_parent_button())
+            .child(self.maybe_render_go_to_parent_button(cx))
             .child(self.render_message_editor(window, cx))
     }
 }

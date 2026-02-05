@@ -246,17 +246,9 @@ impl ConnectedServerState {
         self.current.read(cx).thread_error.is_some()
     }
 
-    pub fn navigate_to_subagent(&mut self, session_id: acp::SessionId) {
+    pub fn navigate_to_session(&mut self, session_id: acp::SessionId) {
         if let Some(session) = self.threads.get(&session_id) {
             self.current = session.clone();
-        }
-    }
-
-    pub fn navigate_to_parent(&mut self, cx: &mut App) {
-        if let Some(parent_id) = &self.current.read(cx).parent_id
-            && let Some(parent) = self.threads.get(parent_id)
-        {
-            self.current = parent.clone();
         }
     }
 }
