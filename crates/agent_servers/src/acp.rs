@@ -1139,6 +1139,84 @@ struct ClientDelegate {
     cx: AsyncApp,
 }
 
+/// Permission decision for ACP tool calls, mirroring the logic in the agent crate's
+/// `ToolPermissionDecision` but usable without depending on the agent crate.
+enum AcpPermissionDecision {
+    Allow,
+    Deny(String),
+    Confirm,
+}
+
+/// Checks tool permission settings for an ACP tool call, including pattern-based rules.
+///
+/// This replicates the core logic of `decide_permission_from_settings` from the agent crate
+/// so that ACP code paths respect `always_deny`, `always_allow`, and `always_confirm` patterns
+/// in addition to the tool's `default` mode.
+fn check_acp_tool_permission(
+    tool_name: &str,
+    input: &str,
+    settings: &AgentSettings,
+) -> AcpPermissionDecision {
+    let rules = match settings.tool_permissions.tools.get(tool_name) {
+        Some(rules) => rules,
+        None => {
+            return match settings.tool_permissions.default {
+                ToolPermissionMode::Allow => AcpPermissionDecision::Allow,
+                ToolPermissionMode::Deny => {
+                    AcpPermissionDecision::Deny("Blocked by global default: deny".into())
+                }
+                ToolPermissionMode::Confirm => AcpPermissionDecision::Confirm,
+            };
+        }
+    };
+
+    // If any patterns failed to compile, block the tool call for safety.
+    if !rules.invalid_patterns.is_empty() {
+        let pattern_list: Vec<&str> = rules
+            .invalid_patterns
+            .iter()
+            .map(|p| p.pattern.as_str())
+            .collect();
+        return AcpPermissionDecision::Deny(format!(
+            "Tool '{}' has invalid regex patterns that failed to compile: {}. \
+             Fix or remove these patterns in your settings to unblock this tool.",
+            tool_name,
+            pattern_list.join(", ")
+        ));
+    }
+
+    // Deny takes highest precedence
+    for pattern in &rules.always_deny {
+        if pattern.is_match(input) {
+            return AcpPermissionDecision::Deny(format!(
+                "Blocked by always_deny pattern: {}",
+                pattern.pattern
+            ));
+        }
+    }
+
+    // Confirm takes precedence over allow
+    for pattern in &rules.always_confirm {
+        if pattern.is_match(input) {
+            return AcpPermissionDecision::Confirm;
+        }
+    }
+
+    // Allow patterns
+    for pattern in &rules.always_allow {
+        if pattern.is_match(input) {
+            return AcpPermissionDecision::Allow;
+        }
+    }
+
+    // Fall back to tool-specific or global default
+    match rules.default.unwrap_or(settings.tool_permissions.default) {
+        ToolPermissionMode::Allow => AcpPermissionDecision::Allow,
+        ToolPermissionMode::Deny => AcpPermissionDecision::Deny("Blocked by default: deny".into()),
+        ToolPermissionMode::Confirm => AcpPermissionDecision::Confirm,
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl acp::Client for ClientDelegate {
     async fn request_permission(
@@ -1169,49 +1247,86 @@ impl acp::Client for ClientDelegate {
                 .and_then(|v| v.as_str());
 
             let settings = AgentSettings::get_global(cx);
-            let effective_default = tool_name
-                .and_then(|name| settings.tool_permissions.tools.get(name))
-                .and_then(|rules| rules.default)
-                .unwrap_or(settings.tool_permissions.default);
 
-            if effective_default == ToolPermissionMode::Deny {
-                thread.upsert_tool_call_inner(
-                    arguments.tool_call,
-                    acp_thread::ToolCallStatus::Rejected,
-                    cx,
-                )?;
-                // Use Selected(deny_option) when available so external agents
-                // can distinguish "policy denied" from "prompt cancelled."
-                // Fall back to Cancelled if no deny option exists (ACP protocol
-                // limitation: there is no dedicated Denied/Rejected variant).
-                if let Some(deny_option) = options.deny_once_option_id() {
-                    return Ok(async {
-                        acp::RequestPermissionOutcome::Selected(
-                            acp::SelectedPermissionOutcome::new(deny_option),
-                        )
+            // Check pattern-based rules (always_deny, always_allow, always_confirm)
+            // in addition to the default mode. The ACP protocol doesn't expose the
+            // tool's input value directly, so we use the tool call title as a
+            // best-effort input for pattern matching. For tools where the title
+            // contains the relevant input (e.g., file path, command), this provides
+            // meaningful pattern matching. For others, it falls through to the default.
+            if let Some(name) = tool_name {
+                let input_for_matching = arguments.tool_call.fields.title.as_deref().unwrap_or("");
+                let decision = check_acp_tool_permission(name, input_for_matching, settings);
+                match decision {
+                    AcpPermissionDecision::Deny(_reason) => {
+                        thread.upsert_tool_call_inner(
+                            arguments.tool_call,
+                            acp_thread::ToolCallStatus::Rejected,
+                            cx,
+                        )?;
+                        if let Some(deny_option) = options.deny_once_option_id() {
+                            return Ok(async {
+                                acp::RequestPermissionOutcome::Selected(
+                                    acp::SelectedPermissionOutcome::new(deny_option),
+                                )
+                            }
+                            .boxed());
+                        }
+                        return Ok(async { acp::RequestPermissionOutcome::Cancelled }.boxed());
                     }
-                    .boxed());
+                    AcpPermissionDecision::Allow if !has_own_permission_modes => {
+                        if let Some(allow_once_option) = options.allow_once_option_id() {
+                            thread.upsert_tool_call_inner(
+                                arguments.tool_call,
+                                acp_thread::ToolCallStatus::Pending,
+                                cx,
+                            )?;
+                            return Ok(async {
+                                acp::RequestPermissionOutcome::Selected(
+                                    acp::SelectedPermissionOutcome::new(allow_once_option),
+                                )
+                            }
+                            .boxed());
+                        }
+                    }
+                    // Confirm or Allow-with-own-permission-modes: fall through to UI prompt
+                    _ => {}
                 }
-                return Ok(async { acp::RequestPermissionOutcome::Cancelled }.boxed());
-            }
+            } else {
+                // No tool name available — fall back to legacy default-only check
+                let effective_default = settings.tool_permissions.default;
 
-            // Confirm always shows the Zed confirmation UI, regardless of
-            // whether the external agent has its own permission system.
-            // This is the default fallthrough behavior, so we only need to
-            // handle the Allow case specially.
-            if effective_default == ToolPermissionMode::Allow && !has_own_permission_modes {
-                if let Some(allow_once_option) = options.allow_once_option_id() {
+                if effective_default == ToolPermissionMode::Deny {
                     thread.upsert_tool_call_inner(
                         arguments.tool_call,
-                        acp_thread::ToolCallStatus::Pending,
+                        acp_thread::ToolCallStatus::Rejected,
                         cx,
                     )?;
-                    return Ok(async {
-                        acp::RequestPermissionOutcome::Selected(
-                            acp::SelectedPermissionOutcome::new(allow_once_option),
-                        )
+                    if let Some(deny_option) = options.deny_once_option_id() {
+                        return Ok(async {
+                            acp::RequestPermissionOutcome::Selected(
+                                acp::SelectedPermissionOutcome::new(deny_option),
+                            )
+                        }
+                        .boxed());
                     }
-                    .boxed());
+                    return Ok(async { acp::RequestPermissionOutcome::Cancelled }.boxed());
+                }
+
+                if effective_default == ToolPermissionMode::Allow && !has_own_permission_modes {
+                    if let Some(allow_once_option) = options.allow_once_option_id() {
+                        thread.upsert_tool_call_inner(
+                            arguments.tool_call,
+                            acp_thread::ToolCallStatus::Pending,
+                            cx,
+                        )?;
+                        return Ok(async {
+                            acp::RequestPermissionOutcome::Selected(
+                                acp::SelectedPermissionOutcome::new(allow_once_option),
+                            )
+                        }
+                        .boxed());
+                    }
                 }
             }
 
@@ -1228,6 +1343,17 @@ impl acp::Client for ClientDelegate {
         arguments: acp::WriteTextFileRequest,
     ) -> Result<acp::WriteTextFileResponse, acp::Error> {
         let cx = &mut self.cx.clone();
+
+        // Check tool permissions for edit_file (write_text_file is the ACP equivalent)
+        let path_str = arguments.path.to_string_lossy().to_string();
+        let decision = cx.update(|cx| {
+            let settings = AgentSettings::get_global(cx);
+            check_acp_tool_permission("edit_file", &path_str, settings)
+        });
+        if let AcpPermissionDecision::Deny(reason) = decision {
+            return Err(anyhow!("{}", reason).into());
+        }
+
         let task = self
             .session_thread(&arguments.session_id)?
             .update(cx, |thread, cx| {

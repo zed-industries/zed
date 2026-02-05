@@ -480,10 +480,15 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
 
     // For terminal commands, parse chained commands (&&, ||, ;) so the preview
     // matches the real permission engine's behavior.
-    let inputs_to_check: Vec<String> = if tool_id == TerminalTool::NAME {
-        extract_commands(input).unwrap_or_else(|| vec![input.to_string()])
+    // When parsing fails (extract_commands returns None), the real engine
+    // ignores always_allow rules, so we track parse success to mirror that.
+    let (inputs_to_check, allow_enabled) = if tool_id == TerminalTool::NAME {
+        match extract_commands(input) {
+            Some(cmds) => (cmds, true),
+            None => (vec![input.to_string()], false),
+        }
     } else {
-        vec![input.to_string()]
+        (vec![input.to_string()], true)
     };
 
     let mut has_deny_match = false;
@@ -524,7 +529,10 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
             matched.push(MatchedPattern {
                 pattern: rule.pattern.clone(),
                 rule_type: ToolPermissionMode::Allow,
-                is_overridden: has_deny_match || has_confirm_match || !all_commands_matched_allow,
+                is_overridden: !allow_enabled
+                    || has_deny_match
+                    || has_confirm_match
+                    || !all_commands_matched_allow,
             });
         }
     }
