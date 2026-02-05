@@ -389,18 +389,41 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
 /// A whitespace-only change is an added or deleted line whose content is empty or
 /// contains only whitespace. It is "isolated" when it is not adjacent to any
 /// substantive (non-whitespace) change within the same contiguous change group.
-pub fn has_isolated_whitespace_changes(patch_str: &str) -> bool {
+pub fn has_isolated_whitespace_changes(
+    patch_str: &str,
+    cursor_offset: Option<usize>,
+    updated_text: &str,
+) -> bool {
+    let cursor_new_line = cursor_offset.map(|offset| {
+        let offset = offset.min(updated_text.len());
+        updated_text[..offset].matches('\n').count() + 1 // 1-based
+    });
+
     let patch = Patch::parse_unified_diff(patch_str);
 
     for hunk in &patch.hunks {
         let lines = &hunk.lines;
+        let mut new_text_line = hunk.new_start as usize;
+
         for (i, line) in lines.iter().enumerate() {
             let content = match line {
-                PatchLine::Addition(s) | PatchLine::Deletion(s) => s.as_str(),
+                PatchLine::Addition(s) => {
+                    new_text_line += 1;
+                    s.as_str()
+                }
+                PatchLine::Deletion(s) => s.as_str(),
+                PatchLine::Context(_) => {
+                    new_text_line += 1;
+                    continue;
+                }
                 _ => continue,
             };
 
             if !content.trim().is_empty() {
+                continue;
+            }
+
+            if cursor_new_line == Some(new_text_line - 1) {
                 continue;
             }
 
@@ -841,7 +864,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch));
+        assert!(has_isolated_whitespace_changes(patch, None, ""));
     }
 
     #[test]
@@ -854,7 +877,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(!has_isolated_whitespace_changes(patch));
+        assert!(!has_isolated_whitespace_changes(patch, None, ""));
     }
 
     #[test]
@@ -866,7 +889,7 @@ index abc123..def456 100644
             +    println!(\"world\");
              }
         "};
-        assert!(!has_isolated_whitespace_changes(patch));
+        assert!(!has_isolated_whitespace_changes(patch, None, ""));
     }
 
     #[test]
@@ -878,7 +901,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch));
+        assert!(has_isolated_whitespace_changes(patch, None, ""));
     }
 
     #[test]
@@ -895,12 +918,65 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch));
+        assert!(has_isolated_whitespace_changes(patch, None, ""));
     }
 
     #[test]
     fn test_isolated_whitespace_empty_patch() {
         let patch = "";
-        assert!(!has_isolated_whitespace_changes(patch));
+        assert!(!has_isolated_whitespace_changes(patch, None, ""));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_skipped_on_cursor_line() {
+        // The addition of a blank line at new-file line 2 should be skipped
+        // because the cursor is on that line.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        let actual_text = "fn main() {\n\n    println!(\"hello\");\n}\n";
+        // Cursor offset 12 is right after "fn main() {\n", i.e. on line 2 (the blank line)
+        assert!(!has_isolated_whitespace_changes(
+            patch,
+            Some(12),
+            actual_text
+        ));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_not_skipped_when_cursor_on_different_line() {
+        // The blank line is at new-file line 2, but the cursor is on line 1.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        let actual_text = "fn main() {\n\n    println!(\"hello\");\n}\n";
+        // Cursor offset 0 is at the start of line 1
+        assert!(has_isolated_whitespace_changes(patch, Some(0), actual_text));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion_not_skipped_by_cursor() {
+        // Deletions don't have a new-file line, so cursor can't suppress them.
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        let actual_text = "fn main() {\n    println!(\"hello\");\n}\n";
+        assert!(has_isolated_whitespace_changes(
+            patch,
+            Some(12),
+            actual_text
+        ));
     }
 }

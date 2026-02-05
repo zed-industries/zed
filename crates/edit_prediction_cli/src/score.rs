@@ -165,8 +165,11 @@ pub async fn run_scoring(
         let wrong_editable_region = Some(!metrics::is_editable_region_correct(&actual_patch));
 
         // Check for isolated whitespace changes
-        let has_isolated_whitespace_changes =
-            metrics::has_isolated_whitespace_changes(&actual_patch);
+        let has_isolated_whitespace_changes = metrics::has_isolated_whitespace_changes(
+            &actual_patch,
+            prediction.actual_cursor_offset,
+            &actual_text,
+        );
 
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
