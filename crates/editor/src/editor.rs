@@ -176,8 +176,8 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrol
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, SemanticTokenRules, Settings, SettingsLocation,
-    SettingsStore, update_settings_file,
+    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
@@ -228,6 +228,7 @@ use crate::{
     },
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
+    semantic_tokens::SemanticTokenState,
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
@@ -1336,10 +1337,7 @@ pub struct Editor {
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
-    semantic_token_rules: SemanticTokenRules,
-    semantic_tokens_enabled: bool,
-    update_semantic_tokens_task: Task<()>,
-    semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
+    semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
     refresh_outline_symbols_task: Task<()>,
     outline_symbols: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
@@ -2585,15 +2583,9 @@ impl Editor {
             on_local_selections_changed: None,
             suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
-            semantic_token_rules: ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
+            semantic_token_state: SemanticTokenState::new(cx, full_mode),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
-            semantic_tokens_enabled: full_mode,
-            update_semantic_tokens_task: Task::ready(()),
-            semantic_tokens_fetched_for_buffers: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
             refresh_outline_symbols_task: Task::ready(()),
@@ -3141,7 +3133,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
-            semantic_tokens_enabled: self.semantic_tokens_enabled,
+            semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
@@ -23911,8 +23903,8 @@ impl Editor {
                     )
                     .detach();
                 }
-                self.semantic_tokens_fetched_for_buffers
-                    .remove(&buffer.read(cx).remote_id());
+                self.semantic_token_state
+                    .invalidate_buffer(&buffer.read(cx).remote_id());
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
@@ -23935,7 +23927,7 @@ impl Editor {
                     self.registered_buffers.remove(buffer_id);
                     self.tasks
                         .retain(|(task_buffer_id, _), _| task_buffer_id != buffer_id);
-                    self.semantic_tokens_fetched_for_buffers.remove(buffer_id);
+                    self.semantic_token_state.invalidate_buffer(buffer_id);
                     self.display_map.update(cx, |display_map, _| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
                     });
@@ -23964,8 +23956,8 @@ impl Editor {
                 for id in ids {
                     self.fetched_tree_sitter_chunks.remove(id);
                     if let Some(buffer) = snapshot.buffer_for_excerpt(*id) {
-                        self.semantic_tokens_fetched_for_buffers
-                            .remove(&buffer.remote_id());
+                        self.semantic_token_state
+                            .invalidate_buffer(&buffer.remote_id());
                     }
                 }
                 self.colorize_brackets(false, cx);
@@ -24141,21 +24133,12 @@ impl Editor {
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
-        let (
-            restore_unsaved_buffers,
-            show_inline_diagnostics,
-            inline_blame_enabled,
-            new_semantic_token_rules,
-        ) = {
+        let (restore_unsaved_buffers, show_inline_diagnostics, inline_blame_enabled) = {
             let project_settings = ProjectSettings::get_global(cx);
             (
                 project_settings.session.restore_unsaved_buffers,
                 project_settings.diagnostics.inline.enabled,
                 project_settings.git.inline_blame.enabled,
-                project_settings
-                    .global_lsp_settings
-                    .semantic_token_rules
-                    .clone(),
             )
         };
         self.buffer_serialization = self
@@ -24211,8 +24194,14 @@ impl Editor {
                 cx,
             );
 
-            if new_semantic_token_rules != self.semantic_token_rules {
-                self.semantic_token_rules = new_semantic_token_rules;
+            let new_semantic_token_rules = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone();
+            if self
+                .semantic_token_state
+                .update_rules(new_semantic_token_rules)
+            {
                 self.refresh_semantic_token_highlights(cx);
             }
         }
@@ -24232,14 +24221,6 @@ impl Editor {
         }
 
         self.refresh_semantic_token_highlights(cx);
-    }
-
-    fn refresh_semantic_token_highlights(&mut self, cx: &mut Context<Self>) {
-        self.semantic_tokens_fetched_for_buffers.clear();
-        self.display_map.update(cx, |display_map, _| {
-            display_map.semantic_token_highlights.clear();
-        });
-        self.update_semantic_tokens(None, None, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
