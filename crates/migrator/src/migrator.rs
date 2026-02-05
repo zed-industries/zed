@@ -2988,5 +2988,122 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        // Case 14: Root-level profile with always_allow_tool_actions
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "always_allow_tool_actions": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 15: Root-level profile with default_mode
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default_mode": "allow"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 16: Root-level profile + root-level agent both migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                },
+                "profiles": {
+                    "strict": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default_mode": "deny"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    },
+                    "profiles": {
+                        "strict": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "default": "deny"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 }

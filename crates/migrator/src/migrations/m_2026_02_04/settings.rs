@@ -24,6 +24,18 @@ pub fn migrate_tool_permission_defaults(value: &mut Value) -> Result<()> {
         }
     }
 
+    if let Some(profiles) = root_object.get_mut("profiles") {
+        if let Some(profiles_object) = profiles.as_object_mut() {
+            for (_profile_name, profile_settings) in profiles_object.iter_mut() {
+                if let Some(profile_map) = profile_settings.as_object_mut() {
+                    if let Some(agent) = profile_map.get_mut("agent") {
+                        migrate_agent_with_profiles(agent)?;
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
