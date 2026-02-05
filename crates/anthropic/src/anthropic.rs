@@ -16,6 +16,9 @@ pub mod batches;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
+pub const FINE_GRAINED_TOOL_STREAMING_BETA_HEADER: &str = "fine-grained-tool-streaming-2025-05-14";
+pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct AnthropicModelCacheConfiguration {
@@ -543,20 +546,20 @@ impl Model {
             | Self::ClaudeOpus4_6Thinking
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5Thinking => {
-                headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
+                headers.push(FINE_GRAINED_TOOL_STREAMING_BETA_HEADER.to_string());
             }
             Self::ClaudeOpus4_6_1mContext
             | Self::ClaudeOpus4_6_1mContextThinking
             | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_5_1mContextThinking => {
-                headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
-                headers.push("context-1m-2025-08-07".to_string());
+                headers.push(FINE_GRAINED_TOOL_STREAMING_BETA_HEADER.to_string());
+                headers.push(CONTEXT_1M_BETA_HEADER.to_string());
             }
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {
                 // Try beta token-efficient tool use (supported in Claude 3.7 Sonnet only)
                 // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
                 headers.push("token-efficient-tools-2025-02-19".to_string());
-                headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
+                headers.push(FINE_GRAINED_TOOL_STREAMING_BETA_HEADER.to_string());
             }
             Self::Custom {
                 extra_beta_headers, ..
