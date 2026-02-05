@@ -5681,6 +5681,193 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_create_directory_tool_deny_rule_blocks_creation(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({"existing.txt": "content"}))
+        .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            CreateDirectoryTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![
+                    agent_settings::CompiledRegex::new(r"restricted", false).unwrap(),
+                ],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::CreateDirectoryTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::CreateDirectoryToolInput {
+                path: "root/restricted_area".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected directory creation to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the creation was blocked"
+    );
+
+    assert!(
+        !fs.is_dir(Path::new("/root/restricted_area")).await,
+        "directory should not have been created"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_path_tool_deny_by_user(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "data.txt": "original content",
+            "backup": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            CopyPathTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Confirm),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::CopyPathTool::new(project));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::CopyPathToolInput {
+                source_path: "root/data.txt".to_string(),
+                destination_path: "root/backup/data.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let auth = rx.expect_authorization().await;
+    auth.response
+        .send(acp::PermissionOptionId::new("deny"))
+        .unwrap();
+
+    let result = task.await;
+    assert!(result.is_err(), "expected copy to be denied by user");
+    assert!(
+        result.unwrap_err().to_string().contains("denied by user"),
+        "error should mention denial by user"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/data.txt")).await,
+        "source file should still exist"
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/backup/data.txt")).await,
+        "destination file should not have been created"
+    );
+}
+
+#[gpui::test]
+async fn test_move_path_tool_deny_by_user(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "file.txt": "important data",
+            "archive": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            MovePathTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Confirm),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::MovePathTool::new(project));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::MovePathToolInput {
+                source_path: "root/file.txt".to_string(),
+                destination_path: "root/archive/file.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let auth = rx.expect_authorization().await;
+    auth.response
+        .send(acp::PermissionOptionId::new("deny"))
+        .unwrap();
+
+    let result = task.await;
+    assert!(result.is_err(), "expected move to be denied by user");
+    assert!(
+        result.unwrap_err().to_string().contains("denied by user"),
+        "error should mention denial by user"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/file.txt")).await,
+        "source file should still exist after denied move"
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/archive/file.txt")).await,
+        "destination file should not exist after denied move"
+    );
+}
+
+#[gpui::test]
 async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
