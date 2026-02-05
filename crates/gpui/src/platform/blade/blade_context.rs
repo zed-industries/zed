@@ -3,9 +3,15 @@ use blade_graphics as gpu;
 use std::sync::Arc;
 use util::ResultExt;
 
+use super::BladeAtlas;
+
 #[cfg_attr(target_os = "macos", derive(Clone))]
 pub struct BladeContext {
     pub(super) gpu: Arc<gpu::Context>,
+    /// Shared atlas that can be used by windows before their renderer is initialized.
+    /// This is particularly useful for layer shell windows where the initial size is 0x0
+    /// and the renderer cannot be created until the compositor provides the actual size.
+    pub(crate) atlas: Arc<BladeAtlas>,
 }
 
 impl BladeContext {
@@ -32,7 +38,8 @@ impl BladeContext {
             }
             .map_err(|e| anyhow::anyhow!("{e:?}"))?,
         );
-        Ok(Self { gpu })
+        let atlas = Arc::new(BladeAtlas::new(&gpu));
+        Ok(Self { gpu, atlas })
     }
 
     #[allow(dead_code)]

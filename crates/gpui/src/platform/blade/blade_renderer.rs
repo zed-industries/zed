@@ -419,7 +419,8 @@ impl BladeRenderer {
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu));
+        // Use the shared atlas from the context
+        let atlas = Arc::clone(&context.atlas);
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "path rasterization sampler",
             mag_filter: gpu::FilterMode::Linear,
@@ -576,6 +577,10 @@ impl BladeRenderer {
         self.surface_config.size
     }
 
+    /// Returns the shared sprite atlas.
+    /// Note: On Linux (Wayland/X11), the atlas is accessed directly from BladeContext
+    /// to support lazy renderer creation. This method is kept for macOS compatibility.
+    #[cfg(target_os = "macos")]
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
     }
@@ -665,7 +670,8 @@ impl BladeRenderer {
 
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
-        self.atlas.destroy();
+        // Note: atlas is shared across windows and managed by BladeContext,
+        // so we don't destroy it here.
         self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
