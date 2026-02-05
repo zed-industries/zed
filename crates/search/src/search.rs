@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
+pub use editor::HighlightKey;
 use editor::SearchSettings;
 use gpui::{Action, App, ClickEvent, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;

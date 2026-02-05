@@ -962,75 +962,26 @@
     // Per-tool permission rules for granular control over tool actions.
     // This setting only applies to the native Zed agent.
     "tool_permissions": {
+      // Here are some examples of tool-specific permissions.
       "tools": {
-        "terminal": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // Dangerous rm commands
-            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
-            { "pattern": "rm\\s+-rf\\s*$" },
-            // Disk destruction
-            { "pattern": "> /dev/sd" },
-            { "pattern": "mkfs\\." },
-            { "pattern": "dd\\s+if=/dev/(zero|random)" },
-            // Fork bomb
-            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
-            // System files
-            { "pattern": "/etc/passwd" },
-            { "pattern": "/etc/shadow" },
-            // Windows destructive commands
-            { "pattern": "del /f /s /q c:\\\\" },
-            { "pattern": "format c:" },
-            { "pattern": "rd /s /q" },
-          ],
-          "always_confirm": [
-            // File deletion
-            { "pattern": "rm\\s" },
-            // Destructive git operations
-            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
-            { "pattern": "git\\s+push\\s+(-f|--force)" },
-            // Database operations
-            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
-            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
-            // Privileged commands
-            { "pattern": "sudo\\s" },
-          ],
-        },
-        "edit_file": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // Secrets and credentials
-            { "pattern": "\\.env($|\\.)" },
-            { "pattern": "secrets?/" },
-            { "pattern": "\\.pem$" },
-            { "pattern": "\\.key$" },
-          ],
-        },
-        "delete_path": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // System directories
-            { "pattern": "^/etc" },
-            { "pattern": "^/usr" },
-            { "pattern": "^/bin" },
-            { "pattern": "^/sbin" },
-            { "pattern": "^/var" },
-            { "pattern": "^/boot" },
-            { "pattern": "^/root" },
-            // Home directory root
-            { "pattern": "^~$" },
-            { "pattern": "^/Users/[^/]+$" },
-            { "pattern": "^/home/[^/]+$" },
-            // Git directory
-            { "pattern": "\\.git/?$" },
-            // Windows system directories
-            { "pattern": "^C:\\\\Windows" },
-            { "pattern": "^C:\\\\Program Files" },
-          ],
-        },
-        "fetch": {
-          "default_mode": "confirm",
-        },
+        // "terminal": {
+        //   "default_mode": "confirm",
+        //   "always_confirm": [
+        //     // Destructive git operations
+        //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+        //     { "pattern": "git\\s+push\\s+(-f|--force)" },
+        //   ],
+        // },
+        // "edit_file": {
+        //   "default_mode": "confirm",
+        //   "always_deny": [
+        //     // Secrets and credentials
+        //     { "pattern": "\\.env($|\\.)" },
+        //     { "pattern": "secrets?/" },
+        //     { "pattern": "\\.pem$" },
+        //     { "pattern": "\\.key$" },
+        //   ],
+        // },
       },
     },
     // When enabled, agent edits will be displayed in single-file editors for review
@@ -1139,6 +1090,15 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+  // Controls how semantic tokens from language servers are used for syntax highlighting.
+  //
+  // Options:
+  // - "off": Do not request semantic tokens from language servers.
+  // - "combined": Use LSP semantic tokens together with tree-sitter highlighting as base.
+  // - "full": Use LSP semantic tokens exclusively to highlight the text, tree-sitter syntax highlighting is off.
+  //
+  // May require language server restart to properly apply.
+  "semantic_tokens": "off",
 
   // When to automatically save edited buffers. This setting can
   // take four values.
@@ -1548,6 +1508,11 @@
       // diagnostics, file paths, repository names, and generated predictions
       // to improve the service.
       "privacy_mode": false,
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "max_output_tokens": 64,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -2260,6 +2225,36 @@
       // Set to 0 to disable auto-dismiss.
       "dismiss_timeout_ms": 5000,
     },
+    // Rules for highlighting semantic tokens. User-defined rules are prepended to the default
+    // rules (viewable via "Show Default Semantic Token Rules"), so they take precedence.
+    //
+    // Each `rule` has the following properties:
+    // - `token_type`: The LSP semantic token type to customize. If omitted, the rule matches all token types.
+    // - `token_modifiers`: A list of LSP semantic token modifiers to match. All modifiers must be present
+    //    to match.
+    // - `style`: A list of styles from the current syntax theme to use. The first style found is used. Any
+    //    settings below override that style.
+    // - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., "#ff0000").
+    // - `background_color`: The background color to use for the token type, in hex format.
+    // - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
+    // - `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+    // - `font_weight`: One of "normal", "bold".
+    // - `font_style`: One of "normal", "italic".
+    //
+    // The first matching rule for a token is applied. Because user-defined rules are prepended to the
+    // default rules, a token can be entirely disabled by adding an empty rule that matches it.
+    //
+    // Example: Highlight unresolved references in red and bold:
+    // "semantic_token_rules": [
+    //   {
+    //     "token_type": "unresolvedReference",
+    //     "foreground_color": "#c93f3f",
+    //     "font_weight": "bold"
+    //   }
+    // ]
+    //
+    // Default rules are viewable via the "zed: show default semantic token rules" action.
+    "semantic_token_rules": [],
   },
   // Jupyter settings
   "jupyter": {
@@ -2356,6 +2351,7 @@
   "line_indicator_format": "long",
   // Set a proxy to use. The proxy protocol is specified by the URI scheme.
   //
+  // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from

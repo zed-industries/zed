@@ -156,7 +156,7 @@ impl Application {
         ))
     }
 
-    /// Assign
+    /// Assigns the source of assets for the application.
     pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
         let mut context_lock = self.0.borrow_mut();
         let asset_source = Arc::new(asset_source);

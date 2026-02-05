@@ -656,36 +656,25 @@ impl BlockMap {
                         .to_point(WrapPoint::new(edit.new.end, 0), Bias::Left);
 
                     let my_start = companion
-                        .convert_rows_from_companion(
+                        .convert_point_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            (
-                                Bound::Included(companion_start),
-                                Bound::Included(companion_start),
-                            ),
+                            companion_start,
                         )
-                        .first()
-                        .and_then(|t| t.boundaries.first())
-                        .map(|(_, range)| range.start)
-                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                        .start;
                     let my_end = companion
-                        .convert_rows_from_companion(
+                        .convert_point_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            (
-                                Bound::Included(companion_end),
-                                Bound::Included(companion_end),
-                            ),
+                            companion_end,
                         )
-                        .first()
-                        .and_then(|t| t.boundaries.last())
-                        .map(|(_, range)| range.end)
-                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                        .end;
 
                     let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
+                    // TODO(split-diff) should use trailing_excerpt_update_count for the second case
                     if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
                         *my_end.row_mut() += 1;
                         *my_end.column_mut() = 0;
@@ -1104,17 +1093,36 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        let row_mappings = companion.convert_rows_to_companion(
+        let patches = companion.convert_rows_to_companion(
             display_map_id,
             companion_buffer,
             our_buffer,
             bounds,
         );
 
-        let determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
-            let our_wrap = wrap_snapshot.make_wrap_point(our_point, Bias::Left).row();
-            let companion_wrap = companion_snapshot
-                .make_wrap_point(their_point, Bias::Left)
+        let mut our_inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut our_fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
+        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
+        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
+        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
+        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
+
+        let mut determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
+            let our_wrap = our_wrap_point_cursor
+                .map(our_tab_point_cursor.map(
+                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
+                ))
+                .row();
+            let companion_wrap = companion_wrap_point_cursor
+                .map(
+                    companion_tab_point_cursor.map(
+                        companion_fold_point_cursor
+                            .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
+                    ),
+                )
                 .row();
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
@@ -1129,14 +1137,25 @@ impl BlockMap {
 
         let mut result = Vec::new();
 
-        for row_mapping in row_mappings {
-            let mut iter = row_mapping.boundaries.iter().cloned().peekable();
+        for excerpt in patches {
+            let mut source_points = (excerpt.edited_range.start.row..=excerpt.edited_range.end.row)
+                .map(|row| MultiBufferPoint::new(row, 0))
+                .chain(if excerpt.edited_range.end.column > 0 {
+                    Some(excerpt.edited_range.end)
+                } else {
+                    None
+                })
+                .peekable();
+            let last_source_point = if excerpt.edited_range.end.column > 0 {
+                excerpt.edited_range.end
+            } else {
+                MultiBufferPoint::new(excerpt.edited_range.end.row, 0)
+            };
 
-            let Some(((first_boundary, first_range), first_group)) =
-                iter.peek().cloned().zip(row_mapping.first_group.clone())
-            else {
+            let Some(first_point) = source_points.peek().copied() else {
                 continue;
             };
+            let edit_for_first_point = excerpt.patch.edit_for_old_position(first_point);
 
             // Because we calculate spacers based on differences in wrap row
             // counts between the RHS and LHS for corresponding buffer points,
@@ -1145,12 +1164,20 @@ impl BlockMap {
             // counts should have been balanced already by spacers above this
             // edit, so we only need to insert spacers for when the difference
             // in counts diverges from that baseline value.
-            let (our_baseline, their_baseline) = if first_group.start < first_boundary {
-                (first_group.start, first_range.start)
-            } else if let Some((prev_boundary, prev_range)) = row_mapping.prev_boundary {
-                (prev_boundary, prev_range.end)
+            let (our_baseline, their_baseline) = if edit_for_first_point.old.start < first_point {
+                // Case 1: We are inside a hunk/group--take the start of the hunk/group on both sides as the baseline.
+                (
+                    edit_for_first_point.old.start,
+                    edit_for_first_point.new.start,
+                )
+            } else if first_point.row > excerpt.source_excerpt_range.start.row {
+                // Case 2: We are not inside a hunk/group--go back by one row to find the baseline.
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let edit_for_prev_point = excerpt.patch.edit_for_old_position(prev_point);
+                (prev_point, edit_for_prev_point.new.end)
             } else {
-                (first_boundary, first_range.start)
+                // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
+                (first_point, edit_for_first_point.new.start)
             };
             let our_baseline = wrap_snapshot
                 .make_wrap_point(our_baseline, Bias::Left)
@@ -1161,14 +1188,17 @@ impl BlockMap {
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
-            if first_group.start < first_boundary {
-                let mut current_boundary = first_boundary;
-                let current_range = first_range;
-                while let Some((next_boundary, next_range)) = iter.peek().cloned()
-                    && next_range.end <= current_range.end
-                {
-                    iter.next();
-                    current_boundary = next_boundary;
+            // If we started out in the middle of a hunk/group, work up to the end of that group to set up the main loop below.
+            if edit_for_first_point.old.start < first_point {
+                let mut current_boundary = first_point;
+                let current_range = edit_for_first_point.new;
+                while let Some(next_point) = source_points.peek().cloned() {
+                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                    if edit_for_next_point.new.end > current_range.end {
+                        break;
+                    }
+                    source_points.next();
+                    current_boundary = next_point;
                 }
 
                 let (new_delta, spacer) =
@@ -1187,13 +1217,14 @@ impl BlockMap {
                 }
             }
 
-            while let Some((boundary, range)) = iter.next() {
-                let mut current_boundary = boundary;
-                let current_range = range;
+            // Main loop: process one hunk/group at a time, possibly inserting spacers before and after.
+            while let Some(source_point) = source_points.next() {
+                let mut current_boundary = source_point;
+                let current_range = excerpt.patch.edit_for_old_position(current_boundary).new;
 
                 // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
-                    debug_assert_eq!(current_boundary, row_mapping.source_excerpt_end);
+                    debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
                 }
 
@@ -1202,9 +1233,12 @@ impl BlockMap {
                     determine_spacer(current_boundary, current_range.start, delta);
                 delta = delta_at_start;
 
-                while let Some((next_boundary, next_range)) = iter.peek()
-                    && next_range.end <= current_range.end
-                {
+                while let Some(next_point) = source_points.peek().copied() {
+                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                    if edit_for_next_point.new.end > current_range.end {
+                        break;
+                    }
+
                     if let Some((wrap_row, height)) = spacer_at_start.take() {
                         result.push((
                             BlockPlacement::Above(wrap_row),
@@ -1216,13 +1250,13 @@ impl BlockMap {
                         ));
                     }
 
-                    current_boundary = *next_boundary;
-                    iter.next();
+                    current_boundary = next_point;
+                    source_points.next();
                 }
 
                 // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
-                    debug_assert_eq!(current_boundary, row_mapping.source_excerpt_end);
+                    debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
                 }
 
@@ -1254,10 +1288,9 @@ impl BlockMap {
                 }
             }
 
-            let (last_boundary, _last_range) = row_mapping.boundaries.last().cloned().unwrap();
-            if last_boundary == row_mapping.source_excerpt_end {
+            if last_source_point == excerpt.source_excerpt_range.end {
                 let (_new_delta, spacer) =
-                    determine_spacer(last_boundary, row_mapping.target_excerpt_end, delta);
+                    determine_spacer(last_source_point, excerpt.target_excerpt_range.end, delta);
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),

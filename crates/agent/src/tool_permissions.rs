@@ -17,12 +17,22 @@ pub struct HardcodedSecurityRules {
 
 pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
     HardcodedSecurityRules {
+        // Case-insensitive; `(-[rf]+\s+)*` handles `-rf`, `-fr`, `-RF`, `-r -f`, etc.
         terminal_deny: vec![
             // Recursive deletion of root - "rm -rf /" or "rm -rf / "
-            CompiledRegex::new(r"rm\s+(-[rRfF]+\s+)*/\s*$", false)
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*/\s*$", false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of home - "rm -rf ~" (but not ~/subdir)
-            CompiledRegex::new(r"rm\s+(-[rRfF]+\s+)*~\s*$", false)
+            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" (but not ~/subdir)
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*~/?\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}"
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*(\$HOME|\$\{HOME\})/?\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./"
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\./?\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../"
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\.\./?\s*$", false)
                 .expect("hardcoded regex should compile"),
         ],
     }
@@ -982,8 +992,8 @@ mod tests {
     }
 
     #[test]
-    fn nushell_denies_when_always_allow_configured() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_deny();
+    fn nushell_allows_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_allow();
     }
 
     #[test]
@@ -1012,8 +1022,13 @@ mod tests {
     }
 
     #[test]
-    fn elvish_denies_when_always_allow_configured() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_deny();
+    fn elvish_allows_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_allow();
+    }
+
+    #[test]
+    fn rc_allows_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Rc).is_allow();
     }
 
     #[test]
@@ -1060,14 +1075,44 @@ mod tests {
 
     #[test]
     fn hardcoded_blocks_rm_rf_root() {
-        // rm -rf / should be blocked by hardcoded rules
         t("rm -rf /").is_deny();
+        t("rm -fr /").is_deny();
+        t("rm -RF /").is_deny();
+        t("rm -FR /").is_deny();
+        t("rm -r -f /").is_deny();
+        t("rm -f -r /").is_deny();
+        t("RM -RF /").is_deny();
     }
 
     #[test]
     fn hardcoded_blocks_rm_rf_home() {
-        // rm -rf ~ should be blocked by hardcoded rules
         t("rm -rf ~").is_deny();
+        t("rm -fr ~").is_deny();
+        t("rm -rf ~/").is_deny();
+        t("rm -rf $HOME").is_deny();
+        t("rm -fr $HOME").is_deny();
+        t("rm -rf $HOME/").is_deny();
+        t("rm -rf ${HOME}").is_deny();
+        t("rm -rf ${HOME}/").is_deny();
+        t("rm -RF $HOME").is_deny();
+        t("rm -FR ${HOME}/").is_deny();
+        t("rm -R -F ${HOME}/").is_deny();
+        t("RM -RF ~").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_rf_dot() {
+        t("rm -rf .").is_deny();
+        t("rm -fr .").is_deny();
+        t("rm -rf ./").is_deny();
+        t("rm -rf ..").is_deny();
+        t("rm -fr ..").is_deny();
+        t("rm -rf ../").is_deny();
+        t("rm -RF .").is_deny();
+        t("rm -FR ../").is_deny();
+        t("rm -R -F ../").is_deny();
+        t("RM -RF .").is_deny();
+        t("RM -RF ..").is_deny();
     }
 
     #[test]
@@ -1075,12 +1120,18 @@ mod tests {
         // Even with always_allow_tool_actions=true, hardcoded rules block
         t("rm -rf /").global(true).is_deny();
         t("rm -rf ~").global(true).is_deny();
+        t("rm -rf $HOME").global(true).is_deny();
+        t("rm -rf .").global(true).is_deny();
+        t("rm -rf ..").global(true).is_deny();
     }
 
     #[test]
     fn hardcoded_cannot_be_bypassed_by_allow_pattern() {
         // Even with an allow pattern that matches, hardcoded rules block
         t("rm -rf /").allow(&[".*"]).is_deny();
+        t("rm -rf $HOME").allow(&[".*"]).is_deny();
+        t("rm -rf .").allow(&[".*"]).is_deny();
+        t("rm -rf ..").allow(&[".*"]).is_deny();
     }
 
     #[test]
@@ -1092,6 +1143,18 @@ mod tests {
         t("rm -rf /tmp/test")
             .mode(ToolPermissionMode::Allow)
             .is_allow();
+        t("rm -rf ~/Documents")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf $HOME/Documents")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf ../some_dir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf .hidden_dir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 
     #[test]
@@ -1100,5 +1163,8 @@ mod tests {
         t("ls && rm -rf /").is_deny();
         t("echo hello; rm -rf ~").is_deny();
         t("cargo build && rm -rf /").global(true).is_deny();
+        t("echo hello; rm -rf $HOME").is_deny();
+        t("echo hello; rm -rf .").is_deny();
+        t("echo hello; rm -rf ..").is_deny();
     }
 }

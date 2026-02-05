@@ -2,14 +2,14 @@ use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
     CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
     ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
-    DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
-    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
-    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
-    HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
-    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
+    JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
+    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -27,7 +27,6 @@ use crate::{
         POPOVER_RIGHT_OFFSET, hover_at,
     },
     inlay_hint_settings,
-    items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
     scroll::{
         ActiveScrollbarState, Autoscroll, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState,
@@ -48,9 +47,9 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
-    linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba, size,
-    solid_background, transparent_black,
+    TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
+    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
+    transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -61,6 +60,7 @@ use multi_buffer::{
 };
 
 use edit_prediction_types::EditPredictionGranularity;
+
 use project::{
     DisableAiSettings, Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -498,6 +498,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
+        register_action(editor, window, Editor::toggle_semantic_highlights);
         register_action(editor, window, Editor::toggle_edit_predictions);
         if editor.read(cx).diagnostics_enabled() {
             register_action(editor, window, Editor::toggle_diagnostics);
@@ -1991,13 +1992,13 @@ impl EditorElement {
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
                 ||
                 // Buffer Search Results
-                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
+                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
                 ||
                 // Selected Text Occurrences
-                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights(HighlightKey::SelectedTextHighlight))
                 ||
                 // Selected Symbol Occurrences
-                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights(HighlightKey::DocumentHighlightRead) || editor.has_background_highlights(HighlightKey::DocumentHighlightWrite)))
                 ||
                 // Diagnostics
                 (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot().has_diagnostics())
@@ -3785,7 +3786,9 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
+            let use_tree_sitter = !snapshot.semantic_tokens_enabled
+                || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
+            let chunks = snapshot.highlighted_chunks(rows.clone(), use_tree_sitter, style);
             LineWithInvisibles::from_chunks(
                 chunks,
                 style,
@@ -4005,7 +4008,11 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .bg(pattern_slash(rgba(0xFFFFFF10), 8.0, 8.0))
+                .bg(checkerboard(cx.theme().colors().panel_background, {
+                    let target_size = 16.0;
+                    let scale = window.scale_factor();
+                    Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale)
+                }))
                 .into_any(),
         };
 
@@ -4065,6 +4072,24 @@ impl EditorElement {
         }
 
         Some((element, final_size, row, x_offset))
+    }
+
+    /// The checkerboard pattern height must be an even factor of the line
+    /// height, so that two consecutive spacer blocks can render contiguously
+    /// without an obvious break in the pattern.
+    fn checkerboard_size(line_height: f32, target_height: f32) -> f32 {
+        let k_approx = line_height / (2.0 * target_height);
+        let k_floor = (k_approx.floor() as u32).max(1);
+        let k_ceil = (k_approx.ceil() as u32).max(1);
+
+        let size_floor = line_height / (2 * k_floor) as f32;
+        let size_ceil = line_height / (2 * k_ceil) as f32;
+
+        if (size_floor - target_height).abs() <= (size_ceil - target_height).abs() {
+            size_floor
+        } else {
+            size_ceil
+        }
     }
 
     fn render_buffer_header(
@@ -6981,15 +7006,13 @@ impl EditorElement {
                                 background_highlights.iter()
                             {
                                 let is_search_highlights = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<BufferSearchHighlights>());
-                                let is_text_highlights = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<SelectedTextHighlight>());
+                                    == HighlightKey::BufferSearchHighlights;
+                                let is_text_highlights =
+                                    *background_highlight_id == HighlightKey::SelectedTextHighlight;
                                 let is_symbol_occurrences = *background_highlight_id
-                                    == HighlightKey::Type(TypeId::of::<DocumentHighlightRead>())
+                                    == HighlightKey::DocumentHighlightRead
                                     || *background_highlight_id
-                                        == HighlightKey::Type(
-                                            TypeId::of::<DocumentHighlightWrite>(),
-                                        );
+                                        == HighlightKey::DocumentHighlightWrite;
                                 if (is_search_highlights && scrollbar_settings.search_results)
                                     || (is_text_highlights && scrollbar_settings.selected_text)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
@@ -10712,24 +10735,25 @@ impl Element for EditorElement {
 
                     let mode = snapshot.mode.clone();
 
-                    let (diff_hunk_controls, diff_hunk_control_bounds) = if is_read_only {
-                        (vec![], vec![])
-                    } else {
-                        self.layout_diff_hunk_controls(
-                            start_row..end_row,
-                            &row_infos,
-                            &text_hitbox,
-                            newest_selection_head,
-                            line_height,
-                            right_margin,
-                            scroll_pixel_position,
-                            &display_hunks,
-                            &highlighted_rows,
-                            self.editor.clone(),
-                            window,
-                            cx,
-                        )
-                    };
+                    let (diff_hunk_controls, diff_hunk_control_bounds) =
+                        if is_read_only && !self.editor.read(cx).delegate_stage_and_restore {
+                            (vec![], vec![])
+                        } else {
+                            self.layout_diff_hunk_controls(
+                                start_row..end_row,
+                                &row_infos,
+                                &text_hitbox,
+                                newest_selection_head,
+                                line_height,
+                                right_margin,
+                                scroll_pixel_position,
+                                &display_hunks,
+                                &highlighted_rows,
+                                self.editor.clone(),
+                                window,
+                                cx,
+                            )
+                        };
 
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
@@ -11704,7 +11728,9 @@ pub fn layout_line(
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
+    let use_tree_sitter =
+        !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
+    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), use_tree_sitter, style);
     LineWithInvisibles::from_chunks(
         chunks,
         style,
@@ -12116,6 +12142,7 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
+    use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
 
@@ -13216,5 +13243,32 @@ mod tests {
             assert_eq!(out[2].color, text_color);
             assert_eq!(out[3].color, adjusted_bg1);
         }
+    }
+
+    #[test]
+    fn test_checkerboard_size() {
+        // line height is smaller than target height, so we just return half the line height
+        assert_eq!(EditorElement::checkerboard_size(10.0, 20.0), 5.0);
+
+        // line height is exactly half the target height, perfect match
+        assert_eq!(EditorElement::checkerboard_size(20.0, 10.0), 10.0);
+
+        // line height is close to half the target height
+        assert_eq!(EditorElement::checkerboard_size(20.0, 9.0), 10.0);
+
+        // line height is close to 1/4 the target height
+        assert_eq!(EditorElement::checkerboard_size(20.0, 4.8), 5.0);
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_checkerboard_size(mut rng: StdRng) {
+        let line_height = rng.next_u32() as f32;
+        let target_height = rng.next_u32() as f32;
+
+        let result = EditorElement::checkerboard_size(line_height, target_height);
+
+        let k = line_height / result;
+        assert!(k - k.round() < 0.0000001); // approximately integer
+        assert!((k.round() as u32).is_multiple_of(2));
     }
 }

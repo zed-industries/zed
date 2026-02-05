@@ -6129,4 +6129,6 @@ fn is_known_binary_header(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"\xFF\xD8\xFF") // JPEG
         || bytes.starts_with(b"GIF87a") // GIF87a
         || bytes.starts_with(b"GIF89a") // GIF89a
+        || bytes.starts_with(b"IWAD") // Doom IWAD archive
+        || bytes.starts_with(b"PWAD") // Doom PWAD archive
 }
