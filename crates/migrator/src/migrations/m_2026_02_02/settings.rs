@@ -29,7 +29,7 @@ pub fn move_edit_prediction_provider_to_edit_predictions(value: &mut Value) -> R
         .or_insert_with(|| Value::Object(Default::default()));
 
     let Some(edit_predictions_obj) = edit_predictions.as_object_mut() else {
-        anyhow::bail!("Expected edit_predictions to be an object");
+        return Ok(());
     };
 
     if !edit_predictions_obj.contains_key("provider") {
