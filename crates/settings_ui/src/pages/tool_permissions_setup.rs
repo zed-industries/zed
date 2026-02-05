@@ -511,12 +511,20 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
         }
     }
 
+    // The real engine requires ALL commands to match at least one allow
+    // pattern for the overall verdict to be Allow. Compute that first,
+    // then show individual patterns with correct override status.
+    let all_commands_matched_allow = !inputs_to_check.is_empty()
+        && inputs_to_check
+            .iter()
+            .all(|cmd| rules.always_allow.iter().any(|rule| rule.is_match(cmd)));
+
     for rule in &rules.always_allow {
         if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
             matched.push(MatchedPattern {
                 pattern: rule.pattern.clone(),
                 rule_type: ToolPermissionMode::Allow,
-                is_overridden: has_deny_match || has_confirm_match,
+                is_overridden: has_deny_match || has_confirm_match || !all_commands_matched_allow,
             });
         }
     }
