@@ -339,16 +339,14 @@ impl Model {
             Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeOpus4_6Thinking => "Claude Opus 4.6 Thinking",
-            Self::ClaudeOpus4_6_1mContext => "Claude Opus 4.6 (1M context window)",
-            Self::ClaudeOpus4_6_1mContextThinking => "Claude Opus 4.6 Thinking (1M context window)",
+            Self::ClaudeOpus4_6_1mContext => "Claude Opus 4.6 (1M context)",
+            Self::ClaudeOpus4_6_1mContextThinking => "Claude Opus 4.6 Thinking (1M context)",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4_5Thinking => "Claude Sonnet 4.5 Thinking",
-            Self::ClaudeSonnet4_5_1mContext => "Claude Sonnet 4.5 (1M context window)",
-            Self::ClaudeSonnet4_5_1mContextThinking => {
-                "Claude Sonnet 4.5 Thinking (1M context window)"
-            }
+            Self::ClaudeSonnet4_5_1mContext => "Claude Sonnet 4.5 (1M context)",
+            Self::ClaudeSonnet4_5_1mContextThinking => "Claude Sonnet 4.5 Thinking (1M context)",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
