@@ -7,12 +7,12 @@ use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscriptio
 use itertools::Itertools;
 use language::{Buffer, Capability};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferDiffHunk,
-    MultiBufferPoint, MultiBufferSnapshot, PathKey,
+    Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
+    MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
-use text::{OffsetRangeExt as _, Patch, ToPoint as _};
+use text::{BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
     Styled as _, Window, div,
@@ -60,6 +60,72 @@ pub(crate) fn convert_rhs_rows_to_lhs(
         rhs_bounds,
         |diff, range, buffer| diff.patch_for_buffer_range(range, buffer),
     )
+}
+
+fn translate_lhs_selections_to_rhs(
+    selections_by_buffer: &HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
+    splittable: &SplittableEditor,
+    cx: &App,
+) -> HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> {
+    let rhs_display_map = splittable.rhs_editor.read(cx).display_map.read(cx);
+    let Some(companion) = rhs_display_map.companion() else {
+        return HashMap::default();
+    };
+    let companion = companion.read(cx);
+
+    let mut translated: HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> =
+        HashMap::default();
+
+    for (lhs_buffer_id, (ranges, scroll_offset)) in selections_by_buffer {
+        let Some(rhs_buffer_id) = companion.lhs_to_rhs_buffer(*lhs_buffer_id) else {
+            continue;
+        };
+
+        let Some(rhs_buffer) = splittable
+            .rhs_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .buffer(rhs_buffer_id)
+        else {
+            continue;
+        };
+
+        let Some(diff) = splittable
+            .rhs_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .diff_for(rhs_buffer_id)
+        else {
+            continue;
+        };
+
+        let diff_snapshot = diff.read(cx).snapshot(cx);
+        let rhs_buffer_snapshot = rhs_buffer.read(cx).snapshot();
+        let base_text_buffer = diff.read(cx).base_text_buffer();
+        let base_text_snapshot = base_text_buffer.read(cx).snapshot();
+
+        let translated_ranges: Vec<Range<BufferOffset>> = ranges
+            .iter()
+            .map(|range| {
+                let start_point = base_text_snapshot.offset_to_point(range.start.0);
+                let end_point = base_text_snapshot.offset_to_point(range.end.0);
+
+                let rhs_start = diff_snapshot
+                    .base_text_point_to_buffer_point(start_point, &rhs_buffer_snapshot);
+                let rhs_end =
+                    diff_snapshot.base_text_point_to_buffer_point(end_point, &rhs_buffer_snapshot);
+
+                BufferOffset(rhs_buffer_snapshot.point_to_offset(rhs_start))
+                    ..BufferOffset(rhs_buffer_snapshot.point_to_offset(rhs_end))
+            })
+            .collect();
+
+        translated.insert(rhs_buffer, (translated_ranges, *scroll_offset));
+    }
+
+    translated
 }
 
 fn translate_lhs_hunks_to_rhs(
@@ -420,6 +486,7 @@ impl SplittableEditor {
             editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
             editor.set_delegate_stage_and_restore(true);
+            editor.set_delegate_open_excerpts(true);
             editor.set_show_vertical_scrollbar(false, cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
@@ -429,59 +496,75 @@ impl SplittableEditor {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
-        let subscriptions =
-            vec![cx.subscribe(
-                &lhs_editor,
-                |this, _, event: &EditorEvent, cx| match event {
-                    EditorEvent::ExpandExcerptsRequested {
-                        excerpt_ids,
-                        lines,
-                        direction,
-                    } => {
-                        if this.lhs.is_some() {
-                            let rhs_display_map = this.rhs_editor.read(cx).display_map.read(cx);
-                            let rhs_ids: Vec<_> = excerpt_ids
-                                .iter()
-                                .filter_map(|id| {
-                                    rhs_display_map.companion_excerpt_to_my_excerpt(*id, cx)
-                                })
-                                .collect();
-                            this.expand_excerpts(rhs_ids.into_iter(), *lines, *direction, cx);
+        let subscriptions = vec![cx.subscribe_in(
+            &lhs_editor,
+            window,
+            |this, _, event: &EditorEvent, window, cx| match event {
+                EditorEvent::ExpandExcerptsRequested {
+                    excerpt_ids,
+                    lines,
+                    direction,
+                } => {
+                    if this.lhs.is_some() {
+                        let rhs_display_map = this.rhs_editor.read(cx).display_map.read(cx);
+                        let rhs_ids: Vec<_> = excerpt_ids
+                            .iter()
+                            .filter_map(|id| {
+                                rhs_display_map.companion_excerpt_to_my_excerpt(*id, cx)
+                            })
+                            .collect();
+                        this.expand_excerpts(rhs_ids.into_iter(), *lines, *direction, cx);
+                    }
+                }
+                EditorEvent::StageOrUnstageRequested { stage, hunks } => {
+                    if this.lhs.is_some() {
+                        let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
+                        if !translated.is_empty() {
+                            let stage = *stage;
+                            this.rhs_editor.update(cx, |editor, cx| {
+                                let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
+                                for (buffer_id, hunks) in &chunk_by {
+                                    editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
+                                }
+                            });
                         }
                     }
-                    EditorEvent::StageOrUnstageRequested { stage, hunks } => {
-                        if this.lhs.is_some() {
-                            let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
-                            if !translated.is_empty() {
-                                let stage = *stage;
-                                this.rhs_editor.update(cx, |editor, cx| {
-                                    let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
-                                    for (buffer_id, hunks) in &chunk_by {
-                                        editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
-                                    }
-                                });
-                            }
+                }
+                EditorEvent::RestoreRequested { hunks } => {
+                    if this.lhs.is_some() {
+                        let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
+                        if !translated.is_empty() {
+                            this.rhs_editor.update(cx, |editor, cx| {
+                                editor.restore_diff_hunks(translated, cx);
+                            });
                         }
                     }
-                    EditorEvent::RestoreRequested { hunks } => {
-                        if this.lhs.is_some() {
-                            let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
-                            if !translated.is_empty() {
-                                this.rhs_editor.update(cx, |editor, cx| {
-                                    editor.restore_diff_hunks(translated, cx);
-                                });
-                            }
+                }
+                EditorEvent::OpenExcerptsRequested {
+                    selections_by_buffer,
+                    split,
+                } => {
+                    if this.lhs.is_some() {
+                        let translated =
+                            translate_lhs_selections_to_rhs(selections_by_buffer, this, cx);
+                        if !translated.is_empty() {
+                            let workspace = this.workspace.clone();
+                            let split = *split;
+                            Editor::open_buffers_in_workspace(
+                                workspace, translated, split, window, cx,
+                            );
                         }
                     }
-                    EditorEvent::SelectionsChanged { .. } => {
-                        if let Some(lhs) = &mut this.lhs {
-                            lhs.has_latest_selection = true;
-                        }
-                        cx.emit(event.clone());
+                }
+                EditorEvent::SelectionsChanged { .. } => {
+                    if let Some(lhs) = &mut this.lhs {
+                        lhs.has_latest_selection = true;
                     }
-                    _ => cx.emit(event.clone()),
-                },
-            )];
+                    cx.emit(event.clone());
+                }
+                _ => cx.emit(event.clone()),
+            },
+        )];
         let mut lhs = LhsEditor {
             editor: lhs_editor,
             multibuffer: lhs_multibuffer,
