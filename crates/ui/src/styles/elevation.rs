@@ -55,7 +55,7 @@ impl ElevationIndex {
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., if is_light { 0.03 } else { 0.06 }),
-                    offset: point(px(1.), px(1.)),
+                    offset: point(px(0.), px(1.)),
                     blur_radius: px(0.),
                     spread_radius: px(0.),
                 },
@@ -82,7 +82,7 @@ impl ElevationIndex {
                 },
                 BoxShadow {
                     color: hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
-                    offset: point(px(1.), px(1.)),
+                    offset: point(px(0.), px(1.)),
                     blur_radius: px(0.),
                     spread_radius: px(0.),
                 },

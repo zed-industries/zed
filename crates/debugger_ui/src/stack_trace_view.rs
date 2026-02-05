@@ -1,10 +1,13 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 
 use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
-    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
+    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, HighlightKey,
+    MultiBuffer, RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
     App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
@@ -147,7 +150,7 @@ impl StackTraceView {
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_task.take();
         self.editor.update(cx, |editor, cx| {
-            editor.clear_highlights::<DebugStackFrameLine>(cx)
+            editor.clear_highlights(HighlightKey::DebugStackFrameLine, cx)
         });
 
         let stack_frames = self
@@ -333,7 +336,7 @@ impl Item for StackTraceView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {

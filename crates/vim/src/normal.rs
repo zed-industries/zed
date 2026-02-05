@@ -100,9 +100,9 @@ actions!(
         GoToTab,
         /// Go to previous tab page (with count support).
         GoToPreviousTab,
-        /// Go to tab page (with count support).
+        /// Goes to the previous reference to the symbol under the cursor.
         GoToPreviousReference,
-        /// Go to previous tab page (with count support).
+        /// Goes to the next reference to the symbol under the cursor.
         GoToNextReference,
     ]
 );
@@ -579,7 +579,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
 
             // If vim is in temporary mode and the motion being used is
             // `EndOfLine` ($), we'll want to disable clipping at line ends so
@@ -748,7 +748,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -1949,6 +1949,19 @@ mod test {
         );
 
         cx.assert_binding_normal("e", indoc! {"ˇassert_binding"}, indoc! {"asserˇt_binding"});
+
+        // Subword end should stop at EOL
+        cx.assert_binding_normal("e", indoc! {"foo_bˇar\nbaz"}, indoc! {"foo_baˇr\nbaz"});
+
+        // Already at subword end, should move to next subword on next line
+        cx.assert_binding_normal(
+            "e",
+            indoc! {"foo_barˇ\nbaz_qux"},
+            indoc! {"foo_bar\nbaˇz_qux"},
+        );
+
+        // CamelCase at EOL
+        cx.assert_binding_normal("e", indoc! {"fooˇBar\nbaz"}, indoc! {"fooBaˇr\nbaz"});
 
         cx.assert_binding_normal("b", indoc! {"assert_ˇbinding"}, indoc! {"ˇassert_binding"});
 

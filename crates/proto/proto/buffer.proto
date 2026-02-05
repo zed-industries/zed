@@ -308,8 +308,28 @@ message FindSearchCandidates {
     uint64 project_id = 1;
     SearchQuery query = 2;
     uint64 limit = 3;
+    uint64 handle = 4;
 }
 
-message FindSearchCandidatesResponse {
-    repeated uint64 buffer_ids = 1;
+
+message FindSearchCandidatesDone {}
+
+message FindSearchCandidatesMatches {
+  repeated uint64 buffer_ids = 1;
+}
+
+message FindSearchCandidatesChunk {
+  uint64 project_id = 1;
+  PeerId peer_id = 2;
+  uint64 handle = 3;
+
+  oneof variant {
+    FindSearchCandidatesMatches matches = 4;
+    FindSearchCandidatesDone done = 5;
+  }
+}
+
+message FindSearchCandidatesCancelled {
+    uint64 project_id = 1;
+    uint64 handle = 2;
 }

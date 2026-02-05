@@ -14,6 +14,10 @@ use language_model::{
     TokenUsage, env_var,
 };
 use menu;
+use open_ai::responses::{
+    ResponseFunctionCallItem, ResponseFunctionCallOutputItem, ResponseInputContent,
+    ResponseInputItem, ResponseMessageItem,
+};
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent,
     responses::{
@@ -22,7 +26,6 @@ use open_ai::{
     },
     stream_completion,
 };
-use serde_json::{Value, json};
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr as _;
@@ -307,6 +310,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FiveNano
             | Model::FivePointOne
             | Model::FivePointTwo
+            | Model::FivePointTwoCodex
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -324,6 +328,10 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -409,7 +417,14 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    if !text.trim().is_empty() {
+                    let should_add = if message.role == Role::User {
+                        // Including whitespace-only user messages can cause error with OpenAI compatible APIs
+                        // See https://github.com/zed-industries/zed/issues/40097
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
@@ -531,7 +546,6 @@ pub fn into_open_ai_response(
         thread_id,
         prompt_id: _,
         intent: _,
-        mode: _,
         messages,
         tools,
         tool_choice,
@@ -585,9 +599,9 @@ pub fn into_open_ai_response(
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInputItem>,
 ) {
-    let mut content_parts: Vec<Value> = Vec::new();
+    let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
     for content in message.content {
         match content {
@@ -604,20 +618,20 @@ fn append_message_to_response_items(
             MessageContent::ToolUse(tool_use) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
                 let call_id = tool_use.id.to_string();
-                input_items.push(json!({
-                    "type": "function_call",
-                    "call_id": call_id,
-                    "name": tool_use.name,
-                    "arguments": tool_use.raw_input,
+                input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
+                    call_id,
+                    name: tool_use.name.to_string(),
+                    arguments: tool_use.raw_input,
                 }));
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
-                input_items.push(json!({
-                    "type": "function_call_output",
-                    "call_id": tool_result.tool_use_id.to_string(),
-                    "output": tool_result_output(&tool_result),
-                }));
+                input_items.push(ResponseInputItem::FunctionCallOutput(
+                    ResponseFunctionCallOutputItem {
+                        call_id: tool_result.tool_use_id.to_string(),
+                        output: tool_result_output(&tool_result),
+                    },
+                ));
             }
         }
     }
@@ -625,67 +639,59 @@ fn append_message_to_response_items(
     flush_response_parts(&message.role, index, &mut content_parts, input_items);
 }
 
-fn push_response_text_part(role: &Role, text: impl Into<String>, parts: &mut Vec<Value>) {
+fn push_response_text_part(
+    role: &Role,
+    text: impl Into<String>,
+    parts: &mut Vec<ResponseInputContent>,
+) {
     let text = text.into();
     if text.trim().is_empty() {
         return;
     }
 
     match role {
-        Role::Assistant => parts.push(json!({
-            "type": "output_text",
-            "text": text,
-            "annotations": [],
-        })),
-        _ => parts.push(json!({
-            "type": "input_text",
-            "text": text,
-        })),
+        Role::Assistant => parts.push(ResponseInputContent::OutputText {
+            text,
+            annotations: Vec::new(),
+        }),
+        _ => parts.push(ResponseInputContent::Text { text }),
     }
 }
 
-fn push_response_image_part(role: &Role, image: LanguageModelImage, parts: &mut Vec<Value>) {
+fn push_response_image_part(
+    role: &Role,
+    image: LanguageModelImage,
+    parts: &mut Vec<ResponseInputContent>,
+) {
     match role {
-        Role::Assistant => parts.push(json!({
-            "type": "output_text",
-            "text": "[image omitted]",
-            "annotations": [],
-        })),
-        _ => parts.push(json!({
-            "type": "input_image",
-            "image_url": image.to_base64_url(),
-        })),
+        Role::Assistant => parts.push(ResponseInputContent::OutputText {
+            text: "[image omitted]".to_string(),
+            annotations: Vec::new(),
+        }),
+        _ => parts.push(ResponseInputContent::Image {
+            image_url: image.to_base64_url(),
+        }),
     }
 }
 
 fn flush_response_parts(
     role: &Role,
     _index: usize,
-    parts: &mut Vec<Value>,
-    input_items: &mut Vec<Value>,
+    parts: &mut Vec<ResponseInputContent>,
+    input_items: &mut Vec<ResponseInputItem>,
 ) {
     if parts.is_empty() {
         return;
     }
 
-    let item = match role {
-        Role::Assistant => json!({
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "content": parts.clone(),
-        }),
-        Role::User => json!({
-            "type": "message",
-            "role": "user",
-            "content": parts.clone(),
-        }),
-        Role::System => json!({
-            "type": "message",
-            "role": "system",
-            "content": parts.clone(),
-        }),
-    };
+    let item = ResponseInputItem::Message(ResponseMessageItem {
+        role: match role {
+            Role::User => open_ai::Role::User,
+            Role::Assistant => open_ai::Role::Assistant,
+            Role::System => open_ai::Role::System,
+        },
+        content: parts.clone(),
+    });
 
     input_items.push(item);
     parts.clear();
@@ -783,8 +789,18 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                if !reasoning_content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: reasoning_content,
+                        signature: None,
+                    }));
+                }
+            }
             if let Some(content) = delta.content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                if !content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
@@ -887,7 +903,7 @@ impl OpenAiResponseEventMapper {
         })
     }
 
-    fn map_event(
+    pub fn map_event(
         &mut self,
         event: ResponsesStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
@@ -1168,8 +1184,8 @@ pub fn count_open_ai_tokens(
             | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5.1 and 5.2 don't have dedicated tiktoken support; use gpt-5 tokenizer
-            Model::FivePointOne | Model::FivePointTwo => {
+            // GPT-5.1, 5.2, and 5.2-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
+            Model::FivePointOne | Model::FivePointTwo | Model::FivePointTwoCodex => {
                 tiktoken_rs::num_tokens_from_messages("gpt-5", &messages)
             }
         }
@@ -1358,7 +1374,6 @@ impl Render for ConfigurationView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use futures::{StreamExt, executor::block_on};
     use gpui::TestAppContext;
     use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
@@ -1367,6 +1382,9 @@ mod tests {
         ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
     use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::*;
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -1405,7 +1423,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
@@ -1422,8 +1439,8 @@ mod tests {
         // Validate that all models are supported by tiktoken-rs
         for model in Model::iter() {
             let count = cx
-                .executor()
-                .block(count_open_ai_tokens(
+                .foreground_executor()
+                .block_on(count_open_ai_tokens(
                     request.clone(),
                     model,
                     &cx.app.borrow(),
@@ -1512,7 +1529,6 @@ mod tests {
             thread_id: Some("thread-123".into()),
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,
@@ -1587,7 +1603,6 @@ mod tests {
                 {
                     "type": "message",
                     "role": "assistant",
-                    "status": "completed",
                     "content": [
                         { "type": "output_text", "text": "Looking that up.", "annotations": [] }
                     ]

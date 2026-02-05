@@ -1,12 +1,13 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression},
     vars::{self, PathCondition},
 };
 
@@ -48,6 +49,9 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
+        should_run_tests.guard(clippy(Platform::Windows)),
+        should_run_tests.guard(clippy(Platform::Linux)),
+        should_run_tests.guard(clippy(Platform::Mac)),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
         should_run_tests.guard(run_platform_tests(Platform::Linux)),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
@@ -111,6 +115,14 @@ pub(crate) fn run_tests() -> Workflow {
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, true)
+}
+
+pub fn orchestrate_without_package_filter(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, false)
+}
+
+fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -139,6 +151,52 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     "#});
 
     let mut outputs = IndexMap::new();
+
+    if include_package_filter {
+        script.push_str(indoc::indoc! {r#"
+        # Check for changes that require full rebuild (no filter)
+        # Direct pushes to main/stable/preview always run full suite
+        if [ -z "$GITHUB_BASE_REF" ]; then
+          echo "Not a PR, running full test suite"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|\.github/|Cargo\.(toml|lock)$)'; then
+          echo "Toolchain, cargo config, or root Cargo files changed, will run all tests"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        else
+          # Extract changed packages from file paths
+          FILE_CHANGED_PKGS=$(echo "$CHANGED_FILES" | \
+            grep -oP '^(crates|tooling)/\K[^/]+' | \
+            sort -u || true)
+
+          # If assets/ changed, add crates that depend on those assets
+          if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+          fi
+
+          # Combine all changed packages
+          ALL_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' || true)
+
+          if [ -z "$ALL_CHANGED_PKGS" ]; then
+            echo "No package changes detected, will run all tests"
+            echo "changed_packages=" >> "$GITHUB_OUTPUT"
+          else
+            # Build nextest filterset with rdeps for each package
+            FILTERSET=$(echo "$ALL_CHANGED_PKGS" | \
+              sed 's/.*/rdeps(&)/' | \
+              tr '\n' '|' | \
+              sed 's/|$//')
+            echo "Changed packages filterset: $FILTERSET"
+            echo "changed_packages=$FILTERSET" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
+    "#});
+
+        outputs.insert(
+            "changed_packages".to_owned(),
+            format!("${{{{ steps.{}.outputs.changed_packages }}}}", step_name),
+        );
+    }
 
     for rule in rules {
         assert!(
@@ -171,12 +229,7 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
             "fetch-depth",
             "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
         )))
-        .add_step(
-            Step::new(step_name.clone())
-                .run(script)
-                .id(step_name)
-                .shell(BASH_SHELL),
-        );
+        .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
 }
@@ -304,7 +357,39 @@ fn check_workspace_binaries() -> NamedJob {
     )
 }
 
+pub(crate) fn clippy(platform: Platform) -> NamedJob {
+    let runner = match platform {
+        Platform::Windows => runners::WINDOWS_DEFAULT,
+        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Mac => runners::MAC_DEFAULT,
+    };
+    NamedJob {
+        name: format!("clippy_{platform}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(platform))
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
+            .when(
+                platform == Platform::Linux,
+                steps::install_linux_dependencies,
+            )
+            .add_step(steps::clippy(platform)),
+    }
+}
+
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
+    run_platform_tests_impl(platform, true)
+}
+
+pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
+    run_platform_tests_impl(platform, false)
+}
+
+fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -314,22 +399,44 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                job.add_service(
+                    "postgres",
+                    Container::new("postgres:15")
+                        .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                        .ports(vec![Port::Name("5432:5432".into())])
+                        .options(
+                            "--health-cmd pg_isready \
+                             --health-interval 500ms \
+                             --health-timeout 5s \
+                             --health-retries 10",
+                        ),
+                )
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .add_step(steps::clippy(platform))
-            .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::cargo_install_nextest())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
             .add_step(steps::clear_target_dir_if_large(platform))
-            .add_step(steps::cargo_nextest(platform))
+            .when(filter_packages, |job| {
+                job.add_step(
+                    steps::cargo_nextest(platform).with_changed_packages_filter("orchestrate"),
+                )
+            })
+            .when(!filter_packages, |job| {
+                job.add_step(steps::cargo_nextest(platform))
+            })
             .add_step(steps::cleanup_cargo_config(platform)),
     }
 }

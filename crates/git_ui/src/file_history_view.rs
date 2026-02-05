@@ -12,6 +12,7 @@ use project::{
     git_store::{GitStore, Repository},
 };
 use std::any::{Any, TypeId};
+use std::sync::Arc;
 
 use time::OffsetDateTime;
 use ui::{Avatar, Chip, Divider, ListItem, WithScrollbar, prelude::*};
@@ -282,6 +283,7 @@ impl FileHistoryView {
     fn render_commit_avatar(
         &self,
         sha: &SharedString,
+        author_email: Option<SharedString>,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
@@ -289,7 +291,7 @@ impl FileHistoryView {
         let size = rems_from_px(20.);
 
         if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
+            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone(), author_email);
             if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
                 Avatar::new(url.to_string()).size(size)
             } else {
@@ -348,7 +350,12 @@ impl FileHistoryView {
                             .flex_none()
                             .child(Chip::new(pr_number)),
                     )
-                    .child(self.render_commit_avatar(&entry.sha, window, cx))
+                    .child(self.render_commit_avatar(
+                        &entry.sha,
+                        Some(entry.author_email.clone()),
+                        window,
+                        cx,
+                    ))
                     .child(
                         h_flex()
                             .min_w_0()
@@ -394,6 +401,7 @@ impl FileHistoryView {
 #[derive(Clone, Debug)]
 struct CommitAvatarAsset {
     sha: SharedString,
+    author_email: Option<SharedString>,
     remote: GitRemote,
 }
 
@@ -405,8 +413,12 @@ impl std::hash::Hash for CommitAvatarAsset {
 }
 
 impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
+    fn new(remote: GitRemote, sha: SharedString, author_email: Option<SharedString>) -> Self {
+        Self {
+            remote,
+            sha,
+            author_email,
+        }
     }
 }
 
@@ -427,6 +439,7 @@ impl Asset for CommitAvatarAsset {
                     &source.remote.owner,
                     &source.remote.repo,
                     source.sha.clone(),
+                    source.author_email.clone(),
                     client,
                 )
                 .await
@@ -574,7 +587,12 @@ impl Item for FileHistoryView {
         Task::ready(None)
     }
 
-    fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        _: Arc<dyn Any + Send>,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> bool {
         false
     }
 

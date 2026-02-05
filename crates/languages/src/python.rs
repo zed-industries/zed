@@ -2,12 +2,13 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
+use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -24,11 +25,13 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
+use terminal::terminal_settings::TerminalSettings;
+
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use std::process::Stdio;
-use terminal::terminal_settings::TerminalSettings;
+
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
@@ -300,18 +303,31 @@ impl LspInstaller for TyLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
+        toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let Some(ty_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await else {
-            return None;
+        let ty_in_venv = if let Some(toolchain) = toolchain
+            && toolchain.language_name.as_ref() == "Python"
+        {
+            Path::new(toolchain.path.as_str())
+                .parent()
+                .map(|path| path.join("ty"))
+        } else {
+            None
         };
-        let env = delegate.shell_env().await;
-        Some(LanguageServerBinary {
-            path: ty_bin,
-            env: Some(env),
-            arguments: vec!["server".into()],
-        })
+
+        for path in ty_in_venv.into_iter().chain(["ty".into()]) {
+            if let Some(ty_bin) = delegate.which(path.as_os_str()).await {
+                let env = delegate.shell_env().await;
+                return Some(LanguageServerBinary {
+                    path: ty_bin,
+                    env: Some(env),
+                    arguments: vec!["server".into()],
+                });
+            }
+        }
+
+        None
     }
 
     async fn fetch_server_binary(
@@ -534,11 +550,11 @@ impl LspAdapter for PyrightLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -1187,7 +1203,16 @@ impl ToolchainLister for PythonToolchainProvider {
         config.workspace_directories = Some(
             subroot_relative_path
                 .ancestors()
-                .map(|ancestor| worktree_root.join(ancestor.as_std_path()))
+                .map(|ancestor| {
+                    // remove trailing separator as it alters the environment name hash used by Poetry.
+                    let path = worktree_root.join(ancestor.as_std_path());
+                    let path_str = path.to_string_lossy();
+                    if path_str.ends_with(std::path::MAIN_SEPARATOR) && path_str.len() > 1 {
+                        PathBuf::from(path_str.trim_end_matches(std::path::MAIN_SEPARATOR))
+                    } else {
+                        path
+                    }
+                })
                 .collect(),
         );
         for locator in locators.iter() {
@@ -1311,93 +1336,110 @@ impl ToolchainLister for PythonToolchainProvider {
             .context("Could not convert a venv into a toolchain")
     }
 
-    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind, cx: &App) -> Vec<String> {
-        let Ok(toolchain) =
-            serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
-        else {
-            return vec![];
-        };
+    fn activation_script(
+        &self,
+        toolchain: &Toolchain,
+        shell: ShellKind,
+        cx: &App,
+    ) -> BoxFuture<'static, Vec<String>> {
+        let settings = TerminalSettings::get_global(cx);
+        let conda_manager = settings
+            .detect_venv
+            .as_option()
+            .map(|venv| venv.conda_manager)
+            .unwrap_or(settings::CondaManager::Auto);
 
-        log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
+        let toolchain_clone = toolchain.clone();
+        Box::pin(async move {
+            let Ok(toolchain) =
+                serde_json::from_value::<PythonToolchainData>(toolchain_clone.as_json.clone())
+            else {
+                return vec![];
+            };
 
-        let mut activation_script = vec![];
+            log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
 
-        match toolchain.environment.kind {
-            Some(PythonEnvironmentKind::Conda) => {
-                let settings = TerminalSettings::get_global(cx);
-                let conda_manager = settings
-                    .detect_venv
-                    .as_option()
-                    .map(|venv| venv.conda_manager)
-                    .unwrap_or(settings::CondaManager::Auto);
-                let manager = match conda_manager {
-                    settings::CondaManager::Conda => "conda",
-                    settings::CondaManager::Mamba => "mamba",
-                    settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => toolchain
-                        .environment
-                        .manager
-                        .as_ref()
-                        .and_then(|m| m.executable.file_name())
-                        .and_then(|name| name.to_str())
-                        .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
-                        .unwrap_or("conda"),
-                };
+            let mut activation_script = vec![];
 
-                // Activate micromamba shell in the child shell
-                // [required for micromamba]
-                if manager == "micromamba" {
-                    let shell = micromamba_shell_name(shell);
-                    activation_script
-                        .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+            match toolchain.environment.kind {
+                Some(PythonEnvironmentKind::Conda) => {
+                    let Some(manager_info) = &toolchain.environment.manager else {
+                        return vec![];
+                    };
+                    if smol::fs::metadata(&manager_info.executable).await.is_err() {
+                        return vec![];
+                    }
+
+                    let manager = match conda_manager {
+                        settings::CondaManager::Conda => "conda",
+                        settings::CondaManager::Mamba => "mamba",
+                        settings::CondaManager::Micromamba => "micromamba",
+                        settings::CondaManager::Auto => toolchain
+                            .environment
+                            .manager
+                            .as_ref()
+                            .and_then(|m| m.executable.file_name())
+                            .and_then(|name| name.to_str())
+                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                            .unwrap_or("conda"),
+                    };
+
+                    // Activate micromamba shell in the child shell
+                    // [required for micromamba]
+                    if manager == "micromamba" {
+                        let shell = micromamba_shell_name(shell);
+                        activation_script
+                            .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                    }
+
+                    if let Some(name) = &toolchain.environment.name {
+                        activation_script.push(format!("{manager} activate {name}"));
+                    } else {
+                        activation_script.push(format!("{manager} activate base"));
+                    }
                 }
-
-                if let Some(name) = &toolchain.environment.name {
-                    activation_script.push(format!("{manager} activate {name}"));
-                } else {
-                    activation_script.push(format!("{manager} activate base"));
-                }
-            }
-            Some(
-                PythonEnvironmentKind::Venv
-                | PythonEnvironmentKind::VirtualEnv
-                | PythonEnvironmentKind::Uv
-                | PythonEnvironmentKind::UvWorkspace,
-            ) => {
-                if let Some(activation_scripts) = &toolchain.activation_scripts {
-                    if let Some(activate_script_path) = activation_scripts.get(&shell) {
-                        let activate_keyword = shell.activate_keyword();
-                        if let Some(quoted) =
-                            shell.try_quote(&activate_script_path.to_string_lossy())
-                        {
-                            activation_script.push(format!("{activate_keyword} {quoted}"));
+                Some(
+                    PythonEnvironmentKind::Venv
+                    | PythonEnvironmentKind::VirtualEnv
+                    | PythonEnvironmentKind::Uv
+                    | PythonEnvironmentKind::UvWorkspace
+                    | PythonEnvironmentKind::Poetry,
+                ) => {
+                    if let Some(activation_scripts) = &toolchain.activation_scripts {
+                        if let Some(activate_script_path) = activation_scripts.get(&shell) {
+                            let activate_keyword = shell.activate_keyword();
+                            if let Some(quoted) =
+                                shell.try_quote(&activate_script_path.to_string_lossy())
+                            {
+                                activation_script.push(format!("{activate_keyword} {quoted}"));
+                            }
                         }
                     }
                 }
+                Some(PythonEnvironmentKind::Pyenv) => {
+                    let Some(manager) = &toolchain.environment.manager else {
+                        return vec![];
+                    };
+                    let version = toolchain.environment.version.as_deref().unwrap_or("system");
+                    let pyenv = &manager.executable;
+                    let pyenv = pyenv.display();
+                    activation_script.extend(match shell {
+                        ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
+                        ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
+                        ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
+                        ShellKind::PowerShell | ShellKind::Pwsh => None,
+                        ShellKind::Csh => None,
+                        ShellKind::Tcsh => None,
+                        ShellKind::Cmd => None,
+                        ShellKind::Rc => None,
+                        ShellKind::Xonsh => None,
+                        ShellKind::Elvish => None,
+                    })
+                }
+                _ => {}
             }
-            Some(PythonEnvironmentKind::Pyenv) => {
-                let Some(manager) = &toolchain.environment.manager else {
-                    return vec![];
-                };
-                let version = toolchain.environment.version.as_deref().unwrap_or("system");
-                let pyenv = &manager.executable;
-                let pyenv = pyenv.display();
-                activation_script.extend(match shell {
-                    ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
-                    ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
-                    ShellKind::Nushell => Some(format!("^\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::PowerShell | ShellKind::Pwsh => None,
-                    ShellKind::Csh => None,
-                    ShellKind::Tcsh => None,
-                    ShellKind::Cmd => None,
-                    ShellKind::Rc => None,
-                    ShellKind::Xonsh => None,
-                    ShellKind::Elvish => None,
-                })
-            }
-            _ => {}
-        }
-        activation_script
+            activation_script
+        })
     }
 }
 
@@ -1424,7 +1466,8 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
             PythonEnvironmentKind::Venv
             | PythonEnvironmentKind::VirtualEnv
             | PythonEnvironmentKind::Uv
-            | PythonEnvironmentKind::UvWorkspace,
+            | PythonEnvironmentKind::UvWorkspace
+            | PythonEnvironmentKind::Poetry,
         ) => resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await,
         _ => {}
     }
@@ -1462,6 +1505,7 @@ async fn resolve_venv_activation_scripts(
             (ShellKind::Fish, "activate.fish"),
             (ShellKind::Nushell, "activate.nu"),
             (ShellKind::PowerShell, "activate.ps1"),
+            (ShellKind::Pwsh, "activate.ps1"),
             (ShellKind::Cmd, "activate.bat"),
             (ShellKind::Xonsh, "activate.xsh"),
         ] {
@@ -1664,11 +1708,11 @@ impl LspAdapter for PyLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -1956,11 +2000,11 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();

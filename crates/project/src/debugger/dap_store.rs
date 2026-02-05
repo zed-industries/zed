@@ -4,6 +4,8 @@ use super::{
     locators,
     session::{self, Session, SessionStateEvent},
 };
+use remote::Interactive;
+
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
     debugger::session::SessionQuirks,
@@ -266,8 +268,8 @@ impl DapStore {
                         Some(worktree.read(cx).resolve_executable_path(path))
                     }
                 });
-                let user_args = dap_settings.map(|s| s.args.clone());
-                let user_env = dap_settings.map(|s| s.env.clone());
+                let user_args = dap_settings.and_then(|s| s.args.clone());
+                let user_env = dap_settings.and_then(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
 
@@ -341,12 +343,13 @@ impl DapStore {
                     }
 
                     let command = remote.read_with(cx, |remote, _cx| {
-                        remote.build_command(
+                        remote.build_command_with_options(
                             binary.command,
                             &binary.arguments,
                             &binary.envs,
                             binary.cwd.map(|path| path.display().to_string()),
                             port_forwarding,
+                            Interactive::No,
                         )
                     })?;
 
@@ -396,11 +399,12 @@ impl DapStore {
                 // Pre-resolve args with existing environment.
                 let locators = DapRegistry::global(cx).locators();
                 let locator = locators.get(locator_name);
+                let executor = cx.background_executor().clone();
 
                 if let Some(locator) = locator.cloned() {
                     cx.background_spawn(async move {
                         let result = locator
-                            .run(build_command.clone())
+                            .run(build_command.clone(), executor)
                             .await
                             .log_with_level(log::Level::Error);
                         if let Some(result) = result {
