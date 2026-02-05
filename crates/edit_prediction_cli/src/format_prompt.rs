@@ -1,6 +1,6 @@
 use crate::{
     FormatPromptArgs, PredictionProvider,
-    example::{Example, ExamplePrompt},
+    example::{ActualCursor, Example, ExamplePrompt},
     headless::EpAppState,
     progress::{ExampleProgress, Step},
     retrieve_context::run_context_retrieval,
@@ -196,7 +196,7 @@ impl TeacherPrompt {
         prompt
     }
 
-    pub fn parse(example: &Example, response: &str) -> Result<(String, Option<usize>)> {
+    pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
         // Extract updated (new) editable region from the model response.
         // The model may include editable region markers in its output, so we need to strip them.
         let new_editable_region = extract_last_codeblock(response);
@@ -257,7 +257,18 @@ impl TeacherPrompt {
             diff = diff,
         };
 
-        Ok((diff, cursor_offset))
+        let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+            ActualCursor::from_editable_region(
+                &example.spec.cursor_path,
+                editable_region_cursor_offset,
+                &new_editable_region,
+                &prompt_inputs.content,
+                editable_region_offset,
+                editable_region_start_line,
+            )
+        });
+
+        Ok((diff, actual_cursor))
     }
 
     fn format_edit_history(edit_history: &str) -> String {
@@ -410,7 +421,7 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     Some(result)
 }
 
-fn extract_last_codeblock(text: &str) -> String {
+pub(crate) fn extract_last_codeblock(text: &str) -> String {
     let mut last_block = None;
     let mut search_start = 0;
 

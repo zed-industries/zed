@@ -86,10 +86,61 @@ pub struct ExamplePrediction {
     #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actual_cursor_offset: Option<usize>,
+    pub actual_cursor: Option<ActualCursor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub provider: PredictionProvider,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActualCursor {
+    pub path: String,
+    pub row: u32,
+    pub column: u32,
+    pub offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editable_region_offset: Option<usize>,
+}
+
+impl ActualCursor {
+    /// Construct an `ActualCursor` from a cursor offset within the new editable region.
+    ///
+    /// - `path`: file path the cursor is in
+    /// - `editable_region_cursor_offset`: byte offset of the cursor within the new editable region text
+    /// - `new_editable_region`: the full new editable region text (after marker removal)
+    /// - `content`: the full file content (before the edit)
+    /// - `editable_region_byte_offset`: byte offset where the editable region starts in `content`
+    /// - `editable_region_start_line`: 0-based line number where the editable region starts in `content`
+    pub fn from_editable_region(
+        path: &std::path::Path,
+        editable_region_cursor_offset: usize,
+        new_editable_region: &str,
+        content: &str,
+        editable_region_byte_offset: usize,
+        editable_region_start_line: usize,
+    ) -> Self {
+        let global_offset = editable_region_byte_offset + editable_region_cursor_offset;
+        let new_region_prefix = &new_editable_region[..editable_region_cursor_offset];
+        let row = (editable_region_start_line + new_region_prefix.matches('\n').count()) as u32;
+        let column = match new_region_prefix.rfind('\n') {
+            Some(pos) => (editable_region_cursor_offset - pos - 1) as u32,
+            None => {
+                let content_prefix = &content[..editable_region_byte_offset];
+                let content_column = match content_prefix.rfind('\n') {
+                    Some(pos) => editable_region_byte_offset - pos - 1,
+                    None => editable_region_byte_offset,
+                };
+                (content_column + editable_region_cursor_offset) as u32
+            }
+        };
+        ActualCursor {
+            path: path.to_string_lossy().to_string(),
+            row,
+            column,
+            offset: global_offset,
+            editable_region_offset: Some(editable_region_cursor_offset),
+        }
+    }
 }
 
 fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>

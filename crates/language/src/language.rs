@@ -354,6 +354,17 @@ impl CachedLspAdapter {
             .await
     }
 
+    pub async fn settings_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .settings_schema(delegate, self.cached_binary.clone().lock_owned().await, cx)
+            .await
+    }
+
     pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
         self.adapter.process_prompt_response(context, cx)
     }
@@ -485,6 +496,18 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     /// Returns the JSON schema of the initialization_options for the language server.
     async fn initialization_options_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Returns the JSON schema of the settings for the language server.
+    /// This corresponds to the `settings` field in `LspSettings`, which is used
+    /// to respond to `workspace/configuration` requests from the language server.
+    async fn settings_schema(
         self: Arc<Self>,
         _delegate: &Arc<dyn LspAdapterDelegate>,
         _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,

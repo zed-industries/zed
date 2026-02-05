@@ -94,12 +94,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
     });
 
     ep_store.update(cx, |ep_store, cx| {
-        ep_store.reject_current_prediction(
-            EditPredictionRejectReason::Discarded,
-            &project,
-            edit_prediction_types::EditPredictionDismissReason::Ignored,
-            cx,
-        );
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
 
     // Prediction for diagnostic in another file
@@ -1135,14 +1130,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
-            edit_prediction_types::EditPredictionDismissReason::Ignored,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
-            edit_prediction_types::EditPredictionDismissReason::Ignored,
             cx,
         );
     });
@@ -1179,7 +1172,6 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
-                edit_prediction_types::EditPredictionDismissReason::Ignored,
                 cx,
             );
         }
@@ -1211,7 +1203,6 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
-            edit_prediction_types::EditPredictionDismissReason::Ignored,
             cx,
         );
     });
@@ -1231,7 +1222,6 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
-            edit_prediction_types::EditPredictionDismissReason::Ignored,
             cx,
         );
     });

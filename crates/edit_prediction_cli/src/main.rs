@@ -1068,6 +1068,10 @@ fn main() {
                             score::write_summary_json(&examples, summary_path)?;
                         }
                     }
+                    Command::Repair(args) => {
+                        let examples = finished_examples.lock().unwrap();
+                        repair::print_report(&examples, args.confidence_threshold);
+                    }
                     _ => (),
                 };
 

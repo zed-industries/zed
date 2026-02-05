@@ -6,9 +6,7 @@ mod transaction;
 
 use self::transaction::History;
 
-pub use anchor::{
-    Anchor, AnchorHasDiffbaseError, AnchorRangeExt, DiffbaselessAnchor, DiffbaselessAnchorRangeExt,
-};
+pub use anchor::{Anchor, AnchorRangeExt};
 
 use anyhow::{Result, anyhow};
 use buffer_diff::{
@@ -2609,6 +2607,13 @@ impl MultiBuffer {
 
     pub fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
         let buffer_id = diff.read(cx).buffer_id;
+
+        if let Some(existing_diff) = self.diff_for(buffer_id)
+            && diff.entity_id() == existing_diff.entity_id()
+        {
+            return;
+        }
+
         self.buffer_diff_changed(
             diff.clone(),
             text::Anchor::min_max_range_for_buffer(buffer_id),
@@ -6800,6 +6805,10 @@ impl MultiBufferSnapshot {
         self.diffs.get(&buffer_id).map(|diff| &diff.diff)
     }
 
+    pub fn all_diff_hunks_expanded(&self) -> bool {
+        self.all_diff_hunks_expanded
+    }
+
     /// Visually annotates a position or range with the `Debug` representation of a value. The
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
@@ -7285,23 +7294,6 @@ impl Excerpt {
     }
 
     fn contains(&self, anchor: &Anchor) -> bool {
-        (anchor.text_anchor.buffer_id == None
-            || anchor.text_anchor.buffer_id == Some(self.buffer_id))
-            && self
-                .range
-                .context
-                .start
-                .cmp(&anchor.text_anchor, &self.buffer)
-                .is_le()
-            && self
-                .range
-                .context
-                .end
-                .cmp(&anchor.text_anchor, &self.buffer)
-                .is_ge()
-    }
-
-    fn contains_diffbaseless(&self, anchor: &DiffbaselessAnchor) -> bool {
         (anchor.text_anchor.buffer_id == None
             || anchor.text_anchor.buffer_id == Some(self.buffer_id))
             && self

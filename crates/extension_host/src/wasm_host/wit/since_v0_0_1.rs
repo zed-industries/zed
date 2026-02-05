@@ -1,4 +1,4 @@
-use super::latest;
+use super::{latest, since_v0_6_0};
 use crate::wasm_host::WasmState;
 use crate::wasm_host::wit::since_v0_0_4;
 use anyhow::Result;
@@ -17,7 +17,7 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.1",
     with: {
          "worktree": ExtensionWorktree,
-         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/github": since_v0_6_0::zed::extension::github,
          "zed:extension/platform": latest::zed::extension::platform,
     },
 });
@@ -120,7 +120,7 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        latest::zed::extension::github::Host::latest_github_release(self, repo, options).await
+        since_v0_6_0::zed::extension::github::Host::latest_github_release(self, repo, options).await
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {

@@ -2348,7 +2348,6 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "theme",
  "ui",
  "workspace",
 ]
@@ -7273,7 +7272,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "feature_flags",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -14842,6 +14840,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
