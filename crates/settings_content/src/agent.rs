@@ -563,7 +563,7 @@ pub struct ToolPermissionsContent {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolRulesContent {
     /// Default mode when no regex rules match.
-    /// Default: confirm
+    /// When unset, inherits from the global `tool_permissions.default`.
     #[serde(alias = "default_mode")]
     pub default: Option<ToolPermissionMode>,
 
