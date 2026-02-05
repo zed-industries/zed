@@ -347,10 +347,19 @@ pub(crate) fn render_tool_config_page(
 
 fn render_hardcoded_security_banner(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let pattern_labels = HARDCODED_SECURITY_RULES.terminal_deny.iter().map(|rule| {
-        Label::new(rule.pattern.clone())
-            .size(LabelSize::Small)
-            .color(Color::Muted)
-            .buffer_font(cx)
+        h_flex()
+            .gap_1()
+            .child(
+                Icon::new(IconName::Dash)
+                    .color(Color::Hidden)
+                    .size(IconSize::Small),
+            )
+            .child(
+                Label::new(rule.pattern.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .buffer_font(cx),
+            )
     });
 
     v_flex()
@@ -401,13 +410,8 @@ fn render_verification_section(
     let (decision, matched_patterns) = if current_text.is_empty() {
         (None, Vec::new())
     } else {
+        let matches = find_matched_patterns(tool_id, &current_text, cx);
         let decision = evaluate_test_input(tool_id, &current_text, cx);
-        let tool_name = TOOLS
-            .iter()
-            .find(|t| t.id == tool_id)
-            .map(|t| t.name)
-            .unwrap_or(tool_id);
-        let matches = find_matched_patterns(tool_id, tool_name, &current_text, cx);
         (Some(decision), matches)
     };
 
@@ -443,27 +447,16 @@ fn render_verification_section(
                         .track_focus(&focus_handle)
                         .child(editor),
                 )
-                .when_some(decision, |this, decision| {
-                    let (verdict_label, verdict_color) = match &decision {
-                        ToolPermissionDecision::Allow => ("Result: Allow", Color::Success),
-                        ToolPermissionDecision::Deny(_) => ("Result: Deny", Color::Error),
-                        ToolPermissionDecision::Confirm => ("Result: Confirm", Color::Warning),
-                    };
-                    this.child(
-                        Label::new(verdict_label)
-                            .size(LabelSize::Small)
-                            .color(verdict_color),
-                    )
-                    .child(render_matched_patterns(&matched_patterns, cx))
-                    .when(tool_id == "terminal", |this| {
+                .when(decision.is_some(), |this| {
+                    if matched_patterns.is_empty() {
                         this.child(
-                            Label::new(
-                                "Note: For chained commands (&&, ||, ;), patterns are checked against each sub-command individually. The result above reflects the actual behavior."
-                            )
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
+                            Label::new("No regex matches, using the default action.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                         )
-                    })
+                    } else {
+                        this.child(render_matched_patterns(&matched_patterns, cx))
+                    }
                 }),
         )
         .into_any_element()
@@ -471,20 +464,17 @@ fn render_verification_section(
 
 #[derive(Clone, Debug)]
 struct MatchedPattern {
-    label: String,
+    pattern: String,
     rule_type: ToolPermissionMode,
     is_overridden: bool,
-    is_regex: bool,
 }
 
-fn find_matched_patterns(
-    tool_id: &str,
-    tool_name: &str,
-    input: &str,
-    cx: &App,
-) -> Vec<MatchedPattern> {
+fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPattern> {
     let settings = AgentSettings::get_global(cx);
-    let rules = settings.tool_permissions.tools.get(tool_id);
+    let rules = match settings.tool_permissions.tools.get(tool_id) {
+        Some(rules) => rules,
+        None => return Vec::new(),
+    };
 
     let mut matched = Vec::new();
 
@@ -496,106 +486,40 @@ fn find_matched_patterns(
         vec![input.to_string()]
     };
 
-    // Check hardcoded security rules first (highest priority, terminal only)
-    let mut hardcoded_denied = false;
-    if tool_id == "terminal" {
-        for cmd in &inputs_to_check {
-            for pattern in &HARDCODED_SECURITY_RULES.terminal_deny {
-                if pattern.is_match(cmd) {
-                    hardcoded_denied = true;
-                    matched.push(MatchedPattern {
-                        label: "This command is always denied for safety, regardless of settings"
-                            .to_string(),
-                        rule_type: ToolPermissionMode::Deny,
-                        is_overridden: false,
-                        is_regex: false,
-                    });
-                    break;
-                }
-            }
-            if hardcoded_denied {
-                break;
-            }
-        }
-    }
-
     let mut has_deny_match = false;
     let mut has_confirm_match = false;
-    let mut has_allow_match = false;
 
-    if let Some(rules) = rules {
-        if !rules.invalid_patterns.is_empty() {
-            let count = rules.invalid_patterns.len();
-            let pattern_word = if count == 1 { "pattern" } else { "patterns" };
+    for rule in &rules.always_deny {
+        if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
             has_deny_match = true;
             matched.push(MatchedPattern {
-                label: format!(
-                    "{count} invalid regex {pattern_word} — tool is blocked until fixed"
-                ),
+                pattern: rule.pattern.clone(),
                 rule_type: ToolPermissionMode::Deny,
-                is_overridden: hardcoded_denied,
-                is_regex: false,
+                is_overridden: false,
             });
         }
+    }
 
-        for rule in &rules.always_deny {
-            if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
-                has_deny_match = true;
-                matched.push(MatchedPattern {
-                    label: rule.pattern.clone(),
-                    rule_type: ToolPermissionMode::Deny,
-                    is_overridden: hardcoded_denied,
-                    is_regex: true,
-                });
-            }
-        }
-
-        for rule in &rules.always_confirm {
-            if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
-                has_confirm_match = true;
-                matched.push(MatchedPattern {
-                    label: rule.pattern.clone(),
-                    rule_type: ToolPermissionMode::Confirm,
-                    is_overridden: hardcoded_denied || has_deny_match,
-                    is_regex: true,
-                });
-            }
-        }
-
-        for rule in &rules.always_allow {
-            if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
-                has_allow_match = true;
-                matched.push(MatchedPattern {
-                    label: rule.pattern.clone(),
-                    rule_type: ToolPermissionMode::Allow,
-                    is_overridden: hardcoded_denied || has_deny_match || has_confirm_match,
-                    is_regex: true,
-                });
-            }
+    for rule in &rules.always_confirm {
+        if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
+            has_confirm_match = true;
+            matched.push(MatchedPattern {
+                pattern: rule.pattern.clone(),
+                rule_type: ToolPermissionMode::Confirm,
+                is_overridden: has_deny_match,
+            });
         }
     }
 
-    let anything_matched =
-        hardcoded_denied || has_deny_match || has_confirm_match || has_allow_match;
-    let tool_specific_default = rules.and_then(|r| r.default);
-    let global_default = settings.tool_permissions.default;
-    let has_tool_default = tool_specific_default.is_some();
-
-    if let Some(tool_default) = tool_specific_default {
-        matched.push(MatchedPattern {
-            label: format!("Default permission for {} tool", tool_name.to_lowercase()),
-            rule_type: tool_default,
-            is_overridden: anything_matched,
-            is_regex: false,
-        });
+    for rule in &rules.always_allow {
+        if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
+            matched.push(MatchedPattern {
+                pattern: rule.pattern.clone(),
+                rule_type: ToolPermissionMode::Allow,
+                is_overridden: has_deny_match || has_confirm_match,
+            });
+        }
     }
-
-    matched.push(MatchedPattern {
-        label: "Default permission for all tools".to_string(),
-        rule_type: global_default,
-        is_overridden: anything_matched || has_tool_default,
-        is_regex: false,
-    });
 
     matched
 }
@@ -604,18 +528,10 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
     v_flex()
         .gap_1()
         .children(patterns.iter().map(|pattern| {
-            let (type_label, color) = if pattern.is_regex {
-                match pattern.rule_type {
-                    ToolPermissionMode::Deny => ("Always Deny", Color::Error),
-                    ToolPermissionMode::Confirm => ("Always Confirm", Color::Warning),
-                    ToolPermissionMode::Allow => ("Always Allow", Color::Success),
-                }
-            } else {
-                match pattern.rule_type {
-                    ToolPermissionMode::Deny => ("Deny", Color::Error),
-                    ToolPermissionMode::Confirm => ("Confirm", Color::Warning),
-                    ToolPermissionMode::Allow => ("Allow", Color::Success),
-                }
+            let (type_label, color) = match pattern.rule_type {
+                ToolPermissionMode::Deny => ("Always Deny", Color::Error),
+                ToolPermissionMode::Confirm => ("Always Confirm", Color::Warning),
+                ToolPermissionMode::Allow => ("Always Allow", Color::Success),
             };
 
             let type_color = if pattern.is_overridden {
@@ -627,11 +543,16 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
             h_flex()
                 .gap_1()
                 .child(
-                    Label::new(pattern.label.clone())
+                    Label::new(pattern.pattern.clone())
                         .size(LabelSize::Small)
                         .color(Color::Muted)
-                        .when(pattern.is_regex, |this| this.buffer_font(cx))
+                        .buffer_font(cx)
                         .when(pattern.is_overridden, |this| this.strikethrough()),
+                )
+                .child(
+                    Icon::new(IconName::Dash)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.4))),
                 )
                 .child(
                     Label::new(type_label)
@@ -842,14 +763,18 @@ fn render_default_mode_section(
     current_mode: ToolPermissionMode,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let mode_label = current_mode.to_string();
+    let mode_label = match current_mode {
+        ToolPermissionMode::Allow => "Allow",
+        ToolPermissionMode::Deny => "Deny",
+        ToolPermissionMode::Confirm => "Confirm",
+    };
 
     let tool_id_owned = tool_id.to_string();
 
     h_flex()
         .justify_between()
         .child(
-            v_flex().child(Label::new("Default Permission")).child(
+            v_flex().child(Label::new("Default Action")).child(
                 Label::new("Action to take when no patterns match.")
                     .size(LabelSize::Small)
                     .color(Color::Muted),
