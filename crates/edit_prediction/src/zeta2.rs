@@ -14,8 +14,8 @@ use release_channel::AppVersion;
 
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::format_zeta_prompt;
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion, v0120_git_merge_markers};
+use zeta_prompt::{format_zeta_prompt, get_prefill};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
 
@@ -87,9 +87,10 @@ pub fn request_prediction_with_zeta2(
             let (request_id, output_text, usage) = if let Some(custom_url) = custom_url {
                 // Use raw endpoint with custom URL
                 let prompt = format_zeta_prompt(&prompt_input, zeta_version);
+                let prefill = get_prefill(&prompt_input, zeta_version);
                 let request = RawCompletionRequest {
                     model: EDIT_PREDICTIONS_MODEL_ID.clone().unwrap_or_default(),
-                    prompt,
+                    prompt: format!("{prompt}{prefill}"),
                     temperature: None,
                     stop: vec![],
                     max_tokens: Some(2048),
@@ -105,7 +106,11 @@ pub fn request_prediction_with_zeta2(
                 .await?;
 
                 let request_id = EditPredictionId(response.id.clone().into());
-                let output_text = response.choices.pop().map(|choice| choice.text);
+                let output_text = response
+                    .choices
+                    .pop()
+                    .map(|choice| choice.text)
+                    .map(|text| format!("{prefill}{text}"));
                 (request_id, output_text, usage)
             } else {
                 let (response, usage) = EditPredictionStore::send_v3_request(

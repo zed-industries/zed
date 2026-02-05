@@ -1969,11 +1969,13 @@ impl EditPredictionStore {
             .http_client()
             .build_zed_llm_url("/predict_edits/v3", &[])?;
 
+        let prefill = zeta_prompt::get_prefill(&input, prompt_version);
         let request = PredictEditsV3Request {
             input,
             model: EDIT_PREDICTIONS_MODEL_ID.clone(),
             prompt_version,
             trigger,
+            prefill: Some(prefill).filter(|p| !p.is_empty()),
         };
 
         Self::send_api_request(
