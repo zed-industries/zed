@@ -3059,10 +3059,10 @@ impl ToolCallEventStream {
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    /// They only support `default` (allow/deny/confirm) per tool.
     ///
     /// Uses the dropdown authorization flow with two granularities:
-    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
     /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
