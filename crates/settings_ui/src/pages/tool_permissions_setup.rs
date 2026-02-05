@@ -405,8 +405,27 @@ fn render_verification_section(
                         .track_focus(&focus_handle)
                         .child(editor),
                 )
-                .when(decision.is_some(), |this| {
-                    this.child(render_matched_patterns(&matched_patterns, cx))
+                .when_some(decision, |this, decision| {
+                    let (verdict_label, verdict_color) = match &decision {
+                        ToolPermissionDecision::Allow => ("Result: Allow", Color::Success),
+                        ToolPermissionDecision::Deny(_) => ("Result: Deny", Color::Error),
+                        ToolPermissionDecision::Confirm => ("Result: Confirm", Color::Warning),
+                    };
+                    this.child(
+                        Label::new(verdict_label)
+                            .size(LabelSize::Small)
+                            .color(verdict_color),
+                    )
+                    .child(render_matched_patterns(&matched_patterns, cx))
+                    .when(tool_id == "terminal", |this| {
+                        this.child(
+                            Label::new(
+                                "Note: For chained commands (&&, ||, ;), patterns are checked against each sub-command individually. The result above reflects the actual behavior."
+                            )
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                        )
+                    })
                 }),
         )
         .into_any_element()
@@ -462,6 +481,20 @@ fn find_matched_patterns(
     let mut has_allow_match = false;
 
     if let Some(rules) = rules {
+        if !rules.invalid_patterns.is_empty() {
+            let count = rules.invalid_patterns.len();
+            let pattern_word = if count == 1 { "pattern" } else { "patterns" };
+            has_deny_match = true;
+            matched.push(MatchedPattern {
+                label: format!(
+                    "{count} invalid regex {pattern_word} — tool is blocked until fixed"
+                ),
+                rule_type: RuleType::Deny,
+                is_overridden: hardcoded_denied,
+                is_regex: false,
+            });
+        }
+
         for rule in &rules.always_deny {
             if rule.is_match(input) {
                 has_deny_match = true;
@@ -924,7 +957,10 @@ fn update_pattern(
             };
 
             if let Some(list) = rules_list {
-                if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
+                let already_exists = list.0.iter().any(|r| r.pattern == new_pattern);
+                if already_exists {
+                    list.0.retain(|r| r.pattern != old_pattern);
+                } else if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
                     rule.pattern = new_pattern;
                 }
             }
