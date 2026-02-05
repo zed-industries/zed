@@ -540,7 +540,7 @@ struct SubagentDisplayConnection;
 
 impl AgentConnection for SubagentDisplayConnection {
     fn telemetry_id(&self) -> SharedString {
-        "subagent".into()
+        acp_thread::SUBAGENT_TOOL_NAME.into()
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {

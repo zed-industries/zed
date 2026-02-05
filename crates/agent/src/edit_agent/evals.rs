@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    EditFileMode, EditFileToolInput, GrepToolInput, ListDirectoryToolInput, ReadFileToolInput,
+    AgentTool, EditFileMode, EditFileTool, EditFileToolInput, GrepToolInput,
+    ListDirectoryToolInput, ReadFileToolInput,
 };
 use Role::*;
 use client::{Client, UserStore};
@@ -1173,7 +1174,7 @@ impl EvalInput {
             .content
             .iter()
             .flat_map(|content| match content {
-                MessageContent::ToolUse(tool_use) if tool_use.name == "edit_file".into() => {
+                MessageContent::ToolUse(tool_use) if tool_use.name == EditFileTool::NAME.into() => {
                     Some(tool_use)
                 }
                 _ => None,

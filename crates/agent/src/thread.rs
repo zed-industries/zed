@@ -2338,8 +2338,8 @@ impl Thread {
             .iter()
             .filter_map(|(tool_name, tool)| {
                 // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == "streaming_edit_file" {
-                    "edit_file"
+                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
+                    EditFileTool::NAME
                 } else {
                     tool_name.as_ref()
                 };
@@ -2348,10 +2348,10 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        ("streaming_edit_file", false) | ("edit_file", true) => None,
-                        ("streaming_edit_file", true) => {
+                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
+                        (StreamingEditFileTool::NAME, true) => {
                             // Expose streaming tool as "edit_file"
-                            Some((SharedString::from("edit_file"), tool.clone()))
+                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
                         }
                         _ => Some((truncate(tool_name), tool.clone())),
                     }

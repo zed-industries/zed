@@ -1,4 +1,6 @@
 use super::edit_file_tool::EditFileTool;
+use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
+use super::save_file_tool::SaveFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
     decide_permission_from_settings, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
@@ -329,8 +331,8 @@ impl AgentTool for StreamingEditFileTool {
                             .file()
                             .and_then(|file| file.disk_state().mtime());
                         let dirty = buffer.read(cx).is_dirty();
-                        let has_save = thread.has_tool("save_file");
-                        let has_restore = thread.has_tool("restore_file_from_disk");
+                        let has_save = thread.has_tool(SaveFileTool::NAME);
+                        let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
                         (last_read, current, dirty, has_save, has_restore)
                     })?;
 

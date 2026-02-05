@@ -1,3 +1,5 @@
+use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
+use super::save_file_tool::SaveFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
     decide_permission_from_settings,
@@ -340,8 +342,8 @@ impl AgentTool for EditFileTool {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let dirty = buffer.read(cx).is_dirty();
-                    let has_save = thread.has_tool("save_file");
-                    let has_restore = thread.has_tool("restore_file_from_disk");
+                    let has_save = thread.has_tool(SaveFileTool::NAME);
+                    let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
                     (last_read, current, dirty, has_save, has_restore)
                 })?;
 
