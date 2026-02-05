@@ -675,10 +675,21 @@ impl ToolPermissionContext {
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
             )
+        } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
+            // input_value is "source -> destination"; extract pattern from destination
+            // because that's the more security-relevant path (where data is being written).
+            // Both paths are checked independently by decide_permission_from_settings,
+            // so a pattern matching the destination directory covers the common case.
+            let dest = input_value
+                .split_once(" -> ")
+                .map(|(_, d)| d)
+                .unwrap_or(input_value);
+            (
+                extract_path_pattern(dest),
+                extract_path_pattern_display(dest),
+            )
         } else if tool_name == EditFileTool::NAME
             || tool_name == DeletePathTool::NAME
-            || tool_name == MovePathTool::NAME
-            || tool_name == CopyPathTool::NAME
             || tool_name == CreateDirectoryTool::NAME
             || tool_name == SaveFileTool::NAME
         {
