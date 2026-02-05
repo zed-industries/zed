@@ -789,7 +789,7 @@ fn render_default_mode_section(
     h_flex()
         .justify_between()
         .child(
-            v_flex().child(Label::new("Default Action")).child(
+            v_flex().child(Label::new("Default Permission")).child(
                 Label::new("Action to take when no patterns match.")
                     .size(LabelSize::Small)
                     .color(Color::Muted),
