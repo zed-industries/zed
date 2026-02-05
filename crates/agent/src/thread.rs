@@ -3139,7 +3139,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3152,7 +3152,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Deny);
                         });
                     });
                 }
@@ -3206,7 +3206,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3222,7 +3222,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Deny);
                         });
                     });
                 }

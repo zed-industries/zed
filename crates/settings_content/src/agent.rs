@@ -189,7 +189,7 @@ impl AgentSettingsContent {
         self.favorite_models.retain(|m| m != model);
     }
 
-    pub fn set_tool_default_mode(&mut self, tool_id: &str, mode: ToolPermissionMode) {
+    pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {
         let tool_permissions = self.tool_permissions.get_or_insert_default();
         let tool_rules = tool_permissions
             .tools
@@ -615,11 +615,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_set_tool_default_mode_creates_structure() {
+    fn test_set_tool_default_permission_creates_structure() {
         let mut settings = AgentSettingsContent::default();
         assert!(settings.tool_permissions.is_none());
 
-        settings.set_tool_default_mode("terminal", ToolPermissionMode::Allow);
+        settings.set_tool_default_permission("terminal", ToolPermissionMode::Allow);
 
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
@@ -627,11 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn test_set_tool_default_mode_updates_existing() {
+    fn test_set_tool_default_permission_updates_existing() {
         let mut settings = AgentSettingsContent::default();
 
-        settings.set_tool_default_mode("terminal", ToolPermissionMode::Confirm);
-        settings.set_tool_default_mode("terminal", ToolPermissionMode::Allow);
+        settings.set_tool_default_permission("terminal", ToolPermissionMode::Confirm);
+        settings.set_tool_default_permission("terminal", ToolPermissionMode::Allow);
 
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let terminal_rules = tool_permissions.tools.get("terminal").unwrap();
@@ -639,10 +639,10 @@ mod tests {
     }
 
     #[test]
-    fn test_set_tool_default_mode_for_mcp_tool() {
+    fn test_set_tool_default_permission_for_mcp_tool() {
         let mut settings = AgentSettingsContent::default();
 
-        settings.set_tool_default_mode("mcp:github:create_issue", ToolPermissionMode::Allow);
+        settings.set_tool_default_permission("mcp:github:create_issue", ToolPermissionMode::Allow);
 
         let tool_permissions = settings.tool_permissions.as_ref().unwrap();
         let mcp_rules = tool_permissions
