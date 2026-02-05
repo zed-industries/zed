@@ -80,7 +80,7 @@ impl MultibufferHint {
         };
 
         if active_pane_item.buffer_kind(cx) == ItemBufferKind::Singleton
-            || active_pane_item.breadcrumbs(cx.theme(), cx).is_none()
+            || active_pane_item.breadcrumbs(cx).is_none()
             || !active_pane_item.can_save(cx)
         {
             return ToolbarItemLocation::Hidden;

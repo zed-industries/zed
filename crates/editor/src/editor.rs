@@ -1340,6 +1340,11 @@ pub struct Editor {
     semantic_tokens_enabled: bool,
     update_semantic_tokens_task: Task<()>,
     semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
+    pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
+    refresh_outline_symbols_task: Task<()>,
+    outline_symbols: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
+    sticky_headers_task: Task<()>,
+    sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1969,37 +1974,43 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
-    pub fn sticky_headers(
-        &self,
+    pub fn refresh_sticky_headers(
+        &mut self,
         display_snapshot: &DisplaySnapshot,
-        style: &EditorStyle,
-        cx: &App,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
-        let multi_buffer = self.buffer().read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        cx: &mut Context<Editor>,
+    ) {
+        if !self.mode.is_full() {
+            return;
+        }
+        let multi_buffer = display_snapshot.buffer_snapshot();
         let multi_buffer_visible_start = self
             .scroll_manager
             .native_anchor(display_snapshot, cx)
             .anchor
-            .to_point(&multi_buffer_snapshot);
-        let max_row = multi_buffer_snapshot.max_point().row;
+            .to_point(&multi_buffer);
+        let max_row = multi_buffer.max_point().row;
 
         let start_row = (multi_buffer_visible_start.row).min(max_row);
         let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
-
-        if let Some((excerpt_id, _, buffer)) = multi_buffer.read(cx).as_singleton() {
-            let outline_items = buffer
+        let Some((excerpt_id, _, buffer)) = multi_buffer.as_singleton() else {
+            return;
+        };
+        let buffer = buffer.clone();
+        let &excerpt_id = excerpt_id;
+        let syntax = self.style(cx).syntax.clone();
+        let background_task = cx.background_spawn(async move {
+            buffer
                 .outline_items_containing(
                     Point::new(start_row, 0)..Point::new(end_row, 0),
                     true,
-                    Some(style.syntax.as_ref()),
+                    Some(syntax.as_ref()),
                 )
                 .into_iter()
                 .map(|outline_item| OutlineItem {
                     depth: outline_item.depth,
-                    range: Anchor::range_in_buffer(*excerpt_id, outline_item.range),
+                    range: Anchor::range_in_buffer(excerpt_id, outline_item.range),
                     source_range_for_text: Anchor::range_in_buffer(
-                        *excerpt_id,
+                        excerpt_id,
                         outline_item.source_range_for_text,
                     ),
                     text: outline_item.text,
@@ -2007,15 +2018,21 @@ impl Editor {
                     name_ranges: outline_item.name_ranges,
                     body_range: outline_item
                         .body_range
-                        .map(|range| Anchor::range_in_buffer(*excerpt_id, range)),
+                        .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
                     annotation_range: outline_item
                         .annotation_range
-                        .map(|range| Anchor::range_in_buffer(*excerpt_id, range)),
-                });
-            return Some(outline_items.collect());
-        }
-
-        None
+                        .map(|range| Anchor::range_in_buffer(excerpt_id, range)),
+                })
+                .collect()
+        });
+        self.sticky_headers_task = cx.spawn(async move |this, cx| {
+            let sticky_headers = background_task.await;
+            this.update(cx, |this, cx| {
+                this.sticky_headers = Some(sticky_headers);
+                cx.notify();
+            })
+            .ok();
+        });
     }
 
     fn new_internal(
@@ -2578,6 +2595,11 @@ impl Editor {
             update_semantic_tokens_task: Task::ready(()),
             semantic_tokens_fetched_for_buffers: HashMap::default(),
             number_deleted_lines: false,
+            refresh_matching_bracket_highlights_task: Task::ready(()),
+            refresh_outline_symbols_task: Task::ready(()),
+            outline_symbols: None,
+            sticky_headers_task: Task::ready(()),
+            sticky_headers: None,
         };
 
         if is_minimap {
@@ -2633,6 +2655,7 @@ impl Editor {
                                 .ok();
                         });
                     }
+                    editor.refresh_sticky_headers(&editor.snapshot(window, cx), cx);
                 }
                 EditorEvent::Edited { .. } => {
                     let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
@@ -3577,6 +3600,7 @@ impl Editor {
 
             self.refresh_selected_text_highlights(false, window, cx);
             self.refresh_matching_bracket_highlights(window, cx);
+            self.refresh_outline_symbols(cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
@@ -7291,17 +7315,27 @@ impl Editor {
         }
 
         let snapshot = cursor_buffer.read(cx).snapshot();
-        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position, None);
-        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, None);
-        if start_word_range != end_word_range {
-            self.document_highlights_task.take();
-            self.clear_background_highlights(HighlightKey::DocumentHighlightRead, cx);
-            self.clear_background_highlights(HighlightKey::DocumentHighlightWrite, cx);
-            return None;
-        }
+        let word_ranges = cx.background_spawn(async move {
+            // this might look odd to put on the background thread, but
+            // `surrounding_word` can be quite expensive as it calls into
+            // tree-sitter language scopes
+            let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position, None);
+            let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, None);
+            (start_word_range, end_word_range)
+        });
 
         let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce.0;
         self.document_highlights_task = Some(cx.spawn(async move |this, cx| {
+            let (start_word_range, end_word_range) = word_ranges.await;
+            if start_word_range != end_word_range {
+                this.update(cx, |this, cx| {
+                    this.document_highlights_task.take();
+                    this.clear_background_highlights(HighlightKey::DocumentHighlightRead, cx);
+                    this.clear_background_highlights(HighlightKey::DocumentHighlightWrite, cx);
+                })
+                .ok();
+                return;
+            }
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
@@ -7557,6 +7591,26 @@ impl Editor {
                     display_map.remove_folds_with_type(existing_newlines, type_id, cx);
                     display_map.fold(creases, cx);
                 });
+            })
+            .ok();
+        });
+    }
+
+    #[ztracing::instrument(skip_all)]
+    fn refresh_outline_symbols(&mut self, cx: &mut Context<Editor>) {
+        if !self.mode.is_full() {
+            return;
+        }
+        let cursor = self.selections.newest_anchor().head();
+        let multibuffer = self.buffer().read(cx).snapshot(cx);
+        let syntax = cx.theme().syntax().clone();
+        let background_task = cx
+            .background_spawn(async move { multibuffer.symbols_containing(cursor, Some(&syntax)) });
+        self.refresh_outline_symbols_task = cx.spawn(async move |this, cx| {
+            let symbols = background_task.await;
+            this.update(cx, |this, cx| {
+                this.outline_symbols = symbols;
+                cx.notify();
             })
             .ok();
         });
@@ -23773,6 +23827,8 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_single_line_folds(window, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
+                self.refresh_outline_symbols(cx);
+                self.refresh_sticky_headers(&self.snapshot(window, cx), cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
@@ -25180,14 +25236,11 @@ impl Editor {
             show_underlines: self.diagnostics_enabled(),
         }
     }
-    fn breadcrumbs_inner(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        let cursor = self.selections.newest_anchor().head();
+    fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let multibuffer = self.buffer().read(cx);
         let is_singleton = multibuffer.is_singleton();
-        let (buffer_id, symbols) = multibuffer
-            .read(cx)
-            .symbols_containing(cursor, Some(variant.syntax()))?;
-        let buffer = multibuffer.buffer(buffer_id)?;
+        let (buffer_id, symbols) = self.outline_symbols.as_ref()?;
+        let buffer = multibuffer.buffer(*buffer_id)?;
 
         let buffer = buffer.read(cx);
         let settings = ThemeSettings::get_global(cx);
@@ -25220,9 +25273,9 @@ impl Editor {
             vec![]
         };
 
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-            text: symbol.text,
-            highlights: Some(symbol.highlight_ranges),
+        breadcrumbs.extend(symbols.iter().map(|symbol| BreadcrumbText {
+            text: symbol.text.clone(),
+            highlights: Some(symbol.highlight_ranges.clone()),
             font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
