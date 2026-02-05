@@ -345,16 +345,16 @@ fn assert_tab_switcher_is_closed(workspace: Entity<Workspace>, cx: &mut VisualTe
 }
 
 #[track_caller]
-fn open_tab_switcher_unique(
+fn open_tab_switcher_for_active_pane(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<TabSwitcherDelegate>> {
-    cx.dispatch_action(ToggleUnique);
+    cx.dispatch_action(OpenInActivePane);
     get_active_tab_switcher(workspace, cx)
 }
 
 #[gpui::test]
-async fn test_toggle_unique_deduplicates_files_by_path(cx: &mut gpui::TestAppContext) {
+async fn test_open_in_active_pane_deduplicates_files_by_path(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
     app_state
         .fs
@@ -385,7 +385,7 @@ async fn test_toggle_unique_deduplicates_files_by_path(cx: &mut gpui::TestAppCon
     });
     open_buffer("1.txt", &workspace, cx).await;
 
-    let tab_switcher = open_tab_switcher_unique(&workspace, cx);
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
 
     tab_switcher.read_with(cx, |picker, _cx| {
         assert_eq!(
@@ -397,7 +397,7 @@ async fn test_toggle_unique_deduplicates_files_by_path(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
-async fn test_toggle_unique_clones_files_to_current_pane(cx: &mut gpui::TestAppContext) {
+async fn test_open_in_active_pane_clones_files_to_current_pane(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
     app_state
         .fs
@@ -422,7 +422,7 @@ async fn test_toggle_unique_clones_files_to_current_pane(cx: &mut gpui::TestAppC
 
     let panes = workspace.read_with(cx, |workspace, _| workspace.panes().to_vec());
 
-    let tab_switcher = open_tab_switcher_unique(&workspace, cx);
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
     tab_switcher.update(cx, |picker, _| {
         picker.delegate.selected_index = 0;
     });
@@ -450,7 +450,7 @@ async fn test_toggle_unique_clones_files_to_current_pane(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
-async fn test_toggle_unique_moves_terminals_to_current_pane(cx: &mut gpui::TestAppContext) {
+async fn test_open_in_active_pane_moves_terminals_to_current_pane(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
     let project = Project::test(app_state.fs.clone(), [], cx).await;
     let (workspace, cx) =
@@ -472,7 +472,7 @@ async fn test_toggle_unique_moves_terminals_to_current_pane(cx: &mut gpui::TestA
 
     let panes = workspace.read_with(cx, |workspace, _| workspace.panes().to_vec());
 
-    let tab_switcher = open_tab_switcher_unique(&workspace, cx);
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
     tab_switcher.update(cx, |picker, _| {
         picker.delegate.selected_index = 0;
     });
@@ -497,7 +497,7 @@ async fn test_toggle_unique_moves_terminals_to_current_pane(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
-async fn test_toggle_unique_closes_file_in_all_panes(cx: &mut gpui::TestAppContext) {
+async fn test_open_in_active_pane_closes_file_in_all_panes(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
     app_state
         .fs
@@ -523,7 +523,7 @@ async fn test_toggle_unique_closes_file_in_all_panes(cx: &mut gpui::TestAppConte
 
     let panes = workspace.read_with(cx, |workspace, _| workspace.panes().to_vec());
 
-    let tab_switcher = open_tab_switcher_unique(&workspace, cx);
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
     tab_switcher.update(cx, |picker, _| {
         picker.delegate.selected_index = 0;
     });

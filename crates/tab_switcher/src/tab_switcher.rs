@@ -47,7 +47,7 @@ actions!(
         ToggleAll,
         /// Toggles the tab switcher showing all tabs across all panes, deduplicated by path.
         /// Opens selected items in the active pane.
-        ToggleUnique,
+        OpenInActivePane,
     ]
 );
 
@@ -92,7 +92,7 @@ impl TabSwitcher {
                     .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
         });
-        workspace.register_action(|workspace, _action: &ToggleUnique, window, cx| {
+        workspace.register_action(|workspace, _action: &OpenInActivePane, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
                 Self::open(workspace, false, true, true, window, cx);
                 return;
@@ -110,7 +110,7 @@ impl TabSwitcher {
         workspace: &mut Workspace,
         select_last: bool,
         is_global: bool,
-        is_unique: bool,
+        open_in_active_pane: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -149,7 +149,7 @@ impl TabSwitcher {
                 weak_pane,
                 weak_workspace,
                 is_global,
-                is_unique,
+                open_in_active_pane,
                 window,
                 cx,
                 original_items,
@@ -252,7 +252,7 @@ pub struct TabSwitcherDelegate {
     matches: Vec<TabMatch>,
     original_items: Vec<(Entity<Pane>, usize)>,
     is_all_panes: bool,
-    is_unique: bool,
+    open_in_active_pane: bool,
     restored_items: bool,
 }
 
@@ -336,7 +336,7 @@ impl TabSwitcherDelegate {
         pane: WeakEntity<Pane>,
         workspace: WeakEntity<Workspace>,
         is_all_panes: bool,
-        is_unique: bool,
+        open_in_active_pane: bool,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
@@ -351,7 +351,7 @@ impl TabSwitcherDelegate {
             project,
             matches: Vec::new(),
             is_all_panes,
-            is_unique,
+            open_in_active_pane,
             original_items,
             restored_items: false,
         }
@@ -455,7 +455,7 @@ impl TabSwitcherDelegate {
             .collect()
         };
 
-        if self.is_unique {
+        if self.open_in_active_pane {
             let mut seen_paths: HashSet<project::ProjectPath> = HashSet::default();
             matches.retain(|tab| {
                 if let Some(path) = tab.item.project_path(cx) {
@@ -585,7 +585,7 @@ impl TabSwitcherDelegate {
             return;
         };
 
-        if self.is_unique
+        if self.open_in_active_pane
             && let Some(project_path) = tab_match.item.project_path(cx)
         {
             let Some(workspace) = self.workspace.upgrade() else {
@@ -653,7 +653,7 @@ impl TabSwitcherDelegate {
         self.selected_index = index;
     }
 
-    fn confirm_unique(
+    fn confirm_open_in_active_pane(
         &mut self,
         selected_match: TabMatch,
         window: &mut Window,
@@ -749,7 +749,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     ) {
         self.selected_index = ix;
 
-        if !self.is_unique {
+        if !self.open_in_active_pane {
             let Some(selected_match) = self.matches.get(self.selected_index()) else {
                 return;
             };
@@ -796,8 +796,8 @@ impl PickerDelegate for TabSwitcherDelegate {
             })
         }
 
-        if self.is_unique {
-            self.confirm_unique(selected_match, window, cx);
+        if self.open_in_active_pane {
+            self.confirm_open_in_active_pane(selected_match, window, cx);
         } else {
             selected_match
                 .pane
