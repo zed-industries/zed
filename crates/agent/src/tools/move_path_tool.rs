@@ -57,9 +57,7 @@ impl AgentTool for MovePathTool {
     type Input = MovePathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "move_path"
-    }
+    const NAME: &'static str = "move_path";
 
     fn kind() -> ToolKind {
         ToolKind::Move

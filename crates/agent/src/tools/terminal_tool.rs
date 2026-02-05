@@ -65,9 +65,7 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "terminal"
-    }
+    const NAME: &'static str = "terminal";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute

@@ -230,9 +230,7 @@ impl AgentTool for StreamingEditFileTool {
     type Input = StreamingEditFileToolInput;
     type Output = StreamingEditFileToolOutput;
 
-    fn name() -> &'static str {
-        "streaming_edit_file"
-    }
+    const NAME: &'static str = "streaming_edit_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit

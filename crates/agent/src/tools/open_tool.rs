@@ -38,9 +38,7 @@ impl AgentTool for OpenTool {
     type Input = OpenToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "open"
-    }
+    const NAME: &'static str = "open";
 
     fn kind() -> ToolKind {
         ToolKind::Execute
