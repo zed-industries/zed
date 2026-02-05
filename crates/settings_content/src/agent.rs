@@ -131,12 +131,6 @@ impl AgentSettingsContent {
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
-        // let model = language_model.id().0.to_string();
-        // let provider = language_model.provider_id().0.to_string();
-        // self.default_model = Some(LanguageModelSelection {
-        //     provider: provider.into(),
-        //     model,
-        // });
         self.default_model = Some(language_model)
     }
 
