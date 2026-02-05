@@ -55,7 +55,8 @@ use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
     AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
-    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
+    WorkspaceSettings, WorkspaceStore,
+    notifications::{NotificationId, NotificationSource},
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -929,6 +930,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                 format!("Imported shared thread from {}", response.sharer_username),
                             )
                             .autohide(),
+                            NotificationSource::Agent,
                             cx,
                         );
                     })?;
@@ -1351,8 +1353,11 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 {
                     workspace
                         .update(cx, |workspace, _, cx| {
-                            workspace
-                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                            workspace.show_toast(
+                                Toast::new(NotificationId::unique::<()>(), message),
+                                NotificationSource::System,
+                                cx,
+                            )
                         })
                         .ok();
                     return true;

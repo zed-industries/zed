@@ -38,7 +38,8 @@ use ui::{
 use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
-    Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
+    Item, ModalView, SerializableItem, Workspace,
+    notifications::{NotificationSource, NotifyTaskExt as _},
     register_serializable_item,
 };
 
@@ -1319,7 +1320,7 @@ impl KeymapEditor {
         cx.spawn(async move |_, _| {
             remove_keybinding(to_remove, &fs, keyboard_mapper.as_ref()).await
         })
-        .detach_and_notify_err(window, cx);
+        .detach_and_notify_err(NotificationSource::Settings, window, cx);
     }
 
     fn copy_context_to_clipboard(
