@@ -876,7 +876,10 @@ impl Item for ProjectDiff {
 
     fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
         // TODO(split-diff) SplitEditor should be searchable
-        Some(Box::new(self.editor.read(cx).rhs_editor().clone()))
+        let is_rhs = self.editor.read(cx).last_selected_editor() == self.editor.read(cx).rhs_editor();
+        dbg!(is_rhs);
+        
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(

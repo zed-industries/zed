@@ -227,6 +227,8 @@ pub struct DisplayMap {
     pub(crate) companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
 }
 
+// test change
+
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
     rhs_folded_buffers: HashSet<BufferId>,

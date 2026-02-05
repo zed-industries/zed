@@ -18,12 +18,14 @@ pub enum CollapseDirection {
     Expanded,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
     ResultsCollapsedChanged(CollapseDirection),
 }
+
+
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Direction {
