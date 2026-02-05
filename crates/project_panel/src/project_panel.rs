@@ -1409,27 +1409,23 @@ impl ProjectPanel {
             return;
         };
 
-        let worktree_id = worktree.id();
-        let entry_id = entry.id;
-        let is_root = worktree.root_entry().map(|e| e.id) == Some(entry_id);
-
+        let is_root = worktree.root_entry().map(|e| e.id) == Some(entry.id);
         if !is_root {
             return;
         }
 
-        let single_visible_worktree = self.project.read(cx).visible_worktrees(cx).count() == 1;
+        let worktree_id = worktree.id();
+        let root_id = entry.id;
 
-        self.collapse_all_for_entry(worktree_id, entry_id, cx);
-
-        if single_visible_worktree {
-            if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
-                if let Err(ix) = expanded_dir_ids.binary_search(&entry_id) {
-                    expanded_dir_ids.insert(ix, entry_id);
-                }
+        if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
+            if self.project.read(cx).visible_worktrees(cx).count() == 1 {
+                expanded_dir_ids.retain(|id| id == &root_id);
+            } else {
+                expanded_dir_ids.clear();
             }
         }
 
-        self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
+        self.update_visible_entries(Some((worktree_id, root_id)), false, false, window, cx);
         cx.notify();
     }
 
