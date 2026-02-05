@@ -132,13 +132,13 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
 
 Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior:
 
-- `"confirm"` (default) - Prompts for approval before running any tool action, including MCP tool calls
-- `"allow"` - Auto-approves tool actions without prompting
-- `"deny"` - Blocks all tool actions
+- `"confirm"` (default) — Prompts for approval before running any tool action, including MCP tool calls
+- `"allow"` — Auto-approves tool actions without prompting
+- `"deny"` — Blocks all tool actions
 
 You can change this in either your `settings.json` or through the Agent Panel settings.
 
-Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
+For granular control over specific MCP tools, you can configure per-tool permission rules using regex patterns. MCP tools use the naming format `mcp:<server>:<tool_name>`. See [Tool Permissions](./tool-permissions.md) for details.
 
 ### External Agents
 

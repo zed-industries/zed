@@ -68,7 +68,7 @@ Here's how you can customize your `settings.json` to add this functionality:
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-4-mini"
+        "model": "gpt-5-mini"
       }
     ]
   }
@@ -92,7 +92,7 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-4-mini"
+        "model": "gpt-5-mini"
       },
       {
         "provider": "zed.dev",
@@ -108,23 +108,27 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
 Specify a custom temperature for a provider and/or model:
 
 ```json [settings]
-"model_parameters": [
-  // To set parameters for all requests to OpenAI models:
-  {
-    "provider": "openai",
-    "temperature": 0.5
-  },
-  // To set parameters for all requests in general:
-  {
-    "temperature": 0
-  },
-  // To set parameters for a specific provider and model:
-  {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4",
-    "temperature": 1.0
+{
+  "agent": {
+    "model_parameters": [
+      // To set parameters for all requests to OpenAI models:
+      {
+        "provider": "openai",
+        "temperature": 0.5
+      },
+      // To set parameters for all requests in general:
+      {
+        "temperature": 0
+      },
+      // To set parameters for a specific provider and model:
+      {
+        "provider": "zed.dev",
+        "model": "claude-sonnet-4",
+        "temperature": 1.0
+      }
+    ]
   }
-],
+}
 ```
 
 ## Agent Panel Settings {#agent-panel-settings}
@@ -146,37 +150,42 @@ You can choose between `thread` (the default) and `text_thread`:
 
 ### Font Size
 
-Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
+Use the `agent_ui_font_size` setting to change the font size of rendered agent responses in the panel.
 
 ```json [settings]
 {
-  "agent": {
-    "agent_font_size": 18
-  }
+  "agent_ui_font_size": 18
 }
 ```
 
 > Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
 
-### Default Tool Permissions
+### Tool Permissions
 
-Control the default behavior for tool actions. The default value is `"confirm"`.
-
-- `"confirm"` - Prompts for approval before running any tool action (default)
-- `"allow"` - Auto-approves tool actions without prompting
-- `"deny"` - Blocks all tool actions
+For granular control over individual tool actions, you can configure regex-based rules that auto-approve, auto-deny, or always require confirmation for specific inputs.
 
 ```json [settings]
 {
   "agent": {
     "tool_permissions": {
-      "default": "allow"
+      "default": "allow",
+      "tools": {
+        "terminal": {
+          "default": "confirm",
+          "always_allow": [
+            { "pattern": "^cargo\\s+(build|test)" }
+          ],
+          "always_deny": [
+            { "pattern": "rm\\s+-rf\\s+" }
+          ]
+        }
+      }
     }
   }
 }
 ```
 
-Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
+See the [Tool Permissions](./tool-permissions.md) documentation for complete details on configuring per-tool rules.
 
 ### Single-file Review
 
@@ -186,12 +195,12 @@ The default value is `true`.
 ```json [settings]
 {
   "agent": {
-    "single_file_review": true
+    "single_file_review": false
   }
 }
 ```
 
-When set to false, these controls are only available in the multibuffer review tab.
+When set to `false`, these controls are only available in the multibuffer review tab.
 
 ### Sound Notification
 
