@@ -184,9 +184,17 @@ fn render_tool_list_item(
     let rules = get_tool_rules(tool.id, cx);
     let rule_count =
         rules.always_allow.len() + rules.always_deny.len() + rules.always_confirm.len();
+    let invalid_count = rules.invalid_patterns.len();
 
-    let rule_summary = if rule_count > 0 {
-        Some(format!("{} rules", rule_count))
+    let rule_summary = if rule_count > 0 || invalid_count > 0 {
+        let mut parts = Vec::new();
+        if rule_count > 0 {
+            parts.push(format!("{} rules", rule_count));
+        }
+        if invalid_count > 0 {
+            parts.push(format!("{} invalid", invalid_count));
+        }
+        Some(parts.join(", "))
     } else {
         None
     };
@@ -340,7 +348,15 @@ pub(crate) fn render_tool_config_page(
                     ToolPermissionMode::Confirm,
                     &rules.always_confirm,
                     cx,
-                )),
+                ))
+                .when(!rules.invalid_patterns.is_empty(), |this| {
+                    this.child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
+                        .child(render_invalid_patterns_section(
+                            tool.id,
+                            &rules.invalid_patterns,
+                            cx,
+                        ))
+                }),
         )
         .into_any_element()
 }
@@ -415,6 +431,27 @@ fn render_verification_section(
         (Some(decision), matches)
     };
 
+    let default_mode = get_tool_rules(tool_id, cx).default;
+    let (authoritative_mode, patterns_agree) = match &decision {
+        Some(decision) => {
+            let authoritative = decision_to_mode(decision);
+            let implied = implied_mode_from_patterns(&matched_patterns, default_mode);
+            let agrees = authoritative == implied;
+            if !agrees {
+                log::error!(
+                    "Tool permission verdict disagreement for '{}': \
+                     engine={}, pattern_preview={}. \
+                     Showing authoritative verdict only.",
+                    tool_id,
+                    mode_display_label(authoritative),
+                    mode_display_label(implied),
+                );
+            }
+            (Some(authoritative), agrees)
+        }
+        None => (None, true),
+    };
+
     let theme_colors = cx.theme().colors();
 
     v_flex()
@@ -447,16 +484,28 @@ fn render_verification_section(
                         .track_focus(&focus_handle)
                         .child(editor),
                 )
-                .when(decision.is_some(), |this| {
-                    if matched_patterns.is_empty() {
+                .when_some(authoritative_mode, |this, mode| {
+                    this.when(patterns_agree, |this| {
+                        if matched_patterns.is_empty() {
+                            this.child(
+                                Label::new("No regex matches, using the default action.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        } else {
+                            this.child(render_matched_patterns(&matched_patterns, cx))
+                        }
+                    })
+                    .when(!patterns_agree, |this| {
                         this.child(
-                            Label::new("No regex matches, using the default action.")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            Label::new(
+                                "Pattern preview differs from engine — showing authoritative result.",
+                            )
+                            .size(LabelSize::XSmall)
+                            .color(Color::Warning),
                         )
-                    } else {
-                        this.child(render_matched_patterns(&matched_patterns, cx))
-                    }
+                    })
+                    .child(render_verdict_label(mode))
                 }),
         )
         .into_any_element()
@@ -593,6 +642,173 @@ fn evaluate_test_input(tool_id: &str, input: &str, cx: &App) -> ToolPermissionDe
         &settings.tool_permissions,
         ShellKind::system(),
     )
+}
+
+fn decision_to_mode(decision: &ToolPermissionDecision) -> ToolPermissionMode {
+    match decision {
+        ToolPermissionDecision::Allow => ToolPermissionMode::Allow,
+        ToolPermissionDecision::Deny(_) => ToolPermissionMode::Deny,
+        ToolPermissionDecision::Confirm => ToolPermissionMode::Confirm,
+    }
+}
+
+fn implied_mode_from_patterns(
+    patterns: &[MatchedPattern],
+    default_mode: ToolPermissionMode,
+) -> ToolPermissionMode {
+    let has_active_deny = patterns
+        .iter()
+        .any(|p| matches!(p.rule_type, ToolPermissionMode::Deny) && !p.is_overridden);
+    let has_active_confirm = patterns
+        .iter()
+        .any(|p| matches!(p.rule_type, ToolPermissionMode::Confirm) && !p.is_overridden);
+    let has_active_allow = patterns
+        .iter()
+        .any(|p| matches!(p.rule_type, ToolPermissionMode::Allow) && !p.is_overridden);
+
+    if has_active_deny {
+        ToolPermissionMode::Deny
+    } else if has_active_confirm {
+        ToolPermissionMode::Confirm
+    } else if has_active_allow {
+        ToolPermissionMode::Allow
+    } else {
+        default_mode
+    }
+}
+
+fn mode_display_label(mode: ToolPermissionMode) -> &'static str {
+    match mode {
+        ToolPermissionMode::Allow => "Allow",
+        ToolPermissionMode::Deny => "Deny",
+        ToolPermissionMode::Confirm => "Confirm",
+    }
+}
+
+fn verdict_color(mode: ToolPermissionMode) -> Color {
+    match mode {
+        ToolPermissionMode::Allow => Color::Success,
+        ToolPermissionMode::Deny => Color::Error,
+        ToolPermissionMode::Confirm => Color::Warning,
+    }
+}
+
+fn render_verdict_label(mode: ToolPermissionMode) -> AnyElement {
+    h_flex()
+        .gap_1()
+        .child(
+            Label::new("Result:")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(
+            Label::new(mode_display_label(mode))
+                .size(LabelSize::Small)
+                .color(verdict_color(mode)),
+        )
+        .into_any_element()
+}
+
+fn render_invalid_patterns_section(
+    tool_id: &'static str,
+    invalid_patterns: &[InvalidPatternView],
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let section_id = format!("{}-invalid-patterns-section", tool_id);
+    let theme_colors = cx.theme().colors();
+
+    v_flex()
+        .id(section_id)
+        .child(
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .child(Label::new("Invalid Patterns").color(Color::Error)),
+        )
+        .child(
+            Label::new(
+                "These patterns failed to compile as regular expressions. \
+                 The tool will be blocked until they are fixed or removed.",
+            )
+            .size(LabelSize::Small)
+            .color(Color::Muted),
+        )
+        .child(
+            v_flex()
+                .mt_2()
+                .w_full()
+                .gap_1p5()
+                .children(invalid_patterns.iter().map(|invalid| {
+                    let rule_type_label = match invalid.rule_type.as_str() {
+                        "always_allow" => "Always Allow",
+                        "always_deny" => "Always Deny",
+                        "always_confirm" => "Always Confirm",
+                        other => other,
+                    };
+
+                    let pattern_for_delete = invalid.pattern.clone();
+                    let rule_type = match invalid.rule_type.as_str() {
+                        "always_allow" => ToolPermissionMode::Allow,
+                        "always_deny" => ToolPermissionMode::Deny,
+                        _ => ToolPermissionMode::Confirm,
+                    };
+                    let tool_id_for_delete = tool_id.to_string();
+                    let delete_id =
+                        format!("{}-invalid-delete-{}", tool_id, invalid.pattern.clone());
+
+                    v_flex()
+                        .p_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme_colors.border_variant)
+                        .bg(theme_colors.surface_background.opacity(0.15))
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .min_w_0()
+                                        .child(
+                                            Label::new(invalid.pattern.clone())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Error)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new(format!("({})", rule_type_label))
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    IconButton::new(delete_id, IconName::Trash)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .tooltip(Tooltip::text("Delete Invalid Pattern"))
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            delete_pattern(
+                                                &tool_id_for_delete,
+                                                rule_type,
+                                                &pattern_for_delete,
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        )
+                        .child(
+                            Label::new(format!("Error: {}", invalid.error))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                })),
+        )
+        .into_any_element()
 }
 
 fn render_rule_section(
@@ -830,11 +1046,18 @@ fn render_default_mode_section(
         .into_any_element()
 }
 
+struct InvalidPatternView {
+    pattern: String,
+    rule_type: String,
+    error: String,
+}
+
 struct ToolRulesView {
     default: ToolPermissionMode,
     always_allow: Vec<String>,
     always_deny: Vec<String>,
     always_confirm: Vec<String>,
+    invalid_patterns: Vec<InvalidPatternView>,
 }
 
 fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
@@ -860,12 +1083,22 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
                 .iter()
                 .map(|r| r.pattern.clone())
                 .collect(),
+            invalid_patterns: rules
+                .invalid_patterns
+                .iter()
+                .map(|p| InvalidPatternView {
+                    pattern: p.pattern.clone(),
+                    rule_type: p.rule_type.clone(),
+                    error: p.error.clone(),
+                })
+                .collect(),
         },
         None => ToolRulesView {
             default: settings.tool_permissions.default,
             always_allow: Vec::new(),
             always_deny: Vec::new(),
             always_confirm: Vec::new(),
+            invalid_patterns: Vec::new(),
         },
     }
 }
