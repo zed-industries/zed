@@ -309,19 +309,10 @@ pub(crate) fn render_tool_config_page(
 
 fn render_hardcoded_security_banner(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let pattern_labels = HARDCODED_SECURITY_RULES.terminal_deny.iter().map(|rule| {
-        h_flex()
-            .gap_1()
-            .child(
-                Icon::new(IconName::Dash)
-                    .color(Color::Hidden)
-                    .size(IconSize::Small),
-            )
-            .child(
-                Label::new(rule.pattern.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .buffer_font(cx),
-            )
+        Label::new(rule.pattern.clone())
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+            .buffer_font(cx)
     });
 
     v_flex()
