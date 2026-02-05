@@ -1,3 +1,4 @@
+use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use gpui::{App, SharedString, Task, WeakEntity};
@@ -156,7 +157,10 @@ impl AgentTool for SubagentTool {
 
         let subagent_session = subagent.id();
         let mut meta = acp::Meta::new();
-        meta.insert("subagent".into(), subagent_session.0.to_string().into());
+        meta.insert(
+            SUBAGENT_SESSION_ID_META_KEY.into(),
+            subagent_session.0.to_string().into(),
+        );
 
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 

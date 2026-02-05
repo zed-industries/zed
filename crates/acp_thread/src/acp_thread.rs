@@ -224,7 +224,7 @@ pub struct ToolCall {
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
-    pub subagent_session: Option<acp::SessionId>,
+    pub subagent_session_id: Option<acp::SessionId>,
 }
 
 impl ToolCall {
@@ -278,7 +278,7 @@ impl ToolCall {
             raw_input_markdown,
             raw_output: tool_call.raw_output,
             tool_name,
-            subagent_session,
+            subagent_session_id: subagent_session,
         };
         Ok(result)
     }
@@ -311,7 +311,7 @@ impl ToolCall {
             self.status = status.into();
         }
 
-        self.subagent_session = subagent_session_id_from_meta(&meta);
+        self.subagent_session_id = subagent_session_id_from_meta(&meta);
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
@@ -402,7 +402,7 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        self.subagent_session.is_some()
+        self.subagent_session_id.is_some()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -997,6 +997,7 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Retry(RetryStatus),
+    SpawnedSubagent(acp::SessionId),
     Stopped,
     Error,
     LoadError(LoadError),
@@ -1528,7 +1529,7 @@ impl AcpThread {
                     raw_input_markdown: None,
                     raw_output: None,
                     tool_name: None,
-                    subagent_session: None,
+                    subagent_session_id: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1541,6 +1542,7 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
+                let has_subagent_session = call.subagent_session_id.is_some();
                 call.update_fields(
                     update.fields,
                     update.meta,
@@ -1549,6 +1551,10 @@ impl AcpThread {
                     &self.terminals,
                     cx,
                 )?;
+                if !has_subagent_session && let Some(session_id) = call.subagent_session_id.clone()
+                {
+                    cx.emit(AcpThreadEvent::SpawnedSubagent(session_id))
+                }
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
