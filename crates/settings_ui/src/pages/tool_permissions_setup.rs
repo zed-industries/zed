@@ -398,9 +398,9 @@ fn render_verification_section(
                 )
                 .when_some(decision, |this, decision| {
                     let (verdict_label, verdict_color) = match &decision {
-                        ToolPermissionDecision::Allow => ("Allow", Color::Success),
-                        ToolPermissionDecision::Deny(_) => ("Deny", Color::Error),
-                        ToolPermissionDecision::Confirm => ("Confirm", Color::Warning),
+                        ToolPermissionDecision::Allow => ("Result: Allow", Color::Success),
+                        ToolPermissionDecision::Deny(_) => ("Result: Deny", Color::Error),
+                        ToolPermissionDecision::Confirm => ("Result: Confirm", Color::Warning),
                     };
                     this.child(
                         Label::new(verdict_label)
