@@ -362,7 +362,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let proxy_process =
-            match wsl_command_impl(&self.connection_options, "env", &proxy_args, false)
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, true)
                 .kill_on_drop(true)
                 .spawn()
             {

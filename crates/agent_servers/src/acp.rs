@@ -381,9 +381,7 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(map_acp_error)?;
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) = config_state(response.modes, response.models, response.config_options);
 
             if let Some(default_mode) = self.default_mode.clone() {
                 if let Some(modes) = modes.as_ref() {
@@ -638,7 +636,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_| {
             let response = match self
                 .connection
                 .load_session(
@@ -654,9 +652,8 @@ impl AgentConnection for AcpConnection {
                 }
             };
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) =
+                config_state(response.modes, response.models, response.config_options);
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
                 session.session_modes = modes;
                 session.models = models;
@@ -712,7 +709,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_| {
             let response = match self
                 .connection
                 .resume_session(
@@ -728,9 +725,8 @@ impl AgentConnection for AcpConnection {
                 }
             };
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) =
+                config_state(response.modes, response.models, response.config_options);
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
                 session.session_modes = modes;
                 session.models = models;
@@ -963,7 +959,6 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 }
 
 fn config_state(
-    cx: &App,
     modes: Option<acp::SessionModeState>,
     models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
@@ -972,9 +967,7 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if cx.has_flag::<AcpBetaFeatureFlag>()
-        && let Some(opts) = config_options
-    {
+    if let Some(opts) = config_options {
         return (None, None, Some(Rc::new(RefCell::new(opts))));
     }
 

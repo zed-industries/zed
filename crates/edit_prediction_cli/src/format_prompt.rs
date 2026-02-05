@@ -154,11 +154,14 @@ pub fn zeta2_output_for_patch(
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
-    if version == ZetaVersion::V0120GitMergeMarkers {
-        if !result.ends_with('\n') {
-            result.push('\n');
+    match version {
+        ZetaVersion::V0120GitMergeMarkers | ZetaVersion::V0131GitMergeMarkersPrefix => {
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
         }
-        result.push_str(zeta_prompt::v0120_git_merge_markers::END_MARKER);
+        _ => (),
     }
 
     Ok(result)

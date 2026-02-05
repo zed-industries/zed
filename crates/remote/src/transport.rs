@@ -346,20 +346,21 @@ async fn build_remote_server_from_source(
         delegate.set_status(Some("Compressing binary"), cx);
 
         #[cfg(not(target_os = "windows"))]
-        {
-            run_cmd(new_smol_command("gzip").args(["-f", &bin_path.to_string_lossy()])).await?;
-        }
+        let archive_path = {
+            run_cmd(new_smol_command("gzip").arg("-f").arg(&bin_path)).await?;
+            bin_path.with_extension("gz")
+        };
 
         #[cfg(target_os = "windows")]
-        {
-            let zip_path = format!("target/remote_server/{}/debug/remote_server.zip", triple);
+        let archive_path = {
+            let zip_path = bin_path.with_extension("zip");
             if smol::fs::metadata(&zip_path).await.is_ok() {
                 smol::fs::remove_file(&zip_path).await?;
             }
             let compress_command = format!(
                 "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
-                bin_path.to_string_lossy(),
-                zip_path
+                bin_path.display(),
+                zip_path.display(),
             );
             run_cmd(new_smol_command("powershell.exe").args([
                 "-NoProfile",
@@ -367,10 +368,9 @@ async fn build_remote_server_from_source(
                 &compress_command,
             ]))
             .await?;
-        }
+            zip_path
+        };
 
-        let mut archive_path = bin_path;
-        archive_path.set_extension("zip");
         std::env::current_dir()?.join(archive_path)
     } else {
         bin_path
