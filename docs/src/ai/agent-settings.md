@@ -158,7 +158,7 @@ Use the `agent_font_size` setting to change the font size of rendered agent resp
 
 > Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
 
-### Tool Permission Default Mode
+### Default Tool Permissions
 
 Control the default behavior for tool actions. The default value is `"confirm"`.
 
