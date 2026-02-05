@@ -41,6 +41,7 @@ time.workspace = true
 util.workspace = true
 is_executable = "1.0.5"
 notify = "8.2.0"
+trash = { version = "5.2.5", path = "../../../trash-rs" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc.workspace = true

@@ -569,7 +569,7 @@ nbformat = "0.15.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
-objc2-foundation = { version = "=0.3.1", default-features = false, features = [
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
     "NSBundle",

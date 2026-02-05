@@ -42,6 +42,7 @@ use std::{
 };
 use tempfile::TempDir;
 use text::LineEnding;
+use trash::TrashItem;
 
 #[cfg(feature = "test-support")]
 mod fake_git_repo;
@@ -106,8 +107,10 @@ pub trait Fs: Send + Sync {
         self.remove_dir(path, options).await
     }
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_file(path, options).await
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<Option<TrashItem>> {
+        // TODO!: We might actually want to update `remove_file` to also return
+        // a `TrashItem`? As in, use `trash-rs`.
+        self.remove_file(path, options).await.map(|_| None)
     }
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
@@ -646,31 +649,20 @@ impl Fs for RealFs {
     }
 
     #[cfg(target_os = "macos")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use cocoa::{
-            base::{id, nil},
-            foundation::{NSAutoreleasePool, NSString},
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashItem>> {
+        use trash::{
+            DEFAULT_TRASH_CTX,
+            macos::{DeleteMethod, TrashContextExtMacos},
         };
-        use objc::{class, msg_send, sel, sel_impl};
 
-        unsafe {
-            /// Allow NSString::alloc use here because it sets autorelease
-            #[allow(clippy::disallowed_methods)]
-            unsafe fn ns_string(string: &str) -> id {
-                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
-            }
+        DEFAULT_TRASH_CTX.set_delete_method(DeleteMethod::NsFileManager);
 
-            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
-            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-
-            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
-        }
-        Ok(())
+        let path = path.to_path_buf();
+        smol::unblock(move || trash::delete_with_info(path).map_err(Into::into)).await
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashItem>> {
         if let Ok(Some(metadata)) = self.metadata(path).await
             && metadata.is_symlink
         {
@@ -679,7 +671,7 @@ impl Fs for RealFs {
         }
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(None),
             Err(err) => {
                 log::error!("Failed to trash file: {}", err);
                 // Trashing files can fail if you don't have a trashing dbus service configured.
@@ -690,7 +682,7 @@ impl Fs for RealFs {
     }
 
     #[cfg(target_os = "windows")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<Option<TrashItem>> {
         use util::paths::SanitizedPath;
         use windows::{
             Storage::{StorageDeleteOption, StorageFile},
@@ -703,12 +695,12 @@ impl Fs for RealFs {
         let path_string = path.to_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
+        Ok(None)
     }
 
     #[cfg(target_os = "macos")]
     async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
+        self.trash_file(path, options).await.map(|_| ())
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
