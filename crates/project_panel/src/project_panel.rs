@@ -58,10 +58,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconButtonShape, IconDecoration,
+    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
+    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tab,
+    Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -129,6 +129,7 @@ pub struct ProjectPanel {
     drag_target_entry: Option<DragTarget>,
     marked_entries: Vec<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    filter_editor: Entity<Editor>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
@@ -736,6 +737,23 @@ impl ProjectPanel {
 
             let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
+            let filter_editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Filter files…", window, cx);
+                editor
+            });
+
+            cx.subscribe_in(
+                &filter_editor,
+                window,
+                |project_panel: &mut Self, _, event, window, cx| {
+                    if let EditorEvent::BufferEdited = event {
+                        project_panel.update_visible_entries(None, false, false, window, cx);
+                    }
+                },
+            )
+            .detach();
+
             cx.subscribe_in(
                 &filename_editor,
                 window,
@@ -815,6 +833,7 @@ impl ProjectPanel {
 
                 marked_entries: Default::default(),
                 context_menu: None,
+                filter_editor,
                 filename_editor,
                 clipboard: None,
                 _dragged_entry_destination: None,
@@ -1877,6 +1896,17 @@ impl ProjectPanel {
         if cx.stop_active_drag(window) {
             self.drag_target_entry.take();
             self.hover_expand_task.take();
+            return;
+        }
+
+        if self.filter_editor.focus_handle(cx).is_focused(window) {
+            if self.filter_query(cx).is_some() {
+                self.filter_editor.update(cx, |editor, cx| {
+                    editor.set_text("", window, cx);
+                });
+            }
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
             return;
         }
 
@@ -3710,6 +3740,7 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
+        let filter_query = self.filter_query(cx);
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
@@ -3912,7 +3943,34 @@ impl ProjectPanel {
                             worktree_id,
                             entries: visible_worktree_entries,
                             index: OnceCell::new(),
-                        })
+                        });
+                    }
+
+                    if let Some(ref query) = filter_query {
+                        let query_lower = query.to_lowercase();
+                        for visible_entries in &mut new_state.visible_entries {
+                            let matched_paths: HashSet<Arc<RelPath>> = visible_entries
+                                .entries
+                                .iter()
+                                .filter(|entry| {
+                                    entry.path.file_name().is_some_and(|name| {
+                                        name.to_lowercase().contains(&query_lower)
+                                    })
+                                })
+                                .map(|entry| entry.path.clone())
+                                .collect();
+
+                            visible_entries.entries.retain(|entry| {
+                                let is_match = matched_paths.contains(&entry.path);
+                                let is_ancestor_of_match = entry.kind.is_dir()
+                                    && matched_paths.iter().any(|matched_path: &Arc<RelPath>| {
+                                        matched_path.starts_with(&entry.path)
+                                            && matched_path != &entry.path
+                                    });
+                                is_match || is_ancestor_of_match
+                            });
+                            visible_entries.index.take();
+                        }
                     }
                     if let Some((project_entry_id, worktree_id, _)) = max_width_item {
                         let mut visited_worktrees_length = 0;
@@ -5827,6 +5885,15 @@ impl ProjectPanel {
         }
     }
 
+    fn filter_query(&self, cx: &App) -> Option<String> {
+        let query = self.filter_editor.read(cx).text(cx);
+        if query.trim().is_empty() {
+            None
+        } else {
+            Some(query)
+        }
+    }
+
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
@@ -5834,6 +5901,8 @@ impl ProjectPanel {
 
         let identifier = if self.filename_editor.focus_handle(cx).is_focused(window) {
             "editing"
+        } else if self.filter_editor.focus_handle(cx).is_focused(window) {
+            "filtering"
         } else {
             "not_editing"
         };
@@ -6089,6 +6158,7 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
     item_width
 }
 
+
 impl Render for ProjectPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.state.visible_entries.is_empty();
@@ -6107,6 +6177,9 @@ impl Render for ProjectPanel {
         };
 
         let is_local = project.is_local();
+        let is_read_only = project.is_read_only(cx);
+        let is_remote = project.is_remote();
+        let is_via_remote_server = project.is_via_remote_server();
 
         if has_worktree {
             let item_count = self
@@ -6115,6 +6188,8 @@ impl Render for ProjectPanel {
                 .iter()
                 .map(|worktree| worktree.entries.len())
                 .sum();
+            let has_filter_query = self.filter_query(cx).is_some();
+            let filter_editor = self.filter_editor.clone();
 
             fn handle_drag_move<T: 'static>(
                 this: &mut ProjectPanel,
@@ -6230,7 +6305,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
-                .when(!project.is_read_only(cx), |el| {
+                .when(!is_read_only, |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
@@ -6240,22 +6315,49 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
-                        .when(!project.is_remote(), |el| {
+                        .when(!is_remote, |el| {
                             el.on_action(cx.listener(Self::trash))
                         })
                 })
-                .when(project.is_local(), |el| {
+                .when(is_local, |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })
-                .when(project.is_via_remote_server(), |el| {
+                .when(is_via_remote_server, |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                         .on_action(cx.listener(Self::download_from_remote))
                 })
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .child(
+                            h_flex()
+                                .p_2()
+                                .h(Tab::container_height(cx))
+                                .w_full()
+                                .gap_1p5()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border)
+                                .child(
+                                    Icon::new(IconName::MagnifyingGlass)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(filter_editor)
+                                .when(has_filter_query, |this| {
+                                    this.child(
+                                        IconButton::new("clear_filter", IconName::Close)
+                                            .shape(IconButtonShape::Square)
+                                            .tooltip(Tooltip::text("Clear Filter"))
+                                            .on_click(cx.listener(|project_panel, _, window, cx| {
+                                                project_panel.filter_editor.update(cx, |editor, cx| {
+                                                    editor.set_text("", window, cx);
+                                                });
+                                            })),
+                                    )
+                                }),
+                        )
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
@@ -6579,7 +6681,7 @@ impl Render for ProjectPanel {
                                         }
                                     }),
                                 )
-                                .when(!project.is_read_only(cx), |el| {
+                                .when(!is_read_only, |el| {
                                     el.on_click(cx.listener(
                                         |this, event: &gpui::ClickEvent, window, cx| {
                                             if event.click_count() > 1
@@ -6819,8 +6921,8 @@ impl Panel for ProjectPanel {
 }
 
 impl Focusable for ProjectPanel {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.filter_editor.focus_handle(cx)
     }
 }
 

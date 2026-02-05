@@ -8439,3 +8439,115 @@ impl Render for TestProjectItemView {
         Empty
     }
 }
+
+#[gpui::test]
+async fn test_filter_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "test_file.rs": "",
+            "config.json": "",
+            "test_config.json": "",
+            "src": {
+                "main.rs": "",
+                "lib.rs": "",
+                "test_utils.rs": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    let initial_entries = visible_entries_as_strings(&panel, 0..50, cx);
+    assert!(initial_entries.len() > 5, "Should have all entries visible initially");
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filter_editor.update(cx, |editor, cx| {
+            editor.set_text("test", window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let filtered_entries = visible_entries_as_strings(&panel, 0..50, cx);
+
+    let filtered_filenames: Vec<String> = filtered_entries
+        .iter()
+        .map(|s| s.trim().replace("> ", "").replace("v ", "").replace("  ", ""))
+        .collect();
+
+    assert!(
+        filtered_filenames.iter().all(|name| {
+            name.to_lowercase().contains("test") || name == "root" || name == "src"
+        }),
+        "All visible entries should contain 'test' or be parent directories. Got: {:?}",
+        filtered_filenames
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filter_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let restored_entries = visible_entries_as_strings(&panel, 0..50, cx);
+    assert_eq!(
+        initial_entries.len(),
+        restored_entries.len(),
+        "All entries should be visible again after clearing filter"
+    );
+}
+
+#[gpui::test]
+async fn test_filter_preserves_parent_directories(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "deeply": {
+                "nested": {
+                    "target_file.txt": ""
+                }
+            },
+            "other_file.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/deeply", cx);
+    toggle_expand_dir(&panel, "root/deeply/nested", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filter_editor.update(cx, |editor, cx| {
+            editor.set_text("target", window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let filtered_entries = visible_entries_as_strings(&panel, 0..50, cx);
+    let has_root = filtered_entries.iter().any(|e| e.contains("root"));
+    let has_deeply = filtered_entries.iter().any(|e| e.contains("deeply"));
+    let has_nested = filtered_entries.iter().any(|e| e.contains("nested"));
+    let has_target = filtered_entries.iter().any(|e| e.contains("target"));
+
+    assert!(has_root, "Root should be visible");
+    assert!(has_deeply, "Parent dir 'deeply' should be visible");
+    assert!(has_nested, "Parent dir 'nested' should be visible");
+    assert!(has_target, "Target file should be visible");
+}
