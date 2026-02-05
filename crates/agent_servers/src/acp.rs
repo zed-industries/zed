@@ -1350,8 +1350,20 @@ impl acp::Client for ClientDelegate {
             let settings = AgentSettings::get_global(cx);
             check_acp_tool_permission("edit_file", &path_str, settings)
         });
-        if let AcpPermissionDecision::Deny(reason) = decision {
-            return Err(anyhow!("{}", reason).into());
+        match decision {
+            AcpPermissionDecision::Deny(reason) => {
+                return Err(anyhow!("{}", reason).into());
+            }
+            AcpPermissionDecision::Confirm => {
+                return Err(anyhow!(
+                    "File write to '{}' requires confirmation. \
+                     Use request_permission to prompt the user first, \
+                     or configure an always_allow pattern for this path.",
+                    path_str
+                )
+                .into());
+            }
+            AcpPermissionDecision::Allow => {}
         }
 
         let task = self
