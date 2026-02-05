@@ -488,7 +488,6 @@ impl SplittableEditor {
             if let Some(lhs) = &mut this.lhs {
                 if !lhs.was_last_focused {
                     lhs.was_last_focused = true;
-                    dbg!("left focused");
                     cx.notify();
                 }
             }
@@ -499,7 +498,6 @@ impl SplittableEditor {
             if let Some(lhs) = &mut this.lhs {
                 if lhs.was_last_focused {
                     lhs.was_last_focused = false;
-                    dbg!("right focused");
                     cx.notify();
                 }
             }
