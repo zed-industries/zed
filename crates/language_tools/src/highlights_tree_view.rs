@@ -302,7 +302,7 @@ impl HighlightsTreeView {
                         .buffer(*buffer_id)
                         .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
-                        let range: Range<Anchor> = token.range.start.into()..token.range.end.into();
+                        let range = token.range.start..token.range.end;
                         let excerpt_id = range.start.excerpt_id;
                         let (range_display, sort_key) = format_anchor_range(
                             &range,

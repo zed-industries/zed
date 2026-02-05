@@ -289,18 +289,12 @@ fn buffer_into_editor_highlights<'a, 'b>(
     cx: &'a App,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
     buffer_tokens.iter().filter_map(|token| {
-        let multi_buffer_start = all_excerpts
-            .iter()
-            .find_map(|&excerpt_id| {
-                multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.start)
-            })
-            .and_then(|anchor| anchor.try_into().ok())?;
-        let multi_buffer_end = all_excerpts
-            .iter()
-            .find_map(|&excerpt_id| {
-                multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.end)
-            })
-            .and_then(|anchor| anchor.try_into().ok())?;
+        let multi_buffer_start = all_excerpts.iter().find_map(|&excerpt_id| {
+            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.start)
+        })?;
+        let multi_buffer_end = all_excerpts.iter().find_map(|&excerpt_id| {
+            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.end)
+        })?;
 
         let style = convert_token(
             stylizer,
@@ -427,8 +421,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
     use multi_buffer::{
-        DiffbaselessAnchorRangeExt, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-        MultiBufferOffset,
+        AnchorRangeExt, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset,
     };
     use project::Project;
     use rope::Point;
