@@ -101,7 +101,7 @@ impl UpdateButton {
 
 impl RenderOnce for UpdateButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let border_color = cx.theme().colors().border.opacity(0.8);
+        let border_color = cx.theme().colors().border;
 
         let icon = Icon::new(self.icon)
             .size(IconSize::XSmall)
