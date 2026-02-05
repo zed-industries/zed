@@ -1,7 +1,7 @@
 use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
-use codestral::CodestralEditPredictionDelegate;
+use codestral::{self, CodestralEditPredictionDelegate};
 use copilot::Status;
 use edit_prediction::{EditPredictionStore, Zeta2FeatureFlag};
 use edit_prediction_types::EditPredictionDelegateHandle;
@@ -287,7 +287,7 @@ impl Render for EditPredictionButton {
 
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
-                let has_api_key = CodestralEditPredictionDelegate::has_api_key(cx);
+                let has_api_key = codestral::codestral_api_key(cx).is_some();
                 let this = cx.weak_entity();
                 let file = self.file.clone();
                 let language = self.language.clone();
@@ -600,7 +600,6 @@ impl EditPredictionButton {
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-        client: Arc<Client>,
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -630,7 +629,7 @@ impl EditPredictionButton {
         })
         .detach();
 
-        CodestralEditPredictionDelegate::ensure_api_key_loaded(client.http_client(), cx);
+        CodestralEditPredictionDelegate::ensure_api_key_loaded(cx);
 
         Self {
             editor_subscription: None,
@@ -1493,7 +1492,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         }
     }
 
-    if CodestralEditPredictionDelegate::has_api_key(cx) {
+    if codestral::codestral_api_key(cx).is_some() {
         providers.push(EditPredictionProvider::Codestral);
     }
 
