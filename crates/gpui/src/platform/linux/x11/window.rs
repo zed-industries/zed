@@ -678,9 +678,7 @@ impl X11WindowState {
 
             xcb_flush(xcb);
 
-            // Get the shared atlas from the context
-            let atlas: Arc<dyn PlatformAtlas> =
-                Arc::clone(&gpu_context.atlas) as Arc<dyn PlatformAtlas>;
+            let atlas = gpu_context.atlas.clone();
 
             let renderer = {
                 let raw_window = RawWindow {
@@ -1579,9 +1577,7 @@ impl PlatformWindow for X11Window {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let inner = self.0.state.borrow();
-        // Use the shared atlas from BladeContext
-        Arc::clone(&inner.atlas)
+        Arc::clone(&self.0.state.borrow().atlas)
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {

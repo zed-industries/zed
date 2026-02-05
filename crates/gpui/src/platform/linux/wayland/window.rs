@@ -339,14 +339,11 @@ impl WaylandWindowState {
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
-        // Get the shared atlas from the context - this is available even without a renderer
-        let atlas: Arc<dyn PlatformAtlas> =
-            Arc::clone(&gpu_context.atlas) as Arc<dyn PlatformAtlas>;
-
         // Renderer is created lazily in set_size_and_scale() when we receive
         // the first configure event with a valid size. This handles both:
         // - Layer shell windows with initial 0x0 size (anchored to opposite edges)
         // - Regular windows that also receive their size via configure events
+        let atlas = gpu_context.atlas.clone();
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
@@ -962,33 +959,28 @@ impl WaylandWindowStatePtr {
             let width = device_bounds.size.width.0 as u32;
             let height = device_bounds.size.height.0 as u32;
 
-            // Create renderer lazily if it doesn't exist yet (layer shell case with
-            // initial 0x0 size). Now that we have a valid size, we can create it.
-            match &mut state.renderer {
-                None if width > 0 && height > 0 => {
-                    let client = state.client.get_client();
-                    let client_state = client.borrow();
-                    match WaylandWindowState::create_renderer(
-                        &state.surface,
-                        &client_state.gpu_context,
-                        width,
-                        height,
-                    ) {
-                        Ok(mut renderer) => {
-                            // Apply current transparency setting to the new renderer
-                            let opaque = !state.is_transparent();
-                            renderer.update_transparency(!opaque);
-                            state.renderer = Some(renderer);
-                        }
-                        Err(err) => {
-                            log::error!("Failed to create renderer: {:?}", err);
-                        }
+            // Create renderer lazily when we have a valid size (layer shell windows
+            // start with 0x0 until compositor sends configure event)
+            if let Some(renderer) = &mut state.renderer {
+                renderer.update_drawable_size(device_bounds.size);
+            } else if width > 0 && height > 0 {
+                let client = state.client.get_client();
+                let client_state = client.borrow();
+                match WaylandWindowState::create_renderer(
+                    &state.surface,
+                    &client_state.gpu_context,
+                    width,
+                    height,
+                ) {
+                    Ok(mut renderer) => {
+                        let opaque = !state.is_transparent();
+                        renderer.update_transparency(!opaque);
+                        state.renderer = Some(renderer);
+                    }
+                    Err(err) => {
+                        log::error!("Failed to create renderer: {:?}", err);
                     }
                 }
-                Some(renderer) => {
-                    renderer.update_drawable_size(device_bounds.size);
-                }
-                None => {} // Still waiting for valid size from compositor
             }
 
             (state.bounds.size, state.scale)
@@ -998,10 +990,14 @@ impl WaylandWindowStatePtr {
             fun(size, scale);
         }
 
-        {
-            let state = self.state.borrow();
-            if let Some(viewport) = &state.viewport {
-                viewport.set_destination(size.width.0 as i32, size.height.0 as i32);
+        // Only set viewport destination when we have a valid size.
+        // For layer shell windows, the initial size may be 0x0 until the
+        // compositor sends a configure event with the actual dimensions.
+        let width = size.width.0 as i32;
+        let height = size.height.0 as i32;
+        if width > 0 && height > 0 {
+            if let Some(viewport) = &self.state.borrow().viewport {
+                viewport.set_destination(width, height);
             }
         }
     }
@@ -1386,9 +1382,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let state = self.borrow();
-        // Use the shared atlas - it's available even before the renderer is created
-        Arc::clone(&state.atlas)
+        Arc::clone(&self.borrow().atlas)
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {

@@ -670,8 +670,7 @@ impl BladeRenderer {
 
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
-        // Note: atlas is shared across windows and managed by BladeContext,
-        // so we don't destroy it here.
+        // Atlas is shared and managed by BladeContext
         self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
