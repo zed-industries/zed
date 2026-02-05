@@ -1,4 +1,7 @@
-use std::{ops::{Bound, Range, RangeInclusive}, sync::Arc};
+use std::{
+    ops::{Bound, Range, RangeInclusive},
+    sync::Arc,
+};
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
@@ -431,8 +434,8 @@ impl SplittableEditor {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
-        let mut subscriptions =
-            vec![cx.subscribe(
+        let mut subscriptions = vec![
+            cx.subscribe(
                 &lhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::ExpandExcerptsRequested {
@@ -484,24 +487,28 @@ impl SplittableEditor {
         ];
 
         let lhs_focus_handle = lhs_editor.read(cx).focus_handle(cx);
-        subscriptions.push(cx.on_focus_in(&lhs_focus_handle, window, |this, _window, cx| {
-            if let Some(lhs) = &mut this.lhs {
-                if !lhs.was_last_focused {
-                    lhs.was_last_focused = true;
-                    cx.notify();
+        subscriptions.push(
+            cx.on_focus_in(&lhs_focus_handle, window, |this, _window, cx| {
+                if let Some(lhs) = &mut this.lhs {
+                    if !lhs.was_last_focused {
+                        lhs.was_last_focused = true;
+                        cx.notify();
+                    }
                 }
-            }
-        }));
+            }),
+        );
 
         let rhs_focus_handle = self.rhs_editor.read(cx).focus_handle(cx);
-        subscriptions.push(cx.on_focus_in(&rhs_focus_handle, window, |this, _window, cx| {
-            if let Some(lhs) = &mut this.lhs {
-                if lhs.was_last_focused {
-                    lhs.was_last_focused = false;
-                    cx.notify();
+        subscriptions.push(
+            cx.on_focus_in(&rhs_focus_handle, window, |this, _window, cx| {
+                if let Some(lhs) = &mut this.lhs {
+                    if lhs.was_last_focused {
+                        lhs.was_last_focused = false;
+                        cx.notify();
+                    }
                 }
-            }
-        }));
+            }),
+        );
 
         let mut lhs = LhsEditor {
             editor: lhs_editor,
@@ -893,8 +900,6 @@ impl SplittableEditor {
         });
         cx.notify();
     }
-
-
 
     pub fn set_excerpts_for_path(
         &mut self,
@@ -1553,9 +1558,8 @@ impl Item for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
-        self.rhs_editor.update(cx, |editor, cx| {
-            editor.save(options, project, window, cx)
-        })
+        self.rhs_editor
+            .update(cx, |editor, cx| editor.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -1565,9 +1569,8 @@ impl Item for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
-        self.rhs_editor.update(cx, |editor, cx| {
-            editor.save_as(project, path, window, cx)
-        })
+        self.rhs_editor
+            .update(cx, |editor, cx| editor.save_as(project, path, window, cx))
     }
 
     fn reload(
@@ -1576,9 +1579,8 @@ impl Item for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
-        self.rhs_editor.update(cx, |editor, cx| {
-            editor.reload(project, window, cx)
-        })
+        self.rhs_editor
+            .update(cx, |editor, cx| editor.reload(project, window, cx))
     }
 
     fn navigate(
@@ -1587,9 +1589,8 @@ impl Item for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.last_selected_editor().update(cx, |editor, cx| {
-            editor.navigate(data, window, cx)
-        })
+        self.last_selected_editor()
+            .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1632,7 +1633,9 @@ impl Item for SplittableEditor {
     }
 
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<gpui::Point<gpui::Pixels>> {
-        self.last_selected_editor().read(cx).pixel_position_of_cursor(cx)
+        self.last_selected_editor()
+            .read(cx)
+            .pixel_position_of_cursor(cx)
     }
 }
 
@@ -1658,9 +1661,8 @@ impl SearchableItem for SplittableEditor {
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        self.last_selected_editor().update(cx, |editor, cx| {
-            editor.query_suggestion(window, cx)
-        })
+        self.last_selected_editor()
+            .update(cx, |editor, cx| editor.query_suggestion(window, cx))
     }
 
     fn activate_match(
@@ -1704,9 +1706,8 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Task<Vec<Self::Match>> {
-        self.last_selected_editor().update(cx, |editor, cx| {
-            editor.find_matches(query, window, cx)
-        })
+        self.last_selected_editor()
+            .update(cx, |editor, cx| editor.find_matches(query, window, cx))
     }
 
     fn active_match_index(

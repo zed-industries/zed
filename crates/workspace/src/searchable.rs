@@ -25,8 +25,6 @@ pub enum SearchEvent {
     ResultsCollapsedChanged(CollapseDirection),
 }
 
-
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Direction {
     Prev,
