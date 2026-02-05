@@ -23,6 +23,8 @@ pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
 
+pub use shell_parser::extract_commands;
+
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse, UserMessageId,

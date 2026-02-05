@@ -1,4 +1,6 @@
-use agent::{HARDCODED_SECURITY_RULES, ToolPermissionDecision};
+use agent::{
+    AgentTool, HARDCODED_SECURITY_RULES, TerminalTool, ToolPermissionDecision, extract_commands,
+};
 use agent_settings::AgentSettings;
 use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prelude::*};
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
@@ -67,11 +69,41 @@ const TOOLS: &[ToolInfo] = &[
     },
 ];
 
-struct ToolInfo {
+pub(crate) struct ToolInfo {
     id: &'static str,
     name: &'static str,
     description: &'static str,
     regex_explanation: &'static str,
+}
+
+const fn const_str_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Finds the index of a tool in `TOOLS` by its ID. Panics (compile error in
+/// const context) if the ID is not found, so every macro-generated render
+/// function is validated at compile time.
+const fn tool_index(id: &str) -> usize {
+    let mut i = 0;
+    while i < TOOLS.len() {
+        if const_str_eq(TOOLS[i].id, id) {
+            return i;
+        }
+        i += 1;
+    }
+    panic!("tool ID not found in TOOLS array")
 }
 
 /// Renders the main tool permissions setup page showing a list of tools
@@ -86,6 +118,9 @@ pub(crate) fn render_tool_permissions_setup_page(
         .enumerate()
         .map(|(i, tool)| render_tool_list_item(settings_window, tool, i, window, cx))
         .collect();
+
+    let page_description =
+        "Configure regex patterns to control which tool actions require confirmation.";
 
     let settings = AgentSettings::get_global(cx);
     let global_default = settings.tool_permissions.default;
@@ -117,6 +152,12 @@ pub(crate) fn render_tool_permissions_setup_page(
         .pb_16()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
+        .child(Label::new("Tool Permission Rules").size(LabelSize::Large))
+        .child(
+            Label::new(page_description)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
         .child(
             v_flex()
                 .mt_2()
@@ -205,6 +246,7 @@ fn get_tool_render_fn(
         "terminal" => render_terminal_tool_config,
         "edit_file" => render_edit_file_tool_config,
         "delete_path" => render_delete_path_tool_config,
+        "copy_path" => render_copy_path_tool_config,
         "move_path" => render_move_path_tool_config,
         "create_directory" => render_create_directory_tool_config,
         "save_file" => render_save_file_tool_config,
@@ -216,19 +258,18 @@ fn get_tool_render_fn(
 
 /// Renders an individual tool's permission configuration page
 pub(crate) fn render_tool_config_page(
-    tool_id: &'static str,
+    tool: &ToolInfo,
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let tool = TOOLS.iter().find(|t| t.id == tool_id).unwrap();
-    let rules = get_tool_rules(tool_id, cx);
+    let rules = get_tool_rules(tool.id, cx);
     let page_title = format!("{} Tool", tool.name);
     let scroll_step = px(80.);
 
     v_flex()
-        .id(format!("tool-config-page-{}", tool_id))
+        .id(format!("tool-config-page-{}", tool.id))
         .on_action({
             let scroll_handle = scroll_handle.clone();
             move |_: &menu::SelectNext, window, cx| {
@@ -262,20 +303,20 @@ pub(crate) fn render_tool_config_page(
                         .color(Color::Muted),
                 ),
         )
-        .when(tool_id == "terminal", |this| {
+        .when(tool.id == TerminalTool::NAME, |this| {
             this.child(render_hardcoded_security_banner(cx))
         })
-        .child(render_verification_section(tool_id, window, cx))
+        .child(render_verification_section(tool.id, window, cx))
         .child(
             v_flex()
                 .mt_6()
                 .min_w_0()
                 .w_full()
                 .gap_5()
-                .child(render_default_mode_section(tool_id, rules.default, cx))
+                .child(render_default_mode_section(tool.id, rules.default, cx))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
                 .child(render_rule_section(
-                    tool_id,
+                    tool.id,
                     "Always Deny",
                     "If any of these regexes match, the tool action will be denied.",
                     ToolPermissionMode::Deny,
@@ -284,7 +325,7 @@ pub(crate) fn render_tool_config_page(
                 ))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
                 .child(render_rule_section(
-                    tool_id,
+                    tool.id,
                     "Always Allow",
                     "If any of these regexes match, the action will be approved—unless an Always Confirm or Always Deny matches.",
                     ToolPermissionMode::Allow,
@@ -293,7 +334,7 @@ pub(crate) fn render_tool_config_page(
                 ))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
                 .child(render_rule_section(
-                    tool_id,
+                    tool.id,
                     "Always Confirm",
                     "If any of these regexes match, a confirmation will be shown unless an Always Deny regex matches.",
                     ToolPermissionMode::Confirm,
@@ -458,16 +499,21 @@ fn find_matched_patterns(
     // Check hardcoded security rules first (highest priority, terminal only)
     let mut hardcoded_denied = false;
     if tool_id == "terminal" {
-        for pattern in &HARDCODED_SECURITY_RULES.terminal_deny {
-            if pattern.is_match(input) {
-                hardcoded_denied = true;
-                matched.push(MatchedPattern {
-                    label: "This command is always denied for safety, regardless of settings"
-                        .to_string(),
-                    rule_type: ToolPermissionMode::Deny,
-                    is_overridden: false,
-                    is_regex: false,
-                });
+        for cmd in &inputs_to_check {
+            for pattern in &HARDCODED_SECURITY_RULES.terminal_deny {
+                if pattern.is_match(cmd) {
+                    hardcoded_denied = true;
+                    matched.push(MatchedPattern {
+                        label: "This command is always denied for safety, regardless of settings"
+                            .to_string(),
+                        rule_type: ToolPermissionMode::Deny,
+                        is_overridden: false,
+                        is_regex: false,
+                    });
+                    break;
+                }
+            }
+            if hardcoded_denied {
                 break;
             }
         }
@@ -493,7 +539,7 @@ fn find_matched_patterns(
         }
 
         for rule in &rules.always_deny {
-            if rule.is_match(input) {
+            if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
                 has_deny_match = true;
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
@@ -505,7 +551,7 @@ fn find_matched_patterns(
         }
 
         for rule in &rules.always_confirm {
-            if rule.is_match(input) {
+            if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
                 has_confirm_match = true;
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
@@ -517,7 +563,7 @@ fn find_matched_patterns(
         }
 
         for rule in &rules.always_allow {
-            if rule.is_match(input) {
+            if inputs_to_check.iter().any(|cmd| rule.is_match(cmd)) {
                 has_allow_match = true;
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
@@ -1012,7 +1058,9 @@ macro_rules! tool_config_page_fn {
             window: &mut Window,
             cx: &mut Context<SettingsWindow>,
         ) -> AnyElement {
-            render_tool_config_page($tool_id, settings_window, scroll_handle, window, cx)
+            // Evaluated at compile time — fails to compile if $tool_id is not in TOOLS.
+            const INDEX: usize = tool_index($tool_id);
+            render_tool_config_page(&TOOLS[INDEX], settings_window, scroll_handle, window, cx)
         }
     };
 }
@@ -1020,8 +1068,70 @@ macro_rules! tool_config_page_fn {
 tool_config_page_fn!(render_terminal_tool_config, "terminal");
 tool_config_page_fn!(render_edit_file_tool_config, "edit_file");
 tool_config_page_fn!(render_delete_path_tool_config, "delete_path");
+tool_config_page_fn!(render_copy_path_tool_config, "copy_path");
 tool_config_page_fn!(render_move_path_tool_config, "move_path");
 tool_config_page_fn!(render_create_directory_tool_config, "create_directory");
 tool_config_page_fn!(render_save_file_tool_config, "save_file");
 tool_config_page_fn!(render_fetch_tool_config, "fetch");
 tool_config_page_fn!(render_web_search_tool_config, "web_search");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_tools_are_in_tool_info_or_excluded() {
+        // Tools that intentionally don't appear in the permissions UI.
+        // If you add a new tool and this test fails, either:
+        //   1. Add a ToolInfo entry to TOOLS (if the tool has permission checks), or
+        //   2. Add it to this list with a comment explaining why it's excluded.
+        const EXCLUDED_TOOLS: &[&str] = &[
+            // Read-only / low-risk tools that don't call decide_permission_from_settings
+            "diagnostics",
+            "find_path",
+            "grep",
+            "list_directory",
+            "now",
+            "open",
+            "read_file",
+            "restore_file_from_disk",
+            "thinking",
+            // streaming_edit_file uses "edit_file" for permission lookups,
+            // so its rules are configured under the edit_file entry.
+            "streaming_edit_file",
+            // Subagent permission checks happen at the level of individual
+            // tool calls within the subagent, not at the spawning level.
+            "subagent",
+        ];
+
+        let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();
+
+        for tool_name in agent::ALL_TOOL_NAMES {
+            if EXCLUDED_TOOLS.contains(tool_name) {
+                assert!(
+                    !tool_info_ids.contains(tool_name),
+                    "Tool '{}' is in both EXCLUDED_TOOLS and TOOLS — pick one.",
+                    tool_name,
+                );
+                continue;
+            }
+            assert!(
+                tool_info_ids.contains(tool_name),
+                "Tool '{}' is in ALL_TOOL_NAMES but has no entry in TOOLS and \
+                 is not in EXCLUDED_TOOLS. Either add a ToolInfo entry (if the \
+                 tool has permission checks) or add it to EXCLUDED_TOOLS with \
+                 a comment explaining why.",
+                tool_name,
+            );
+        }
+
+        for tool_id in &tool_info_ids {
+            assert!(
+                agent::ALL_TOOL_NAMES.contains(tool_id),
+                "TOOLS contains '{}' but it is not in ALL_TOOL_NAMES. \
+                 Is this a valid built-in tool?",
+                tool_id,
+            );
+        }
+    }
+}
