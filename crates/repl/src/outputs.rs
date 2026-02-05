@@ -256,7 +256,7 @@ impl Output {
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
         let max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).output_max_width_columns,
+            ReplSettings::get_global(cx).max_columns,
             window,
             cx,
         );
@@ -277,7 +277,6 @@ impl Output {
         h_flex()
             .id("output-content")
             .w_full()
-            .when_some(max_width, |this, max_width| this.max_w(max_width))
             .when(needs_horizontal_scroll, |this| this.overflow_x_scroll())
             .when(!needs_horizontal_scroll, |this| this.overflow_x_hidden())
             .items_start()
@@ -286,6 +285,7 @@ impl Output {
                     .when(!needs_horizontal_scroll, |el| {
                         el.flex_1().w_full().overflow_x_hidden()
                     })
+                    .when_some(max_width, |el, max_width| el.max_w(max_width))
                     .children(content),
             )
             .children(match self {
