@@ -176,6 +176,8 @@ impl StreamingEditFileTool {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
+        let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
+
         let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
         if path.components().any(|component| {
@@ -212,7 +214,7 @@ impl StreamingEditFileTool {
             return Task::ready(Err(anyhow!("thread was dropped")));
         };
 
-        if project_path.is_some() {
+        if project_path.is_some() || explicitly_allowed {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {

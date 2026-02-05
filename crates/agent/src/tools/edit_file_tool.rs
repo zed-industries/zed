@@ -167,6 +167,8 @@ impl EditFileTool {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
+        let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
+
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
         let local_settings_folder = paths::local_settings_folder_name();
@@ -212,7 +214,7 @@ impl EditFileTool {
 
         // If the path is inside the project, and it's not one of the above edge cases,
         // then no confirmation is necessary. Otherwise, confirmation is necessary.
-        if project_path.is_some() {
+        if project_path.is_some() || explicitly_allowed {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
@@ -1264,9 +1266,9 @@ mod tests {
             Some("test 5.1 (local settings)".into())
         );
 
-        // 5.2: /etc/hosts is outside the project — still prompts
+        // 5.2: /etc/hosts is outside the project, but Allow auto-approves
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
+        cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
                     display_description: "test 5.2".into(),
@@ -1276,9 +1278,10 @@ mod tests {
                 &stream_tx,
                 cx,
             )
-        });
-        let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.fields.title, Some("test 5.2".into()));
+        })
+        .await
+        .unwrap();
+        assert!(stream_rx.try_next().is_err());
 
         // 5.3: Normal in-project path with allow — no confirmation needed
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1296,6 +1299,29 @@ mod tests {
         .await
         .unwrap();
         assert!(stream_rx.try_next().is_err());
+
+        // 5.4: With Confirm default, non-project paths still prompt
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.4".into(),
+                    path: "/etc/hosts".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(event.tool_call.fields.title, Some("test 5.4".into()));
     }
 
     #[gpui::test]
