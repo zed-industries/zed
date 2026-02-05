@@ -3,6 +3,7 @@ use crate::{
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
+    resolve_active_repository,
 };
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
@@ -154,7 +155,7 @@ impl ProjectDiff {
                 "Action"
             }
         );
-        let intended_repo = Self::resolve_repo(workspace, cx);
+        let intended_repo = resolve_active_repository(workspace, cx);
 
         let existing = workspace
             .items_of_type::<Self>(cx)
@@ -201,30 +202,6 @@ impl ProjectDiff {
                 project_diff.move_to_entry(entry, window, cx);
             })
         }
-    }
-
-    fn resolve_repo(workspace: &Workspace, cx: &App) -> Option<Entity<Repository>> {
-        let project = workspace.project().read(cx);
-        workspace
-            .active_worktree_override()
-            .and_then(|override_id| {
-                project
-                    .worktree_for_id(override_id, cx)
-                    .and_then(|worktree| {
-                        let worktree_abs_path = worktree.read(cx).abs_path();
-                        let git_store = project.git_store().read(cx);
-                        git_store
-                            .repositories()
-                            .values()
-                            .find(|repo| {
-                                let repo_path = &repo.read(cx).work_directory_abs_path;
-                                *repo_path == worktree_abs_path
-                                    || worktree_abs_path.starts_with(repo_path.as_ref())
-                            })
-                            .cloned()
-                    })
-            })
-            .or_else(|| project.active_repository(cx))
     }
 
     pub fn deploy_at_project_path(
