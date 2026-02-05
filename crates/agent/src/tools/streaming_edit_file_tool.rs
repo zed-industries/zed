@@ -1,3 +1,4 @@
+use crate::EditFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
     decide_permission_from_settings, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
@@ -168,14 +169,20 @@ impl StreamingEditFileTool {
     ) -> Task<Result<()>> {
         let path_str = input.path.to_string_lossy();
         let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+        // Use "edit_file" for permission lookup so users' edit_file rules apply to both variants
+        let decision = decide_permission_from_settings(EditFileTool::NAME, &path_str, settings);
+        let allow_if_safe;
 
         match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
+            ToolPermissionDecision::Allow => {
+                allow_if_safe = true;
+            }
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => {}
+            ToolPermissionDecision::Confirm => {
+                allow_if_safe = false;
+            }
         }
 
         let local_settings_folder = paths::local_settings_folder_name();
@@ -214,7 +221,7 @@ impl StreamingEditFileTool {
             return Task::ready(Err(anyhow!("thread was dropped")));
         };
 
-        if project_path.is_some() {
+        if project_path.is_some() && allow_if_safe {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
