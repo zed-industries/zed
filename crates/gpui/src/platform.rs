@@ -59,6 +59,7 @@ use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use std::any::Any;
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
@@ -372,8 +373,24 @@ pub trait ScreenCaptureStream {
     fn metadata(&self) -> Result<SourceMetadata>;
 }
 
+/// An opaque, platform-specific pixel buffer for rendering video or screen
+/// capture content.
+///
+/// Platform implementations provide concrete types that implement this trait.
+/// Renderers downcast to the expected concrete type via `as_any()`.
+pub trait PlatformPixelBuffer: 'static {
+    /// Width in pixels.
+    fn width(&self) -> u32;
+    /// Height in pixels.
+    fn height(&self) -> u32;
+    /// Downcast to the concrete platform type.
+    fn as_any(&self) -> &dyn Any;
+    /// Downcast to the concrete platform type, consuming self.
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+}
+
 /// A frame of video captured from a screen.
-pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
+pub struct ScreenCaptureFrame(pub Box<dyn PlatformPixelBuffer>);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]

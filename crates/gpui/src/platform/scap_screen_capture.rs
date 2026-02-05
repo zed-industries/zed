@@ -1,7 +1,7 @@
 //! Screen capture for Linux and Windows
 use crate::{
-    DevicePixels, ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Size, SourceMetadata, size,
+    DevicePixels, ForegroundExecutor, PlatformPixelBuffer, ScreenCaptureFrame, ScreenCaptureSource,
+    ScreenCaptureStream, Size, SourceMetadata, size,
 };
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
@@ -9,6 +9,24 @@ use scap::Target;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
+
+impl PlatformPixelBuffer for scap::frame::Frame {
+    fn width(&self) -> u32 {
+        frame_size(self).width.0 as u32
+    }
+
+    fn height(&self) -> u32 {
+        frame_size(self).height.0 as u32
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
+}
 
 /// Populates the receiver with the screens that can be captured.
 ///
@@ -233,7 +251,7 @@ fn run_capture(
     }
     while !cancel_stream.load(std::sync::atomic::Ordering::SeqCst) {
         match capturer.get_next_frame() {
-            Ok(frame) => frame_callback(ScreenCaptureFrame(frame)),
+            Ok(frame) => frame_callback(ScreenCaptureFrame(Box::new(frame))),
             Err(err) => {
                 log::error!("Halting screen capture due to error: {err}");
                 break;

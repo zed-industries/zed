@@ -738,20 +738,30 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use core_foundation::base::TCFType;
+    use core_video::pixel_buffer::CVPixelBuffer;
     use livekit::webrtc;
 
-    let pixel_buffer = frame.0.as_concrete_TypeRef();
-    std::mem::forget(frame.0);
-    unsafe {
-        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
-    }
+    let pixel_buffer = frame
+        .0
+        .into_any()
+        .downcast::<CVPixelBuffer>()
+        .expect("macOS screen capture produces CVPixelBuffer");
+    let raw = pixel_buffer.as_concrete_TypeRef();
+    std::mem::forget(*pixel_buffer);
+    unsafe { Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(raw as _)) }
 }
 
 #[cfg(not(target_os = "macos"))]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     use libwebrtc::native::yuv_helper::{abgr_to_nv12, argb_to_nv12};
     use livekit::webrtc::prelude::NV12Buffer;
-    match frame.0 {
+    let scap_frame = frame
+        .0
+        .into_any()
+        .downcast::<scap::frame::Frame>()
+        .expect("non-macOS screen capture produces scap Frame");
+    match *scap_frame {
         scap::frame::Frame::BGRx(frame) => {
             let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
             let (stride_y, stride_uv) = buffer.strides();

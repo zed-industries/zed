@@ -1,8 +1,10 @@
 use super::RemoteVideoTrack;
 use futures::StreamExt as _;
 use gpui::{
-    AppContext as _, Context, Empty, Entity, EventEmitter, IntoElement, Render, Task, Window,
+    AppContext as _, Context, Empty, Entity, EventEmitter, IntoElement, PlatformPixelBuffer,
+    Render, Task, Window,
 };
+use std::sync::Arc;
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
@@ -78,7 +80,7 @@ impl Render for RemoteVideoTrackView {
         #[cfg(target_os = "macos")]
         if let Some(latest_frame) = &self.latest_frame {
             use gpui::Styled as _;
-            return gpui::surface(latest_frame.clone())
+            return gpui::surface(Arc::new(latest_frame.clone()) as Arc<dyn PlatformPixelBuffer>)
                 .size_full()
                 .into_any_element();
         }

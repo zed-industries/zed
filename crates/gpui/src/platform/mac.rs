@@ -15,7 +15,7 @@ mod metal_atlas;
 #[cfg(not(feature = "macos-blade"))]
 pub mod metal_renderer;
 
-use core_video::image_buffer::CVImageBuffer;
+use core_video::pixel_buffer::CVPixelBuffer;
 #[cfg(not(feature = "macos-blade"))]
 use metal_renderer as renderer;
 
@@ -54,8 +54,23 @@ pub(crate) use window::*;
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;
 
-/// A frame of video captured from a screen.
-pub(crate) type PlatformScreenCaptureFrame = CVImageBuffer;
+impl crate::PlatformPixelBuffer for CVPixelBuffer {
+    fn width(&self) -> u32 {
+        self.get_width() as u32
+    }
+
+    fn height(&self) -> u32 {
+        self.get_height() as u32
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
+}
 
 trait BoolExt {
     fn to_objc(self) -> BOOL;

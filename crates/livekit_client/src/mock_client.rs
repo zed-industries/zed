@@ -26,9 +26,18 @@ pub type RemoteVideoFrame = std::sync::Arc<gpui::RenderImage>;
 #[derive(Clone)]
 pub(crate) struct RemoteVideoFrame {}
 #[cfg(target_os = "macos")]
-impl Into<gpui::SurfaceSource> for RemoteVideoFrame {
-    fn into(self) -> gpui::SurfaceSource {
+impl gpui::PlatformPixelBuffer for RemoteVideoFrame {
+    fn width(&self) -> u32 {
         unimplemented!()
+    }
+    fn height(&self) -> u32 {
+        unimplemented!()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
     }
 }
 pub(crate) fn play_remote_video_track(

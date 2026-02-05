@@ -16,6 +16,7 @@ use core_graphics::display::{
     CGDirectDisplayID, CGDisplayCopyDisplayMode, CGDisplayModeGetPixelHeight,
     CGDisplayModeGetPixelWidth, CGDisplayModeRelease,
 };
+use core_video::pixel_buffer::CVPixelBuffer;
 use ctor::ctor;
 use futures::channel::oneshot;
 use media::core_media::{CMSampleBuffer, CMSampleBufferRef};
@@ -336,10 +337,12 @@ extern "C" fn stream_did_output_sample_buffer_of_type(
         let sample_buffer = sample_buffer as CMSampleBufferRef;
         let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
         if let Some(buffer) = sample_buffer.image_buffer() {
-            let callback: Box<Box<dyn Fn(ScreenCaptureFrame)>> =
-                Box::from_raw(*this.get_ivar::<*mut c_void>(FRAME_CALLBACK_IVAR) as *mut _);
-            callback(ScreenCaptureFrame(buffer));
-            mem::forget(callback);
+            if let Some(pixel_buffer) = buffer.downcast_into::<CVPixelBuffer>() {
+                let callback: Box<Box<dyn Fn(ScreenCaptureFrame)>> =
+                    Box::from_raw(*this.get_ivar::<*mut c_void>(FRAME_CALLBACK_IVAR) as *mut _);
+                callback(ScreenCaptureFrame(Box::new(pixel_buffer)));
+                mem::forget(callback);
+            }
         }
     }
 }

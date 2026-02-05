@@ -889,34 +889,40 @@ impl BladeRenderer {
 
                         #[cfg(target_os = "macos")]
                         {
+                            let image_buffer = surface
+                                .pixel_buffer
+                                .as_any()
+                                .downcast_ref::<core_video::pixel_buffer::CVPixelBuffer>()
+                                .expect("macOS Blade renderer requires CVPixelBuffer");
+
                             let (t_y, t_cb_cr) = unsafe {
                                 use core_foundation::base::TCFType as _;
                                 use std::ptr;
 
                                 assert_eq!(
-                                        surface.image_buffer.get_pixel_format(),
+                                        image_buffer.get_pixel_format(),
                                         core_video::pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                                     );
 
                                 let y_texture = self
                                     .core_video_texture_cache
                                     .create_texture_from_image(
-                                        surface.image_buffer.as_concrete_TypeRef(),
+                                        image_buffer.as_concrete_TypeRef(),
                                         ptr::null(),
                                         metal::MTLPixelFormat::R8Unorm,
-                                        surface.image_buffer.get_width_of_plane(0),
-                                        surface.image_buffer.get_height_of_plane(0),
+                                        image_buffer.get_width_of_plane(0),
+                                        image_buffer.get_height_of_plane(0),
                                         0,
                                     )
                                     .unwrap();
                                 let cb_cr_texture = self
                                     .core_video_texture_cache
                                     .create_texture_from_image(
-                                        surface.image_buffer.as_concrete_TypeRef(),
+                                        image_buffer.as_concrete_TypeRef(),
                                         ptr::null(),
                                         metal::MTLPixelFormat::RG8Unorm,
-                                        surface.image_buffer.get_width_of_plane(1),
-                                        surface.image_buffer.get_height_of_plane(1),
+                                        image_buffer.get_width_of_plane(1),
+                                        image_buffer.get_height_of_plane(1),
                                         1,
                                     )
                                     .unwrap();
