@@ -440,17 +440,29 @@ mod tests {
                     always_allow: self
                         .allow
                         .iter()
-                        .filter_map(|(p, cs)| CompiledRegex::new(p, *cs))
+                        .map(|(p, cs)| {
+                            CompiledRegex::new(p, *cs).unwrap_or_else(|| {
+                                panic!("invalid always_allow regex in test: {p:?}")
+                            })
+                        })
                         .collect(),
                     always_deny: self
                         .deny
                         .iter()
-                        .filter_map(|(p, cs)| CompiledRegex::new(p, *cs))
+                        .map(|(p, cs)| {
+                            CompiledRegex::new(p, *cs).unwrap_or_else(|| {
+                                panic!("invalid always_deny regex in test: {p:?}")
+                            })
+                        })
                         .collect(),
                     always_confirm: self
                         .confirm
                         .iter()
-                        .filter_map(|(p, cs)| CompiledRegex::new(p, *cs))
+                        .map(|(p, cs)| {
+                            CompiledRegex::new(p, *cs).unwrap_or_else(|| {
+                                panic!("invalid always_confirm regex in test: {p:?}")
+                            })
+                        })
                         .collect(),
                     invalid_patterns: vec![],
                 },
