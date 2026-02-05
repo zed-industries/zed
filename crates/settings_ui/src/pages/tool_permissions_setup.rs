@@ -30,6 +30,12 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the path being deleted.",
     },
     ToolInfo {
+        id: "copy_path",
+        name: "Copy Path",
+        description: "File and directory copying",
+        regex_explanation: "Patterns are matched against both the source and destination paths.",
+    },
+    ToolInfo {
         id: "move_path",
         name: "Move Path",
         description: "File and directory moves/renames",
