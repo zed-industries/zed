@@ -571,7 +571,7 @@ pub struct ToolRulesContent {
 
     /// Regexes for inputs to auto-approve.
     /// For terminal: matches command. For file tools: matches path. For fetch: matches URL.
-    /// For `copy_path` and `move_path`: matches against `source_path -> destination_path`.
+    /// For `copy_path` and `move_path`: matched independently against the source and destination paths.
     /// Patterns accumulate across settings layers (user, project, profile) and cannot be
     /// removed by a higher-priority layer—only new patterns can be added.
     /// Default: []
@@ -579,7 +579,7 @@ pub struct ToolRulesContent {
 
     /// Regexes for inputs to auto-reject.
     /// **SECURITY**: These take precedence over ALL other rules, across ALL settings layers.
-    /// For `copy_path` and `move_path`: matches against `source_path -> destination_path`.
+    /// For `copy_path` and `move_path`: matched independently against the source and destination paths.
     /// Patterns accumulate across settings layers (user, project, profile) and cannot be
     /// removed by a higher-priority layer—only new patterns can be added.
     /// Default: []
@@ -587,7 +587,7 @@ pub struct ToolRulesContent {
 
     /// Regexes for inputs that must always prompt.
     /// Takes precedence over always_allow but not always_deny.
-    /// For `copy_path` and `move_path`: matches against `source_path -> destination_path`.
+    /// For `copy_path` and `move_path`: matched independently against the source and destination paths.
     /// Patterns accumulate across settings layers (user, project, profile) and cannot be
     /// removed by a higher-priority layer—only new patterns can be added.
     /// Default: []
