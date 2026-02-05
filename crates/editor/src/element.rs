@@ -9577,25 +9577,13 @@ impl Element for EditorElement {
                         );
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
 
-                        if let Some(update) = editor.scroll_manager.update_animation() {
+                        if let Some(animation) = editor.scroll_manager.update_animation() {
                             use crate::scroll::ScrollAnimationPhase;
 
-                            let snapshot =
-                                editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+                            editor.set_scroll_position(animation.position, window, cx);
 
-                            match update.phase {
-                                ScrollAnimationPhase::Intermediate => {
-                                    editor.scroll_manager.set_scroll_position_visual(
-                                        update.position,
-                                        &snapshot,
-                                        cx,
-                                    );
-
-                                    window.request_animation_frame();
-                                }
-                                ScrollAnimationPhase::Final => {
-                                    editor.set_scroll_position(update.position, window, cx);
-                                }
+                            if animation.phase == ScrollAnimationPhase::Intermediate {
+                                window.request_animation_frame();
                             }
                         }
 

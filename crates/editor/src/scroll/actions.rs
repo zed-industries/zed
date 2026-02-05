@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, EditorSettings, NextScreen, NextScrollCursorCenterTopBottom,
@@ -31,23 +33,23 @@ impl Editor {
         scroll_position: Point<ScrollOffset>,
         axis: Option<Axis>,
         behavior: ScrollBehavior,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let smooth_scroll = EditorSettings::get_global(cx).smooth_scroll;
         let current_position = self.scroll_position(cx);
         self.scroll_manager.update_ongoing_scroll(axis);
 
-        match behavior {
+        let duration = match behavior {
             ScrollBehavior::RequestAnimation if smooth_scroll.enabled => {
-                self.scroll_manager
-                    .start_animation(current_position, scroll_position);
-                cx.notify();
+                Duration::from_secs_f32(smooth_scroll.duration)
             }
-            _ => {
-                self.set_scroll_position(scroll_position, window, cx);
-            }
-        }
+            _ => Duration::ZERO,
+        };
+
+        self.scroll_manager
+            .scroll_to(current_position, scroll_position, duration);
+        cx.notify();
     }
 
     pub fn scroll_cursor_center_top_bottom(
