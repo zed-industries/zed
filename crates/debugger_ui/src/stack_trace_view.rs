@@ -439,8 +439,8 @@ impl Item for StackTraceView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(cx)
     }
 
     fn added_to_workspace(
