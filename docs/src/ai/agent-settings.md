@@ -172,12 +172,8 @@ For granular control over individual tool actions, you can configure regex-based
       "tools": {
         "terminal": {
           "default": "confirm",
-          "always_allow": [
-            { "pattern": "^cargo\\s+(build|test)" }
-          ],
-          "always_deny": [
-            { "pattern": "rm\\s+-rf\\s+" }
-          ]
+          "always_allow": [{ "pattern": "^cargo\\s+(build|test)" }],
+          "always_deny": [{ "pattern": "rm\\s+-rf\\s+" }]
         }
       }
     }

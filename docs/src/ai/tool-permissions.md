@@ -18,9 +18,7 @@ You can use Zed's Settings UI to configure tool permissions, or add rules direct
             { "pattern": "^cargo\\s+(build|test|check)" },
             { "pattern": "^npm\\s+(install|test|run)" }
           ],
-          "always_confirm": [
-            { "pattern": "sudo\\s+/" }
-          ]
+          "always_confirm": [{ "pattern": "sudo\\s+/" }]
         }
       }
     }
@@ -40,17 +38,17 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 
 ## Supported Tools
 
-| Tool | Input Matched Against |
-| --- | --- |
-| `terminal` | The shell command string |
-| `edit_file` | The file path |
-| `delete_path` | The path being deleted |
-| `move_path` | Source and destination paths |
-| `copy_path` | Source and destination paths |
-| `create_directory` | The directory path |
-| `save_file` | The file paths |
-| `fetch` | The URL |
-| `web_search` | The search query |
+| Tool               | Input Matched Against        |
+| ------------------ | ---------------------------- |
+| `terminal`         | The shell command string     |
+| `edit_file`        | The file path                |
+| `delete_path`      | The path being deleted       |
+| `move_path`        | Source and destination paths |
+| `copy_path`        | Source and destination paths |
+| `create_directory` | The directory path           |
+| `save_file`        | The file paths               |
+| `fetch`            | The URL                      |
+| `web_search`       | The search query             |
 
 For MCP tools, use the format `mcp:<server>:<tool_name>`. For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
 
@@ -76,11 +74,11 @@ For MCP tools, use the format `mcp:<server>:<tool_name>`. For example, a tool ca
 
 ### Options
 
-| Option | Description |
-| --- | --- |
-| `default` | Fallback when no patterns match: `"confirm"` (default), `"allow"`, or `"deny"` |
-| `always_allow` | Patterns that auto-approve (unless deny or confirm also matches) |
-| `always_deny` | Patterns that block immediately—highest priority, cannot be overridden |
+| Option           | Description                                                                    |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `default`        | Fallback when no patterns match: `"confirm"` (default), `"allow"`, or `"deny"` |
+| `always_allow`   | Patterns that auto-approve (unless deny or confirm also matches)               |
+| `always_deny`    | Patterns that block immediately—highest priority, cannot be overridden         |
 | `always_confirm` | Patterns that always prompt, even when `tool_permissions.default` is `"allow"` |
 
 ### Pattern Syntax
@@ -198,9 +196,7 @@ From highest to lowest priority:
             { "pattern": "docs\\.rs" },
             { "pattern": "github\\.com" }
           ],
-          "always_deny": [
-            { "pattern": "internal\\.company\\.com" }
-          ]
+          "always_deny": [{ "pattern": "internal\\.company\\.com" }]
         }
       }
     }
