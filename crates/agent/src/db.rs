@@ -26,6 +26,7 @@ pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbThreadMetadata {
     pub id: acp::SessionId,
+    pub parent_session_id: Option<acp::SessionId>,
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
@@ -357,6 +358,13 @@ impl ThreadsDatabase {
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN parent_id TEXT
+        "})
+        {
+            s().ok();
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -368,6 +376,7 @@ impl ThreadsDatabase {
     fn save_thread_sync(
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
+        parent_id: Option<acp::SessionId>,
         thread: DbThread,
     ) -> Result<()> {
         const COMPRESSION_LEVEL: i32 = 3;
@@ -392,11 +401,18 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, String, String, DataType, Vec<u8>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, parent_id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, title, updated_at, data_type, data))?;
+        insert((
+            id.0,
+            parent_id.map(|id| id.0),
+            title,
+            updated_at,
+            data_type,
+            data,
+        ))?;
 
         Ok(())
     }
@@ -407,17 +423,18 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let connection = connection.lock();
 
-            let mut select =
-                connection.select_bound::<(), (Arc<str>, String, String)>(indoc! {"
-                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
+            let mut select = connection
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, String, String)>(indoc! {"
+                SELECT id, parent_id, summary, updated_at FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, summary, updated_at) in rows {
+            for (id, parent_id, summary, updated_at) in rows {
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
+                    parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 });
@@ -453,11 +470,16 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
+    pub fn save_thread(
+        &self,
+        id: acp::SessionId,
+        parent_id: Option<acp::SessionId>,
+        thread: DbThread,
+    ) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
+            .spawn(async move { Self::save_thread_sync(&connection, id, parent_id, thread) })
     }
 
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {

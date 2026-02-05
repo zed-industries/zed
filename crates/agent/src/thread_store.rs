@@ -77,13 +77,14 @@ impl ThreadStore {
     pub fn save_thread(
         &mut self,
         id: acp::SessionId,
+        parent_id: Option<acp::SessionId>,
         thread: crate::DbThread,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(id, thread).await?;
+            database.save_thread(id, parent_id, thread).await?;
             this.update(cx, |this, cx| this.reload(cx))
         })
     }
@@ -114,7 +115,12 @@ impl ThreadStore {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let threads = database.list_threads().await?;
+            let threads = database
+                .list_threads()
+                .await?
+                .into_iter()
+                .filter(|thread| thread.parent_session_id.is_none())
+                .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
                 this.threads = threads;
                 cx.notify();

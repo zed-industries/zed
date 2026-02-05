@@ -2452,6 +2452,12 @@ impl Thread {
         self.subagent_context.is_some()
     }
 
+    pub fn parent_thread_id(&self) -> Option<acp::SessionId> {
+        self.subagent_context
+            .as_ref()
+            .map(|c| c.parent_thread_id.clone())
+    }
+
     pub fn depth(&self) -> u8 {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }

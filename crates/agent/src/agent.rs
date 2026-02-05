@@ -848,12 +848,16 @@ impl NativeAgent {
             return;
         };
         let thread_store = self.thread_store.clone();
+        let parent_id = thread.read(cx).parent_thread_id();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return;
             };
             let db_thread = db_thread.await;
-            database.save_thread(id, db_thread).await.log_err();
+            database
+                .save_thread(id, parent_id, db_thread)
+                .await
+                .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
         });
     }
