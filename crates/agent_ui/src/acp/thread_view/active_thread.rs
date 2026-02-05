@@ -2350,7 +2350,7 @@ impl AcpThreadView {
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
                             .child(self.render_follow_toggle(cx))
-                            .children(self.render_thinking_toggle(cx)),
+                            .children(self.render_thinking_control(cx)),
                     )
                     .child(
                         h_flex()
@@ -2694,7 +2694,7 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> Option<SplitButton> {
+    fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<SplitButton> {
         if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
             return None;
         }
