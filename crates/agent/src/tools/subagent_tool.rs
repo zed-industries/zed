@@ -1,30 +1,12 @@
-use acp_thread::{AcpThread, AgentConnection, UserMessageId};
-use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use collections::{BTreeMap, HashSet};
-use futures::{FutureExt, channel::mpsc};
-use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task, WeakEntity};
-use project::Project;
+use gpui::{App, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use smol::stream::StreamExt;
-use std::any::Any;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
-use util::ResultExt;
-use watch;
 
-use crate::{
-    AgentTool, AnyAgentTool, MAX_PARALLEL_SUBAGENTS, MAX_SUBAGENT_DEPTH, SubagentContext, Thread,
-    ThreadEnvironment, ThreadEvent, ToolCallAuthorization, ToolCallEventStream,
-};
-
-/// When a subagent's remaining context window falls below this fraction (25%),
-/// the "context running out" prompt is sent to encourage the subagent to wrap up.
-const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
+use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 
 /// Spawns a subagent with its own context window to perform a delegated task.
 ///
@@ -129,7 +111,7 @@ impl AgentTool for SubagentTool {
     type Output = String;
 
     fn name() -> &'static str {
-        acp_thread::SUBAGENT_TOOL_NAME
+        "subagent"
     }
 
     fn kind() -> acp::ToolKind {
@@ -149,7 +131,7 @@ impl AgentTool for SubagentTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
         if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
@@ -171,6 +153,12 @@ impl AgentTool for SubagentTool {
             Ok(subagent) => subagent,
             Err(err) => return Task::ready(Err(err)),
         };
+
+        let subagent_session = subagent.id();
+        let mut meta = acp::Meta::new();
+        meta.insert("subagent".into(), subagent_session.0.to_string().into());
+
+        event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
         // event_stream.update_subagent_thread(acp_thread.clone());
 
@@ -230,45 +218,5 @@ mod tests {
     #[test]
     fn test_subagent_tool_kind() {
         assert_eq!(SubagentTool::kind(), acp::ToolKind::Other);
-    }
-}
-
-struct SubagentDisplayConnection;
-
-impl AgentConnection for SubagentDisplayConnection {
-    fn telemetry_id(&self) -> SharedString {
-        "subagent".into()
-    }
-
-    fn auth_methods(&self) -> &[acp::AuthMethod] {
-        &[]
-    }
-
-    fn new_thread(
-        self: Rc<Self>,
-        _project: Entity<Project>,
-        _cwd: &Path,
-        _cx: &mut App,
-    ) -> Task<Result<Entity<AcpThread>>> {
-        unimplemented!("SubagentDisplayConnection does not support new_thread")
-    }
-
-    fn authenticate(&self, _method_id: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
-        unimplemented!("SubagentDisplayConnection does not support authenticate")
-    }
-
-    fn prompt(
-        &self,
-        _id: Option<UserMessageId>,
-        _params: acp::PromptRequest,
-        _cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
-        unimplemented!("SubagentDisplayConnection does not support prompt")
-    }
-
-    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
-
-    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-        self
     }
 }

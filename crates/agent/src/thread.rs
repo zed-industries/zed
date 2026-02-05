@@ -579,7 +579,7 @@ pub trait TerminalHandle {
 }
 
 pub trait SubagentHandle {
-    fn id(&self, cx: &AsyncApp) -> acp::SessionId;
+    fn id(&self) -> acp::SessionId;
     fn wait_for_summary(
         &self,
         summary_prompt: String,
@@ -1060,6 +1060,7 @@ impl Thread {
                         }),
                 )
                 .raw_output(output),
+            None,
         );
     }
 
@@ -1286,12 +1287,12 @@ impl Thread {
         ));
         self.add_tool(SaveFileTool::new(self.project.clone()));
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SubagentTool::new(cx.weak_entity()));
+            self.add_tool(SubagentTool::new(cx.weak_entity(), environment));
         }
     }
 
@@ -1736,6 +1737,7 @@ impl Thread {
                             acp::ToolCallStatus::Completed
                         })
                         .raw_output(tool_result.output.clone()),
+                    None,
                 );
                 this.update(cx, |this, _cx| {
                     this.pending_message()
@@ -2006,6 +2008,7 @@ impl Thread {
                     .title(title.as_str())
                     .kind(kind)
                     .raw_input(tool_use.input.clone()),
+                None,
             );
         }
 
@@ -2902,10 +2905,13 @@ impl ThreadEventStream {
         &self,
         tool_use_id: &LanguageModelToolUseId,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
     ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields).into(),
+                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields)
+                    .meta(meta)
+                    .into(),
             )))
             .ok();
     }
@@ -3013,7 +3019,16 @@ impl ToolCallEventStream {
 
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
         self.stream
-            .update_tool_call_fields(&self.tool_use_id, fields);
+            .update_tool_call_fields(&self.tool_use_id, fields, None);
+    }
+
+    pub fn update_fields_with_meta(
+        &self,
+        fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
+    ) {
+        self.stream
+            .update_tool_call_fields(&self.tool_use_id, fields, meta);
     }
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {

@@ -1660,6 +1660,8 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             thread
         });
 
+        let session_id = subagent_thread.read(cx).id().clone();
+
         let acp_thread = agent.update(cx, |agent, cx| {
             agent.register_session(subagent_thread.clone(), cx)
         })?;
@@ -1709,6 +1711,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             .shared();
 
         Ok(Rc::new(NativeSubagentHandle {
+            session_id,
             thread: subagent_thread,
             wait_for_prompt_to_complete,
             user_cancelled,
@@ -1723,14 +1726,15 @@ enum SubagentInitialPromptResult {
 }
 
 pub struct NativeSubagentHandle {
+    session_id: acp::SessionId,
     thread: Entity<Thread>,
     wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
     user_cancelled: Shared<Task<()>>,
 }
 
 impl SubagentHandle for NativeSubagentHandle {
-    fn id(&self, cx: &AsyncApp) -> acp::SessionId {
-        self.thread.read_with(cx, |thread, _cx| thread.id().clone())
+    fn id(&self) -> acp::SessionId {
+        self.session_id.clone()
     }
 
     fn wait_for_summary(
@@ -1756,7 +1760,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 timed_out || check_context_low(&thread, CONTEXT_LOW_THRESHOLD, cx);
 
             if should_interrupt {
-                thread.update(cx, |thread, cx| thread.cancel(cx));
+                thread.update(cx, |thread, cx| thread.cancel(cx).detach());
                 let mut events_rx = thread.update(cx, |thread, cx| {
                     thread.submit_user_message(context_low_prompt, cx)
                 })?;

@@ -9,8 +9,8 @@ use agent_settings::AgentSettings;
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
 
-/// The tool name for subagent spawning
-pub const SUBAGENT_TOOL_NAME: &str = "subagent";
+/// Key used in ACP ToolCall meta to store the session id when a subagent is spawned.
+pub const SUBAGENT_SESSION_ID_META_KEY: &str = "subagent_session_id";
 
 /// Helper to extract tool name from ACP meta
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
@@ -18,6 +18,14 @@ pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
         .and_then(|m| m.get(TOOL_NAME_META_KEY))
         .and_then(|v| v.as_str())
         .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to extract subagent session id from ACP meta
+pub fn subagent_session_id_from_meta(meta: &Option<acp::Meta>) -> Option<acp::SessionId> {
+    meta.as_ref()
+        .and_then(|m| m.get(SUBAGENT_SESSION_ID_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| acp::SessionId::from(s.to_string()))
 }
 
 /// Helper to create meta with tool name
@@ -216,6 +224,7 @@ pub struct ToolCall {
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
+    pub subagent_session: Option<acp::SessionId>,
 }
 
 impl ToolCall {
@@ -254,6 +263,8 @@ impl ToolCall {
 
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
+        let subagent_session = subagent_session_id_from_meta(&tool_call.meta);
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -267,6 +278,7 @@ impl ToolCall {
             raw_input_markdown,
             raw_output: tool_call.raw_output,
             tool_name,
+            subagent_session,
         };
         Ok(result)
     }
@@ -274,6 +286,7 @@ impl ToolCall {
     fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
@@ -297,6 +310,8 @@ impl ToolCall {
         if let Some(status) = status {
             self.status = status.into();
         }
+
+        self.subagent_session = subagent_session_id_from_meta(&meta);
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
@@ -387,12 +402,7 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        matches!(self.kind, acp::ToolKind::Other)
-            && self
-                .tool_name
-                .as_ref()
-                .map(|n| n.as_ref() == SUBAGENT_TOOL_NAME)
-                .unwrap_or(false)
+        self.subagent_session.is_some()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -1518,6 +1528,7 @@ impl AcpThread {
                     raw_input_markdown: None,
                     raw_output: None,
                     tool_name: None,
+                    subagent_session: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1530,7 +1541,14 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(update.fields, languages, path_style, &self.terminals, cx)?;
+                call.update_fields(
+                    update.fields,
+                    update.meta,
+                    languages,
+                    path_style,
+                    &self.terminals,
+                    cx,
+                )?;
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
@@ -1605,6 +1623,7 @@ impl AcpThread {
 
             call.update_fields(
                 update.fields,
+                update.meta,
                 language_registry,
                 path_style,
                 &self.terminals,
