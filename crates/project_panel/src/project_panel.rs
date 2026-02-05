@@ -1375,7 +1375,7 @@ impl ProjectPanel {
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
-        let multiple_worktrees = self.project.read(cx).worktrees(cx).count() > 1;
+        let multiple_worktrees = self.project.read(cx).visible_worktrees(cx).count() > 1;
         let project = self.project.read(cx);
 
         self.state
