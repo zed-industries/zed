@@ -21,8 +21,6 @@ mod thinking_tool;
 mod web_search_tool;
 
 use crate::AgentTool;
-use feature_flags::{FeatureFlagAppExt, SubagentsFeatureFlag};
-use gpui::App;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 
 pub use context_server_registry::*;
@@ -54,27 +52,14 @@ macro_rules! tools {
             $(<$tool>::NAME,)*
         ];
 
-        /// A list of all built-in tool names
-        pub fn supported_built_in_tool_names(provider: Option<language_model::LanguageModelProviderId>, cx: &App) -> Vec<String> {
-            let mut tools: Vec<String> = [
-                $(
-                    (if let Some(provider) = provider.as_ref() {
-                        <$tool>::supports_provider(provider)
-                    } else {
-                        true
-                    })
-                    .then(|| <$tool>::NAME.to_string()),
-                )*
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-
-            if !cx.has_flag::<SubagentsFeatureFlag>() {
-                tools.retain(|name| name != SubagentTool::NAME);
-            }
-
-            tools
+        /// Returns whether the tool with the given name supports the given provider.
+        pub fn tool_supports_provider(name: &str, provider: &language_model::LanguageModelProviderId) -> bool {
+            $(
+                if name == <$tool>::NAME {
+                    return <$tool>::supports_provider(provider);
+                }
+            )*
+            false
         }
 
         /// A list of all built-in tools
