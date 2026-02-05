@@ -523,6 +523,7 @@ impl SplittableEditor {
             convert_lhs_rows_to_rhs,
         );
 
+        // stream this
         for (path, diff) in path_diffs {
             for (lhs, rhs) in
                 lhs.update_path_excerpts_from_rhs(path, &self.rhs_multibuffer, diff.clone(), cx)

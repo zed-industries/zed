@@ -441,6 +441,15 @@ impl DisplayMap {
             return;
         };
 
+        // Second call to set_companion doesn't need to do anything
+        if companion_display_map
+            .update(cx, |companion_dm, _| companion_dm.companion.is_none())
+            .unwrap_or(true)
+        {
+            self.companion = Some((companion_display_map, companion));
+            return;
+        }
+
         let rhs_display_map_id = companion.read(cx).rhs_display_map_id;
         if self.entity_id != rhs_display_map_id {
             let buffer_mapping = companion

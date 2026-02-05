@@ -30,7 +30,7 @@ pub struct BufferDiff {
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner<language::BufferSnapshot>,
-    secondary_diff: Option<Box<BufferDiffSnapshot>>,
+    secondary_diff: Option<Arc<BufferDiffSnapshot>>,
 }
 
 impl std::fmt::Debug for BufferDiffSnapshot {
@@ -1785,10 +1785,10 @@ impl BufferDiff {
                 base_text_exists: self.inner.base_text_exists,
                 buffer_snapshot: self.inner.buffer_snapshot.clone(),
             },
-            secondary_diff: self
-                .secondary_diff
-                .as_ref()
-                .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
+            secondary_diff: self.secondary_diff.as_ref().map(|diff| {
+                debug_assert!(diff.read(cx).secondary_diff.is_none());
+                Arc::new(diff.read(cx).snapshot(cx))
+            }),
         }
     }
 
@@ -2103,7 +2103,7 @@ mod tests {
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let unstaged_diff = BufferDiffSnapshot::new_sync(&buffer, index_text, cx);
         let mut uncommitted_diff = BufferDiffSnapshot::new_sync(&buffer, head_text.clone(), cx);
-        uncommitted_diff.secondary_diff = Some(Box::new(unstaged_diff));
+        uncommitted_diff.secondary_diff = Some(Arc::new(unstaged_diff));
 
         let expected_hunks = vec![
             (2..3, "two\n", "TWO\n", DiffHunkStatus::modified_none()),

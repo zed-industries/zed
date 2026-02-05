@@ -678,7 +678,7 @@ impl std::hash::Hash for DiffTransformHunkInfo {
 #[derive(Clone)]
 pub struct ExcerptInfo {
     pub id: ExcerptId,
-    pub buffer: BufferSnapshot,
+    pub buffer: Arc<BufferSnapshot>,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
     pub end_row: MultiBufferRow,
@@ -739,7 +739,7 @@ struct Excerpt {
     /// The buffer being excerpted
     buffer_id: BufferId,
     /// A snapshot of the buffer being excerpted
-    buffer: BufferSnapshot,
+    buffer: Arc<BufferSnapshot>,
     /// The range of the buffer to be shown in the excerpt
     range: ExcerptRange<text::Anchor>,
     /// The last row in the excerpted slice of the buffer
@@ -1849,6 +1849,7 @@ impl MultiBuffer {
         };
 
         let mut excerpts = Vec::new();
+        let buffer_snapshot = Arc::new(buffer_snapshot);
         while let Some((id, range)) = ranges.next() {
             let locator = Locator::between(&prev_locator, &next_locator);
             if let Err(ix) = buffer_state.excerpts.binary_search(&locator) {
@@ -3105,13 +3106,13 @@ impl MultiBuffer {
                     old_excerpt.id,
                     locator.clone(),
                     buffer_id,
-                    buffer.snapshot(),
+                    Arc::new(buffer.snapshot()),
                     old_excerpt.range.clone(),
                     old_excerpt.has_trailing_newline,
                 );
             } else {
                 new_excerpt = old_excerpt.clone();
-                new_excerpt.buffer = buffer.snapshot();
+                new_excerpt.buffer = Arc::new(buffer.snapshot());
             }
 
             new_excerpts.push(new_excerpt, ());
@@ -4479,7 +4480,7 @@ impl MultiBufferSnapshot {
             self.excerpts
                 .iter()
                 .next()
-                .map(|e| (&e.id, e.buffer_id, &e.buffer))
+                .map(|e| (&e.id, e.buffer_id, &*e.buffer))
         } else {
             None
         }
@@ -5701,7 +5702,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<text::Anchor>)> {
         self.excerpts
             .iter()
-            .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
+            .map(|excerpt| (excerpt.id, &*excerpt.buffer, excerpt.range.clone()))
     }
 
     fn cursor<'a, MBD, BD>(&'a self) -> MultiBufferCursor<'a, MBD, BD>
@@ -5780,14 +5781,14 @@ impl MultiBufferSnapshot {
         });
 
         if cursor
-            .region()
-            .is_some_and(|region| bounds.contains(&region.range.start.key))
+            .fetch_region2()
+            .is_some_and(|(_, range)| bounds.contains(&range.start.key))
         {
             cursor.prev_excerpt();
         } else {
             cursor.seek_to_start_of_current_excerpt();
         }
-        let mut prev_region = cursor.region().cloned();
+        let mut prev_region = cursor.fetch_region2().map(|(excerpt, _)| excerpt);
 
         cursor.next_excerpt();
 
@@ -5797,34 +5798,34 @@ impl MultiBufferSnapshot {
                     return None;
                 }
 
-                let next_region = cursor.region()?.clone();
+                let (next_excerpt, next_range) = cursor.fetch_region2()?;
                 cursor.next_excerpt();
-                if !bounds.contains(&next_region.range.start.key) {
-                    prev_region = Some(next_region);
+                if !bounds.contains(&next_range.start.key) {
+                    prev_region = Some(next_excerpt);
                     continue;
                 }
 
-                let next_region_start = next_region.range.start.value.unwrap();
-                let next_region_end = if let Some(region) = cursor.region() {
-                    region.range.start.value.unwrap()
+                let next_region_start = next_range.start.value.unwrap();
+                let next_region_end = if let Some((_, range)) = cursor.fetch_region2() {
+                    range.start.value.unwrap()
                 } else {
                     self.max_point()
                 };
 
                 let prev = prev_region.as_ref().map(|region| ExcerptInfo {
-                    id: region.excerpt.id,
-                    buffer: region.excerpt.buffer.clone(),
-                    buffer_id: region.excerpt.buffer_id,
-                    range: region.excerpt.range.clone(),
+                    id: region.id,
+                    buffer: region.buffer.clone(),
+                    buffer_id: region.buffer_id,
+                    range: region.range.clone(),
                     end_row: MultiBufferRow(next_region_start.row),
                 });
 
                 let next = ExcerptInfo {
-                    id: next_region.excerpt.id,
-                    buffer: next_region.excerpt.buffer.clone(),
-                    buffer_id: next_region.excerpt.buffer_id,
-                    range: next_region.excerpt.range.clone(),
-                    end_row: if next_region.excerpt.has_trailing_newline {
+                    id: next_excerpt.id,
+                    buffer: next_excerpt.buffer.clone(),
+                    buffer_id: next_excerpt.buffer_id,
+                    range: next_excerpt.range.clone(),
+                    end_row: if next_excerpt.has_trailing_newline {
                         MultiBufferRow(next_region_end.row - 1)
                     } else {
                         MultiBufferRow(next_region_end.row)
@@ -5833,7 +5834,7 @@ impl MultiBufferSnapshot {
 
                 let row = MultiBufferRow(next_region_start.row);
 
-                prev_region = Some(next_region);
+                prev_region = Some(next_excerpt);
 
                 return Some(ExcerptBoundary { row, prev, next });
             }
@@ -6050,7 +6051,7 @@ impl MultiBufferSnapshot {
             cursor.next();
             Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region_row + (buffer_row - region_buffer_row);
-                (MultiBufferRow(row), indent, region_buffer)
+                (MultiBufferRow(row), indent, region_buffer.as_ref())
             }))
         })
         .flatten()
@@ -6094,7 +6095,7 @@ impl MultiBufferSnapshot {
             cursor.prev();
             Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region_row + (buffer_row - region_buffer_row);
-                (MultiBufferRow(row), indent, region_buffer)
+                (MultiBufferRow(row), indent, region_buffer.as_ref())
             }))
         })
         .flatten()
@@ -7031,8 +7032,8 @@ where
 
     fn seek_to_start_of_current_excerpt(&mut self) {
         self.cached_region.take();
-        self.diff_transforms.seek(self.excerpts.start(), Bias::Left);
-        if self.diff_transforms.end().excerpt_dimension == *self.excerpts.start()
+
+        if self.diff_transforms.seek(self.excerpts.start(), Bias::Left)
             && self.diff_transforms.start().excerpt_dimension < *self.excerpts.start()
             && self.diff_transforms.next_item().is_some()
         {
@@ -7193,10 +7194,10 @@ where
                 let mut end;
                 let mut buffer_end;
                 let has_trailing_newline;
-                if self.diff_transforms.end().excerpt_dimension < self.excerpts.end() {
-                    let overshoot =
-                        self.diff_transforms.end().excerpt_dimension - *self.excerpts.start();
-                    end = self.diff_transforms.end().output_dimension.0;
+                let transform_end = self.diff_transforms.end();
+                if transform_end.excerpt_dimension < self.excerpts.end() {
+                    let overshoot = transform_end.excerpt_dimension - *self.excerpts.start();
+                    end = transform_end.output_dimension.0;
                     buffer_end = buffer_context_start;
                     buffer_end += overshoot;
                     has_trailing_newline = false;
@@ -7230,6 +7231,38 @@ where
         }
     }
 
+    fn fetch_region2(&self) -> Option<(&'a Excerpt, Range<MBD>)> {
+        let excerpt = self.excerpts.item()?;
+        match self.diff_transforms.item()? {
+            &DiffTransform::DeletedHunk { .. } => {
+                let start = self.diff_transforms.start().output_dimension.0;
+                let end = self.diff_transforms.end().output_dimension.0;
+                Some((excerpt, start..end))
+            }
+            DiffTransform::BufferContent { .. } => {
+                let mut start = self.diff_transforms.start().output_dimension.0;
+                if self.diff_transforms.start().excerpt_dimension < *self.excerpts.start() {
+                    let overshoot =
+                        *self.excerpts.start() - self.diff_transforms.start().excerpt_dimension;
+                    start += overshoot;
+                }
+
+                let mut end;
+                let transform_end = self.diff_transforms.end();
+                if transform_end.excerpt_dimension < self.excerpts.end() {
+                    end = transform_end.output_dimension.0;
+                } else {
+                    let overshoot =
+                        self.excerpts.end() - self.diff_transforms.start().excerpt_dimension;
+                    end = self.diff_transforms.start().output_dimension.0;
+                    end += overshoot;
+                };
+
+                Some((excerpt, start..end))
+            }
+        }
+    }
+
     fn excerpt(&self) -> Option<&'a Excerpt> {
         self.excerpts.item()
     }
@@ -7240,7 +7273,7 @@ impl Excerpt {
         id: ExcerptId,
         locator: Locator,
         buffer_id: BufferId,
-        buffer: BufferSnapshot,
+        buffer: Arc<BufferSnapshot>,
         range: ExcerptRange<text::Anchor>,
         has_trailing_newline: bool,
     ) -> Self {
