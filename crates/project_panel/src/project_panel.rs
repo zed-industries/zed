@@ -23,10 +23,10 @@ use gpui::{
     CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
     ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
-    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
-    anchored, deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size,
-    transparent_white, uniform_list,
+    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
+    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
+    point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -58,10 +58,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuItem, DecoratedIcon, Divider, Icon, IconDecoration,
-    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
-    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
-    WithScrollbar, prelude::*, v_flex,
+    Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, Divider, Icon,
+    IconDecoration, IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
+    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
