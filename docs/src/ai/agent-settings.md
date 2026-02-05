@@ -267,6 +267,29 @@ For example, the following rule prevents copying or moving anything into a `secr
 }
 ```
 
+#### MCP and External Tool Permissions
+
+MCP tools can also have per-tool defaults using the key format `mcp:server_name:tool_name`:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "mcp:github:create_issue": {
+          "default": "allow"
+        },
+        "mcp:filesystem:write_file": {
+          "default": "deny"
+        }
+      }
+    }
+  }
+}
+```
+
+For MCP tools, only the `default` key is meaningful. Pattern-based rules (`always_allow`, `always_deny`, `always_confirm`) are evaluated against the tool call's title (which is set by the MCP server), not the raw tool input.
+
 ### Single-file Review
 
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
