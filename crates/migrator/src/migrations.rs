@@ -181,5 +181,5 @@ pub(crate) mod m_2026_02_03 {
 pub(crate) mod m_2026_02_04 {
     mod settings;
 
-    pub(crate) use settings::migrate_always_allow_tool_actions_to_default_mode;
+    pub(crate) use settings::migrate_tool_permission_defaults;
 }

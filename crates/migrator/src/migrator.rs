@@ -236,9 +236,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
         ),
         MigrationType::Json(migrations::m_2026_02_03::migrate_experimental_sweep_mercury),
-        MigrationType::Json(
-            migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
-        ),
+        MigrationType::Json(migrations::m_2026_02_04::migrate_tool_permission_defaults),
     ];
     run_migrations(text, migrations)
 }
@@ -2601,7 +2599,7 @@ mod tests {
         // Case 1: No agent settings - no change
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"{ }"#.unindent(),
             None,
@@ -2610,7 +2608,7 @@ mod tests {
         // Case 2: always_allow_tool_actions: true -> tool_permissions.default: "allow"
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2637,7 +2635,7 @@ mod tests {
         // Case 3: always_allow_tool_actions: false -> just remove it
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2656,7 +2654,7 @@ mod tests {
         // Case 4: Preserve existing tool_permissions.tools when migrating
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2695,7 +2693,7 @@ mod tests {
         // Case 5: Don't override existing default (and migrate default_mode to default)
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2725,7 +2723,7 @@ mod tests {
         // Case 6: Migrate existing default_mode to default (no always_allow_tool_actions)
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2754,7 +2752,7 @@ mod tests {
         // Case 7: No migration needed if already using new format with "default"
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2772,7 +2770,7 @@ mod tests {
         // Case 8: Migrate default_mode to default in tool-specific rules
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_02_04::migrate_always_allow_tool_actions_to_default_mode,
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
             &r#"
             {
@@ -2798,6 +2796,187 @@ mod tests {
                             "tools": {
                                 "terminal": {
                                     "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 9: Graceful fallback when tool_permissions is not an object (null)
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true,
+                    "tool_permissions": null
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": null
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 10: Platform-specific agent migration
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "agent": {
+                        "always_allow_tool_actions": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default": "allow"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 11: Channel-specific agent migration
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "always_allow_tool_actions": true
+                },
+                "nightly": {
+                    "agent": {
+                        "tool_permissions": {
+                            "default_mode": "confirm"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "default": "allow"
+                        }
+                    },
+                    "nightly": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default": "confirm"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 12: Profile-level migration
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "profiles": {
+                        "custom": {
+                            "always_allow_tool_actions": true,
+                            "tool_permissions": {
+                                "default_mode": "allow"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "profiles": {
+                            "custom": {
+                                "tool_permissions": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Case 13: Platform-specific agent with profiles
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_04::migrate_tool_permission_defaults,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "agent": {
+                        "always_allow_tool_actions": true,
+                        "profiles": {
+                            "strict": {
+                                "tool_permissions": {
+                                    "default_mode": "deny"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "agent": {
+                            "tool_permissions": {
+                                "default": "allow"
+                            },
+                            "profiles": {
+                                "strict": {
+                                    "tool_permissions": {
+                                        "default": "deny"
+                                    }
                                 }
                             }
                         }
