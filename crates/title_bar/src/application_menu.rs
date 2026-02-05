@@ -177,12 +177,12 @@ impl ApplicationMenu {
         let menu_name = entry.menu.name.clone();
         let entry = entry.clone();
 
-        let any_menu_deployed = self.entries.iter().any(|e| e.handle.is_deployed());
         let all_handles: Vec<_> = self
             .entries
             .iter()
             .map(|entry| entry.handle.clone())
             .collect();
+        let any_menu_deployed = all_handles.iter().any(|e| e.is_deployed());
 
         div()
             .id(format!("{}-menu-item", menu_name))
