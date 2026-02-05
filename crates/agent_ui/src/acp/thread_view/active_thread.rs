@@ -1,4 +1,4 @@
-use gpui::List;
+use gpui::{List, rgb};
 
 use super::*;
 
@@ -164,6 +164,7 @@ impl DiffStats {
 
 pub struct AcpThreadView {
     pub id: acp::SessionId,
+    pub parent_id: Option<acp::SessionId>, 
     pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
     pub server_view: WeakEntity<AcpServerView>,
@@ -245,6 +246,7 @@ pub struct TurnFields {
 
 impl AcpThreadView {
     pub fn new(
+        parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         login: Option<task::SpawnInTerminal>,
         server_view: WeakEntity<AcpServerView>,
@@ -334,6 +336,7 @@ impl AcpThreadView {
 
         Self {
             id,
+            parent_id,
             thread,
             login,
             server_view,
@@ -439,6 +442,10 @@ impl AcpThreadView {
             let mode_selector = self.mode_selector.as_ref()?;
             Some(mode_selector.read(cx).mode().0)
         }
+    }
+
+    fn is_subagent(&self) -> bool {
+        self.parent_id.is_some()
     }
 
     /// Returns the currently active editor, either for a message that is being
@@ -2274,11 +2281,37 @@ impl AcpThreadView {
             )
     }
 
+    pub(crate) fn maybe_render_go_to_parent_button(&mut self) -> AnyElement {
+        if !self.is_subagent() {
+            return div().into_any_element();
+        };
+
+        let server_view = self.server_view.clone();
+
+        h_flex()
+            .child("Go to parent")
+            .bg(rgb(0xFF0000))
+            .on_mouse_down(gpui::MouseButton::Left, move |_event, _window, cx| {
+                let _ = server_view.update(cx, |server_view, cx| {
+                    let Some(connected) = server_view.as_connected_mut() else {
+                        return;
+                    };
+
+                    connected.navigate_to_parent(cx);
+                });
+            })
+            .into_any_element()
+    }
+
     pub(crate) fn render_message_editor(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.is_subagent() {
+            return div().into_any_element();
+        }
+
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
@@ -5554,21 +5587,16 @@ impl AcpThreadView {
     ) -> Div {
         let tool_call_status = &tool_call.status;
 
-        let acp_thread_view = self
+        let Some(thread_view) = self
             .server_view
             .upgrade()
-            .unwrap()
-            .read(cx)
-            .as_connected()
-            .unwrap()
-            .threads
-            .get(&subagent_session_id);
-
-        let Some(acp_thread_view) = acp_thread_view else {
+            .and_then(|server_view| server_view.read(cx).as_connected())
+            .and_then(|connected| connected.threads.get(&subagent_session_id))
+        else {
             return div().child("Loading subagent...");
         };
 
-        let thread = acp_thread_view.read(cx).thread.clone();
+        let thread = thread_view.read(cx).thread.clone();
 
         v_flex()
             .mx_5()
@@ -5704,7 +5732,8 @@ impl AcpThreadView {
                                         this.server_view
                                             .update(cx, |this, cx| {
                                                 if let Some(connected) = this.as_connected_mut() {
-                                                    connected.navigate_to_session(&session_id);
+                                                    connected
+                                                        .navigate_to_subagent(session_id.clone());
                                                     cx.notify();
                                                 }
                                             })
@@ -6960,6 +6989,7 @@ impl Render for AcpThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
+            .child(self.maybe_render_go_to_parent_button())
             .child(self.render_message_editor(window, cx))
     }
 }

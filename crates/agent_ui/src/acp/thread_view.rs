@@ -246,9 +246,17 @@ impl ConnectedServerState {
         self.current.read(cx).thread_error.is_some()
     }
 
-    pub fn navigate_to_session(&mut self, session_id: &acp::SessionId) {
-        if let Some(session) = self.threads.get(session_id) {
+    pub fn navigate_to_subagent(&mut self, session_id: acp::SessionId) {
+        if let Some(session) = self.threads.get(&session_id) {
             self.current = session.clone();
+        }
+    }
+
+    pub fn navigate_to_parent(&mut self, cx: &mut App) {
+        if let Some(parent_id) = &self.current.read(cx).parent_id
+            && let Some(parent) = self.threads.get(parent_id)
+        {
+            self.current = parent.clone();
         }
     }
 }
@@ -469,6 +477,7 @@ impl AcpServerView {
                 match result {
                     Ok(thread) => {
                         let current = this.new_thread_view(
+                            None,
                             thread,
                             resumed_without_history,
                             resume_thread,
@@ -545,6 +554,7 @@ impl AcpServerView {
 
     fn new_thread_view(
         &self,
+        parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         resumed_without_history: bool,
         resume_thread: Option<AgentSessionInfo>,
@@ -687,6 +697,7 @@ impl AcpServerView {
         let weak = cx.weak_entity();
         cx.new(|cx| {
             AcpThreadView::new(
+                parent_id,
                 thread,
                 self.login.clone(),
                 weak,
@@ -953,9 +964,12 @@ impl AcpServerView {
                     list_state.splice(range.clone(), 0);
                 }
             }
-            AcpThreadEvent::SpawnedSubagent(session_id) => {
-                self.load_subagent_session(session_id.clone(), window, cx)
-            }
+            AcpThreadEvent::SpawnedSubagent(session_id) => self.load_subagent_session(
+                session_id.clone(),
+                thread.read(cx).session_id().clone(),
+                window,
+                cx,
+            ),
             AcpThreadEvent::ToolAuthorizationRequired => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
@@ -1383,7 +1397,8 @@ impl AcpServerView {
 
     fn load_subagent_session(
         &mut self,
-        session_id: acp::SessionId,
+        subagent_id: acp::SessionId,
+        parent_id: acp::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1391,7 +1406,7 @@ impl AcpServerView {
             return;
         };
         let subagent_thread_task = connected.connection.clone().load_session(
-            AgentSessionInfo::new(session_id.clone()),
+            AgentSessionInfo::new(subagent_id.clone()),
             self.project.clone(),
             Path::new("/"), //todo
             cx,
@@ -1400,11 +1415,19 @@ impl AcpServerView {
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let view = this.new_thread_view(subagent_thread, false, None, None, window, cx);
+                let view = this.new_thread_view(
+                    Some(parent_id),
+                    subagent_thread,
+                    false,
+                    None,
+                    None,
+                    window,
+                    cx,
+                );
                 let Some(connected) = this.as_connected_mut() else {
                     return;
                 };
-                connected.threads.insert(session_id, view);
+                connected.threads.insert(subagent_id, view);
             })
         })
         .detach(); //todo
