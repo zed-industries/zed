@@ -275,6 +275,8 @@ impl ShellKind {
     /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
     ///   have `&&`/`||` operators for conditional chaining.
     pub fn supports_posix_chaining(&self) -> bool {
+        // New variants should consciously decide whether brush-parser can handle
+        // their command chaining syntax before being added here.
         matches!(
             self,
             ShellKind::Posix
@@ -285,9 +287,6 @@ impl ShellKind {
                 | ShellKind::Xonsh
                 | ShellKind::Csh
                 | ShellKind::Tcsh
-                | ShellKind::Nushell
-                | ShellKind::Elvish
-                | ShellKind::Rc
         )
     }
 

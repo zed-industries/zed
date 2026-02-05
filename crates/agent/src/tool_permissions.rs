@@ -1043,8 +1043,8 @@ mod tests {
     }
 
     #[test]
-    fn nushell_allows_with_allow_pattern() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_allow();
+    fn nushell_denies_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_deny();
     }
 
     #[test]
@@ -1073,13 +1073,13 @@ mod tests {
     }
 
     #[test]
-    fn elvish_allows_with_allow_pattern() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_allow();
+    fn elvish_denies_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_deny();
     }
 
     #[test]
-    fn rc_allows_with_allow_pattern() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Rc).is_allow();
+    fn rc_denies_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Rc).is_deny();
     }
 
     #[test]
