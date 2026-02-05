@@ -762,6 +762,8 @@ impl Model {
                 | Model::ClaudeSonnet4
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeOpus4_6
+                | Model::ClaudeOpus4_6Thinking
                 | Model::Claude3Haiku
                 | Model::Claude3Sonnet
                 | Model::MetaLlama321BInstructV1
