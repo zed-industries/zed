@@ -105,6 +105,8 @@ pub struct WgpuRenderer {
     atlas_sampler: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
     gamma_buffer: wgpu::Buffer,
+    globals_bind_group: wgpu::BindGroup,
+    globals_with_gamma_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_buffer_capacity: u64,
     storage_buffer_alignment: u64,
@@ -251,6 +253,30 @@ impl WgpuRenderer {
         .map(|(t, v)| (Some(t), Some(v)))
         .unwrap_or((None, None));
 
+        let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("globals_bind_group"),
+            layout: &bind_group_layouts.globals,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: globals_buffer.as_entire_binding(),
+            }],
+        });
+
+        let globals_with_gamma_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("globals_with_gamma_bind_group"),
+            layout: &bind_group_layouts.globals_with_gamma,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: globals_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: gamma_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
         let adapter_info = context.adapter.get_info();
 
         Ok(Self {
@@ -264,6 +290,8 @@ impl WgpuRenderer {
             atlas_sampler,
             globals_buffer,
             gamma_buffer,
+            globals_bind_group,
+            globals_with_gamma_bind_group,
             instance_buffer,
             instance_buffer_capacity: initial_instance_buffer_capacity,
             storage_buffer_alignment,
@@ -892,31 +920,6 @@ impl WgpuRenderer {
             pad: 0,
         };
 
-        let globals_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals_bind_group"),
-            layout: &self.bind_group_layouts.globals,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.globals_buffer.as_entire_binding(),
-            }],
-        });
-
-        let globals_with_gamma_bind_group =
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("globals_with_gamma_bind_group"),
-                layout: &self.bind_group_layouts.globals_with_gamma,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.globals_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.gamma_buffer.as_entire_binding(),
-                    },
-                ],
-            });
-
         loop {
             self.queue
                 .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
@@ -952,13 +955,13 @@ impl WgpuRenderer {
                     let ok = match batch {
                         PrimitiveBatch::Quads(range) => self.draw_quads(
                             &scene.quads[range],
-                            &globals_bind_group,
+                            &self.globals_bind_group,
                             &mut instance_offset,
                             &mut pass,
                         ),
                         PrimitiveBatch::Shadows(range) => self.draw_shadows(
                             &scene.shadows[range],
-                            &globals_bind_group,
+                            &self.globals_bind_group,
                             &mut instance_offset,
                             &mut pass,
                         ),
@@ -994,7 +997,7 @@ impl WgpuRenderer {
                             if did_draw {
                                 self.draw_paths_from_intermediate(
                                     paths,
-                                    &globals_bind_group,
+                                    &self.globals_bind_group,
                                     &mut instance_offset,
                                     &mut pass,
                                 )
@@ -1004,7 +1007,7 @@ impl WgpuRenderer {
                         }
                         PrimitiveBatch::Underlines(range) => self.draw_underlines(
                             &scene.underlines[range],
-                            &globals_bind_group,
+                            &self.globals_bind_group,
                             &mut instance_offset,
                             &mut pass,
                         ),
@@ -1012,7 +1015,7 @@ impl WgpuRenderer {
                             .draw_monochrome_sprites(
                                 &scene.monochrome_sprites[range],
                                 texture_id,
-                                &globals_with_gamma_bind_group,
+                                &self.globals_with_gamma_bind_group,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
@@ -1020,7 +1023,7 @@ impl WgpuRenderer {
                             .draw_subpixel_sprites(
                                 &scene.subpixel_sprites[range],
                                 texture_id,
-                                &globals_with_gamma_bind_group,
+                                &self.globals_with_gamma_bind_group,
                                 &gamma_params,
                                 &mut instance_offset,
                                 &mut pass,
@@ -1029,7 +1032,7 @@ impl WgpuRenderer {
                             .draw_polychrome_sprites(
                                 &scene.polychrome_sprites[range],
                                 texture_id,
-                                &globals_bind_group,
+                                &self.globals_bind_group,
                                 &mut instance_offset,
                                 &mut pass,
                             ),
