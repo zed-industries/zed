@@ -2609,6 +2609,13 @@ impl MultiBuffer {
 
     pub fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
         let buffer_id = diff.read(cx).buffer_id;
+
+        if let Some(existing_diff) = self.diff_for(buffer_id)
+            && diff.entity_id() == existing_diff.entity_id()
+        {
+            return;
+        }
+
         self.buffer_diff_changed(
             diff.clone(),
             text::Anchor::min_max_range_for_buffer(buffer_id),
@@ -6798,6 +6805,10 @@ impl MultiBufferSnapshot {
 
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id).map(|diff| &diff.diff)
+    }
+
+    pub fn all_diff_hunks_expanded(&self) -> bool {
+        self.all_diff_hunks_expanded
     }
 
     /// Visually annotates a position or range with the `Debug` representation of a value. The

@@ -13,7 +13,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme;
 use ui::{Color, Icon, IconName, Label, LabelCommon as _};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -339,8 +338,8 @@ impl Item for MultiDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(cx)
     }
 
     fn added_to_workspace(
