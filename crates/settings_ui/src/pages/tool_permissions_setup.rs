@@ -373,7 +373,12 @@ fn render_verification_section(
         (None, Vec::new())
     } else {
         let decision = evaluate_test_input(tool_id, &current_text, cx);
-        let matches = find_matched_patterns(tool_id, &current_text, cx);
+        let tool_name = TOOLS
+            .iter()
+            .find(|t| t.id == tool_id)
+            .map(|t| t.name)
+            .unwrap_or(tool_id);
+        let matches = find_matched_patterns(tool_id, tool_name, &current_text, cx);
         (Some(decision), matches)
     };
 
@@ -432,7 +437,12 @@ struct MatchedPattern {
     is_regex: bool,
 }
 
-fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPattern> {
+fn find_matched_patterns(
+    tool_id: &str,
+    tool_name: &str,
+    input: &str,
+    cx: &App,
+) -> Vec<MatchedPattern> {
     let settings = AgentSettings::get_global(cx);
     let rules = settings.tool_permissions.tools.get(tool_id);
 
@@ -486,7 +496,7 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
 
     if let Some(tool_default) = tool_specific_default {
         matched.push(MatchedPattern {
-            label: "Tool Default".to_string(),
+            label: format!("Default permission for {} tool", tool_name.to_lowercase()),
             rule_type: mode_to_rule_type(tool_default),
             is_overridden: any_pattern_matched,
             is_regex: false,
@@ -494,7 +504,7 @@ fn find_matched_patterns(tool_id: &str, input: &str, cx: &App) -> Vec<MatchedPat
     }
 
     matched.push(MatchedPattern {
-        label: "Global Default".to_string(),
+        label: "Default permission for all tools".to_string(),
         rule_type: mode_to_rule_type(global_default),
         is_overridden: any_pattern_matched || has_tool_default,
         is_regex: false,
