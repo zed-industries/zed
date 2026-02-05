@@ -6840,7 +6840,7 @@ impl Editor {
                 }))
             }
             CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context;
+                let context = actions_menu.actions.context.into();
 
                 workspace.update(cx, |workspace, cx| {
                     dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
