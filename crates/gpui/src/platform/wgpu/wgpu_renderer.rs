@@ -105,8 +105,10 @@ pub struct WgpuRenderer {
     atlas_sampler: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
     gamma_buffer: wgpu::Buffer,
+    path_globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     globals_with_gamma_bind_group: wgpu::BindGroup,
+    path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_buffer_capacity: u64,
     storage_buffer_alignment: u64,
@@ -277,6 +279,22 @@ impl WgpuRenderer {
             ],
         });
 
+        let path_globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("path_globals_buffer"),
+            size: std::mem::size_of::<GlobalParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("path_globals_bind_group"),
+            layout: &bind_group_layouts.globals,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: path_globals_buffer.as_entire_binding(),
+            }],
+        });
+
         let adapter_info = context.adapter.get_info();
 
         Ok(Self {
@@ -290,8 +308,10 @@ impl WgpuRenderer {
             atlas_sampler,
             globals_buffer,
             gamma_buffer,
+            path_globals_buffer,
             globals_bind_group,
             globals_with_gamma_bind_group,
+            path_globals_bind_group,
             instance_buffer,
             instance_buffer_capacity: initial_instance_buffer_capacity,
             storage_buffer_alignment,
@@ -920,11 +940,21 @@ impl WgpuRenderer {
             pad: 0,
         };
 
+        let path_globals = GlobalParams {
+            premultiplied_alpha: 0,
+            ..globals
+        };
+
         loop {
             self.queue
                 .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
             self.queue
                 .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&gamma_params));
+            self.queue.write_buffer(
+                &self.path_globals_buffer,
+                0,
+                bytemuck::bytes_of(&path_globals),
+            );
 
             let mut instance_offset: u64 = 0;
             let mut overflow = false;
@@ -1420,32 +1450,6 @@ impl WgpuRenderer {
             return false;
         };
 
-        let globals = GlobalParams {
-            viewport_size: [
-                self.surface_config.width as f32,
-                self.surface_config.height as f32,
-            ],
-            premultiplied_alpha: 0,
-            pad: 0,
-        };
-        let globals_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("path_globals"),
-            size: std::mem::size_of::<GlobalParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.queue
-            .write_buffer(&globals_buffer, 0, bytemuck::bytes_of(&globals));
-
-        let globals_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("path_globals_bind_group"),
-            layout: &self.bind_group_layouts.globals,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals_buffer.as_entire_binding(),
-            }],
-        });
-
         let data_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("path_rasterization_bind_group"),
             layout: &self.bind_group_layouts.path_rasterization,
@@ -1478,7 +1482,7 @@ impl WgpuRenderer {
             });
 
             pass.set_pipeline(&self.pipelines.path_rasterization);
-            pass.set_bind_group(0, &globals_bind_group, &[]);
+            pass.set_bind_group(0, &self.path_globals_bind_group, &[]);
             pass.set_bind_group(1, &data_bind_group, &[]);
             pass.draw(0..vertices.len() as u32, 0..1);
         }
