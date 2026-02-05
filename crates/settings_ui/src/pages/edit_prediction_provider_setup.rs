@@ -175,7 +175,7 @@ fn render_api_key_provider(
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
-    _ = window.use_keyed_state(title, cx, |_, cx| {
+    _ = window.use_keyed_state(current_url(cx), cx, |_, cx| {
         let task = api_key_state.update(cx, |key_state, cx| {
             key_state.load_if_needed(current_url(cx), |state| state, cx)
         });
