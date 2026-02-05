@@ -2,6 +2,27 @@ use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum BedrockAdaptiveThinkingEffort {
+    Low,
+    Medium,
+    #[default]
+    High,
+    Max,
+}
+
+impl BedrockAdaptiveThinkingEffort {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum BedrockModelMode {
     #[default]
@@ -9,7 +30,9 @@ pub enum BedrockModelMode {
     Thinking {
         budget_tokens: Option<u64>,
     },
-    AdaptiveThinking,
+    AdaptiveThinking {
+        effort: BedrockAdaptiveThinkingEffort,
+    },
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -608,7 +631,9 @@ impl Model {
             | Model::ClaudeOpus4_5Thinking => BedrockModelMode::Thinking {
                 budget_tokens: Some(4096),
             },
-            Model::ClaudeOpus4_6Thinking => BedrockModelMode::AdaptiveThinking,
+            Model::ClaudeOpus4_6Thinking => BedrockModelMode::AdaptiveThinking {
+                effort: BedrockAdaptiveThinkingEffort::default(),
+            },
             _ => BedrockModelMode::Default,
         }
     }
