@@ -120,11 +120,11 @@ pub(crate) fn render_tool_permissions_setup_page(
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
-        .child(render_global_default_mode_section(global_default))
-        .child(Divider::horizontal())
         .child(
             v_flex()
                 .mt_2()
+                .child(render_global_default_mode_section(global_default))
+                .child(Divider::horizontal())
                 .children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
                     let mut elements: Vec<AnyElement> = vec![item];
                     if i + 1 < TOOLS.len() {
@@ -710,7 +710,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
         .justify_between()
         .child(
             v_flex()
-                .child(Label::new("Default Permission Mode"))
+                .child(Label::new("Default Permission"))
                 .child(
                     Label::new(
                         "Controls the default behavior for all tool actions. Per-tool rules and patterns can override this.",

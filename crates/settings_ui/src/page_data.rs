@@ -6897,7 +6897,7 @@ fn ai_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
-                title: "Configure Tool Rules".into(),
+                title: "Tool Permissions".into(),
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
                 description: Some("Set up regex patterns to auto-allow, auto-deny, or always prompt for specific tool inputs.".into()),
