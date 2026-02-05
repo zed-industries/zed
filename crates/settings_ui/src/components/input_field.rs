@@ -145,6 +145,19 @@ impl RenderOnce for SettingsInputField {
             })
         };
 
+        // When settings change externally (e.g. editing settings.json), the page
+        // re-renders but use_keyed_state returns the cached editor with stale text.
+        // Reconcile with the expected initial_text when the editor is not focused,
+        // so we don't clobber what the user is actively typing.
+        if let Some(initial_text) = &self.initial_text {
+            let current_text = editor.read(cx).text(cx);
+            if current_text != *initial_text && !editor.read(cx).is_focused(window) {
+                editor.update(cx, |editor, cx| {
+                    editor.set_text(initial_text.clone(), window, cx);
+                });
+            }
+        }
+
         let weak_editor = editor.downgrade();
         let weak_editor_for_button = editor.downgrade();
         let weak_editor_for_clear = editor.downgrade();
