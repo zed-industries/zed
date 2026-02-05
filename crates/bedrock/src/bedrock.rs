@@ -59,7 +59,10 @@ pub async fn stream_completion(
         Some(Thinking::Adaptive { effort }) => {
             let thinking_config = HashMap::from([
                 ("type".to_string(), Document::String("adaptive".to_string())),
-                ("effort".to_string(), Document::String(effort.as_str().to_string())),
+                (
+                    "effort".to_string(),
+                    Document::String(effort.as_str().to_string()),
+                ),
             ]);
             response =
                 response.additional_model_request_fields(Document::Object(HashMap::from([(
@@ -159,8 +162,12 @@ pub fn value_to_aws_document(value: &Value) -> Document {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Thinking {
-    Enabled { budget_tokens: Option<u64> },
-    Adaptive { effort: BedrockAdaptiveThinkingEffort },
+    Enabled {
+        budget_tokens: Option<u64>,
+    },
+    Adaptive {
+        effort: BedrockAdaptiveThinkingEffort,
+    },
 }
 
 #[derive(Debug)]
