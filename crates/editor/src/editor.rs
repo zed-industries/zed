@@ -1979,6 +1979,9 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         cx: &mut Context<Editor>,
     ) {
+        if !self.mode.is_full() {
+            return;
+        }
         let multi_buffer = display_snapshot.buffer_snapshot();
         let multi_buffer_visible_start = self
             .scroll_manager
@@ -2024,8 +2027,9 @@ impl Editor {
         });
         self.sticky_headers_task = cx.spawn(async move |this, cx| {
             let sticky_headers = background_task.await;
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 this.sticky_headers = Some(sticky_headers);
+                cx.notify();
             })
             .ok();
         });
@@ -7312,6 +7316,9 @@ impl Editor {
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let word_ranges = cx.background_spawn(async move {
+            // this might look odd to put on the background thread, but
+            // `surrounding_word` can be quite expensive as it calls into
+            // tree-sitter language scopes
             let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position, None);
             let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, None);
             (start_word_range, end_word_range)
@@ -7591,18 +7598,22 @@ impl Editor {
 
     #[ztracing::instrument(skip_all)]
     fn refresh_outline_symbols(&mut self, cx: &mut Context<Editor>) {
+        if !self.mode.is_full() {
+            return;
+        }
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = self.buffer().read(cx).snapshot(cx);
         let syntax = cx.theme().syntax().clone();
         let background_task = cx
             .background_spawn(async move { multibuffer.symbols_containing(cursor, Some(&syntax)) });
         self.refresh_outline_symbols_task = cx.spawn(async move |this, cx| {
-            let r = background_task.await;
-            this.update(cx, |this, _| {
-                this.outline_symbols = r;
+            let symbols = background_task.await;
+            this.update(cx, |this, cx| {
+                this.outline_symbols = symbols;
+                cx.notify();
             })
             .ok();
-        })
+        });
     }
 
     #[ztracing::instrument(skip_all)]

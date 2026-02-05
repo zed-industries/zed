@@ -125,6 +125,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
+        cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
             indoc! {r#"
@@ -139,6 +140,7 @@ mod tests {
                 another_test(1, ˇ2, 3);
             }
         "#});
+        cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
             indoc! {r#"
@@ -153,6 +155,7 @@ mod tests {
                 anotherˇ_test(1, 2, 3);
             }
         "#});
+        cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
             indoc! {r#"
@@ -168,6 +171,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
+        cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
             indoc! {r#"
@@ -183,6 +187,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
+        cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
             indoc! {r#"
