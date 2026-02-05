@@ -1,4 +1,8 @@
-use crate::{PredictionProvider, example::Example, format_prompt::TeacherPrompt};
+use crate::{
+    PredictionProvider,
+    example::{ActualCursor, Example},
+    format_prompt::TeacherPrompt,
+};
 use anyhow::{Context as _, Result};
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
@@ -24,9 +28,9 @@ pub fn run_parse_output(example: &mut Example) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    for (ix, actual_patch, actual_cursor_offset) in parsed_patches {
+    for (ix, actual_patch, actual_cursor) in parsed_patches {
         example.predictions[ix].actual_patch = Some(actual_patch);
-        example.predictions[ix].actual_cursor_offset = actual_cursor_offset;
+        example.predictions[ix].actual_cursor = actual_cursor;
         example.predictions[ix].provider = provider;
     }
 
@@ -37,7 +41,7 @@ pub fn parse_prediction_output(
     example: &Example,
     actual_output: &str,
     provider: PredictionProvider,
-) -> Result<(String, Option<usize>)> {
+) -> Result<(String, Option<ActualCursor>)> {
     match provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             TeacherPrompt::parse(example, actual_output)
@@ -84,7 +88,7 @@ fn parse_zeta2_output(
     example: &Example,
     actual_output: &str,
     version: ZetaVersion,
-) -> Result<(String, Option<usize>)> {
+) -> Result<(String, Option<ActualCursor>)> {
     let prompt = &example.prompt.as_ref().context("prompt required")?.input;
     let prompt_inputs = example
         .prompt_inputs
@@ -154,7 +158,18 @@ fn parse_zeta2_output(
         path = example.spec.cursor_path.to_string_lossy(),
     );
 
-    Ok((formatted_diff, cursor_offset))
+    let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+        ActualCursor::from_editable_region(
+            &example.spec.cursor_path,
+            editable_region_cursor_offset,
+            &new_text,
+            &prompt_inputs.content,
+            editable_region_offset,
+            editable_region_start_line,
+        )
+    });
+
+    Ok((formatted_diff, actual_cursor))
 }
 
 #[cfg(test)]
