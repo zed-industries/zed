@@ -970,7 +970,7 @@ async fn next_tool_call_authorization(
 #[test]
 fn test_permission_options_terminal_with_pattern() {
     let permission_options =
-        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release").build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -989,7 +989,7 @@ fn test_permission_options_terminal_with_pattern() {
 #[test]
 fn test_permission_options_edit_file_with_path_pattern() {
     let permission_options =
-        ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+        ToolPermissionContext::new(EditFileTool::NAME, "src/main.rs").build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1006,7 +1006,7 @@ fn test_permission_options_edit_file_with_path_pattern() {
 #[test]
 fn test_permission_options_fetch_with_domain_pattern() {
     let permission_options =
-        ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+        ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui").build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1022,7 +1022,7 @@ fn test_permission_options_fetch_with_domain_pattern() {
 
 #[test]
 fn test_permission_options_without_pattern() {
-    let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
+    let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
         .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
@@ -1042,7 +1042,7 @@ fn test_permission_options_without_pattern() {
 #[test]
 fn test_permission_option_ids_for_terminal() {
     let permission_options =
-        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release").build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1646,7 +1646,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -1929,7 +1929,7 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -1993,7 +1993,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -2003,7 +2003,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_2".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 2000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 2000", "cd": "."}),
             is_input_complete: true,
@@ -2106,7 +2106,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -2200,7 +2200,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": ".", "timeout_ms": 100}"#.into(),
             input: json!({"command": "sleep 1000", "cd": ".", "timeout_ms": 100}),
             is_input_complete: true,
@@ -3260,7 +3260,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             ThinkingTool::NAME: true,
-                            "terminal": true,
+                            (TerminalTool::NAME): true,
                         }
                     }
                 }
@@ -3657,7 +3657,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Confirm,
                     always_allow: vec![],
@@ -3710,7 +3710,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = false;
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Deny,
                     always_allow: vec![
@@ -3768,7 +3768,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = true;
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Allow,
                     always_allow: vec![],
@@ -3814,7 +3814,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = true;
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Deny,
                     always_allow: vec![],
@@ -3883,7 +3883,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 
     thread.read_with(cx, |thread, _| {
         assert!(
-            thread.has_registered_tool("subagent"),
+            thread.has_registered_tool(SubagentTool::NAME),
             "subagent tool should be present when feature flag is enabled"
         );
     });
@@ -3980,7 +3980,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     deep_subagent.read_with(cx, |thread, _| {
         assert_eq!(thread.depth(), MAX_SUBAGENT_DEPTH);
         assert!(
-            !thread.has_registered_tool("subagent"),
+            !thread.has_registered_tool(SubagentTool::NAME),
             "subagent tool should not be present at max depth"
         );
     });
@@ -5041,7 +5041,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "edit_file".into(),
+            EditFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5109,7 +5109,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "delete_path".into(),
+            DeletePathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5163,7 +5163,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "move_path".into(),
+            MovePathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5219,7 +5219,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "move_path".into(),
+            MovePathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5275,7 +5275,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "copy_path".into(),
+            CopyPathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5332,7 +5332,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "save_file".into(),
+            SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5385,7 +5385,7 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
-            "save_file".into(),
+            SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5426,7 +5426,7 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "web_search".into(),
+            WebSearchTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5470,7 +5470,7 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
-            "edit_file".into(),
+            EditFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Confirm,
                 always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
@@ -5534,7 +5534,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "fetch".into(),
+            FetchTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5575,7 +5575,7 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
-            "fetch".into(),
+            FetchTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Confirm,
                 always_allow: vec![agent_settings::CompiledRegex::new(r"docs\.rs", false).unwrap()],
