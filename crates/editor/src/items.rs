@@ -640,6 +640,36 @@ impl Item for Editor {
         }
     }
 
+    fn navigate_to_position(
+        &mut self,
+        data: Arc<dyn Any + Send + Sync>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(cursor_anchors) = data.downcast_ref::<Vec<Anchor>>() {
+            let buffer = self.buffer.read(cx).read(cx);
+            let ranges: Vec<_> = cursor_anchors
+                .iter()
+                .map(|anchor| {
+                    let point = if buffer.can_resolve(anchor) {
+                        anchor.to_point(&buffer)
+                    } else {
+                        Point::zero()
+                    };
+                    point..point
+                })
+                .collect();
+            drop(buffer);
+
+            self.change_selections(
+                SelectionEffects::default().nav_history(false),
+                window,
+                cx,
+                |s| s.select_ranges(ranges),
+            );
+        }
+    }
+
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         self.buffer()
             .read(cx)

@@ -68,6 +68,7 @@ pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
     SplitDirection,
 };
+use searchable::Direction;
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
@@ -2150,6 +2151,61 @@ impl Workspace {
             |history, _cx| history.pop_tag(mode),
             cx,
         )
+    }
+
+    pub fn navigate_change_history(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(pane_entity) = pane.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+
+        let entry = pane_entity.update(cx, |pane, _cx| {
+            pane.nav_history_mut().pop_change(direction)
+        });
+
+        let Some(entry) = entry else {
+            return Task::ready(Ok(()));
+        };
+
+        window.focus(&pane_entity.read(cx).focus_handle(cx), cx);
+
+        if let Some(item) = entry.item.upgrade() {
+            if let Some(index) = pane_entity.read(cx).index_for_item(item.as_ref()) {
+                pane_entity.update(cx, |pane, cx| {
+                    pane.activate_item(index, true, true, window, cx);
+                });
+
+                if let Some(active_item) = pane_entity.read(cx).active_item() {
+                    active_item.navigate_to_position(entry.data, window, cx);
+                }
+                return Task::ready(Ok(()));
+            }
+        }
+
+        let project_path = pane_entity
+            .read(cx)
+            .nav_history()
+            .path_for_item(entry.item.id());
+
+        if let Some((project_path, _abs_path)) = project_path {
+            let open_task = self.open_path(project_path, Some(pane.clone()), true, window, cx);
+            let data = entry.data;
+
+            cx.spawn_in(window, async move |_workspace, cx| {
+                let item = open_task.await?;
+                pane.update_in(cx, |_pane, window, cx| {
+                    item.navigate_to_position(data, window, cx);
+                })?;
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 
     fn navigate_history_impl(

@@ -228,6 +228,14 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         false
     }
 
+    fn navigate_to_position(
+        &mut self,
+        _data: Arc<dyn Any + Send + Sync>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
     }
@@ -496,6 +504,7 @@ pub trait ItemHandle: 'static + Send {
     fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
+    fn navigate_to_position(&self, data: Arc<dyn Any + Send + Sync>, window: &mut Window, cx: &mut App);
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
@@ -966,6 +975,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool {
         self.update(cx, |this, cx| this.navigate(data, window, cx))
+    }
+
+    fn navigate_to_position(&self, data: Arc<dyn Any + Send + Sync>, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.navigate_to_position(data, window, cx))
     }
 
     fn item_id(&self) -> EntityId {
