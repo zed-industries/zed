@@ -180,7 +180,7 @@ Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patter
 
 ### Per-tool Permission Rules {#per-tool-permission-rules}
 
-You can configure fine-grained permission rules for individual tools using the `tools` key inside `tool_permissions`. Each tool entry supports a `default_mode` and three pattern lists: `always_allow`, `always_deny`, and `always_confirm`. Patterns are regular expressions matched against the tool's input (e.g., the command string for `terminal`, the file path for `edit_file`, etc.).
+You can configure fine-grained permission rules for individual tools using the `tools` key inside `tool_permissions`. Each tool entry supports a `default` and three pattern lists: `always_allow`, `always_deny`, and `always_confirm`. Patterns are regular expressions matched against the tool's input (e.g., the command string for `terminal`, the file path for `edit_file`, etc.).
 
 ```json [settings]
 {
@@ -189,7 +189,7 @@ You can configure fine-grained permission rules for individual tools using the `
       "default": "allow",
       "tools": {
         "terminal": {
-          "default_mode": "allow",
+          "default": "allow",
           "always_deny": [
             { "pattern": "rm\\s+-rf" }
           ],
@@ -219,7 +219,7 @@ Rules are evaluated in the following order (highest priority first):
 2. **`always_deny`** — If any deny pattern matches, the tool call is blocked immediately.
 3. **`always_confirm`** — If any confirm pattern matches (and no deny matched), the user is prompted.
 4. **`always_allow`** — If any allow pattern matches (and no deny/confirm matched), the tool call proceeds without prompting.
-5. **Tool-specific `default_mode`** — Used when no patterns match.
+5. **Tool-specific `default`** — Used when no patterns match.
 6. **Global `default`** — Falls back to `tool_permissions.default` when there is no tool-specific default.
 
 Patterns are case-insensitive by default. Set `"case_sensitive": true` on an individual pattern for exact matching:
