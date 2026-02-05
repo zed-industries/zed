@@ -610,6 +610,16 @@ pub enum ToolPermissionMode {
     Confirm,
 }
 
+impl std::fmt::Display for ToolPermissionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolPermissionMode::Allow => write!(f, "Allow"),
+            ToolPermissionMode::Deny => write!(f, "Deny"),
+            ToolPermissionMode::Confirm => write!(f, "Confirm"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

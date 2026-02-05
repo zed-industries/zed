@@ -281,7 +281,7 @@ pub(crate) fn render_tool_config_page(
                     tool_id,
                     "Always Deny",
                     "If any of these regexes match, the tool action will be denied.",
-                    RuleType::Deny,
+                    ToolPermissionMode::Deny,
                     &rules.always_deny,
                     cx,
                 ))
@@ -290,7 +290,7 @@ pub(crate) fn render_tool_config_page(
                     tool_id,
                     "Always Allow",
                     "If any of these regexes match, the action will be approved—unless an Always Confirm or Always Deny matches.",
-                    RuleType::Allow,
+                    ToolPermissionMode::Allow,
                     &rules.always_allow,
                     cx,
                 ))
@@ -299,7 +299,7 @@ pub(crate) fn render_tool_config_page(
                     tool_id,
                     "Always Confirm",
                     "If any of these regexes match, a confirmation will be shown unless an Always Deny regex matches.",
-                    RuleType::Confirm,
+                    ToolPermissionMode::Confirm,
                     &rules.always_confirm,
                     cx,
                 )),
@@ -431,18 +431,10 @@ fn render_verification_section(
         .into_any_element()
 }
 
-fn mode_to_rule_type(mode: ToolPermissionMode) -> RuleType {
-    match mode {
-        ToolPermissionMode::Allow => RuleType::Allow,
-        ToolPermissionMode::Deny => RuleType::Deny,
-        ToolPermissionMode::Confirm => RuleType::Confirm,
-    }
-}
-
 #[derive(Clone, Debug)]
 struct MatchedPattern {
     label: String,
-    rule_type: RuleType,
+    rule_type: ToolPermissionMode,
     is_overridden: bool,
     is_regex: bool,
 }
@@ -467,7 +459,7 @@ fn find_matched_patterns(
                 matched.push(MatchedPattern {
                     label: "This command is always denied for safety, regardless of settings"
                         .to_string(),
-                    rule_type: RuleType::Deny,
+                    rule_type: ToolPermissionMode::Deny,
                     is_overridden: false,
                     is_regex: false,
                 });
@@ -489,7 +481,7 @@ fn find_matched_patterns(
                 label: format!(
                     "{count} invalid regex {pattern_word} — tool is blocked until fixed"
                 ),
-                rule_type: RuleType::Deny,
+                rule_type: ToolPermissionMode::Deny,
                 is_overridden: hardcoded_denied,
                 is_regex: false,
             });
@@ -500,7 +492,7 @@ fn find_matched_patterns(
                 has_deny_match = true;
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
-                    rule_type: RuleType::Deny,
+                    rule_type: ToolPermissionMode::Deny,
                     is_overridden: hardcoded_denied,
                     is_regex: true,
                 });
@@ -512,7 +504,7 @@ fn find_matched_patterns(
                 has_confirm_match = true;
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
-                    rule_type: RuleType::Confirm,
+                    rule_type: ToolPermissionMode::Confirm,
                     is_overridden: hardcoded_denied || has_deny_match,
                     is_regex: true,
                 });
@@ -524,7 +516,7 @@ fn find_matched_patterns(
                 has_allow_match = true;
                 matched.push(MatchedPattern {
                     label: rule.pattern.clone(),
-                    rule_type: RuleType::Allow,
+                    rule_type: ToolPermissionMode::Allow,
                     is_overridden: hardcoded_denied || has_deny_match || has_confirm_match,
                     is_regex: true,
                 });
@@ -541,7 +533,7 @@ fn find_matched_patterns(
     if let Some(tool_default) = tool_specific_default {
         matched.push(MatchedPattern {
             label: format!("Default permission for {} tool", tool_name.to_lowercase()),
-            rule_type: mode_to_rule_type(tool_default),
+            rule_type: tool_default,
             is_overridden: anything_matched,
             is_regex: false,
         });
@@ -549,7 +541,7 @@ fn find_matched_patterns(
 
     matched.push(MatchedPattern {
         label: "Default permission for all tools".to_string(),
-        rule_type: mode_to_rule_type(global_default),
+        rule_type: global_default,
         is_overridden: anything_matched || has_tool_default,
         is_regex: false,
     });
@@ -563,15 +555,15 @@ fn render_matched_patterns(patterns: &[MatchedPattern], cx: &App) -> AnyElement 
         .children(patterns.iter().map(|pattern| {
             let (type_label, color) = if pattern.is_regex {
                 match pattern.rule_type {
-                    RuleType::Deny => ("Always Deny", Color::Error),
-                    RuleType::Confirm => ("Always Confirm", Color::Warning),
-                    RuleType::Allow => ("Always Allow", Color::Success),
+                    ToolPermissionMode::Deny => ("Always Deny", Color::Error),
+                    ToolPermissionMode::Confirm => ("Always Confirm", Color::Warning),
+                    ToolPermissionMode::Allow => ("Always Allow", Color::Success),
                 }
             } else {
                 match pattern.rule_type {
-                    RuleType::Deny => ("Deny", Color::Error),
-                    RuleType::Confirm => ("Confirm", Color::Warning),
-                    RuleType::Allow => ("Allow", Color::Success),
+                    ToolPermissionMode::Deny => ("Deny", Color::Error),
+                    ToolPermissionMode::Confirm => ("Confirm", Color::Warning),
+                    ToolPermissionMode::Allow => ("Allow", Color::Success),
                 }
             };
 
@@ -619,7 +611,7 @@ fn render_rule_section(
     tool_id: &'static str,
     title: &'static str,
     description: &'static str,
-    rule_type: RuleType,
+    rule_type: ToolPermissionMode,
     patterns: &[String],
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -678,7 +670,7 @@ fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
 
 fn render_user_pattern_row(
     tool_id: &'static str,
-    rule_type: RuleType,
+    rule_type: ToolPermissionMode,
     index: usize,
     pattern: String,
     cx: &mut Context<SettingsWindow>,
@@ -724,7 +716,7 @@ fn render_user_pattern_row(
 
 fn render_add_pattern_input(
     tool_id: &'static str,
-    rule_type: RuleType,
+    rule_type: ToolPermissionMode,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let tool_id_owned = tool_id.to_string();
@@ -749,11 +741,7 @@ fn render_add_pattern_input(
 }
 
 fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyElement {
-    let mode_label = match current_mode {
-        ToolPermissionMode::Allow => "Allow",
-        ToolPermissionMode::Deny => "Deny",
-        ToolPermissionMode::Confirm => "Confirm",
-    };
+    let mode_label = current_mode.to_string();
 
     h_flex()
         .mt_4()
@@ -803,11 +791,7 @@ fn render_default_mode_section(
     current_mode: ToolPermissionMode,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let mode_label = match current_mode {
-        ToolPermissionMode::Allow => "Allow",
-        ToolPermissionMode::Deny => "Deny",
-        ToolPermissionMode::Confirm => "Confirm",
-    };
+    let mode_label = current_mode.to_string();
 
     let tool_id_owned = tool_id.to_string();
 
@@ -854,13 +838,6 @@ fn render_default_mode_section(
         .into_any_element()
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum RuleType {
-    Allow,
-    Deny,
-    Confirm,
-}
-
 struct ToolRulesView {
     default: ToolPermissionMode,
     always_allow: Vec<String>,
@@ -901,7 +878,7 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
     }
 }
 
-fn save_pattern(tool_name: &str, rule_type: RuleType, pattern: String, cx: &mut App) {
+fn save_pattern(tool_name: &str, rule_type: ToolPermissionMode, pattern: String, cx: &mut App) {
     let tool_name = tool_name.to_string();
 
     SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
@@ -921,9 +898,9 @@ fn save_pattern(tool_name: &str, rule_type: RuleType, pattern: String, cx: &mut 
         };
 
         let rules_list = match rule_type {
-            RuleType::Allow => tool_rules.always_allow.get_or_insert_default(),
-            RuleType::Deny => tool_rules.always_deny.get_or_insert_default(),
-            RuleType::Confirm => tool_rules.always_confirm.get_or_insert_default(),
+            ToolPermissionMode::Allow => tool_rules.always_allow.get_or_insert_default(),
+            ToolPermissionMode::Deny => tool_rules.always_deny.get_or_insert_default(),
+            ToolPermissionMode::Confirm => tool_rules.always_confirm.get_or_insert_default(),
         };
 
         if !rules_list.0.iter().any(|r| r.pattern == rule.pattern) {
@@ -934,7 +911,7 @@ fn save_pattern(tool_name: &str, rule_type: RuleType, pattern: String, cx: &mut 
 
 fn update_pattern(
     tool_name: &str,
-    rule_type: RuleType,
+    rule_type: ToolPermissionMode,
     old_pattern: &str,
     new_pattern: String,
     cx: &mut App,
@@ -951,9 +928,9 @@ fn update_pattern(
 
         if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
             let rules_list = match rule_type {
-                RuleType::Allow => &mut tool_rules.always_allow,
-                RuleType::Deny => &mut tool_rules.always_deny,
-                RuleType::Confirm => &mut tool_rules.always_confirm,
+                ToolPermissionMode::Allow => &mut tool_rules.always_allow,
+                ToolPermissionMode::Deny => &mut tool_rules.always_deny,
+                ToolPermissionMode::Confirm => &mut tool_rules.always_confirm,
             };
 
             if let Some(list) = rules_list {
@@ -968,7 +945,7 @@ fn update_pattern(
     });
 }
 
-fn delete_pattern(tool_name: &str, rule_type: RuleType, pattern: &str, cx: &mut App) {
+fn delete_pattern(tool_name: &str, rule_type: ToolPermissionMode, pattern: &str, cx: &mut App) {
     let tool_name = tool_name.to_string();
     let pattern = pattern.to_string();
 
@@ -981,9 +958,9 @@ fn delete_pattern(tool_name: &str, rule_type: RuleType, pattern: &str, cx: &mut 
 
         if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
             let rules_list = match rule_type {
-                RuleType::Allow => &mut tool_rules.always_allow,
-                RuleType::Deny => &mut tool_rules.always_deny,
-                RuleType::Confirm => &mut tool_rules.always_confirm,
+                ToolPermissionMode::Allow => &mut tool_rules.always_allow,
+                ToolPermissionMode::Deny => &mut tool_rules.always_deny,
+                ToolPermissionMode::Confirm => &mut tool_rules.always_confirm,
             };
 
             if let Some(list) = rules_list {
