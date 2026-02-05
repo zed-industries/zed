@@ -1480,6 +1480,9 @@ impl Buffer {
         may_block: bool,
         cx: &mut Context<Self>,
     ) {
+        if language == self.language {
+            return;
+        }
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         let old_language = std::mem::replace(&mut self.language, language);
