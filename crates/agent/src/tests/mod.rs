@@ -970,7 +970,8 @@ async fn next_tool_call_authorization(
 #[test]
 fn test_permission_options_terminal_with_pattern() {
     let permission_options =
-        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release").build_permission_options();
+        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1005,8 +1006,8 @@ fn test_permission_options_edit_file_with_path_pattern() {
 
 #[test]
 fn test_permission_options_fetch_with_domain_pattern() {
-    let permission_options =
-        ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui").build_permission_options();
+    let permission_options = ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui")
+        .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1022,8 +1023,9 @@ fn test_permission_options_fetch_with_domain_pattern() {
 
 #[test]
 fn test_permission_options_without_pattern() {
-    let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
-        .build_permission_options();
+    let permission_options =
+        ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1042,7 +1044,8 @@ fn test_permission_options_without_pattern() {
 #[test]
 fn test_permission_option_ids_for_terminal() {
     let permission_options =
-        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release").build_permission_options();
+        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
