@@ -25,8 +25,8 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::{
-    AnyWindowHandle, Bounds, Decorations, DevicePixels, Globals, GpuSpecs, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, Globals, GpuSpecs, Modifiers, Output,
+    Pixels, PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
     layer_shell::LayerShellNotSupportedError, px, size,
@@ -35,8 +35,8 @@ use crate::{
     Capslock,
     platform::{
         PlatformAtlas, PlatformInputHandler, PlatformWindow,
-        wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig},
         linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+        wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig},
     },
 };
 use crate::{WindowKind, scene::Scene};

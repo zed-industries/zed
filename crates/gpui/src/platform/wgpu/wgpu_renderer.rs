@@ -1,7 +1,8 @@
 use super::{WgpuAtlas, WgpuContext};
 use crate::{
-    Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch, ScaledPixels, Scene,
-    Size, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
+    Underline, get_gamma_correction_ratios,
 };
 use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -906,50 +907,10 @@ impl WgpuRenderer {
             for batch in scene.batches() {
                 match batch {
                     PrimitiveBatch::Quads(range) => {
-                        let quads = &scene.quads[range];
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                quads.as_ptr() as *const u8,
-                                std::mem::size_of_val(quads),
-                            )
-                        };
-                        let buffer = self.create_storage_buffer(data);
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("quads_bind_group"),
-                                layout: &self.bind_group_layouts.quads,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buffer.as_entire_binding(),
-                                }],
-                            });
-                        pass.set_pipeline(&self.pipelines.quads);
-                        pass.set_bind_group(0, &globals_bind_group, &[]);
-                        pass.set_bind_group(1, &bind_group, &[]);
-                        pass.draw(0..4, 0..quads.len() as u32);
+                        self.draw_quads(&scene.quads[range], &globals_bind_group, &mut pass);
                     }
                     PrimitiveBatch::Shadows(range) => {
-                        let shadows = &scene.shadows[range];
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                shadows.as_ptr() as *const u8,
-                                std::mem::size_of_val(shadows),
-                            )
-                        };
-                        let buffer = self.create_storage_buffer(data);
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("shadows_bind_group"),
-                                layout: &self.bind_group_layouts.shadows,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buffer.as_entire_binding(),
-                                }],
-                            });
-                        pass.set_pipeline(&self.pipelines.shadows);
-                        pass.set_bind_group(0, &globals_bind_group, &[]);
-                        pass.set_bind_group(1, &bind_group, &[]);
-                        pass.draw(0..4, 0..shadows.len() as u32);
+                        self.draw_shadows(&scene.shadows[range], &globals_bind_group, &mut pass);
                     }
                     PrimitiveBatch::Paths(range) => {
                         let paths = &scene.paths[range];
@@ -976,226 +937,39 @@ impl WgpuRenderer {
                             ..Default::default()
                         });
 
-                        let first_path = &paths[0];
-                        let sprites: Vec<PathSprite> =
-                            if paths.last().map(|p| &p.order) == Some(&first_path.order) {
-                                paths
-                                    .iter()
-                                    .map(|p| PathSprite {
-                                        bounds: p.clipped_bounds(),
-                                    })
-                                    .collect()
-                            } else {
-                                let mut bounds = first_path.clipped_bounds();
-                                for path in paths.iter().skip(1) {
-                                    bounds = bounds.union(&path.clipped_bounds());
-                                }
-                                vec![PathSprite { bounds }]
-                            };
-
-                        let sprite_data = unsafe {
-                            std::slice::from_raw_parts(
-                                sprites.as_ptr() as *const u8,
-                                std::mem::size_of_val(sprites.as_slice()),
-                            )
-                        };
-                        let sprite_buffer = self.create_storage_buffer(sprite_data);
-
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("paths_bind_group"),
-                                layout: &self.bind_group_layouts.paths,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: sprite_buffer.as_entire_binding(),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::TextureView(
-                                            &self.path_intermediate_view,
-                                        ),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: wgpu::BindingResource::Sampler(
-                                            &self.atlas_sampler,
-                                        ),
-                                    },
-                                ],
-                            });
-
-                        pass.set_pipeline(&self.pipelines.paths);
-                        pass.set_bind_group(0, &globals_bind_group, &[]);
-                        pass.set_bind_group(1, &bind_group, &[]);
-                        pass.draw(0..4, 0..sprites.len() as u32);
+                        self.draw_paths_from_intermediate(paths, &globals_bind_group, &mut pass);
                     }
                     PrimitiveBatch::Underlines(range) => {
-                        let underlines = &scene.underlines[range];
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                underlines.as_ptr() as *const u8,
-                                std::mem::size_of_val(underlines),
-                            )
-                        };
-                        let buffer = self.create_storage_buffer(data);
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("underlines_bind_group"),
-                                layout: &self.bind_group_layouts.underlines,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: buffer.as_entire_binding(),
-                                }],
-                            });
-                        pass.set_pipeline(&self.pipelines.underlines);
-                        pass.set_bind_group(0, &globals_bind_group, &[]);
-                        pass.set_bind_group(1, &bind_group, &[]);
-                        pass.draw(0..4, 0..underlines.len() as u32);
+                        self.draw_underlines(
+                            &scene.underlines[range],
+                            &globals_bind_group,
+                            &mut pass,
+                        );
                     }
                     PrimitiveBatch::MonochromeSprites { texture_id, range } => {
-                        let sprites = &scene.monochrome_sprites[range];
-                        let tex_info = self.atlas.get_texture_info(texture_id);
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                sprites.as_ptr() as *const u8,
-                                std::mem::size_of_val(sprites),
-                            )
-                        };
-                        let buffer = self.create_storage_buffer(data);
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("mono_sprites_bind_group"),
-                                layout: &self.bind_group_layouts.sprites,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: buffer.as_entire_binding(),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::TextureView(
-                                            &tex_info.view,
-                                        ),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: wgpu::BindingResource::Sampler(
-                                            &self.atlas_sampler,
-                                        ),
-                                    },
-                                ],
-                            });
-                        pass.set_pipeline(&self.pipelines.mono_sprites);
-                        pass.set_bind_group(0, &globals_with_gamma_bind_group, &[]);
-                        pass.set_bind_group(1, &bind_group, &[]);
-                        pass.draw(0..4, 0..sprites.len() as u32);
+                        self.draw_monochrome_sprites(
+                            &scene.monochrome_sprites[range],
+                            texture_id,
+                            &globals_with_gamma_bind_group,
+                            &mut pass,
+                        );
                     }
                     PrimitiveBatch::SubpixelSprites { texture_id, range } => {
-                        let sprites = &scene.subpixel_sprites[range];
-                        let tex_info = self.atlas.get_texture_info(texture_id);
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                sprites.as_ptr() as *const u8,
-                                std::mem::size_of_val(sprites),
-                            )
-                        };
-                        let buffer = self.create_storage_buffer(data);
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("subpixel_sprites_bind_group"),
-                                layout: &self.bind_group_layouts.sprites,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: buffer.as_entire_binding(),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::TextureView(
-                                            &tex_info.view,
-                                        ),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: wgpu::BindingResource::Sampler(
-                                            &self.atlas_sampler,
-                                        ),
-                                    },
-                                ],
-                            });
-
-                        if let Some(ref pipeline) = self.pipelines.subpixel_sprites {
-                            let subpixel_gamma = GammaParams {
-                                gamma_ratios: self.rendering_params.gamma_ratios,
-                                grayscale_enhanced_contrast: self
-                                    .rendering_params
-                                    .grayscale_enhanced_contrast,
-                                subpixel_enhanced_contrast: self
-                                    .rendering_params
-                                    .subpixel_enhanced_contrast,
-                                _pad: [0.0; 2],
-                            };
-                            self.queue.write_buffer(
-                                &self.gamma_buffer,
-                                0,
-                                bytemuck::bytes_of(&subpixel_gamma),
-                            );
-
-                            pass.set_pipeline(pipeline);
-                            pass.set_bind_group(0, &globals_with_gamma_bind_group, &[]);
-                            pass.set_bind_group(1, &bind_group, &[]);
-                            pass.draw(0..4, 0..sprites.len() as u32);
-
-                            self.queue.write_buffer(
-                                &self.gamma_buffer,
-                                0,
-                                bytemuck::bytes_of(&gamma_params),
-                            );
-                        } else {
-                            pass.set_pipeline(&self.pipelines.mono_sprites);
-                            pass.set_bind_group(0, &globals_with_gamma_bind_group, &[]);
-                            pass.set_bind_group(1, &bind_group, &[]);
-                            pass.draw(0..4, 0..sprites.len() as u32);
-                        }
+                        self.draw_subpixel_sprites(
+                            &scene.subpixel_sprites[range],
+                            texture_id,
+                            &globals_with_gamma_bind_group,
+                            &gamma_params,
+                            &mut pass,
+                        );
                     }
                     PrimitiveBatch::PolychromeSprites { texture_id, range } => {
-                        let sprites = &scene.polychrome_sprites[range];
-                        let tex_info = self.atlas.get_texture_info(texture_id);
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                sprites.as_ptr() as *const u8,
-                                std::mem::size_of_val(sprites),
-                            )
-                        };
-                        let buffer = self.create_storage_buffer(data);
-                        let bind_group =
-                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("poly_sprites_bind_group"),
-                                layout: &self.bind_group_layouts.sprites,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: buffer.as_entire_binding(),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::TextureView(
-                                            &tex_info.view,
-                                        ),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: wgpu::BindingResource::Sampler(
-                                            &self.atlas_sampler,
-                                        ),
-                                    },
-                                ],
-                            });
-                        pass.set_pipeline(&self.pipelines.poly_sprites);
-                        pass.set_bind_group(0, &globals_bind_group, &[]);
-                        pass.set_bind_group(1, &bind_group, &[]);
-                        pass.draw(0..4, 0..sprites.len() as u32);
+                        self.draw_polychrome_sprites(
+                            &scene.polychrome_sprites[range],
+                            texture_id,
+                            &globals_bind_group,
+                            &mut pass,
+                        );
                     }
                     PrimitiveBatch::Surfaces(_surfaces) => {
                         // Surfaces are macOS-only for video playback
@@ -1207,6 +981,296 @@ impl WgpuRenderer {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
+    }
+
+    fn draw_quads(
+        &self,
+        quads: &[Quad],
+        globals_bind_group: &wgpu::BindGroup,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if quads.is_empty() {
+            return;
+        }
+        let data = unsafe {
+            std::slice::from_raw_parts(quads.as_ptr() as *const u8, std::mem::size_of_val(quads))
+        };
+        let buffer = self.create_storage_buffer(data);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("quads_bind_group"),
+            layout: &self.bind_group_layouts.quads,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        pass.set_pipeline(&self.pipelines.quads);
+        pass.set_bind_group(0, globals_bind_group, &[]);
+        pass.set_bind_group(1, &bind_group, &[]);
+        pass.draw(0..4, 0..quads.len() as u32);
+    }
+
+    fn draw_shadows(
+        &self,
+        shadows: &[Shadow],
+        globals_bind_group: &wgpu::BindGroup,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if shadows.is_empty() {
+            return;
+        }
+        let data = unsafe {
+            std::slice::from_raw_parts(
+                shadows.as_ptr() as *const u8,
+                std::mem::size_of_val(shadows),
+            )
+        };
+        let buffer = self.create_storage_buffer(data);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadows_bind_group"),
+            layout: &self.bind_group_layouts.shadows,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        pass.set_pipeline(&self.pipelines.shadows);
+        pass.set_bind_group(0, globals_bind_group, &[]);
+        pass.set_bind_group(1, &bind_group, &[]);
+        pass.draw(0..4, 0..shadows.len() as u32);
+    }
+
+    fn draw_paths_from_intermediate(
+        &self,
+        paths: &[Path<ScaledPixels>],
+        globals_bind_group: &wgpu::BindGroup,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        let first_path = &paths[0];
+        let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
+        {
+            paths
+                .iter()
+                .map(|p| PathSprite {
+                    bounds: p.clipped_bounds(),
+                })
+                .collect()
+        } else {
+            let mut bounds = first_path.clipped_bounds();
+            for path in paths.iter().skip(1) {
+                bounds = bounds.union(&path.clipped_bounds());
+            }
+            vec![PathSprite { bounds }]
+        };
+
+        let sprite_data = unsafe {
+            std::slice::from_raw_parts(
+                sprites.as_ptr() as *const u8,
+                std::mem::size_of_val(sprites.as_slice()),
+            )
+        };
+        let sprite_buffer = self.create_storage_buffer(sprite_data);
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("paths_bind_group"),
+            layout: &self.bind_group_layouts.paths,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sprite_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.path_intermediate_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
+                },
+            ],
+        });
+
+        pass.set_pipeline(&self.pipelines.paths);
+        pass.set_bind_group(0, globals_bind_group, &[]);
+        pass.set_bind_group(1, &bind_group, &[]);
+        pass.draw(0..4, 0..sprites.len() as u32);
+    }
+
+    fn draw_underlines(
+        &self,
+        underlines: &[Underline],
+        globals_bind_group: &wgpu::BindGroup,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if underlines.is_empty() {
+            return;
+        }
+        let data = unsafe {
+            std::slice::from_raw_parts(
+                underlines.as_ptr() as *const u8,
+                std::mem::size_of_val(underlines),
+            )
+        };
+        let buffer = self.create_storage_buffer(data);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("underlines_bind_group"),
+            layout: &self.bind_group_layouts.underlines,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        pass.set_pipeline(&self.pipelines.underlines);
+        pass.set_bind_group(0, globals_bind_group, &[]);
+        pass.set_bind_group(1, &bind_group, &[]);
+        pass.draw(0..4, 0..underlines.len() as u32);
+    }
+
+    fn draw_monochrome_sprites(
+        &self,
+        sprites: &[MonochromeSprite],
+        texture_id: AtlasTextureId,
+        globals_bind_group: &wgpu::BindGroup,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if sprites.is_empty() {
+            return;
+        }
+        let tex_info = self.atlas.get_texture_info(texture_id);
+        let data = unsafe {
+            std::slice::from_raw_parts(
+                sprites.as_ptr() as *const u8,
+                std::mem::size_of_val(sprites),
+            )
+        };
+        let buffer = self.create_storage_buffer(data);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mono_sprites_bind_group"),
+            layout: &self.bind_group_layouts.sprites,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&tex_info.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
+                },
+            ],
+        });
+        pass.set_pipeline(&self.pipelines.mono_sprites);
+        pass.set_bind_group(0, globals_bind_group, &[]);
+        pass.set_bind_group(1, &bind_group, &[]);
+        pass.draw(0..4, 0..sprites.len() as u32);
+    }
+
+    fn draw_subpixel_sprites(
+        &self,
+        sprites: &[SubpixelSprite],
+        texture_id: AtlasTextureId,
+        globals_bind_group: &wgpu::BindGroup,
+        gamma_params: &GammaParams,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if sprites.is_empty() {
+            return;
+        }
+        let tex_info = self.atlas.get_texture_info(texture_id);
+        let data = unsafe {
+            std::slice::from_raw_parts(
+                sprites.as_ptr() as *const u8,
+                std::mem::size_of_val(sprites),
+            )
+        };
+        let buffer = self.create_storage_buffer(data);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("subpixel_sprites_bind_group"),
+            layout: &self.bind_group_layouts.sprites,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&tex_info.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
+                },
+            ],
+        });
+
+        if let Some(ref pipeline) = self.pipelines.subpixel_sprites {
+            let subpixel_gamma = GammaParams {
+                gamma_ratios: self.rendering_params.gamma_ratios,
+                grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
+                subpixel_enhanced_contrast: self.rendering_params.subpixel_enhanced_contrast,
+                _pad: [0.0; 2],
+            };
+            self.queue
+                .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&subpixel_gamma));
+
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, globals_bind_group, &[]);
+            pass.set_bind_group(1, &bind_group, &[]);
+            pass.draw(0..4, 0..sprites.len() as u32);
+
+            self.queue
+                .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(gamma_params));
+        } else {
+            pass.set_pipeline(&self.pipelines.mono_sprites);
+            pass.set_bind_group(0, globals_bind_group, &[]);
+            pass.set_bind_group(1, &bind_group, &[]);
+            pass.draw(0..4, 0..sprites.len() as u32);
+        }
+    }
+
+    fn draw_polychrome_sprites(
+        &self,
+        sprites: &[PolychromeSprite],
+        texture_id: AtlasTextureId,
+        globals_bind_group: &wgpu::BindGroup,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        if sprites.is_empty() {
+            return;
+        }
+        let tex_info = self.atlas.get_texture_info(texture_id);
+        let data = unsafe {
+            std::slice::from_raw_parts(
+                sprites.as_ptr() as *const u8,
+                std::mem::size_of_val(sprites),
+            )
+        };
+        let buffer = self.create_storage_buffer(data);
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("poly_sprites_bind_group"),
+            layout: &self.bind_group_layouts.sprites,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&tex_info.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
+                },
+            ],
+        });
+        pass.set_pipeline(&self.pipelines.poly_sprites);
+        pass.set_bind_group(0, globals_bind_group, &[]);
+        pass.set_bind_group(1, &bind_group, &[]);
+        pass.draw(0..4, 0..sprites.len() as u32);
     }
 
     fn draw_paths_to_intermediate(
@@ -1316,16 +1380,16 @@ impl RenderingParameters {
     fn from_env(adapter: &wgpu::Adapter) -> Self {
         use std::env;
 
-        let sample_count_mask = adapter
+        let sample_count_mask = (adapter
             .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
             .flags
             .sample_count_supported(4) as u32
-            * 4
-            | adapter
+            * 4)
+            | (adapter
                 .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
                 .flags
                 .sample_count_supported(2) as u32
-                * 2
+                * 2)
             | 1;
 
         let path_sample_count = env::var("ZED_PATH_SAMPLE_COUNT")

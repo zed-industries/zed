@@ -50,7 +50,6 @@ use super::{
 
 use crate::platform::{
     LinuxCommon, PlatformWindow,
-    wgpu::WgpuContext,
     linux::{
         DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
         log_cursor_icon_warning, open_uri_internal,
@@ -58,6 +57,7 @@ use crate::platform::{
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+    wgpu::WgpuContext,
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,

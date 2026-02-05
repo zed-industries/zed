@@ -124,7 +124,9 @@ impl WgpuAtlasState {
         }
 
         let texture = self.push_texture(size, texture_kind);
-        texture.allocate(size).expect("Failed to allocate from newly created texture")
+        texture
+            .allocate(size)
+            .expect("Failed to allocate from newly created texture")
     }
 
     fn push_texture(
@@ -178,10 +180,18 @@ impl WgpuAtlasState {
 
         if let Some(ix) = index {
             texture_list.textures[ix] = Some(atlas_texture);
-            texture_list.textures.get_mut(ix).and_then(|t| t.as_mut()).expect("texture must exist")
+            texture_list
+                .textures
+                .get_mut(ix)
+                .and_then(|t| t.as_mut())
+                .expect("texture must exist")
         } else {
             texture_list.textures.push(Some(atlas_texture));
-            texture_list.textures.last_mut().and_then(|t| t.as_mut()).expect("texture must exist")
+            texture_list
+                .textures
+                .last_mut()
+                .and_then(|t| t.as_mut())
+                .expect("texture must exist")
         }
     }
 
@@ -261,7 +271,9 @@ impl ops::Index<AtlasTextureId> for WgpuAtlasStorage {
             AtlasTextureKind::Subpixel => &self.subpixel_textures,
             AtlasTextureKind::Polychrome => &self.polychrome_textures,
         };
-        textures[id.index as usize].as_ref().expect("texture must exist")
+        textures[id.index as usize]
+            .as_ref()
+            .expect("texture must exist")
     }
 }
 
@@ -306,4 +318,3 @@ impl WgpuAtlasTexture {
         self.live_atlas_keys == 0
     }
 }
-
