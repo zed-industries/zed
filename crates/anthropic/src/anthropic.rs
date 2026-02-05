@@ -435,22 +435,21 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
+            Self::Claude3_5Sonnet | Self::Claude3_5Haiku => 8_192,
             Self::ClaudeOpus4
-            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_1Thinking => 32_000,
+            Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
-            | Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking
-            | Self::Claude3_5Haiku => 8_192,
-            Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_5_1mContextThinking
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
             | Self::ClaudeHaiku4_5
             | Self::ClaudeHaiku4_5Thinking => 64_000,
             Self::ClaudeOpus4_6
