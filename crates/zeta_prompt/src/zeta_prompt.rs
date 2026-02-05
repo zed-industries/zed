@@ -141,6 +141,19 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, version: ZetaVersion) -> Stri
     format_zeta_prompt_with_budget(input, version, MAX_PROMPT_TOKENS)
 }
 
+/// Post-processes model output for the given zeta version by stripping version-specific suffixes.
+pub fn clean_zeta2_model_output(output: &str, version: ZetaVersion) -> &str {
+    match version {
+        ZetaVersion::V0120GitMergeMarkers => output
+            .strip_suffix(v0120_git_merge_markers::END_MARKER)
+            .unwrap_or(output),
+        ZetaVersion::V0131GitMergeMarkersPrefix => output
+            .strip_suffix(v0131_git_merge_markers_prefix::END_MARKER)
+            .unwrap_or(output),
+        _ => output,
+    }
+}
+
 fn format_zeta_prompt_with_budget(
     input: &ZetaPromptInput,
     version: ZetaVersion,

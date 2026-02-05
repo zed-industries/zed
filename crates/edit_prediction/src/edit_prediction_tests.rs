@@ -1343,7 +1343,7 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
 }
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
-    zeta_prompt::format_zeta_prompt(&request.input, request.prompt_version)
+    zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaVersion::default())
 }
 
 struct RequestChannels {

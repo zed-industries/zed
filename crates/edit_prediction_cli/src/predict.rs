@@ -103,9 +103,7 @@ pub async fn run_prediction(
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2(version) => {
-                edit_prediction::EditPredictionModel::Zeta2 { version }
-            }
+            PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta2,
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)

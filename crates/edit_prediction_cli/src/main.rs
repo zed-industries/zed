@@ -207,6 +207,8 @@ enum Command {
     Qa(qa::QaArgs),
     /// Repair predictions that received poor QA scores by generating improved predictions
     Repair(repair::RepairArgs),
+    /// Print all valid zeta versions (lowercase, one per line)
+    PrintZetaVersions,
 }
 
 impl Display for Command {
@@ -248,6 +250,9 @@ impl Display for Command {
             }
             Command::Repair(_) => {
                 write!(f, "repair")
+            }
+            Command::PrintZetaVersions => {
+                write!(f, "print-zeta-versions")
             }
         }
     }
@@ -719,6 +724,13 @@ fn main() {
             std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
             return;
         }
+        Command::PrintZetaVersions => {
+            use strum::IntoEnumIterator as _;
+            for version in ZetaVersion::iter() {
+                println!("{}", version.to_string().to_lowercase());
+            }
+            return;
+        }
         Command::Synthesize(synth_args) => {
             let Some(output_dir) = args.output else {
                 panic!("output dir is required");
@@ -953,7 +965,8 @@ fn main() {
                                         | Command::Split(_)
                                         | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
-                                        | Command::ImportBatch(_) => {
+                                        | Command::ImportBatch(_)
+                                        | Command::PrintZetaVersions => {
                                             unreachable!()
                                         }
                                     }

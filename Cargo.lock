@@ -5398,6 +5398,7 @@ dependencies = [
  "smol",
  "sqlez",
  "sqlez_macros",
+ "strum 0.27.2",
  "telemetry_events",
  "tempfile",
  "terminal_view",

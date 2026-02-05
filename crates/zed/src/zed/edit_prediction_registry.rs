@@ -217,9 +217,7 @@ fn assign_edit_prediction_provider(
                             if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                                 && cx.has_flag::<Zeta2FeatureFlag>() =>
                         {
-                            edit_prediction::EditPredictionModel::Zeta2 {
-                                version: Default::default(),
-                            }
+                            edit_prediction::EditPredictionModel::Zeta2
                         }
                         EditPredictionProvider::Zed
                             if user_store.read(cx).current_user().is_some() =>
