@@ -2322,8 +2322,12 @@ impl Interactivity {
                 window.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
+                    let has_aux_click_listeners = !aux_click_listeners.is_empty();
                     move |event: &MouseDownEvent, phase, window, _cx| {
-                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                        if phase == DispatchPhase::Bubble
+                            && (event.button == MouseButton::Left || has_aux_click_listeners)
+                            && hitbox.is_hovered(window)
+                        {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             window.refresh();
                         }
