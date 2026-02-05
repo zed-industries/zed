@@ -1285,6 +1285,11 @@ impl Thread {
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
+        debug_assert!(
+            !self.tools.contains_key(T::NAME),
+            "Duplicate tool name: {}",
+            T::NAME,
+        );
         self.tools.insert(T::NAME.into(), tool.erase());
     }
 

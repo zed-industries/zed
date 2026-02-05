@@ -52,6 +52,37 @@ macro_rules! tools {
             $(<$tool>::NAME,)*
         ];
 
+        const _: () = {
+            const fn str_eq(a: &str, b: &str) -> bool {
+                let a = a.as_bytes();
+                let b = b.as_bytes();
+                if a.len() != b.len() {
+                    return false;
+                }
+                let mut i = 0;
+                while i < a.len() {
+                    if a[i] != b[i] {
+                        return false;
+                    }
+                    i += 1;
+                }
+                true
+            }
+
+            const NAMES: &[&str] = ALL_TOOL_NAMES;
+            let mut i = 0;
+            while i < NAMES.len() {
+                let mut j = i + 1;
+                while j < NAMES.len() {
+                    if str_eq(NAMES[i], NAMES[j]) {
+                        panic!("Duplicate tool name in tools! macro");
+                    }
+                    j += 1;
+                }
+                i += 1;
+            }
+        };
+
         /// Returns whether the tool with the given name supports the given provider.
         pub fn tool_supports_provider(name: &str, provider: &language_model::LanguageModelProviderId) -> bool {
             $(
