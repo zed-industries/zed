@@ -9,7 +9,7 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::NotifyResultExt,
+    notifications::{NotificationSource, NotifyResultExt},
     toolbar::Toolbar,
     utility_pane::UtilityPaneSlot,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
@@ -3882,8 +3882,9 @@ impl Pane {
                     {
                         let load_path_task = workspace.load_path(project_path.clone(), window, cx);
                         cx.spawn_in(window, async move |workspace, cx| {
-                            if let Some((project_entry_id, build_item)) =
-                                load_path_task.await.notify_async_err(cx)
+                            if let Some((project_entry_id, build_item)) = load_path_task
+                                .await
+                                .notify_async_err(NotificationSource::File, cx)
                             {
                                 let (to_pane, new_item_handle) = workspace
                                     .update_in(cx, |workspace, window, cx| {
@@ -3953,6 +3954,7 @@ impl Pane {
                 if workspace.project().read(cx).is_via_collab() {
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot drop files on a remote project"),
+                        NotificationSource::File,
                         cx,
                     );
                     true
@@ -4010,7 +4012,7 @@ impl Pane {
                         _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
-                                    workspace.show_error(&e, cx);
+                                    workspace.show_error(&e, NotificationSource::File, cx);
                                 }
                             }
                             if to_pane.read(cx).items_len() == 0 {

@@ -70,6 +70,71 @@ pub trait Notification:
 
 pub struct SuppressEvent;
 
+/// Source categories for notification telemetry.
+/// These help identify which part of Zed generated a notification.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum NotificationSource {
+    /// Language server notifications (errors, warnings, info from LSP)
+    Lsp,
+    /// Settings and keymap parse/migration errors
+    Settings,
+    /// App update notifications, release notes
+    Update,
+    /// Extension suggestions, dev extension errors
+    Extension,
+    /// Git blame errors, commit message generation failures
+    Git,
+    /// Local settings/tasks/debug errors, project-level issues
+    Project,
+    /// Collaboration notifications (contact requests, channel invites)
+    Collab,
+    /// WSL filesystem warnings, SSH/remote project errors
+    Remote,
+    /// Database load failures
+    Database,
+    /// File access errors, file drop errors
+    File,
+    /// Dev container suggestions
+    DevContainer,
+    /// Agent/assistant related notifications
+    Agent,
+    /// Copilot related notifications
+    Copilot,
+    /// Editor operations (permalinks, encoding, search)
+    Editor,
+    /// Task execution notifications
+    Task,
+    /// CLI installation notifications
+    Cli,
+    /// Generic system notifications (fallback)
+    #[default]
+    System,
+}
+
+impl NotificationSource {
+    fn as_str(&self) -> &'static str {
+        match self {
+            NotificationSource::Lsp => "lsp",
+            NotificationSource::Settings => "settings",
+            NotificationSource::Update => "update",
+            NotificationSource::Extension => "extension",
+            NotificationSource::Git => "git",
+            NotificationSource::Project => "project",
+            NotificationSource::Collab => "collab",
+            NotificationSource::Remote => "remote",
+            NotificationSource::Database => "database",
+            NotificationSource::File => "file",
+            NotificationSource::DevContainer => "dev_container",
+            NotificationSource::Agent => "agent",
+            NotificationSource::Copilot => "copilot",
+            NotificationSource::Editor => "editor",
+            NotificationSource::Task => "task",
+            NotificationSource::Cli => "cli",
+            NotificationSource::System => "system",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct NotificationTelemetry {
     notification_type: &'static str,
@@ -111,10 +176,10 @@ impl NotificationTelemetry {
         }
     }
 
-    fn for_error_message_prompt(id: &NotificationId) -> Self {
+    fn for_error_message_prompt(source: NotificationSource, id: &NotificationId) -> Self {
         Self {
             notification_type: "error",
-            source: "system",
+            source: source.as_str(),
             lsp_name: None,
             level: Some("critical"),
             has_actions: false,
@@ -123,10 +188,10 @@ impl NotificationTelemetry {
         }
     }
 
-    fn for_message_notification(id: &NotificationId) -> Self {
+    fn for_message_notification(source: NotificationSource, id: &NotificationId) -> Self {
         Self {
             notification_type: "notification",
-            source: "system",
+            source: source.as_str(),
             lsp_name: None,
             level: None,
             has_actions: false,
@@ -162,6 +227,7 @@ impl Workspace {
     pub fn show_notification<V: Notification>(
         &mut self,
         id: NotificationId,
+        source: NotificationSource,
         cx: &mut Context<Self>,
         build_notification: impl FnOnce(&mut Context<Self>) -> Entity<V>,
     ) {
@@ -225,12 +291,12 @@ impl Workspace {
                 .downcast::<ErrorMessagePrompt>()
                 .is_ok()
             {
-                telemetry_data = Some(NotificationTelemetry::for_error_message_prompt(&id));
+                telemetry_data = Some(NotificationTelemetry::for_error_message_prompt(source, &id));
             } else if AnyEntity::from(notification.clone())
                 .downcast::<simple_message_notification::MessageNotification>()
                 .is_ok()
             {
-                telemetry_data = Some(NotificationTelemetry::for_message_notification(&id));
+                telemetry_data = Some(NotificationTelemetry::for_message_notification(source, &id));
             }
 
             notification.into()
@@ -261,11 +327,11 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn show_error<E>(&mut self, err: &E, cx: &mut Context<Self>)
+    pub fn show_error<E>(&mut self, err: &E, source: NotificationSource, cx: &mut Context<Self>)
     where
         E: std::fmt::Debug + std::fmt::Display,
     {
-        self.show_notification(workspace_error_notification_id(), cx, |cx| {
+        self.show_notification(workspace_error_notification_id(), source, cx, |cx| {
             cx.new(|cx| ErrorMessagePrompt::new(format!("Error: {err}"), cx))
         });
     }
@@ -273,14 +339,19 @@ impl Workspace {
     pub fn show_portal_error(&mut self, err: String, cx: &mut Context<Self>) {
         struct PortalError;
 
-        self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
-            cx.new(|cx| {
-                ErrorMessagePrompt::new(err.to_string(), cx).with_link_button(
-                    "See docs",
-                    "https://zed.dev/docs/linux#i-cant-open-any-files",
-                )
-            })
-        });
+        self.show_notification(
+            NotificationId::unique::<PortalError>(),
+            NotificationSource::System,
+            cx,
+            |cx| {
+                cx.new(|cx| {
+                    ErrorMessagePrompt::new(err.to_string(), cx).with_link_button(
+                        "See docs",
+                        "https://zed.dev/docs/linux#i-cant-open-any-files",
+                    )
+                })
+            },
+        );
     }
 
     pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut Context<Self>) {
@@ -294,9 +365,9 @@ impl Workspace {
         });
     }
 
-    pub fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+    pub fn show_toast(&mut self, toast: Toast, source: NotificationSource, cx: &mut Context<Self>) {
         self.dismiss_notification(&toast.id, cx);
-        self.show_notification(toast.id.clone(), cx, |cx| {
+        self.show_notification(toast.id.clone(), source, cx, |cx| {
             cx.new(|cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
@@ -1105,31 +1176,15 @@ impl AppNotifications {
 /// exist. If the notification is dismissed within any workspace, it will be removed from all.
 pub fn show_app_notification<V: Notification + 'static>(
     id: NotificationId,
+    source: NotificationSource,
     cx: &mut App,
     build_notification: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static + Send + Sync,
 ) {
-    let telemetry_id = format!("{:?}", id);
     let telemetry_data = if TypeId::of::<V>() == TypeId::of::<ErrorMessagePrompt>() {
-        Some(NotificationTelemetry {
-            notification_type: "error",
-            source: "system",
-            lsp_name: None,
-            level: Some("critical"),
-            has_actions: false,
-            notification_id: telemetry_id,
-            is_auto_dismissing: false,
-        })
+        Some(NotificationTelemetry::for_error_message_prompt(source, &id))
     } else if TypeId::of::<V>() == TypeId::of::<simple_message_notification::MessageNotification>()
     {
-        Some(NotificationTelemetry {
-            notification_type: "notification",
-            source: "system",
-            lsp_name: None,
-            level: None,
-            has_actions: false,
-            notification_id: telemetry_id,
-            is_auto_dismissing: false,
-        })
+        Some(NotificationTelemetry::for_message_notification(source, &id))
     } else {
         None
     };
@@ -1206,13 +1261,21 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
 pub trait NotifyResultExt {
     type Ok;
 
-    fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
-    -> Option<Self::Ok>;
+    fn notify_err(
+        self,
+        workspace: &mut Workspace,
+        source: NotificationSource,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Self::Ok>;
 
-    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
+    fn notify_async_err(
+        self,
+        source: NotificationSource,
+        cx: &mut AsyncWindowContext,
+    ) -> Option<Self::Ok>;
 
     /// Notifies the active workspace if there is one, otherwise notifies all workspaces.
-    fn notify_app_err(self, cx: &mut App) -> Option<Self::Ok>;
+    fn notify_app_err(self, source: NotificationSource, cx: &mut App) -> Option<Self::Ok>;
 }
 
 impl<T, E> NotifyResultExt for std::result::Result<T, E>
@@ -1221,25 +1284,34 @@ where
 {
     type Ok = T;
 
-    fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Option<T> {
+    fn notify_err(
+        self,
+        workspace: &mut Workspace,
+        source: NotificationSource,
+        cx: &mut Context<Workspace>,
+    ) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("Showing error notification in workspace: {err:?}");
-                workspace.show_error(&err, cx);
+                workspace.show_error(&err, source, cx);
                 None
             }
         }
     }
 
-    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<T> {
+    fn notify_async_err(
+        self,
+        source: NotificationSource,
+        cx: &mut AsyncWindowContext,
+    ) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("{err:?}");
                 cx.update_root(|view, _, cx| {
                     if let Ok(workspace) = view.downcast::<Workspace>() {
-                        workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
+                        workspace.update(cx, |workspace, cx| workspace.show_error(&err, source, cx))
                     }
                 })
                 .ok();
@@ -1248,13 +1320,13 @@ where
         }
     }
 
-    fn notify_app_err(self, cx: &mut App) -> Option<T> {
+    fn notify_app_err(self, source: NotificationSource, cx: &mut App) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
                 let message: SharedString = format!("Error: {err}").into();
                 log::error!("Showing error notification in app: {message}");
-                show_app_notification(workspace_error_notification_id(), cx, {
+                show_app_notification(workspace_error_notification_id(), source, cx, {
                     move |cx| {
                         cx.new({
                             let message = message.clone();
@@ -1270,7 +1342,7 @@ where
 }
 
 pub trait NotifyTaskExt {
-    fn detach_and_notify_err(self, window: &mut Window, cx: &mut App);
+    fn detach_and_notify_err(self, source: NotificationSource, window: &mut Window, cx: &mut App);
 }
 
 impl<R, E> NotifyTaskExt for Task<std::result::Result<R, E>>
@@ -1278,9 +1350,9 @@ where
     E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,
 {
-    fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
+    fn detach_and_notify_err(self, source: NotificationSource, window: &mut Window, cx: &mut App) {
         window
-            .spawn(cx, async move |cx| self.await.notify_async_err(cx))
+            .spawn(cx, async move |cx| self.await.notify_async_err(source, cx))
             .detach();
     }
 }
@@ -1385,7 +1457,7 @@ mod tests {
                     lsp_name.to_string(),
                 );
                 let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
-                workspace.show_notification(notification_id, cx, |cx| {
+                workspace.show_notification(notification_id, NotificationSource::Lsp, cx, |cx| {
                     cx.new(|cx| LanguageServerPrompt::new(request, cx))
                 });
             })
@@ -1444,7 +1516,7 @@ mod tests {
                 );
                 let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
 
-                workspace.show_notification(notification_id, cx, |cx| {
+                workspace.show_notification(notification_id, NotificationSource::Lsp, cx, |cx| {
                     cx.new(|cx| LanguageServerPrompt::new(request, cx))
                 });
             })
@@ -1495,7 +1567,7 @@ mod tests {
                 "test_server".to_string(),
             );
             let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
-            workspace.show_notification(notification_id, cx, |cx| {
+            workspace.show_notification(notification_id, NotificationSource::Lsp, cx, |cx| {
                 cx.new(|cx| LanguageServerPrompt::new(request, cx))
             });
         });
@@ -1538,7 +1610,7 @@ mod tests {
                 "test_server".to_string(),
             );
             let notification_id = NotificationId::composite::<LanguageServerPrompt>(request.id);
-            workspace.show_notification(notification_id, cx, |cx| {
+            workspace.show_notification(notification_id, NotificationSource::Lsp, cx, |cx| {
                 cx.new(|cx| LanguageServerPrompt::new(request, cx))
             });
         });

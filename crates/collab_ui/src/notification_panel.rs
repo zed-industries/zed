@@ -26,7 +26,7 @@ use workspace::notifications::{
     Notification as WorkspaceNotification, NotificationId, SuppressEvent,
 };
 use workspace::{
-    Workspace,
+    NotificationSource, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -473,7 +473,7 @@ impl NotificationPanel {
                 let id = NotificationId::unique::<NotificationToast>();
 
                 workspace.dismiss_notification(&id, cx);
-                workspace.show_notification(id, cx, |cx| {
+                workspace.show_notification(id, NotificationSource::Collab, cx, |cx| {
                     let workspace = cx.entity().downgrade();
                     cx.new(|cx| NotificationToast {
                         actor,

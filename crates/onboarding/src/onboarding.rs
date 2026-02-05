@@ -19,7 +19,7 @@ use ui::{
 pub use workspace::welcome::ShowWelcome;
 use workspace::welcome::WelcomePage;
 use workspace::{
-    AppState, Workspace, WorkspaceId,
+    AppState, NotificationSource, Workspace, WorkspaceId,
     dock::DockPosition,
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
@@ -246,7 +246,7 @@ impl Onboarding {
                 client
                     .sign_in_with_optional_connect(true, cx)
                     .await
-                    .notify_async_err(cx);
+                    .notify_async_err(NotificationSource::System, cx);
             })
             .detach();
     }
