@@ -1114,7 +1114,7 @@ impl ProjectPanel {
                     .is_some()
             };
 
-            let entity = cx.entity().clone();
+            let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
