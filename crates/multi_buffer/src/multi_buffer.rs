@@ -3052,11 +3052,17 @@ impl MultiBuffer {
             *non_text_state_update_count += 1;
         }
 
-        for (id, diff) in diffs.iter() {
-            if buffer_diff.get(id).is_none() || diff.is_inverted {
-                buffer_diff.insert(*id, diff.snapshot(cx));
-            }
-        }
+        let diffs_to_add = diffs
+            .iter()
+            .filter_map(|(id, diff)| {
+                if diff.is_inverted || buffer_diff.get(id).is_none() {
+                    Some((*id, diff.snapshot(cx)))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        buffer_diff.extend(diffs_to_add);
 
         excerpts_to_edit.sort_unstable_by_key(|(locator, _, _)| *locator);
 
