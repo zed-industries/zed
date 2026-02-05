@@ -5251,6 +5251,25 @@ impl ProjectPanel {
                             if !this.marked_entries.contains(&selection) {
                                 this.marked_entries.clear();
                             }
+
+                            if this
+                                .state
+                                .edit_state
+                                .as_ref()
+                                .is_some_and(|state| state.processing_filename.is_none())
+                            {
+                                match this.confirm_edit(false, window, cx) {
+                                    Some(task) => {
+                                        task.detach_and_notify_err(window, cx);
+                                    }
+                                    None => {
+
+                                        this.state.edit_state = None;
+                                        this.update_visible_entries(None, false, false, window, cx);
+                                        cx.notify();
+                                    }
+                                }
+                            }
                             this.deploy_context_menu(event.position, entry_id, window, cx);
                         },
                     ))
