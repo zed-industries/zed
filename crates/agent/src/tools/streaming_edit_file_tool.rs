@@ -498,7 +498,6 @@ fn apply_edits(
     let mut failed_edits = Vec::new();
     let mut ambiguous_edits = Vec::new();
     let mut resolved_edits: Vec<(Range<usize>, String)> = Vec::new();
-    let mut first_edit_line: Option<u32> = None;
 
     // First pass: resolve all edits without applying them
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
@@ -507,9 +506,6 @@ fn apply_edits(
 
         match result {
             Ok(Some((range, new_text))) => {
-                if first_edit_line.is_none() {
-                    first_edit_line = Some(snapshot.offset_to_point(range.start).row);
-                }
                 // Reveal the range in the diff view
                 let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
                     (
@@ -552,7 +548,7 @@ fn apply_edits(
             .map(|(index, ranges)| {
                 let lines = ranges
                     .iter()
-                    .map(|r| r.start.to_string())
+                    .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("edit {}: matches at lines {}", index, lines)
@@ -565,19 +561,20 @@ fn apply_edits(
         );
     }
 
-    // Emit location for the first edit
-    if let Some(line) = first_edit_line {
+    // Sort edits by position so buffer.edit() can handle offset translation
+    let mut edits_sorted = resolved_edits;
+    edits_sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start));
+
+    // Emit location for the earliest edit in the file
+    if let Some((first_range, _)) = edits_sorted.first() {
         if let Some(abs_path) = abs_path.clone() {
+            let line = snapshot.offset_to_point(first_range.start).row;
             event_stream.update_fields(
                 ToolCallUpdateFields::new()
                     .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
             );
         }
     }
-
-    // Sort edits by position so buffer.edit() can handle offset translation
-    let mut edits_sorted = resolved_edits;
-    edits_sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start));
 
     // Validate no overlaps (sorted ascending by start)
     for window in edits_sorted.windows(2) {
