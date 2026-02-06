@@ -6,7 +6,7 @@ use crate::{
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::EditPredictionResult,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use cloud_llm_client::{
     PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger, PredictEditsResponse,
 };
@@ -19,12 +19,13 @@ use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use text::Bias;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
-use zeta_prompt::{Event, ZetaPromptInput};
-
-const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
+use zeta_prompt::{
+    Event, ZetaPromptInput,
+    zeta1::{
+        CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
+        START_OF_FILE_MARKER,
+    },
+};
 
 pub(crate) const MAX_CONTEXT_TOKENS: usize = 150;
 pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
@@ -80,17 +81,12 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
-    let (uri, require_auth) = match &store.custom_predict_edits_url {
-        Some(custom_url) => (custom_url.clone(), false),
-        None => {
-            match client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/v2", &[])
-            {
-                Ok(url) => (url.into(), true),
-                Err(err) => return Task::ready(Err(err)),
-            }
-        }
+    let uri = match client
+        .http_client()
+        .build_zed_llm_url("/predict_edits/v2", &[])
+    {
+        Ok(url) => Arc::from(url),
+        Err(err) => return Task::ready(Err(err)),
     };
 
     cx.spawn(async move |this, cx| {
@@ -126,7 +122,7 @@ pub(crate) fn request_prediction_with_zeta1(
             client,
             llm_token,
             app_version,
-            require_auth,
+            true,
         )
         .await;
 
@@ -265,7 +261,7 @@ fn process_completion_response(
                 let output_excerpt = output_excerpt.clone();
                 let editable_range = editable_range.clone();
                 let snapshot = snapshot.clone();
-                async move { parse_edits(output_excerpt, editable_range, &snapshot) }
+                async move { parse_edits(output_excerpt.as_ref(), editable_range, &snapshot) }
             })
             .await?
             .into();
@@ -286,8 +282,8 @@ fn process_completion_response(
     })
 }
 
-fn parse_edits(
-    output_excerpt: Arc<str>,
+pub(crate) fn parse_edits(
+    output_excerpt: &str,
     editable_range: Range<usize>,
     snapshot: &BufferSnapshot,
 ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
@@ -297,8 +293,8 @@ fn parse_edits(
         .match_indices(EDITABLE_REGION_START_MARKER)
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        start_markers.len() == 1,
-        "expected exactly one start marker, found {}",
+        start_markers.len() <= 1,
+        "expected at most one start marker, found {}",
         start_markers.len()
     );
 
@@ -306,8 +302,8 @@ fn parse_edits(
         .match_indices(EDITABLE_REGION_END_MARKER)
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        end_markers.len() == 1,
-        "expected exactly one end marker, found {}",
+        end_markers.len() <= 1,
+        "expected at most one end marker, found {}",
         end_markers.len()
     );
 
@@ -320,16 +316,16 @@ fn parse_edits(
         sof_markers.len()
     );
 
-    let codefence_start = start_markers[0].0;
-    let content = &content[codefence_start..];
+    let content_start = start_markers
+        .first()
+        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len() + 1) // +1 to skip \n after marker
+        .unwrap_or(0);
+    let content_end = end_markers
+        .first()
+        .map(|e| e.0.saturating_sub(1)) // -1 to exclude \n before marker
+        .unwrap_or(content.strip_suffix("\n").unwrap_or(&content).len());
 
-    let newline_ix = content.find('\n').context("could not find newline")?;
-    let content = &content[newline_ix + 1..];
-
-    let codefence_end = content
-        .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-        .context("could not find end marker")?;
-    let new_text = &content[..codefence_end];
+    let new_text = &content[content_start..content_end];
 
     let old_text = snapshot
         .text_for_range(editable_range.clone())
@@ -513,6 +509,10 @@ pub fn gather_context(
             })
         }
     })
+}
+
+pub(crate) fn prompt_for_events(events: &[Arc<Event>], max_tokens: usize) -> String {
+    prompt_for_events_impl(events, max_tokens).0
 }
 
 fn prompt_for_events_impl(events: &[Arc<Event>], mut remaining_tokens: usize) -> (String, usize) {

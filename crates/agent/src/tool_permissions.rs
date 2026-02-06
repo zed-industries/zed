@@ -17,12 +17,22 @@ pub struct HardcodedSecurityRules {
 
 pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
     HardcodedSecurityRules {
+        // Case-insensitive; `(-[rf]+\s+)*` handles `-rf`, `-fr`, `-RF`, `-r -f`, etc.
         terminal_deny: vec![
             // Recursive deletion of root - "rm -rf /" or "rm -rf / "
-            CompiledRegex::new(r"rm\s+(-[rRfF]+\s+)*/\s*$", false)
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*/\s*$", false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of home - "rm -rf ~" (but not ~/subdir)
-            CompiledRegex::new(r"rm\s+(-[rRfF]+\s+)*~\s*$", false)
+            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" (but not ~/subdir)
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*~/?\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}"
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*(\$HOME|\$\{HOME\})/?\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./"
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\./?\s*$", false)
+                .expect("hardcoded regex should compile"),
+            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../"
+            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\.\./?\s*$", false)
                 .expect("hardcoded regex should compile"),
         ],
     }
@@ -36,7 +46,7 @@ fn check_hardcoded_security_rules(
     shell_kind: ShellKind,
 ) -> Option<ToolPermissionDecision> {
     // Currently only terminal tool has hardcoded rules
-    if tool_name != TerminalTool::name() {
+    if tool_name != TerminalTool::NAME {
         return None;
     }
 
@@ -155,7 +165,7 @@ impl ToolPermissionDecision {
         //
         // If parsing fails or the shell syntax is unsupported, always_allow is
         // disabled for this command (we set allow_enabled to false to signal this).
-        if tool_name == TerminalTool::name() {
+        if tool_name == TerminalTool::NAME {
             // Our shell parser (brush-parser) only supports POSIX-like shell syntax.
             // See the doc comment above for the list of compatible/incompatible shells.
             if !shell_kind.supports_posix_chaining() {
@@ -296,7 +306,9 @@ pub fn decide_permission_from_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AgentTool;
     use crate::pattern_extraction::extract_terminal_pattern;
+    use crate::tools::{EditFileTool, TerminalTool};
     use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
     use std::sync::Arc;
 
@@ -322,7 +334,7 @@ mod tests {
     impl PermTest {
         fn new(input: &'static str) -> Self {
             Self {
-                tool: "terminal",
+                tool: TerminalTool::NAME,
                 input,
                 mode: ToolPermissionMode::Confirm,
                 allow: vec![],
@@ -434,7 +446,7 @@ mod tests {
 
     fn no_rules(input: &str, global: bool) -> ToolPermissionDecision {
         ToolPermissionDecision::from_input(
-            "terminal",
+            TerminalTool::NAME,
             input,
             &ToolPermissions {
                 tools: collections::HashMap::default(),
@@ -656,7 +668,7 @@ mod tests {
     fn other_tool_not_affected() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Deny,
                 always_allow: vec![],
@@ -666,7 +678,7 @@ mod tests {
             },
         );
         tools.insert(
-            Arc::from("edit_file"),
+            Arc::from(EditFileTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -678,16 +690,28 @@ mod tests {
         let p = ToolPermissions { tools };
         // With always_allow_tool_actions=true, even default_mode: Deny is overridden
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, true, ShellKind::Posix),
+            ToolPermissionDecision::from_input(TerminalTool::NAME, "x", &p, true, ShellKind::Posix),
             ToolPermissionDecision::Allow
         );
         // With always_allow_tool_actions=false, default_mode: Deny is respected
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
-            ToolPermissionDecision::from_input("edit_file", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                EditFileTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Allow
         );
     }
@@ -708,7 +732,13 @@ mod tests {
         let p = ToolPermissions { tools };
         // "terminal" should not match "term" rules, so falls back to Confirm (no rules)
         assert_eq!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Confirm
         );
     }
@@ -718,7 +748,7 @@ mod tests {
     fn invalid_pattern_blocks() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Allow,
                 always_allow: vec![CompiledRegex::new("echo", false).unwrap()],
@@ -736,12 +766,24 @@ mod tests {
         };
         // With global=true, all checks are bypassed including invalid pattern check
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, true, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "echo hi",
+                &p,
+                true,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Allow
         ));
         // With global=false, invalid patterns block the tool
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "echo hi",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Deny(_)
         ));
     }
@@ -918,7 +960,7 @@ mod tests {
     fn mcp_doesnt_collide_with_builtin() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Deny,
                 always_allow: vec![],
@@ -939,7 +981,13 @@ mod tests {
         );
         let p = ToolPermissions { tools };
         assert!(matches!(
-            ToolPermissionDecision::from_input("terminal", "x", &p, false, ShellKind::Posix),
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                "x",
+                &p,
+                false,
+                ShellKind::Posix
+            ),
             ToolPermissionDecision::Deny(_)
         ));
         assert_eq!(
@@ -982,8 +1030,8 @@ mod tests {
     }
 
     #[test]
-    fn nushell_denies_when_always_allow_configured() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_deny();
+    fn nushell_allows_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Nushell).is_allow();
     }
 
     #[test]
@@ -1012,15 +1060,20 @@ mod tests {
     }
 
     #[test]
-    fn elvish_denies_when_always_allow_configured() {
-        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_deny();
+    fn elvish_allows_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Elvish).is_allow();
+    }
+
+    #[test]
+    fn rc_allows_with_allow_pattern() {
+        t("ls").allow(&["^ls"]).shell(ShellKind::Rc).is_allow();
     }
 
     #[test]
     fn multiple_invalid_patterns_pluralizes_message() {
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from("terminal"),
+            Arc::from(TerminalTool::NAME),
             ToolRules {
                 default_mode: ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -1042,8 +1095,13 @@ mod tests {
         );
         let p = ToolPermissions { tools };
 
-        let result =
-            ToolPermissionDecision::from_input("terminal", "echo hi", &p, false, ShellKind::Posix);
+        let result = ToolPermissionDecision::from_input(
+            TerminalTool::NAME,
+            "echo hi",
+            &p,
+            false,
+            ShellKind::Posix,
+        );
         match result {
             ToolPermissionDecision::Deny(msg) => {
                 assert!(
@@ -1060,14 +1118,44 @@ mod tests {
 
     #[test]
     fn hardcoded_blocks_rm_rf_root() {
-        // rm -rf / should be blocked by hardcoded rules
         t("rm -rf /").is_deny();
+        t("rm -fr /").is_deny();
+        t("rm -RF /").is_deny();
+        t("rm -FR /").is_deny();
+        t("rm -r -f /").is_deny();
+        t("rm -f -r /").is_deny();
+        t("RM -RF /").is_deny();
     }
 
     #[test]
     fn hardcoded_blocks_rm_rf_home() {
-        // rm -rf ~ should be blocked by hardcoded rules
         t("rm -rf ~").is_deny();
+        t("rm -fr ~").is_deny();
+        t("rm -rf ~/").is_deny();
+        t("rm -rf $HOME").is_deny();
+        t("rm -fr $HOME").is_deny();
+        t("rm -rf $HOME/").is_deny();
+        t("rm -rf ${HOME}").is_deny();
+        t("rm -rf ${HOME}/").is_deny();
+        t("rm -RF $HOME").is_deny();
+        t("rm -FR ${HOME}/").is_deny();
+        t("rm -R -F ${HOME}/").is_deny();
+        t("RM -RF ~").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_rf_dot() {
+        t("rm -rf .").is_deny();
+        t("rm -fr .").is_deny();
+        t("rm -rf ./").is_deny();
+        t("rm -rf ..").is_deny();
+        t("rm -fr ..").is_deny();
+        t("rm -rf ../").is_deny();
+        t("rm -RF .").is_deny();
+        t("rm -FR ../").is_deny();
+        t("rm -R -F ../").is_deny();
+        t("RM -RF .").is_deny();
+        t("RM -RF ..").is_deny();
     }
 
     #[test]
@@ -1075,12 +1163,18 @@ mod tests {
         // Even with always_allow_tool_actions=true, hardcoded rules block
         t("rm -rf /").global(true).is_deny();
         t("rm -rf ~").global(true).is_deny();
+        t("rm -rf $HOME").global(true).is_deny();
+        t("rm -rf .").global(true).is_deny();
+        t("rm -rf ..").global(true).is_deny();
     }
 
     #[test]
     fn hardcoded_cannot_be_bypassed_by_allow_pattern() {
         // Even with an allow pattern that matches, hardcoded rules block
         t("rm -rf /").allow(&[".*"]).is_deny();
+        t("rm -rf $HOME").allow(&[".*"]).is_deny();
+        t("rm -rf .").allow(&[".*"]).is_deny();
+        t("rm -rf ..").allow(&[".*"]).is_deny();
     }
 
     #[test]
@@ -1092,6 +1186,18 @@ mod tests {
         t("rm -rf /tmp/test")
             .mode(ToolPermissionMode::Allow)
             .is_allow();
+        t("rm -rf ~/Documents")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf $HOME/Documents")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf ../some_dir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf .hidden_dir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 
     #[test]
@@ -1100,5 +1206,8 @@ mod tests {
         t("ls && rm -rf /").is_deny();
         t("echo hello; rm -rf ~").is_deny();
         t("cargo build && rm -rf /").global(true).is_deny();
+        t("echo hello; rm -rf $HOME").is_deny();
+        t("echo hello; rm -rf .").is_deny();
+        t("echo hello; rm -rf ..").is_deny();
     }
 }

@@ -672,6 +672,18 @@ impl CodeCell {
         }
     }
 
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                if let Some(buffer) = buffer.as_singleton() {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(language, cx);
+                    });
+                }
+            });
+        });
+    }
+
     /// Load a code cell from notebook file data, including existing outputs and execution count
     pub fn load(
         id: CellId,

@@ -29,6 +29,7 @@ mod stack_trace_view;
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
 
+// Let's see the diff-test in action.
 actions!(
     debugger,
     [
