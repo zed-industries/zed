@@ -8613,7 +8613,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                 }),
                 metadata: None,
-                files: USER,
+                files: USER | PROJECT,
             }),
         ]
     }
