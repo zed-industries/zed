@@ -4975,7 +4975,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.9.2",
- "search",
  "serde",
  "serde_json",
  "settings",
@@ -21264,6 +21263,7 @@ dependencies = [
  "gpui",
  "schemars",
  "serde",
+ "util",
  "uuid",
 ]
 

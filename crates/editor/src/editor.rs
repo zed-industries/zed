@@ -15,7 +15,6 @@ pub mod actions;
 pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
-fn foodie(){}
 pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
