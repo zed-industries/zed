@@ -2766,8 +2766,10 @@ impl AcpThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
-        _cx: &App,
+        cx: &Context<Self>,
     ) -> impl IntoElement {
+        let weak_self = cx.weak_entity();
+
         let default_effort_level = supported_effort_levels
             .iter()
             .find(|effort_level| effort_level.is_default)
@@ -2788,6 +2790,7 @@ impl AcpThreadView {
                     .child(
                         Label::new(
                             selected
+                                .clone()
                                 .or(default_effort_level)
                                 .map_or("Select Effort".into(), |effort| effort.name.clone()),
                         )
@@ -2802,7 +2805,42 @@ impl AcpThreadView {
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                     for effort_level in supported_effort_levels.clone() {
-                        menu = menu.action(effort_level.name, gpui::NoAction.boxed_clone());
+                        let is_selected = selected
+                            .as_ref()
+                            .is_some_and(|selected| selected.value == effort_level.value);
+                        let entry = ContextMenuEntry::new(effort_level.name)
+                            .toggleable(IconPosition::End, is_selected);
+
+                        menu.push_item(entry.handler({
+                            let effort = effort_level.value.clone();
+                            let weak_self = weak_self.clone();
+                            move |_window, cx| {
+                                let effort = effort.clone();
+                                weak_self
+                                    .update(cx, |this, cx| {
+                                        if let Some(thread) = this.as_native_thread(cx) {
+                                            thread.update(cx, |thread, cx| {
+                                                thread.set_thinking_effort(
+                                                    Some(effort.to_string()),
+                                                    cx,
+                                                );
+
+                                                let fs = thread.project().read(cx).fs().clone();
+                                                update_settings_file(fs, cx, move |settings, _| {
+                                                    if let Some(agent) = settings.agent.as_mut()
+                                                        && let Some(default_model) =
+                                                            agent.default_model.as_mut()
+                                                    {
+                                                        default_model.effort =
+                                                            Some(effort.to_string());
+                                                    }
+                                                });
+                                            });
+                                        }
+                                    })
+                                    .ok();
+                            }
+                        }));
                     }
 
                     menu
