@@ -3312,6 +3312,8 @@ impl ToolCallEventStream {
                             });
                         });
                     }
+                } else {
+                    log::error!("Failed to parse always allow pattern: missing newline separator in '{rest}'");
                 }
                 return Ok(());
             }
@@ -3331,6 +3333,8 @@ impl ToolCallEventStream {
                             });
                         });
                     }
+                } else {
+                    log::error!("Failed to parse always deny pattern: missing newline separator in '{rest}'");
                 }
                 return Err(anyhow!("Permission to run tool denied by user"));
             }
