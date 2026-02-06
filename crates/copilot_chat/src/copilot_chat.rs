@@ -708,13 +708,7 @@ fn copilot_request_headers(builder: http_client::Builder, api_token: &str) -> ht
     builder
         .header("Authorization", format!("Bearer {}", api_token))
         .header("Content-Type", "application/json")
-        .header(
-            "Editor-Version",
-            format!(
-                "Zed/{}",
-                option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
-            ),
-        )
+        .header("Copilot-Integration-Id", "vscode-chat")
 }
 
 async fn request_models(
@@ -728,6 +722,7 @@ async fn request_models(
             .uri(models_url.as_ref()),
         &api_token,
     )
+    .header("Editor-Version", "vscode/1.103.2")
     .header("x-github-api-version", "2025-05-01");
 
     let request = request_builder.body(AsyncBody::empty())?;
@@ -821,6 +816,13 @@ async fn stream_completion(
             .method(Method::POST)
             .uri(completion_url.as_ref()),
         &api_key,
+    )
+    .header(
+        "Editor-Version",
+        format!(
+            "Zed/{}",
+            option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
+        ),
     )
     .header("X-Initiator", request_initiator)
     .when(is_vision_request, |builder| {

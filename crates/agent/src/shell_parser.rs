@@ -78,6 +78,11 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
     Some(())
 }
 
+enum RedirectNormalization {
+    Normalized(String),
+    Skip,
+}
+
 fn extract_commands_from_simple_command(
     simple_command: &ast::SimpleCommand,
     commands: &mut Vec<String>,
@@ -90,11 +95,15 @@ fn extract_commands_from_simple_command(
     // returns None — the same as a shell parse failure. The caller then falls
     // back to raw-input matching with always_allow disabled.
     let mut words = Vec::new();
+    let mut redirects = Vec::new();
+
     if let Some(prefix) = &simple_command.prefix {
         for item in &prefix.0 {
             if let ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) = item {
-                if let Some(redirect_str) = normalize_io_redirect(redirect) {
-                    words.push(redirect_str);
+                match normalize_io_redirect(redirect) {
+                    Some(RedirectNormalization::Normalized(s)) => redirects.push(s),
+                    Some(RedirectNormalization::Skip) => {}
+                    None => return None,
                 }
             }
         }
@@ -109,14 +118,18 @@ fn extract_commands_from_simple_command(
                     words.push(normalize_word(word)?);
                 }
                 ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
-                    if let Some(redirect_str) = normalize_io_redirect(redirect) {
-                        words.push(redirect_str);
+                    match normalize_io_redirect(redirect) {
+                        Some(RedirectNormalization::Normalized(s)) => redirects.push(s),
+                        Some(RedirectNormalization::Skip) => {}
+                        None => return None,
                     }
                 }
                 _ => {}
             }
         }
     }
+
+    words.extend(redirects);
     let command_str = words.join(" ");
     if !command_str.is_empty() {
         commands.push(command_str);
@@ -197,12 +210,12 @@ fn normalize_word_piece_into(
     }
 }
 
-fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<String> {
+fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormalization> {
     match redirect {
-        ast::IoRedirect::File(_fd, kind, target) => {
+        ast::IoRedirect::File(fd, kind, target) => {
             let target_word = match target {
                 ast::IoFileRedirectTarget::Filename(word) => word,
-                _ => return None,
+                _ => return Some(RedirectNormalization::Skip),
             };
             let operator = match kind {
                 ast::IoFileRedirectKind::Read => "<",
@@ -213,15 +226,27 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<String> {
                 ast::IoFileRedirectKind::DuplicateInput => "<&",
                 ast::IoFileRedirectKind::DuplicateOutput => ">&",
             };
+            let fd_prefix = match fd {
+                Some(fd) => fd.to_string(),
+                None => String::new(),
+            };
             let normalized = normalize_word(target_word)?;
-            Some(format!("{} {}", operator, normalized))
+            Some(RedirectNormalization::Normalized(format!(
+                "{}{} {}",
+                fd_prefix, operator, normalized
+            )))
         }
         ast::IoRedirect::OutputAndError(word, append) => {
             let operator = if *append { "&>>" } else { "&>" };
             let normalized = normalize_word(word)?;
-            Some(format!("{} {}", operator, normalized))
+            Some(RedirectNormalization::Normalized(format!(
+                "{} {}",
+                operator, normalized
+            )))
         }
-        ast::IoRedirect::HereDocument(_, _) | ast::IoRedirect::HereString(_, _) => None,
+        ast::IoRedirect::HereDocument(_, _) | ast::IoRedirect::HereString(_, _) => {
+            Some(RedirectNormalization::Skip)
+        }
     }
 }
 
@@ -641,5 +666,54 @@ mod tests {
     fn test_fd_redirect_handled_gracefully() {
         let commands = extract_commands("cmd 2>&1").expect("parse failed");
         assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_input_redirect() {
+        let commands = extract_commands("sort < /tmp/input").expect("parse failed");
+        assert_eq!(commands, vec!["sort < /tmp/input"]);
+    }
+
+    #[test]
+    fn test_multiple_redirects() {
+        let commands = extract_commands("cmd > /tmp/out 2> /tmp/err").expect("parse failed");
+        assert_eq!(commands, vec!["cmd > /tmp/out 2> /tmp/err"]);
+    }
+
+    #[test]
+    fn test_prefix_position_redirect() {
+        let commands = extract_commands("> /tmp/out echo hello").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello > /tmp/out"]);
+    }
+
+    #[test]
+    fn test_redirect_with_variable_expansion() {
+        let commands = extract_commands("echo > $HOME/file").expect("parse failed");
+        assert_eq!(commands, vec!["echo > $HOME/file"]);
+    }
+
+    #[test]
+    fn test_output_and_error_redirect() {
+        let commands = extract_commands("cmd &> /tmp/all").expect("parse failed");
+        assert_eq!(commands, vec!["cmd &> /tmp/all"]);
+    }
+
+    #[test]
+    fn test_append_output_and_error_redirect() {
+        let commands = extract_commands("cmd &>> /tmp/all").expect("parse failed");
+        assert_eq!(commands, vec!["cmd &>> /tmp/all"]);
+    }
+
+    #[test]
+    fn test_redirect_in_chained_command() {
+        let commands =
+            extract_commands("echo hello > /tmp/out && cat /tmp/out").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello > /tmp/out", "cat /tmp/out"]);
+    }
+
+    #[test]
+    fn test_here_string_dropped_from_normalized_output() {
+        let commands = extract_commands("cat <<< 'hello'").expect("parse failed");
+        assert_eq!(commands, vec!["cat"]);
     }
 }
