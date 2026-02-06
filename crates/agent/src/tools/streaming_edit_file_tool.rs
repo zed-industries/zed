@@ -995,9 +995,10 @@ mod tests {
             )
         });
 
-        // Edit A spans lines 2-3, edit B spans lines 3-4. They overlap on
-        // "line 3" and are given in ascending file order so the ascending
-        // sort and subsequent pairwise overlap check can detect them correctly.
+        // Edit A spans lines 3-4, edit B spans lines 2-3. They overlap on
+        // "line 3" and are given in descending file order so the ascending
+        // sort must reorder them before the pairwise overlap check can
+        // detect them correctly.
         let result = cx
             .update(|cx| {
                 let input = StreamingEditFileToolInput {
@@ -1007,12 +1008,12 @@ mod tests {
                     content: None,
                     edits: Some(vec![
                         EditOperation {
-                            old_text: "line 2\nline 3".into(),
-                            new_text: "FIRST".into(),
-                        },
-                        EditOperation {
                             old_text: "line 3\nline 4".into(),
                             new_text: "SECOND".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 2\nline 3".into(),
+                            new_text: "FIRST".into(),
                         },
                     ]),
                 };
