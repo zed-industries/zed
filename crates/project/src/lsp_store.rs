@@ -142,6 +142,7 @@ use util::{
 };
 
 pub use document_colors::DocumentColors;
+pub use folding_ranges::LspFoldingRange;
 pub use fs::*;
 pub use language::Location;
 pub use lsp_store::inlay_hints::{CacheInlayHints, InvalidationStrategy};
