@@ -66,8 +66,7 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
             extract_commands_from_simple_command(simple_command, commands)?;
         }
         ast::Command::Compound(compound_command, redirect_list) => {
-            let start = commands.len();
-            extract_commands_from_compound_command(compound_command, commands)?;
+            let body_start = extract_commands_from_compound_command(compound_command, commands)?;
             if let Some(redirect_list) = redirect_list {
                 let mut normalized_redirects = Vec::new();
                 for redirect in &redirect_list.0 {
@@ -77,17 +76,14 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
                     }
                 }
                 if !normalized_redirects.is_empty() {
-                    let new_commands = commands.get_mut(start..);
-                    match new_commands {
-                        Some(new_commands) if !new_commands.is_empty() => {
-                            for command in new_commands {
-                                for redirect in &normalized_redirects {
-                                    command.push(' ');
-                                    command.push_str(redirect);
-                                }
-                            }
+                    if body_start >= commands.len() {
+                        return None;
+                    }
+                    for command in &mut commands[body_start..] {
+                        for redirect in &normalized_redirects {
+                            command.push(' ');
+                            command.push_str(redirect);
                         }
-                        _ => return None,
                     }
                 }
             }
@@ -400,13 +396,17 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
 fn extract_commands_from_compound_command(
     compound_command: &ast::CompoundCommand,
     commands: &mut Vec<String>,
-) -> Option<()> {
+) -> Option<usize> {
     match compound_command {
         ast::CompoundCommand::BraceGroup(brace_group) => {
+            let body_start = commands.len();
             extract_commands_from_compound_list(&brace_group.list, commands)?;
+            Some(body_start)
         }
         ast::CompoundCommand::Subshell(subshell) => {
+            let body_start = commands.len();
             extract_commands_from_compound_list(&subshell.list, commands)?;
+            Some(body_start)
         }
         ast::CompoundCommand::ForClause(for_clause) => {
             if let Some(words) = &for_clause.values {
@@ -414,18 +414,23 @@ fn extract_commands_from_compound_command(
                     extract_commands_from_word(word, commands);
                 }
             }
+            let body_start = commands.len();
             extract_commands_from_do_group(&for_clause.body, commands)?;
+            Some(body_start)
         }
         ast::CompoundCommand::CaseClause(case_clause) => {
             extract_commands_from_word(&case_clause.value, commands);
+            let body_start = commands.len();
             for item in &case_clause.cases {
                 if let Some(body) = &item.cmd {
                     extract_commands_from_compound_list(body, commands)?;
                 }
             }
+            Some(body_start)
         }
         ast::CompoundCommand::IfClause(if_clause) => {
             extract_commands_from_compound_list(&if_clause.condition, commands)?;
+            let body_start = commands.len();
             extract_commands_from_compound_list(&if_clause.then, commands)?;
             if let Some(elses) = &if_clause.elses {
                 for else_item in elses {
@@ -435,18 +440,22 @@ fn extract_commands_from_compound_command(
                     extract_commands_from_compound_list(&else_item.body, commands)?;
                 }
             }
+            Some(body_start)
         }
         ast::CompoundCommand::WhileClause(while_clause)
         | ast::CompoundCommand::UntilClause(while_clause) => {
             extract_commands_from_compound_list(&while_clause.0, commands)?;
+            let body_start = commands.len();
             extract_commands_from_do_group(&while_clause.1, commands)?;
+            Some(body_start)
         }
         ast::CompoundCommand::ArithmeticForClause(arith_for) => {
+            let body_start = commands.len();
             extract_commands_from_do_group(&arith_for.body, commands)?;
+            Some(body_start)
         }
-        ast::CompoundCommand::Arithmetic(_arith_cmd) => {}
+        ast::CompoundCommand::Arithmetic(_arith_cmd) => Some(commands.len()),
     }
-    Some(())
 }
 
 fn extract_commands_from_do_group(
@@ -460,7 +469,8 @@ fn extract_commands_from_function_body(
     func_body: &ast::FunctionBody,
     commands: &mut Vec<String>,
 ) -> Option<()> {
-    extract_commands_from_compound_command(&func_body.0, commands)
+    extract_commands_from_compound_command(&func_body.0, commands)?;
+    Some(())
 }
 
 fn extract_commands_from_extended_test_expr(
@@ -835,13 +845,13 @@ mod tests {
     fn test_while_loop_redirect() {
         let commands =
             extract_commands("while true; do echo line; done > /tmp/log").expect("parse failed");
-        assert_eq!(commands, vec!["true > /tmp/log", "echo line > /tmp/log"]);
+        assert_eq!(commands, vec!["true", "echo line > /tmp/log"]);
     }
 
     #[test]
     fn test_if_clause_redirect() {
         let commands =
             extract_commands("if true; then echo yes; fi > /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["true > /tmp/out", "echo yes > /tmp/out"]);
+        assert_eq!(commands, vec!["true", "echo yes > /tmp/out"]);
     }
 }
