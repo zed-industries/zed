@@ -676,15 +676,12 @@ impl ToolPermissionContext {
                 extract_terminal_pattern_display(input_value),
             )
         } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
-            // input_value is "source -> destination"; extract pattern from destination
-            // because that's the more security-relevant path (where data is being written).
-            let dest = input_value
-                .split_once(" -> ")
-                .map(|(_, d)| d)
-                .unwrap_or(input_value);
+            // input_value is "source -> destination"; extract a pattern from the
+            // common parent directory of both paths so that "always allow" covers
+            // future checks against both the source and the destination.
             (
-                extract_path_pattern(dest),
-                extract_path_pattern_display(dest),
+                extract_copy_move_pattern(input_value),
+                extract_copy_move_pattern_display(input_value),
             )
         } else if tool_name == EditFileTool::NAME
             || tool_name == StreamingEditFileTool::NAME
