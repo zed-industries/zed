@@ -155,7 +155,32 @@ fn expand_rm_to_single_path_commands(command: &str) -> Vec<String> {
     let mut results = Vec::new();
     for path in &paths {
         if path.starts_with('$') {
-            results.push(format!("rm {flags_str}{path}"));
+            let home_prefix = if path.starts_with("${HOME}") {
+                Some("${HOME}")
+            } else if path.starts_with("$HOME") {
+                Some("$HOME")
+            } else {
+                None
+            };
+
+            if let Some(prefix) = home_prefix {
+                let suffix = &path[prefix.len()..];
+                if suffix.is_empty() {
+                    results.push(format!("rm {flags_str}{path}"));
+                } else if suffix.starts_with('/') {
+                    let normalized_suffix = normalize_path(suffix);
+                    let reconstructed = if normalized_suffix == "/" {
+                        prefix.to_string()
+                    } else {
+                        format!("{prefix}{normalized_suffix}")
+                    };
+                    results.push(format!("rm {flags_str}{reconstructed}"));
+                } else {
+                    results.push(format!("rm {flags_str}{path}"));
+                }
+            } else {
+                results.push(format!("rm {flags_str}{path}"));
+            }
             continue;
         }
 
@@ -1362,6 +1387,24 @@ mod tests {
         t("rm -rf -- ~").is_deny();
         t("rm -rf -- ~/").is_deny();
         t("rm -rf -- $HOME").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_rf_home_with_traversal() {
+        // Path traversal after $HOME / ${HOME} should still be blocked
+        t("rm -rf $HOME/./").is_deny();
+        t("rm -rf $HOME/foo/..").is_deny();
+        t("rm -rf ${HOME}/.").is_deny();
+        t("rm -rf ${HOME}/./").is_deny();
+        t("rm -rf $HOME/a/b/../..").is_deny();
+        t("rm -rf ${HOME}/foo/bar/../..").is_deny();
+        // Subdirectories should NOT be blocked
+        t("rm -rf $HOME/subdir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf ${HOME}/Documents")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 
     #[test]
