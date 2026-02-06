@@ -684,7 +684,6 @@ impl ToolPermissionContext {
                 extract_copy_move_pattern_display(input_value),
             )
         } else if tool_name == EditFileTool::NAME
-            || tool_name == StreamingEditFileTool::NAME
             || tool_name == DeletePathTool::NAME
             || tool_name == CreateDirectoryTool::NAME
             || tool_name == SaveFileTool::NAME
