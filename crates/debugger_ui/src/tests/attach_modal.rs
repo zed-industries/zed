@@ -9,7 +9,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::AttachRequest;
+use task::{AttachRequest, SharedTaskContext};
 use tests::{init_test, init_test_workspace};
 use util::path;
 
@@ -220,7 +220,7 @@ async fn test_attach_with_pick_pid_variable(executor: BackgroundExecutor, cx: &m
                     tcp_connection: None,
                 }
                 .to_scenario(),
-                task::TaskContext::default(),
+                SharedTaskContext::default(),
                 None,
                 None,
                 window,

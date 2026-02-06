@@ -30,7 +30,7 @@ use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::sync::{Arc, LazyLock};
-use task::{DebugScenario, TaskContext};
+use task::{DebugScenario, SharedTaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
@@ -176,7 +176,7 @@ impl DebugPanel {
     pub fn start_session(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
@@ -227,9 +227,6 @@ impl DebugPanel {
             inventory.update(cx, |inventory, _| {
                 inventory.scenario_scheduled(
                     scenario.clone(),
-                    // todo(debugger): Task context is cloned three times
-                    // once in Session,inventory, and in resolve scenario
-                    // we should wrap it in an RC instead to save some memory
                     task_context.clone(),
                     worktree_id,
                     active_buffer.as_ref().map(|buffer| buffer.downgrade()),
@@ -1957,7 +1954,7 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        context: TaskContext,
+        context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
