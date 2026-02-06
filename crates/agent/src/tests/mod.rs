@@ -4251,7 +4251,9 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work".to_string()], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4381,7 +4383,9 @@ async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContex
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work".to_string()], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4442,7 +4446,7 @@ async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
 
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Do some work", cx)
+            thread.send(UserMessageId::new(), ["Do some work"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -4516,7 +4520,9 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work"], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4632,7 +4638,9 @@ async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work"], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4714,7 +4722,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
 
     depth_2_subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Nested task", cx)
+            thread.send(UserMessageId::new(), ["Nested task".to_string()], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -4774,7 +4782,11 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Use the echo tool to echo 'hello world'", cx)
+            thread.send(
+                UserMessageId::new(),
+                ["Use the echo tool to echo 'hello world'".to_string()],
+                cx,
+            )
         })
         .unwrap();
     cx.run_until_parked();
@@ -5005,7 +5017,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_ok(), "subagent tool should complete successfully");
 
-    let summary = result.unwrap();
+    let summary = result.unwrap().summary;
     assert!(
         summary.contains("Summary") || summary.contains("TODO") || summary.contains("5"),
         "summary should contain subagent's response: {}",

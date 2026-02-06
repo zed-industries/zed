@@ -594,11 +594,11 @@ mod tests {
         );
 
         database
-            .save_thread(older_id.clone(), older_thread)
+            .save_thread(older_id.clone(), None, older_thread)
             .await
             .unwrap();
         database
-            .save_thread(newer_id.clone(), newer_thread)
+            .save_thread(newer_id.clone(), None, newer_thread)
             .await
             .unwrap();
 
@@ -623,11 +623,11 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), original_thread)
+            .save_thread(thread_id.clone(), None, original_thread)
             .await
             .unwrap();
         database
-            .save_thread(thread_id.clone(), updated_thread)
+            .save_thread(thread_id.clone(), None, updated_thread)
             .await
             .unwrap();
 
