@@ -68,6 +68,7 @@ use {
         sync::Arc,
         time::Duration,
     },
+    util::ResultExt as _,
     watch,
     workspace::{AppState, Workspace},
     zed_actions::OpenSettingsAt,
@@ -308,7 +309,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         .update(&mut cx, |workspace, window, cx| {
             workspace.add_panel(panel, window, cx);
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
@@ -317,7 +318,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         .update(&mut cx, |workspace, window, cx| {
             workspace.open_panel::<ProjectPanel>(window, cx);
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
@@ -352,7 +353,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
                         }
                     });
                 })
-                .ok();
+                .log_err();
         }
     }
 
@@ -362,7 +363,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.refresh();
     })
-    .ok();
+    .log_err();
 
     cx.run_until_parked();
 
@@ -401,7 +402,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         .update(&mut cx, |workspace, window, cx| {
             workspace.close_panel::<ProjectPanel>(window, cx);
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
@@ -546,14 +547,15 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
                 }
             });
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
     // Close the main window
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     // Run until all cleanup tasks complete
     cx.run_until_parked();
@@ -1023,7 +1025,7 @@ fn run_breakpoint_hover_visual_tests(
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let _ = cx.foreground_executor.block_test(task);
+        cx.foreground_executor.block_test(task).log_err();
         cx.background_executor.forbid_parking();
     }
 
@@ -1174,14 +1176,15 @@ fn run_breakpoint_hover_visual_tests(
                 }
             });
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
     // Close the window
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     cx.run_until_parked();
 
@@ -1295,9 +1298,10 @@ fn run_settings_ui_subpage_visual_tests(
     )?;
 
     // Close the settings window
-    let _ = cx.update_window(settings_window_1.into(), |_, window, _cx| {
+    cx.update_window(settings_window_1.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
     cx.run_until_parked();
 
     // Test 2: Open settings with a path that maps to a single SubPageLink
@@ -1339,15 +1343,17 @@ fn run_settings_ui_subpage_visual_tests(
     )?;
 
     // Clean up: close the settings window
-    let _ = cx.update_window(settings_window_2.into(), |_, window, _cx| {
+    cx.update_window(settings_window_2.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
     cx.run_until_parked();
 
     // Clean up: close the workspace window
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
     cx.run_until_parked();
 
     // Give background tasks time to finish
@@ -1452,7 +1458,9 @@ import { AiPaneTabContext } from 'context';
     });
 
     cx.background_executor.allow_parking();
-    let _ = cx.foreground_executor.block_test(add_worktree_task);
+    cx.foreground_executor
+        .block_test(add_worktree_task)
+        .log_err();
     cx.background_executor.forbid_parking();
 
     cx.run_until_parked();
@@ -1494,7 +1502,7 @@ import { AiPaneTabContext } from 'context';
         .update(cx, |workspace, window, cx| {
             ProjectDiff::deploy_at(workspace, None, window, cx);
         })
-        .ok();
+        .log_err();
 
     // Wait for diff to render
     for _ in 0..5 {
@@ -1587,7 +1595,7 @@ import { AiPaneTabContext } from 'context';
 
     if let Some(task) = open_file_task {
         cx.background_executor.allow_parking();
-        let _ = cx.foreground_executor.block_test(task);
+        cx.foreground_executor.block_test(task).log_err();
         cx.background_executor.forbid_parking();
     }
 
@@ -1623,7 +1631,7 @@ import { AiPaneTabContext } from 'context';
                 });
             }
         })
-        .ok();
+        .log_err();
 
     // Wait for overlay to render
     for _ in 0..3 {
@@ -1666,7 +1674,7 @@ import { AiPaneTabContext } from 'context';
                 });
             }
         })
-        .ok();
+        .log_err();
 
     // Wait for text to be inserted
     for _ in 0..3 {
@@ -1700,7 +1708,7 @@ import { AiPaneTabContext } from 'context';
                 });
             }
         })
-        .ok();
+        .log_err();
 
     // Wait for comment to be stored
     for _ in 0..3 {
@@ -1747,7 +1755,7 @@ import { AiPaneTabContext } from 'context';
                 });
             }
         })
-        .ok();
+        .log_err();
 
     // Wait for comments to be stored
     for _ in 0..3 {
@@ -1781,7 +1789,7 @@ import { AiPaneTabContext } from 'context';
                 });
             }
         })
-        .ok();
+        .log_err();
 
     // Wait for UI to update
     for _ in 0..3 {
@@ -1816,17 +1824,19 @@ import { AiPaneTabContext } from 'context';
                 }
             });
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
     // Close windows
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
-    let _ = cx.update_window(regular_window.into(), |_, window, _cx| {
+    })
+    .log_err();
+    cx.update_window(regular_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     cx.run_until_parked();
 
@@ -1938,7 +1948,9 @@ fn run_subagent_visual_tests(
         project.find_or_create_worktree(&project_path, true, cx)
     });
 
-    let _ = cx.foreground_executor.block_test(add_worktree_task);
+    cx.foreground_executor
+        .block_test(add_worktree_task)
+        .log_err();
 
     cx.run_until_parked();
 
@@ -2006,7 +2018,7 @@ fn run_subagent_visual_tests(
                 workspace.add_panel(panel.clone(), window, cx);
                 workspace.open_panel::<AgentPanel>(window, cx);
             })
-            .ok();
+            .log_err();
     })?;
 
     cx.run_until_parked();
@@ -2039,7 +2051,7 @@ fn run_subagent_visual_tests(
         thread.send(vec!["Run two subagents".into()], cx)
     });
 
-    let _ = cx.foreground_executor.block_test(send_future);
+    cx.foreground_executor.block_test(send_future).log_err();
 
     cx.run_until_parked();
 
@@ -2113,7 +2125,7 @@ fn run_subagent_visual_tests(
                 },
                 cx,
             )
-            .ok();
+            .log_err();
         thread
             .update_tool_call(
                 ToolCallUpdateSubagentThread {
@@ -2122,7 +2134,7 @@ fn run_subagent_visual_tests(
                 },
                 cx,
             )
-            .ok();
+            .log_err();
     });
 
     cx.run_until_parked();
@@ -2151,7 +2163,7 @@ fn run_subagent_visual_tests(
                 )),
                 cx,
             )
-            .ok();
+            .log_err();
     });
 
     cx.run_until_parked();
@@ -2203,13 +2215,14 @@ fn run_subagent_visual_tests(
                 }
             });
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     cx.run_until_parked();
 
@@ -2416,7 +2429,7 @@ fn run_agent_thread_view_test(
                 workspace.add_panel(panel.clone(), window, cx);
                 workspace.open_panel::<AgentPanel>(window, cx);
             })
-            .ok();
+            .log_err();
     })?;
 
     cx.run_until_parked();
@@ -2517,7 +2530,7 @@ fn run_agent_thread_view_test(
                 }
             });
         })
-        .ok();
+        .log_err();
 
     cx.run_until_parked();
 
@@ -2525,9 +2538,10 @@ fn run_agent_thread_view_test(
     // Note: This may cause benign "editor::scroll window not found" errors from scrollbar
     // auto-hide timers that were scheduled before the window was closed. These errors
     // don't affect test results.
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     // Run until all cleanup tasks complete
     cx.run_until_parked();
