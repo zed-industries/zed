@@ -10137,6 +10137,7 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "serde_json_lenient",
+ "settings_content",
  "settings_json",
  "streaming-iterator",
  "tree-sitter",

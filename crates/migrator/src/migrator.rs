@@ -2219,6 +2219,165 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "file_finder": {
+                        "include_ignored": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "file_finder": {
+                            "include_ignored": "all"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "file_finder": {
+                            "include_ignored": false
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "file_finder": {
+                                "include_ignored": "indexed"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_relative_line_numbers_an_enum() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"{
+                "relative_line_numbers": true
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "relative_line_numbers": "enabled"
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"{
+                "relative_line_numbers": false
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "relative_line_numbers": "disabled"
+                }"#
+                .unindent(),
+            ),
+        );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "relative_line_numbers": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "relative_line_numbers": "enabled"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "dev": {
+                        "relative_line_numbers": false
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "dev": {
+                            "relative_line_numbers": "disabled"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 
     #[test]
@@ -2261,6 +2420,84 @@ mod tests {
                                 "FOO": "BAR"
                             }
                         },
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_11_25::remove_context_server_source,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "context_servers": {
+                        "my_server": {
+                            "source": "extension",
+                            "settings": {
+                                "key": "value"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "context_servers": {
+                            "my_server": {
+                                "settings": {
+                                    "key": "value"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_11_25::remove_context_server_source,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "context_servers": {
+                            "my_server": {
+                                "source": "custom",
+                                "command": "foo",
+                                "args": ["bar"]
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "context_servers": {
+                                "my_server": {
+                                    "command": "foo",
+                                    "args": ["bar"]
+                                }
+                            }
+                        }
                     }
                 }
                 "#
@@ -2470,6 +2707,117 @@ mod tests {
             .unindent(),
             None,
         );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "features": {
+                        "edit_prediction_provider": "copilot"
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "edit_predictions": {
+                            "provider": "copilot"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "features": {
+                            "edit_prediction_provider": "copilot"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "edit_predictions": {
+                                "provider": "copilot"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Combined: root + platform + profile should all be migrated simultaneously
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                },
+                "macos": {
+                    "features": {
+                        "edit_prediction_provider": "zed"
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "features": {
+                            "edit_prediction_provider": "supermaven"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    },
+                    "macos": {
+                        "edit_predictions": {
+                            "provider": "zed"
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "edit_predictions": {
+                                "provider": "supermaven"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 
     #[test]
@@ -2590,6 +2938,127 @@ mod tests {
             "#
             .unindent(),
             None,
+        );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "edit_predictions": {
+                        "provider": {
+                            "experimental": "sweep"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "edit_predictions": {
+                            "provider": "sweep"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "dev": {
+                        "edit_predictions": {
+                            "provider": {
+                                "experimental": "mercury"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "dev": {
+                            "edit_predictions": {
+                                "provider": "mercury"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Combined: root + platform + profile should all be migrated simultaneously
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "sweep"
+                    }
+                },
+                "linux": {
+                    "edit_predictions": {
+                        "provider": {
+                            "experimental": "mercury"
+                        }
+                    }
+                },
+                "profiles": {
+                    "dev": {
+                        "edit_predictions": {
+                            "provider": {
+                                "experimental": "sweep"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "sweep"
+                    },
+                    "linux": {
+                        "edit_predictions": {
+                            "provider": "mercury"
+                        }
+                    },
+                    "profiles": {
+                        "dev": {
+                            "edit_predictions": {
+                                "provider": "sweep"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
     }
 }
