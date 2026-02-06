@@ -578,10 +578,9 @@ fn apply_edits(
 
     // Validate no overlaps (sorted ascending by start)
     for window in edits_sorted.windows(2) {
-        let [(earlier_range, _), (later_range, _)] = window else {
-            continue;
-        };
-        if earlier_range.end > later_range.start {
+        if let [(earlier_range, _), (later_range, _)] = window
+            && earlier_range.end > later_range.start
+        {
             anyhow::bail!(
                 "Overlapping edit ranges detected: {}..{} overlaps with {}..{}. \
                  Overlapping edit ranges are not allowed, as they would overwrite each other.",
