@@ -65,10 +65,23 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    /// The start offset of the selection. If `None`, the selection is empty
+    /// (cursor only), meaning the selection start equals `cursor_offset`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_start_offset: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt_start_row: Option<u32>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
+}
+
+impl ExamplePromptInputs {
+    /// Returns the selection range. For an empty selection (cursor only),
+    /// returns a range where start == end == cursor_offset.
+    pub fn selection_range(&self) -> std::ops::Range<usize> {
+        let start = self.selection_start_offset.unwrap_or(self.cursor_offset);
+        start..self.cursor_offset
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,25 +113,35 @@ pub struct ActualCursor {
     pub offset: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editable_region_offset: Option<usize>,
+    /// The start offset of the selection (global byte offset).
+    /// If `None`, the selection is empty (cursor only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_start_offset: Option<usize>,
+    /// The start offset of the selection within the editable region.
+    /// If `None`, the selection is empty (cursor only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_start_editable_region_offset: Option<usize>,
 }
 
 impl ActualCursor {
-    /// Construct an `ActualCursor` from a cursor offset within the new editable region.
+    /// Construct an `ActualCursor` from a selection range within the new editable region.
     ///
     /// - `path`: file path the cursor is in
-    /// - `editable_region_cursor_offset`: byte offset of the cursor within the new editable region text
+    /// - `editable_region_selection`: byte offset range of the selection within the new editable region text.
+    ///   For an empty selection (cursor only), use a range where start == end.
     /// - `new_editable_region`: the full new editable region text (after marker removal)
     /// - `content`: the full file content (before the edit)
     /// - `editable_region_byte_offset`: byte offset where the editable region starts in `content`
     /// - `editable_region_start_line`: 0-based line number where the editable region starts in `content`
     pub fn from_editable_region(
         path: &std::path::Path,
-        editable_region_cursor_offset: usize,
+        editable_region_selection: std::ops::Range<usize>,
         new_editable_region: &str,
         content: &str,
         editable_region_byte_offset: usize,
         editable_region_start_line: usize,
     ) -> Self {
+        let editable_region_cursor_offset = editable_region_selection.end;
         let global_offset = editable_region_byte_offset + editable_region_cursor_offset;
         let new_region_prefix = &new_editable_region[..editable_region_cursor_offset];
         let row = (editable_region_start_line + new_region_prefix.matches('\n').count()) as u32;
@@ -133,13 +156,35 @@ impl ActualCursor {
                 (content_column + editable_region_cursor_offset) as u32
             }
         };
+
+        let is_empty_selection = editable_region_selection.start == editable_region_selection.end;
+        let (selection_start_offset, selection_start_editable_region_offset) = if is_empty_selection
+        {
+            (None, None)
+        } else {
+            let start_global = editable_region_byte_offset + editable_region_selection.start;
+            (Some(start_global), Some(editable_region_selection.start))
+        };
+
         ActualCursor {
             path: path.to_string_lossy().to_string(),
             row,
             column,
             offset: global_offset,
             editable_region_offset: Some(editable_region_cursor_offset),
+            selection_start_offset,
+            selection_start_editable_region_offset,
         }
+    }
+
+    /// Returns the selection range within the editable region.
+    /// For an empty selection (cursor only), returns a range where start == end.
+    pub fn editable_region_selection(&self) -> Option<std::ops::Range<usize>> {
+        let cursor_offset = self.editable_region_offset?;
+        let start = self
+            .selection_start_editable_region_offset
+            .unwrap_or(cursor_offset);
+        Some(start..cursor_offset)
     }
 }
 

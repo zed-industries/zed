@@ -511,7 +511,7 @@ impl ExampleSpec {
                 marker_line.push(' ');
             }
             marker_line.push_str(line_comment_prefix);
-            write!(marker_line, " <{}", SELECTION_MARKER).unwrap();
+            write!(marker_line, " <{}", CURSOR_POSITION_MARKER).unwrap();
         } else {
             // Normal case with `^` format.
             if cursor_column >= cursor_line_indent.len() + line_comment_prefix.len() {
@@ -529,7 +529,11 @@ impl ExampleSpec {
             }
 
             marker_line.push('^');
-            marker_line.push_str(SELECTION_MARKER);
+            if is_empty_selection {
+                marker_line.push_str(CURSOR_POSITION_MARKER);
+            } else {
+                marker_line.push_str(SELECTION_MARKER);
+            }
         }
 
         // Build the final cursor_position string.

@@ -37,6 +37,7 @@ You will be provided with:
 3. An excerpt from the user's *current file*.
     - Within the user's current file, there is an *editable region* delimited by the `<|editable_region_start|>` and `<|editable_region_end|>` tags. You can only predict edits in this region.
     - The `<|user_cursor|>` tag marks the user's current cursor position, as it stands after the last edit in the history.
+    - If the user has text selected, the `<|selection_start|>` tag marks the beginning of the selection. The text between `<|selection_start|>` and `<|user_cursor|>` is selected.
 
 # Output Format
 
@@ -46,8 +47,8 @@ You will be provided with:
   `````
   NO_EDITS
   `````
-- If the next edit has some uncertainty, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and place the `<|user_cursor|>` within it for the user to fill in.
-  - e.g. if a user is typing `func<|user_cursor|>`, but you don't know what the function name should be, you can predict `function <|user_cursor|>() {}`
+- If the next edit has some uncertainty, you may still predict the surrounding code (such as a function definition, `for` loop, etc) and make a guess or insert a placeholder, surrounded by `<|selection_start|>` and `<|user_cursor|>` within it for the user to fill in.
+  - e.g. if a user is typing `func<|user_cursor|>`, but you don't know what the function name should be, you can predict `function <|selection_start|>function_name<|user_cursor|>() {}`
 
 ## Example 1
 

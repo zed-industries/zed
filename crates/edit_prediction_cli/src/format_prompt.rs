@@ -174,6 +174,7 @@ impl TeacherPrompt {
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "\n<|editable_region_end|>";
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
+    pub(crate) const SELECTION_START_MARKER: &str = "<|selection_start|>";
     pub(crate) const NO_EDITS: &str = "NO_EDITS";
 
     /// Truncate edit history to this number of last lines
@@ -208,8 +209,33 @@ impl TeacherPrompt {
         }
 
         let new_editable_region = Self::extract_editable_region(&new_editable_region)?;
-        let cursor_offset = new_editable_region.find(Self::USER_CURSOR_MARKER);
-        let mut new_editable_region = new_editable_region.replace(Self::USER_CURSOR_MARKER, "");
+
+        // Extract selection range from markers.
+        // The cursor (head of selection) is at USER_CURSOR_MARKER.
+        // If SELECTION_START_MARKER is present, it marks the start of a non-empty selection.
+        let selection_start_offset = new_editable_region.find(Self::SELECTION_START_MARKER);
+        let cursor_marker_offset = new_editable_region.find(Self::USER_CURSOR_MARKER);
+
+        // Remove markers and compute final offsets.
+        // We need to account for marker removal when computing positions.
+        let selection_range = match (selection_start_offset, cursor_marker_offset) {
+            (Some(mut sel_start), Some(mut cursor_pos)) => {
+                if cursor_pos > sel_start {
+                    cursor_pos -= Self::SELECTION_START_MARKER.len()
+                } else {
+                    std::mem::swap(&mut sel_start, &mut cursor_pos);
+                    cursor_pos -= Self::USER_CURSOR_MARKER.len();
+                }
+                Some(sel_start..cursor_pos)
+            }
+            (None, Some(cursor_pos)) => Some(cursor_pos..cursor_pos),
+            _ => None,
+        };
+
+        let mut new_editable_region = new_editable_region
+            .replace(Self::SELECTION_START_MARKER, "")
+            .replace(Self::USER_CURSOR_MARKER, "");
+
         let old_editable_region = Self::extract_editable_region(
             &example
                 .prompt
@@ -217,6 +243,7 @@ impl TeacherPrompt {
                 .context("example prompt missing")?
                 .input,
         )?
+        .replace(Self::SELECTION_START_MARKER, "")
         .replace(Self::USER_CURSOR_MARKER, "");
 
         let prompt_inputs = example
@@ -258,10 +285,10 @@ impl TeacherPrompt {
             diff = diff,
         };
 
-        let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+        let actual_cursor = selection_range.map(|range| {
             ActualCursor::from_editable_region(
                 &example.spec.cursor_path,
-                editable_region_cursor_offset,
+                range,
                 &new_editable_region,
                 &prompt_inputs.content,
                 editable_region_offset,
@@ -337,14 +364,38 @@ impl TeacherPrompt {
         let mut result = String::new();
 
         let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
+        let selection_range = prompt_inputs.selection_range();
+        let selection_start = selection_range.start;
+        let cursor_offset = selection_range.end;
+        let is_empty_selection = selection_start == cursor_offset;
 
         let path_str = example.spec.cursor_path.to_string_lossy();
         result.push_str(&format!("`````{path_str}\n"));
         result.push_str(&prompt_inputs.content[context_range.start..editable_range.start]);
         result.push_str(Self::EDITABLE_REGION_START);
-        result.push_str(&prompt_inputs.content[editable_range.start..prompt_inputs.cursor_offset]);
-        result.push_str(Self::USER_CURSOR_MARKER);
-        result.push_str(&prompt_inputs.content[prompt_inputs.cursor_offset..editable_range.end]);
+
+        if is_empty_selection {
+            // Just cursor, no selection
+            result.push_str(&prompt_inputs.content[editable_range.start..cursor_offset]);
+            result.push_str(Self::USER_CURSOR_MARKER);
+            result.push_str(&prompt_inputs.content[cursor_offset..editable_range.end]);
+        } else {
+            // Non-empty selection: place SELECTION_START_MARKER at start, USER_CURSOR_MARKER at end
+            // Clamp positions to editable region
+            let start_pos = selection_start
+                .max(editable_range.start)
+                .min(editable_range.end);
+            let end_pos = cursor_offset
+                .max(editable_range.start)
+                .min(editable_range.end);
+
+            result.push_str(&prompt_inputs.content[editable_range.start..start_pos]);
+            result.push_str(Self::SELECTION_START_MARKER);
+            result.push_str(&prompt_inputs.content[start_pos..end_pos]);
+            result.push_str(Self::USER_CURSOR_MARKER);
+            result.push_str(&prompt_inputs.content[end_pos..editable_range.end]);
+        }
+
         result.push_str(Self::EDITABLE_REGION_END);
         result.push_str(&prompt_inputs.content[editable_range.end..context_range.end]);
         result.push_str("\n`````");
@@ -457,140 +508,350 @@ pub(crate) fn extract_last_codeblock(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::example::{Example, ExamplePrompt, ExamplePromptInputs};
+    use edit_prediction::example_spec::ExampleSpec;
+    use std::path::Path;
+    use std::sync::Arc;
+    use util::test::marked_text_ranges;
 
-    #[test]
-    fn test_extract_last_code_block() {
-        let text = indoc::indoc! {"
-            Some thinking
+    /// Convert marked text to prompt format and extract cursor/selection info.
+    /// Uses `ˇ` for cursor position and `«»` for selection ranges (with `ˇ` inside for direction).
+    fn parse_marked_text(marked_text: &str) -> (String, Option<usize>, Option<usize>) {
+        let (text, ranges) = marked_text_ranges(marked_text, true);
+        let range = ranges.first();
 
-            ```
-            first block
-            ```
-
-            `````path='something' lines=1:2
-            last block
-            `````
-            "};
-        let last_block = extract_last_codeblock(text);
-        assert_eq!(last_block, "last block\n");
-    }
-
-    #[test]
-    fn test_extract_codeblock_with_nested_fences() {
-        let text = indoc::indoc! {"
-            `````
-            content with ``` inline
-            and ```python nested
-            more content
-            `````
-            "};
-        let last_block = extract_last_codeblock(text);
-        assert_eq!(
-            last_block,
-            "content with ``` inline\nand ```python nested\nmore content\n"
-        );
-    }
-
-    #[test]
-    fn test_extract_codeblock_ignores_inline_backticks() {
-        let text = indoc::indoc! {"
-            `````
-            here is some `code` with inline backticks
-            and here```more```stuff
-            `````
-            "};
-        let last_block = extract_last_codeblock(text);
-        assert_eq!(
-            last_block,
-            "here is some `code` with inline backticks\nand here```more```stuff\n"
-        );
-    }
-
-    #[test]
-    fn test_extract_editable_region() {
-        let text = indoc::indoc! {"
-            some lines
-            are
-            here
-            <|editable_region_start|>
-            one
-            two three
-
-            <|editable_region_end|>
-            more
-            lines here
-            "};
-        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
-        assert_eq!(
-            parsed,
-            indoc::indoc! {"
-            one
-            two three"}
-        );
-    }
-
-    #[test]
-    fn test_extract_last_codeblock_nested_bibtex() {
-        let text = indoc::indoc! {r#"
-            Looking at the edit history, I can see that a Citation section was just added.
-
-            `````
-            ## Collaborations
-            Our mission is to create a 4D generative model.
-
-            ## Citation
-
-            If you found Unique3D helpful, please cite our report:
-            ```bibtex
-            @misc{wu2024unique3d,
-                  title={Unique3D},
+        let cursor_offset = range.map(|r| r.end);
+        let selection_start = range.and_then(|r| {
+            if r.start != r.end {
+                Some(r.start)
+            } else {
+                None
             }
-            ```
-            `````
-            "#};
-        let last_block = extract_last_codeblock(text);
-        assert_eq!(
-            last_block,
-            indoc::indoc! {r#"
-            ## Collaborations
-            Our mission is to create a 4D generative model.
+        });
 
-            ## Citation
+        (text, cursor_offset, selection_start)
+    }
 
-            If you found Unique3D helpful, please cite our report:
-            ```bibtex
-            @misc{wu2024unique3d,
-                  title={Unique3D},
+    /// Convert marked text to the prompt input format with actual markers.
+    fn to_prompt_format(marked_text: &str) -> String {
+        let (text, cursor_offset, selection_start) = parse_marked_text(marked_text);
+
+        let mut result = String::new();
+        for (i, c) in text.chars().enumerate() {
+            if Some(i) == selection_start {
+                result.push_str(TeacherPrompt::SELECTION_START_MARKER);
             }
-            ```
-            "#}
-        );
+            if Some(i) == cursor_offset {
+                result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
+            }
+            result.push(c);
+        }
+        // Handle cursor at end of text
+        if Some(text.len()) == cursor_offset {
+            if Some(text.len()) == selection_start {
+                result.push_str(TeacherPrompt::SELECTION_START_MARKER);
+            }
+            result.push_str(TeacherPrompt::USER_CURSOR_MARKER);
+        }
+
+        result
+    }
+
+    fn make_example(file_content: &str, prompt_input_with_markers: &str) -> Example {
+        let cursor_path: Arc<Path> = Path::new("test.rs").into();
+
+        let prompt_input = to_prompt_format(prompt_input_with_markers);
+        let (content, cursor_offset, selection_start_offset) =
+            parse_marked_text(prompt_input_with_markers);
+        let _ = content; // Used only for extracting cursor info
+
+        let cursor_offset = cursor_offset.unwrap_or(0);
+
+        Example {
+            spec: ExampleSpec {
+                name: String::new(),
+                repository_url: String::new(),
+                revision: String::new(),
+                tags: Vec::new(),
+                reasoning: None,
+                uncommitted_diff: String::new(),
+                cursor_path,
+                cursor_position: String::new(),
+                edit_history: String::new(),
+                expected_patches: Vec::new(),
+                rejected_patch: None,
+                captured_prompt_input: None,
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
+            },
+            prompt_inputs: Some(ExamplePromptInputs {
+                content: file_content.to_string(),
+                cursor_row: 0,
+                cursor_column: 0,
+                cursor_offset,
+                selection_start_offset,
+                excerpt_start_row: Some(0),
+                edit_history: vec![],
+                related_files: None,
+            }),
+            prompt: Some(ExamplePrompt {
+                input: prompt_input,
+                expected_output: String::new(),
+                rejected_output: None,
+                provider: crate::PredictionProvider::Teacher(crate::TeacherBackend::Sonnet45),
+            }),
+            predictions: Vec::new(),
+            score: Vec::new(),
+            qa: Vec::new(),
+            state: None,
+        }
+    }
+
+    struct ParseTestCase {
+        name: &'static str,
+        file_content: &'static str,
+        prompt_editable_region: &'static str,
+        response: &'static str,
+        expected_new_region: &'static str,
     }
 
     #[test]
-    fn test_extract_editable_region_no_markers() {
-        let text = indoc::indoc! {"
-            one
-            two three"};
-        let parsed = TeacherPrompt::extract_editable_region(text).unwrap();
-        assert_eq!(
-            parsed,
-            indoc::indoc! {"
-            one
-            two three"}
-        );
-    }
+    fn test_parse_teacher_output() {
+        let test_cases = [
+            ParseTestCase {
+                name: "cursor only - no change",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    The code looks good.
 
-    #[test]
-    fn test_parse_no_edits_response() {
-        let response = indoc::indoc! {"
-            The code is already complete. There is no clear next edit to make.
+                    `````
+                    <|editable_region_start|>
+                    let x = <|user_cursor|>42;
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: "let x = ˇ42;\n",
+            },
+            ParseTestCase {
+                name: "cursor only - with edit",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    Changing the value.
 
-            `````
-            NO_EDITS
-            `````
-        "};
-        let codeblock = extract_last_codeblock(response);
-        assert_eq!(codeblock.trim(), TeacherPrompt::NO_EDITS);
+                    `````
+                    <|editable_region_start|>
+                    let x = <|user_cursor|>100;
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: "let x = ˇ100;\n",
+            },
+            ParseTestCase {
+                name: "cursor moves after edit",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    Updating value and moving cursor to end.
+
+                    `````
+                    <|editable_region_start|>
+                    let x = 100;<|user_cursor|>
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: "let x = 100;ˇ\n",
+            },
+            ParseTestCase {
+                name: "selection in response - text selected",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    Selecting the number.
+
+                    `````
+                    <|editable_region_start|>
+                    let x = <|selection_start|>42<|user_cursor|>;
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: "let x = «42ˇ»;\n",
+            },
+            ParseTestCase {
+                name: "selection markers backwards - cursor before selection_start",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    Selecting the number (markers reversed).
+
+                    `````
+                    <|editable_region_start|>
+                    let x = <|user_cursor|>42<|selection_start|>;
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: "let x = «42ˇ»;\n",
+            },
+            ParseTestCase {
+                name: "multiline edit with cursor",
+                file_content: indoc::indoc! {"
+                    fn main() {
+                        let x = 42;
+                    }
+                "},
+                prompt_editable_region: indoc::indoc! {"
+                    fn main() {
+                        let x = ˇ42;
+                    }
+                "},
+                response: indoc::indoc! {"
+                    Adding a new variable.
+
+                    `````
+                    <|editable_region_start|>
+                    fn main() {
+                        let x = 100;
+                        let y = <|user_cursor|>200;
+                    }
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: indoc::indoc! {"
+                    fn main() {
+                        let x = 100;
+                        let y = ˇ200;
+                    }
+                "},
+            },
+            ParseTestCase {
+                name: "no cursor in response",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    Simple edit without cursor.
+
+                    `````
+                    <|editable_region_start|>
+                    let x = 100;
+                    <|editable_region_end|>
+                    `````
+                "},
+                expected_new_region: "let x = 100;\n",
+            },
+            ParseTestCase {
+                name: "NO_EDITS response",
+                file_content: "let x = 42;\n",
+                prompt_editable_region: "let x = ˇ42;\n",
+                response: indoc::indoc! {"
+                    The code is already complete.
+
+                    `````
+                    NO_EDITS
+                    `````
+                "},
+                expected_new_region: "",
+            },
+            ParseTestCase {
+                name: "nested codeblock in response",
+                file_content: indoc::indoc! {r#"
+                    ## Citation
+
+                    ```bibtex
+                    @misc{foo}
+                    ```
+                "#},
+                prompt_editable_region: indoc::indoc! {r#"
+                    ## Citation
+
+                    ˇ```bibtex
+                    @misc{foo}
+                    ```
+                "#},
+                response: indoc::indoc! {r#"
+                    Adding a citation.
+
+                    `````
+                    <|editable_region_start|>
+                    ## Citation
+
+                    ```bibtex
+                    @misc{foo,
+                        title={Bar}<|user_cursor|>
+                    }
+                    ```
+                    <|editable_region_end|>
+                    `````
+                "#},
+                expected_new_region: indoc::indoc! {r#"
+                    ## Citation
+
+                    ```bibtex
+                    @misc{foo,
+                        title={Bar}ˇ
+                    }
+                    ```
+                "#},
+            },
+        ];
+
+        for test_case in test_cases {
+            let example = make_example(test_case.file_content, test_case.prompt_editable_region);
+
+            let result = TeacherPrompt::parse(&example, test_case.response);
+            assert!(
+                result.is_ok(),
+                "Test '{}' failed to parse: {:?}",
+                test_case.name,
+                result.err()
+            );
+
+            let (diff, actual_cursor) = result.unwrap();
+
+            // Handle NO_EDITS case specially.
+            if test_case.expected_new_region.is_empty() {
+                assert!(
+                    diff.is_empty(),
+                    "Test '{}': expected empty diff for NO_EDITS",
+                    test_case.name
+                );
+                assert!(
+                    actual_cursor.is_none(),
+                    "Test '{}': expected no cursor for NO_EDITS",
+                    test_case.name
+                );
+                continue;
+            }
+
+            // Apply the diff to the file content to get the new text.
+            let actual_text =
+                edit_prediction::udiff::apply_diff_to_string(&diff, test_case.file_content)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Test '{}': failed to apply diff: {:?}\nDiff:\n{}",
+                            test_case.name, e, diff
+                        )
+                    });
+
+            // Insert cursor/selection markers into the actual text.
+            let actual_with_markers = if let Some(cursor) = &actual_cursor {
+                let selection = cursor.editable_region_selection().unwrap_or(0..0);
+                util::test::generate_marked_text(
+                    &actual_text,
+                    &[selection],
+                    true, // indicate_cursors - shows direction with ˇ
+                )
+            } else {
+                actual_text.clone()
+            };
+
+            // Compare with expected.
+            assert_eq!(
+                actual_with_markers, test_case.expected_new_region,
+                "Test '{}': mismatch after applying diff and inserting cursor markers",
+                test_case.name
+            );
+        }
     }
 }

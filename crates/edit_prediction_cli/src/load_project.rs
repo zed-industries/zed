@@ -13,6 +13,7 @@ use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
+use std::ops::Range;
 use std::{fs, path::PathBuf, sync::Arc};
 
 pub async fn run_load_project(
@@ -52,8 +53,8 @@ pub async fn run_load_project(
     });
 
     progress.set_substatus("resolving cursor");
-    let (buffer, cursor_position) =
-        cursor_position(example, &project, &open_buffers, &mut cx).await?;
+    let (buffer, cursor_position, selection_range) =
+        cursor_position_and_selection(example, &project, &open_buffers, &mut cx).await?;
     buffer
         .read_with(&cx, |buffer, _| buffer.parsing_idle())
         .await;
@@ -72,12 +73,19 @@ pub async fn run_load_project(
             .language()
             .map(|l| l.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
+        let cursor_offset = cursor_position.to_offset(&buffer);
+        let selection_start_offset = if selection_range.start == selection_range.end {
+            None
+        } else {
+            Some(selection_range.start)
+        };
         (
             ExamplePromptInputs {
                 content: buffer.text(),
                 cursor_row: cursor_point.row,
                 cursor_column: cursor_point.column,
-                cursor_offset: cursor_position.to_offset(&buffer),
+                cursor_offset,
+                selection_start_offset,
                 excerpt_start_row: Some(0),
                 edit_history,
                 related_files: example
@@ -102,12 +110,12 @@ pub async fn run_load_project(
     Ok(())
 }
 
-async fn cursor_position(
+async fn cursor_position_and_selection(
     example: &Example,
     project: &Entity<Project>,
     open_buffers: &OpenedBuffers,
     cx: &mut AsyncApp,
-) -> Result<(Entity<Buffer>, Anchor)> {
+) -> Result<(Entity<Buffer>, Anchor, Range<usize>)> {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     let result = language_registry
         .load_language_for_file_path(&example.spec.cursor_path)
@@ -158,6 +166,7 @@ async fn cursor_position(
     let (cursor_excerpt, selection_within_excerpt) =
         example.spec.cursor_excerpt_with_selection()?;
     let cursor_offset_within_excerpt = selection_within_excerpt.end;
+    let selection_start_within_excerpt = selection_within_excerpt.start;
 
     let excerpt_offset = cursor_buffer.read_with(&*cx, |buffer, _cx| {
         let text = buffer.text();
@@ -174,10 +183,13 @@ async fn cursor_position(
     })?;
 
     let cursor_offset = excerpt_offset + cursor_offset_within_excerpt;
+    let selection_start_offset = excerpt_offset + selection_start_within_excerpt;
+    let selection_range = selection_start_offset..cursor_offset;
+
     let cursor_anchor =
         cursor_buffer.read_with(&*cx, |buffer, _| buffer.anchor_after(cursor_offset));
 
-    Ok((cursor_buffer, cursor_anchor))
+    Ok((cursor_buffer, cursor_anchor, selection_range))
 }
 
 async fn setup_project(

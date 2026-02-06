@@ -1756,6 +1756,7 @@ mod tests {
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
+            selection_start_offset: None,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
@@ -1799,6 +1800,7 @@ mod tests {
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
+            selection_start_offset: None,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
@@ -1840,6 +1842,7 @@ mod tests {
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
+            selection_start_offset: None,
             edit_history: vec![],
             excerpt_start_row: None,
             related_files: None,
@@ -1869,6 +1872,7 @@ mod tests {
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
+            selection_start_offset: None,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/other.rs")),
                 old_path: Arc::from(Path::new("src/other.rs")),
@@ -1911,6 +1915,7 @@ mod tests {
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
+            selection_start_offset: None,
             edit_history: vec![Arc::new(zeta_prompt::Event::BufferChange {
                 path: Arc::from(Path::new("src/test.rs")),
                 old_path: Arc::from(Path::new("src/test.rs")),
@@ -1983,6 +1988,7 @@ mod tests {
             cursor_row: 0,
             cursor_column: 0,
             cursor_offset: 0,
+            selection_start_offset: None,
             edit_history: vec![
                 Arc::new(zeta_prompt::Event::BufferChange {
                     path: Arc::from(Path::new("src/test.rs")),

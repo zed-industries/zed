@@ -644,6 +644,8 @@ mod test {
             column: 0,
             offset: 0,
             editable_region_offset: None,
+            selection_start_offset: None,
+            selection_start_editable_region_offset: None,
         }
     }
 

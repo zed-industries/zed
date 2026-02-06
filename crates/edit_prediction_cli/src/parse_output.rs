@@ -154,9 +154,11 @@ fn parse_zeta2_output(
     );
 
     let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+        // Zeta2 format only has cursor position, not selection range.
+        // Pass an empty selection (start == end) to indicate cursor-only.
         ActualCursor::from_editable_region(
             &example.spec.cursor_path,
-            editable_region_cursor_offset,
+            editable_region_cursor_offset..editable_region_cursor_offset,
             &new_text,
             &prompt_inputs.content,
             editable_region_offset,

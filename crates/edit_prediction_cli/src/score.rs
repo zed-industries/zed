@@ -18,6 +18,8 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 
+use std::ops::Range;
+
 pub async fn run_scoring(
     example: &mut Example,
     args: &PredictArgs,
@@ -104,7 +106,7 @@ pub async fn run_scoring(
         };
 
         let mut best_delta_chr_f = 0.0f32;
-        let mut best_expected_cursor: Option<usize> = None;
+        let mut best_expected_selection: Option<Range<usize>> = None;
         let mut best_patch_idx: Option<usize> = None;
 
         for (idx, expected) in expected_texts.iter().enumerate() {
@@ -116,27 +118,33 @@ pub async fn run_scoring(
         }
 
         if let Some(idx) = best_patch_idx {
-            // Get the raw cursor offset from the expected patch (relative to hunk new text).
-            // We use the end of the selection range as the cursor position.
-            let expected_cursor_in_patch = expected_patches_with_cursors
+            // Get the selection range from the expected patch (relative to hunk new text).
+            let expected_selection_in_patch = expected_patches_with_cursors
                 .get(idx)
-                .and_then(|(_, selection)| selection.as_ref().map(|s| s.end));
+                .and_then(|(_, selection)| selection.clone());
 
             // For Teacher prompts, we need to apply the patch to the editable region
-            // to find where the hunk matched, then compute the actual cursor position
-            if let (Some(editable_region), Some(cursor_in_patch)) =
-                (&old_editable_region, expected_cursor_in_patch)
+            // to find where the hunk matched, then compute the actual selection position
+            if let (Some(editable_region), Some(selection_in_patch)) =
+                (&old_editable_region, expected_selection_in_patch)
             {
                 let (patch, _) = &expected_patches_with_cursors[idx];
                 if let Ok((_, hunk_offset)) =
                     apply_diff_to_string_with_hunk_offset(patch, editable_region)
                 {
                     let hunk_start = hunk_offset.unwrap_or(0);
-                    best_expected_cursor = Some(hunk_start + cursor_in_patch);
+                    // Shift the selection range by hunk offset
+                    best_expected_selection = Some(
+                        (hunk_start + selection_in_patch.start)
+                            ..(hunk_start + selection_in_patch.end),
+                    );
                 }
-            } else {
-                // For non-Teacher prompts or if we can't compute, use raw offset
-                best_expected_cursor = expected_cursor_in_patch;
+            } else if let Some(selection) = expected_patches_with_cursors
+                .get(idx)
+                .and_then(|(_, sel)| sel.clone())
+            {
+                // For non-Teacher prompts or if we can't compute, use raw selection
+                best_expected_selection = Some(selection);
             }
         }
 
@@ -158,9 +166,11 @@ pub async fn run_scoring(
             cursor_path,
         );
 
-        // Compute cursor position metrics
-        let (cursor_distance, cursor_exact_match) =
-            compute_cursor_metrics(best_expected_cursor, prediction.actual_cursor.as_ref());
+        // Compute cursor/selection position metrics
+        let (cursor_distance, cursor_exact_match) = compute_cursor_metrics(
+            best_expected_selection.clone(),
+            prediction.actual_cursor.as_ref(),
+        );
 
         // Compute approximation of editable region correctness
         let wrong_editable_region = Some(!metrics::is_editable_region_correct(&actual_patch));
@@ -190,12 +200,18 @@ pub async fn run_scoring(
 }
 
 fn compute_cursor_metrics(
-    expected_cursor_editable_region_offset: Option<usize>,
+    expected_selection: Option<Range<usize>>,
     actual_cursor: Option<&ActualCursor>,
 ) -> (Option<usize>, Option<bool>) {
-    match (expected_cursor_editable_region_offset, actual_cursor) {
+    // Compare cursor positions (end of selection ranges).
+    // For now we only compare the cursor/head position; full selection range
+    // comparison can be added in the future if needed.
+    let expected_cursor = expected_selection.map(|s| s.end);
+    let actual_cursor_offset = actual_cursor.and_then(|c| c.editable_region_offset);
+
+    match (expected_cursor, actual_cursor_offset) {
         (Some(expected), Some(actual)) => {
-            let distance = expected.abs_diff(actual.editable_region_offset.unwrap_or_default());
+            let distance = expected.abs_diff(actual);
             let exact_match = distance == 0;
             (Some(distance), Some(exact_match))
         }
