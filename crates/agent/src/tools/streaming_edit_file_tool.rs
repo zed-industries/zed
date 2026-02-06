@@ -996,8 +996,8 @@ mod tests {
         });
 
         // Edit A spans lines 2-3, edit B spans lines 3-4. They overlap on
-        // "line 3" and are given in ascending file order so the descending
-        // sort must run before the overlap check can pair them correctly.
+        // "line 3" and are given in ascending file order so the ascending
+        // sort and subsequent pairwise overlap check can detect them correctly.
         let result = cx
             .update(|cx| {
                 let input = StreamingEditFileToolInput {
