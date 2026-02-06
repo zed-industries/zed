@@ -704,6 +704,8 @@ async fn get_models(
     Ok(models)
 }
 
+/// Standard headers for Copilot API requests: Authorization, Content-Type, and Editor-Version.
+/// GitHub identifies Zed traffic by the user-agent header, so no integration ID is needed.
 pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
     api_token: &str,
@@ -725,13 +727,13 @@ async fn request_models(
     api_token: String,
     client: Arc<dyn HttpClient>,
 ) -> Result<Vec<Model>> {
-    let request_builder = HttpRequest::builder()
-        .method(Method::GET)
-        .uri(models_url.as_ref())
-        .header("Authorization", format!("Bearer {}", api_token))
-        .header("Content-Type", "application/json")
-        .header("Editor-Version", "vscode/1.103.2")
-        .header("x-github-api-version", "2025-05-01");
+    let request_builder = copilot_request_headers(
+        HttpRequest::builder()
+            .method(Method::GET)
+            .uri(models_url.as_ref()),
+        &api_token,
+    )
+    .header("x-github-api-version", "2025-05-01");
 
     let request = request_builder.body(AsyncBody::empty())?;
 
