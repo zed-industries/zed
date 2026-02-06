@@ -3332,6 +3332,37 @@ To enable semantic tokens for a specific language:
 
 May require language server restart to properly apply.
 
+## LSP Folding Ranges
+
+- Description: Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding. Tree-sitter and indent-based folding is the default; it is used as a fallback when LSP folding data is not returned or this setting is turned off.
+- Setting: `document_folding_ranges`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter and indent-based folding.
+2. `on`: Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+
+To enable LSP folding ranges globally:
+
+```json [settings]
+{
+  "document_folding_ranges": "on"
+}
+```
+
+To enable LSP folding ranges for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_folding_ranges": "on"
+    }
+  }
+}
+```
+
 ## Use Smartcase Search
 
 - Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \

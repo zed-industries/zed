@@ -1102,6 +1102,14 @@
   // May require language server restart to properly apply.
   "semantic_tokens": "off",
 
+  // Controls whether folding ranges from language servers are used instead of
+  // tree-sitter and indent-based folding.
+  //
+  // Options:
+  // - "off": Use tree-sitter and indent-based folding (default).
+  // - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+  "document_folding_ranges": "off",
+
   // When to automatically save edited buffers. This setting can
   // take four values.
   //

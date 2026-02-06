@@ -863,7 +863,6 @@ dependencies = [
  "assistant_slash_command",
  "chrono",
  "collections",
- "context_server",
  "editor",
  "feature_flags",
  "fs",
@@ -2346,7 +2345,6 @@ dependencies = [
 name = "breadcrumbs"
 version = "0.1.0"
 dependencies = [
- "editor",
  "gpui",
  "ui",
  "workspace",
@@ -4975,7 +4973,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.9.2",
- "search",
  "serde",
  "serde_json",
  "settings",
@@ -5506,6 +5503,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "assets",
+ "breadcrumbs",
  "buffer_diff",
  "client",
  "clock",
@@ -10137,6 +10135,7 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "serde_json_lenient",
+ "settings_content",
  "settings_json",
  "streaming-iterator",
  "tree-sitter",
@@ -14858,7 +14857,6 @@ dependencies = [
  "menu",
  "pretty_assertions",
  "project",
- "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -16886,7 +16884,6 @@ dependencies = [
  "rand 0.9.2",
  "regex",
  "schemars",
- "search",
  "serde",
  "serde_json",
  "settings",
@@ -21259,6 +21256,7 @@ dependencies = [
  "gpui",
  "schemars",
  "serde",
+ "util",
  "uuid",
 ]
 
