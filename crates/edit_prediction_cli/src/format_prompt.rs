@@ -12,7 +12,7 @@ use language::{Buffer, OffsetRangeExt, Point};
 use similar::DiffableStr;
 use std::sync::Arc;
 use std::{fmt::Write as _, ops::Range};
-use zeta_prompt::ZetaVersion;
+use zeta_prompt::ZetaFormat;
 use zeta_prompt::format_zeta_prompt;
 
 pub async fn run_format_prompt(
@@ -54,7 +54,7 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
                 cursor_point,
                 &snapshot,
-                edit_prediction::zeta2::max_editable_tokens(ZetaVersion::default()),
+                edit_prediction::zeta2::max_editable_tokens(ZetaFormat::default()),
                 edit_prediction::zeta2::MAX_CONTEXT_TOKENS,
             );
             let editable_range = editable_range.to_offset(&snapshot);
@@ -126,7 +126,7 @@ pub fn zeta2_output_for_patch(
     input: &zeta_prompt::ZetaPromptInput,
     patch: &str,
     cursor_offset: Option<usize>,
-    version: ZetaVersion,
+    version: ZetaFormat,
 ) -> Result<String> {
     let mut old_editable_region =
         input.cursor_excerpt[input.editable_range_in_excerpt.clone()].to_string();
@@ -155,7 +155,7 @@ pub fn zeta2_output_for_patch(
     }
 
     match version {
-        ZetaVersion::V0120GitMergeMarkers | ZetaVersion::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0120GitMergeMarkers | ZetaFormat::V0131GitMergeMarkersPrefix => {
             if !result.ends_with('\n') {
                 result.push('\n');
             }

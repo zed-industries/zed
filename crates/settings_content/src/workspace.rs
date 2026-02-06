@@ -805,6 +805,7 @@ pub struct ProjectPanelIndentGuidesSettings {
     MergeFrom,
     strum::VariantArray,
     strum::VariantNames,
+    strum::EnumMessage,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticTokens {
