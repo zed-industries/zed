@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
-pub use mistral::{CODESTRAL_API_URL, MISTRAL_API_URL, StreamResponse};
+pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
@@ -29,9 +29,6 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 const API_KEY_ENV_VAR_NAME: &str = "MISTRAL_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
-const CODESTRAL_API_KEY_ENV_VAR_NAME: &str = "CODESTRAL_API_KEY";
-static CODESTRAL_API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(CODESTRAL_API_KEY_ENV_VAR_NAME);
-
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
     pub api_url: String,
@@ -45,20 +42,6 @@ pub struct MistralLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
-    codestral_api_key_state: Entity<ApiKeyState>,
-}
-
-pub fn codestral_api_key(cx: &mut App) -> Entity<ApiKeyState> {
-    // IMPORTANT:
-    // Do not store `Entity<T>` handles in process-wide statics (e.g. `OnceLock`).
-    //
-    // `Entity<T>` is tied to a particular `App`/entity-map context. Caching it globally can
-    // cause panics like "used a entity with the wrong context" when tests (or multiple apps)
-    // create distinct `App` instances in the same process.
-    //
-    // If we want a per-process singleton, store plain data (e.g. env var names) and create
-    // the entity per-App instead.
-    cx.new(|_| ApiKeyState::new(CODESTRAL_API_URL.into(), CODESTRAL_API_KEY_ENV_VAR.clone()))
 }
 
 impl State {
@@ -76,15 +59,6 @@ impl State {
         let api_url = MistralLanguageModelProvider::api_url(cx);
         self.api_key_state
             .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
-    }
-
-    fn authenticate_codestral(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), AuthenticateError>> {
-        self.codestral_api_key_state.update(cx, |state, cx| {
-            state.load_if_needed(CODESTRAL_API_URL.into(), |state| state, cx)
-        })
     }
 }
 
@@ -112,26 +86,12 @@ impl MistralLanguageModelProvider {
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
-                codestral_api_key_state: codestral_api_key(cx),
             }
         });
 
         let this = Arc::new(Self { http_client, state });
         cx.set_global(GlobalMistralLanguageModelProvider(this));
         cx.global::<GlobalMistralLanguageModelProvider>().0.clone()
-    }
-
-    pub fn load_codestral_api_key(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        self.state
-            .update(cx, |state, cx| state.authenticate_codestral(cx))
-    }
-
-    pub fn codestral_api_key(&self, url: &str, cx: &App) -> Option<Arc<str>> {
-        self.state
-            .read(cx)
-            .codestral_api_key_state
-            .read(cx)
-            .key(url)
     }
 
     fn create_language_model(&self, model: mistral::Model) -> Arc<dyn LanguageModel> {
@@ -901,6 +861,7 @@ mod tests {
             intent: None,
             stop: vec![],
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         let mistral_request = into_mistral(request, mistral::Model::MistralSmallLatest, None);
@@ -934,6 +895,7 @@ mod tests {
             intent: None,
             stop: vec![],
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         let mistral_request = into_mistral(request, mistral::Model::Pixtral12BLatest, None);

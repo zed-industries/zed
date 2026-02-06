@@ -297,11 +297,20 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportedEffortLevel {
+    pub name: Arc<str>,
+    pub value: Arc<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

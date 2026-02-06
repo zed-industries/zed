@@ -797,12 +797,13 @@ impl AcpServerView {
             }
             _ => {}
         }
-        if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            self.server_state = ServerState::LoadError(load_err.clone());
+        let load_error = if let Some(load_err) = err.downcast_ref::<LoadError>() {
+            load_err.clone()
         } else {
-            self.server_state =
-                ServerState::LoadError(LoadError::Other(format!("{:#}", err).into()))
-        }
+            LoadError::Other(format!("{:#}", err).into())
+        };
+        self.emit_load_error_telemetry(&load_error);
+        self.server_state = ServerState::LoadError(load_error);
         cx.notify();
     }
 
@@ -1069,6 +1070,7 @@ impl AcpServerView {
             }
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
+                self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
@@ -1626,6 +1628,77 @@ impl AcpServerView {
                     }),
             )
             .into_any_element()
+    }
+
+    fn emit_token_limit_telemetry_if_needed(
+        &mut self,
+        thread: &Entity<AcpThread>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_thread) = self.as_active_thread() else {
+            return;
+        };
+
+        let (ratio, agent_telemetry_id, session_id) = {
+            let thread_data = thread.read(cx);
+            let Some(token_usage) = thread_data.token_usage() else {
+                return;
+            };
+            (
+                token_usage.ratio(),
+                thread_data.connection().telemetry_id(),
+                thread_data.session_id().clone(),
+            )
+        };
+
+        let kind = match ratio {
+            acp_thread::TokenUsageRatio::Normal => {
+                active_thread.update(cx, |active, _cx| {
+                    active.last_token_limit_telemetry = None;
+                });
+                return;
+            }
+            acp_thread::TokenUsageRatio::Warning => "warning",
+            acp_thread::TokenUsageRatio::Exceeded => "exceeded",
+        };
+
+        let should_skip = active_thread
+            .read(cx)
+            .last_token_limit_telemetry
+            .as_ref()
+            .is_some_and(|last| *last >= ratio);
+        if should_skip {
+            return;
+        }
+
+        active_thread.update(cx, |active, _cx| {
+            active.last_token_limit_telemetry = Some(ratio);
+        });
+
+        telemetry::event!(
+            "Agent Token Limit Warning",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = kind,
+        );
+    }
+
+    fn emit_load_error_telemetry(&self, error: &LoadError) {
+        let error_kind = match error {
+            LoadError::Unsupported { .. } => "unsupported",
+            LoadError::FailedToInstall(_) => "failed_to_install",
+            LoadError::Exited { .. } => "exited",
+            LoadError::Other(_) => "other",
+        };
+
+        let agent_name = self.agent.name();
+
+        telemetry::event!(
+            "Agent Panel Error Shown",
+            agent = agent_name,
+            kind = error_kind,
+            message = error.to_string(),
+        );
     }
 
     fn render_load_error(

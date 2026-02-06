@@ -563,6 +563,7 @@ impl ExampleInstance {
                 tool_choice: None,
                 stop: Vec::new(),
                 thinking_allowed: true,
+                thinking_effort: None,
             };
 
             let model = model.clone();
