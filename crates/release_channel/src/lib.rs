@@ -129,7 +129,7 @@ impl AppVersion {
 }
 
 /// A Zed release channel.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, strum::EnumIter)]
 pub enum ReleaseChannel {
     /// The development release channel.
     ///
