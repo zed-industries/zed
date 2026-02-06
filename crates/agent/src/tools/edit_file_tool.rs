@@ -162,6 +162,7 @@ impl EditFileTool {
         cx: &mut App,
     ) -> Task<Result<()>> {
         authorize_file_edit(
+            Self::NAME,
             &input.path,
             &input.display_description,
             &self.thread,
@@ -213,6 +214,7 @@ pub fn is_sensitive_settings_path(path: &Path) -> bool {
 }
 
 pub fn authorize_file_edit(
+    tool_name: &str,
     path: &Path,
     display_description: &str,
     thread: &WeakEntity<Thread>,
@@ -221,7 +223,7 @@ pub fn authorize_file_edit(
 ) -> Task<Result<()>> {
     let path_str = path.to_string_lossy();
     let settings = agent_settings::AgentSettings::get_global(cx);
-    let decision = decide_permission_for_path(EditFileTool::NAME, &path_str, settings);
+    let decision = decide_permission_for_path(tool_name, &path_str, settings);
 
     if let ToolPermissionDecision::Deny(reason) = decision {
         return Task::ready(Err(anyhow!("{}", reason)));
@@ -236,7 +238,7 @@ pub fn authorize_file_edit(
     match sensitive_settings_kind(path) {
         Some(SensitiveSettingsKind::Local) => {
             let context = crate::ToolPermissionContext {
-                tool_name: EditFileTool::NAME.to_string(),
+                tool_name: tool_name.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -247,7 +249,7 @@ pub fn authorize_file_edit(
         }
         Some(SensitiveSettingsKind::Global) => {
             let context = crate::ToolPermissionContext {
-                tool_name: EditFileTool::NAME.to_string(),
+                tool_name: tool_name.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -269,7 +271,7 @@ pub fn authorize_file_edit(
         Task::ready(Ok(()))
     } else {
         let context = crate::ToolPermissionContext {
-            tool_name: EditFileTool::NAME.to_string(),
+            tool_name: tool_name.to_string(),
             input_value: path_str.to_string(),
         };
         event_stream.authorize(display_description, context, cx)

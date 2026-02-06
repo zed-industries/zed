@@ -166,6 +166,7 @@ impl StreamingEditFileTool {
         cx: &mut App,
     ) -> Task<Result<()>> {
         super::edit_file_tool::authorize_file_edit(
+            Self::NAME,
             &input.path,
             &input.display_description,
             &self.thread,
