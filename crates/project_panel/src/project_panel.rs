@@ -761,10 +761,7 @@ impl ProjectPanel {
                                     task.detach_and_notify_err(window, cx);
                                 }
                                 None => {
-                                    project_panel.state.edit_state = None;
-                                    project_panel
-                                        .update_visible_entries(None, false, false, window, cx);
-                                    cx.notify();
+                                    project_panel.discard_edit_state(window, cx);
                                 }
                             }
                         }
@@ -1935,26 +1932,32 @@ impl ProjectPanel {
         }))
     }
 
+    fn discard_edit_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let previously_focused = self
+            .state
+            .edit_state
+            .take()
+            .and_then(|edit_state| edit_state.previously_focused)
+            .map(|entry| (entry.worktree_id, entry.entry_id));
+        self.marked_entries.clear();
+        cx.notify();
+        window.focus(&self.focus_handle, cx);
+        self.update_visible_entries(
+            previously_focused,
+            false,
+            previously_focused.is_some(),
+            window,
+            cx,
+        );
+    }
+
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
             self.drag_target_entry.take();
             self.hover_expand_task.take();
             return;
         }
-
-        let previous_edit_state = self.state.edit_state.take();
-        self.update_visible_entries(None, false, false, window, cx);
-        self.marked_entries.clear();
-
-        if let Some(previously_focused) =
-            previous_edit_state.and_then(|edit_state| edit_state.previously_focused)
-        {
-            self.state.selection = Some(previously_focused);
-            self.autoscroll(cx);
-        }
-
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
+        self.discard_edit_state(window, cx);
     }
 
     fn open_entry(
