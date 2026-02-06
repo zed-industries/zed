@@ -813,4 +813,30 @@ mod tests {
         let result = extract_commands("(( x = 1 )) > /tmp/file");
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_redirect_target_with_command_substitution() {
+        let commands = extract_commands("echo > $(mktemp)").expect("parse failed");
+        assert!(commands.iter().any(|c| c.starts_with("echo >")));
+    }
+
+    #[test]
+    fn test_nested_compound_redirects() {
+        let commands = extract_commands("{ echo > /tmp/a; } > /tmp/b").expect("parse failed");
+        assert_eq!(commands, vec!["echo > /tmp/a > /tmp/b"]);
+    }
+
+    #[test]
+    fn test_while_loop_redirect() {
+        let commands =
+            extract_commands("while true; do echo line; done > /tmp/log").expect("parse failed");
+        assert_eq!(commands, vec!["true > /tmp/log", "echo line > /tmp/log"]);
+    }
+
+    #[test]
+    fn test_if_clause_redirect() {
+        let commands =
+            extract_commands("if true; then echo yes; fi > /tmp/out").expect("parse failed");
+        assert_eq!(commands, vec!["true > /tmp/out", "echo yes > /tmp/out"]);
+    }
 }
