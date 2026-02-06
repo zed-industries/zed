@@ -1,3 +1,4 @@
+use super::edit_file_tool::EditFileTool;
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::{
@@ -166,7 +167,7 @@ impl StreamingEditFileTool {
         cx: &mut App,
     ) -> Task<Result<()>> {
         super::edit_file_tool::authorize_file_edit(
-            Self::NAME,
+            EditFileTool::NAME,
             &input.path,
             &input.display_description,
             &self.thread,

@@ -687,6 +687,7 @@ impl ToolPermissionContext {
                 extract_path_pattern_display(dest),
             )
         } else if tool_name == EditFileTool::NAME
+            || tool_name == StreamingEditFileTool::NAME
             || tool_name == DeletePathTool::NAME
             || tool_name == CreateDirectoryTool::NAME
             || tool_name == SaveFileTool::NAME
