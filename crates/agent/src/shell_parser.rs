@@ -153,6 +153,10 @@ fn extract_commands_from_simple_command(
         }
     }
 
+    if words.is_empty() && !redirects.is_empty() {
+        return None;
+    }
+
     words.extend(redirects);
     let command_str = words.join(" ");
     if !command_str.is_empty() {
@@ -796,6 +800,12 @@ mod tests {
     fn test_fd_to_fd_redirect_skipped() {
         let commands = extract_commands("cmd 1>&2").expect("parse failed");
         assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_bare_redirect_returns_none() {
+        let result = extract_commands("> /etc/passwd");
+        assert!(result.is_none());
     }
 
     #[test]
