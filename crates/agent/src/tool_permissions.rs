@@ -17,23 +17,29 @@ pub struct HardcodedSecurityRules {
 }
 
 pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
+    // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
+    // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
+    const FLAGS: &str = r"(--[a-z][-a-z]*\s+|-[a-zA-Z]+\s+)*";
+
     HardcodedSecurityRules {
-        // Case-insensitive; `(-[rf]+\s+)*` handles `-rf`, `-fr`, `-RF`, `-r -f`, etc.
         terminal_deny: vec![
-            // Recursive deletion of root - "rm -rf /" or "rm -rf / "
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*/\s*$", false)
+            // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}/\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" (but not ~/subdir)
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*~/?\s*$", false)
+            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}~/?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}"
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*(\$HOME|\$\{HOME\})/?\s*$", false)
+            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
-            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./"
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\./?\s*$", false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../"
-            CompiledRegex::new(r"rm\s+(-[rf]+\s+)*\.\./?\s*$", false)
+            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\.\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
         ],
     }
@@ -1179,6 +1185,15 @@ mod tests {
         t("rm -r -f /").is_deny();
         t("rm -f -r /").is_deny();
         t("RM -RF /").is_deny();
+        // Long flags
+        t("rm --recursive --force /").is_deny();
+        t("rm --force --recursive /").is_deny();
+        // Extra short flags
+        t("rm -rfv /").is_deny();
+        t("rm -v -rf /").is_deny();
+        // Glob wildcards
+        t("rm -rf /*").is_deny();
+        t("rm -rf /* ").is_deny();
     }
 
     #[test]
@@ -1195,6 +1210,18 @@ mod tests {
         t("rm -FR ${HOME}/").is_deny();
         t("rm -R -F ${HOME}/").is_deny();
         t("RM -RF ~").is_deny();
+        // Long flags
+        t("rm --recursive --force ~").is_deny();
+        t("rm --recursive --force ~/").is_deny();
+        t("rm --recursive --force $HOME").is_deny();
+        t("rm --force --recursive ${HOME}/").is_deny();
+        // Extra short flags
+        t("rm -rfv ~").is_deny();
+        t("rm -v -rf ~/").is_deny();
+        // Glob wildcards
+        t("rm -rf ~/*").is_deny();
+        t("rm -rf $HOME/*").is_deny();
+        t("rm -rf ${HOME}/*").is_deny();
     }
 
     #[test]
@@ -1210,6 +1237,15 @@ mod tests {
         t("rm -R -F ../").is_deny();
         t("RM -RF .").is_deny();
         t("RM -RF ..").is_deny();
+        // Long flags
+        t("rm --recursive --force .").is_deny();
+        t("rm --force --recursive ../").is_deny();
+        // Extra short flags
+        t("rm -rfv .").is_deny();
+        t("rm -v -rf ../").is_deny();
+        // Glob wildcards
+        t("rm -rf ./*").is_deny();
+        t("rm -rf ../*").is_deny();
     }
 
     #[test]
