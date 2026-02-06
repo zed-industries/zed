@@ -971,6 +971,30 @@ impl SyntaxSnapshot {
         )
     }
 
+    pub fn languages<'a>(
+        &'a self,
+        buffer: &'a BufferSnapshot,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = &'a Arc<Language>> {
+        let mut cursor = self.layers.cursor::<()>(buffer);
+        cursor.next();
+        iter::from_fn(move || {
+            while let Some(layer) = cursor.item() {
+                let mut info = None;
+                if let SyntaxLayerContent::Parsed { language, .. } = &layer.content {
+                    if include_hidden || !language.config.hidden {
+                        info = Some(language);
+                    }
+                }
+                cursor.next();
+                if info.is_some() {
+                    return info;
+                }
+            }
+            None
+        })
+    }
+
     #[cfg(test)]
     pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer<'a>> {
         self.layers_for_range(0..buffer.len(), buffer, true)
