@@ -13,6 +13,7 @@ path = "src/sidebar.rs"
 
 [features]
 default = []
+test-support = []
 
 [dependencies]
 fs.workspace = true

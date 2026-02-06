@@ -661,6 +661,17 @@ impl Sidebar {
         (entries, multi_workspace.active_workspace_index())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_test_recent_projects(
+        &self,
+        projects: Vec<RecentProjectEntry>,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, _cx| {
+            picker.delegate.recent_projects = projects;
+        });
+    }
+
     fn queue_refresh(
         &mut self,
         multi_workspace: Entity<MultiWorkspace>,
