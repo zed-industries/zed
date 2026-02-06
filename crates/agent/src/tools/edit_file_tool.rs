@@ -481,7 +481,11 @@ impl AgentTool for EditFileTool {
                 }
             }
 
-            // If format_on_save is enabled, format the buffer
+            let edit_agent_output = output.await?;
+
+            // If format_on_save is enabled, format the buffer.
+            // Read this after edits are applied, since the edit can change the
+            // buffer's detected language (e.g. creating a new `.py` file).
             let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
                 let settings = language_settings::language_settings(
                     buffer.language().map(|l| l.name()),
@@ -490,8 +494,6 @@ impl AgentTool for EditFileTool {
                 );
                 settings.format_on_save != FormatOnSave::Off
             });
-
-            let edit_agent_output = output.await?;
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
