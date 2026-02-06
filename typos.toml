@@ -60,6 +60,8 @@ extend-exclude = [
     "crates/gpui/src/platform/mac/dispatcher.rs",
     # Tests contain partially incomplete words (by design)
     "crates/edit_prediction_cli/src/split_commit.rs",
+    # Tests contain `baˇr` that cause `"ba" should be "by" or "be".`-like false-positives
+    "crates/editor/src/document_symbols.rs",
 ]
 
 [default]

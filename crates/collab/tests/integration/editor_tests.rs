@@ -35,8 +35,8 @@ use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::{
-    DocumentFoldingRanges, InlayHintSettingsContent, InlineBlameSettings, SemanticTokens,
-    SettingsStore,
+    DocumentFoldingRanges, DocumentSymbols, InlayHintSettingsContent, InlineBlameSettings,
+    SemanticTokens, SettingsStore,
 };
 use std::{
     collections::BTreeSet,
@@ -51,6 +51,7 @@ use std::{
 };
 use text::Point;
 use util::{path, rel_path::rel_path, uri};
+use workspace::item::Item as _;
 use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
@@ -5501,6 +5502,179 @@ async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mu
         !has_restricted_worktrees(&project_b, cx_b),
         "remote client should still be trusted"
     );
+}
+
+#[gpui::test]
+async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let capabilities = lsp::ServerCapabilities {
+        document_symbol_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    #[allow(deprecated)]
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            initializer: Some(Box::new(|fake_language_server| {
+                #[allow(deprecated)]
+                fake_language_server
+                    .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                        move |_, _| async move {
+                            Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                                lsp::DocumentSymbol {
+                                    name: "Foo".to_string(),
+                                    detail: None,
+                                    kind: lsp::SymbolKind::STRUCT,
+                                    tags: None,
+                                    deprecated: None,
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(2, 1),
+                                    ),
+                                    selection_range: lsp::Range::new(
+                                        lsp::Position::new(0, 7),
+                                        lsp::Position::new(0, 10),
+                                    ),
+                                    children: Some(vec![lsp::DocumentSymbol {
+                                        name: "bar".to_string(),
+                                        detail: None,
+                                        kind: lsp::SymbolKind::FIELD,
+                                        tags: None,
+                                        deprecated: None,
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(1, 4),
+                                            lsp::Position::new(1, 13),
+                                        ),
+                                        selection_range: lsp::Range::new(
+                                            lsp::Position::new(1, 4),
+                                            lsp::Position::new(1, 7),
+                                        ),
+                                        children: None,
+                                    }]),
+                                },
+                            ])))
+                        },
+                    );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "struct Foo {\n    bar: u32,\n}\n",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let _fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
+
+    cx_a.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.document_symbols =
+                    Some(DocumentSymbols::On);
+            });
+        });
+    });
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_millis(100));
+    executor.run_until_parked();
+
+    editor_a.update(cx_a, |editor, cx| {
+        let breadcrumbs = editor
+            .breadcrumbs(cx)
+            .expect("Host should have breadcrumbs");
+        let texts: Vec<_> = breadcrumbs.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["main.rs", "Foo"],
+            "Host should see file path and LSP symbol 'Foo' in breadcrumbs"
+        );
+    });
+
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.document_symbols =
+                    Some(DocumentSymbols::On);
+            });
+        });
+    });
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_millis(100));
+    executor.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        let breadcrumbs = editor
+            .breadcrumbs(cx)
+            .expect("Client B should have breadcrumbs");
+        let texts: Vec<_> = breadcrumbs.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["main.rs", "Foo"],
+            "Client B should see file path and LSP symbol 'Foo' via remote project"
+        );
+    });
 }
 
 fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {

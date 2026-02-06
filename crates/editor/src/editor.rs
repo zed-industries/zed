@@ -18,6 +18,7 @@ mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
 mod document_colors;
+mod document_symbols;
 mod editor_settings;
 mod element;
 mod folding_ranges;
@@ -248,7 +249,7 @@ pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
-pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
+pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
@@ -1345,8 +1346,10 @@ pub struct Editor {
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
-    refresh_outline_symbols_task: Task<()>,
-    outline_symbols: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
+    refresh_document_symbols_task: Shared<Task<()>>,
+    lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
+    refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
+    outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
 }
@@ -2592,8 +2595,10 @@ impl Editor {
             fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
-            refresh_outline_symbols_task: Task::ready(()),
-            outline_symbols: None,
+            refresh_document_symbols_task: Task::ready(()).shared(),
+            lsp_document_symbols: HashMap::default(),
+            refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
+            outline_symbols_at_cursor: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
         };
@@ -3599,7 +3604,7 @@ impl Editor {
 
             self.refresh_selected_text_highlights(false, window, cx);
             self.refresh_matching_bracket_highlights(window, cx);
-            self.refresh_outline_symbols(cx);
+            self.refresh_outline_symbols_at_cursor(cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
@@ -7597,23 +7602,34 @@ impl Editor {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn refresh_outline_symbols(&mut self, cx: &mut Context<Editor>) {
+    fn refresh_outline_symbols_at_cursor(&mut self, cx: &mut Context<Editor>) {
         if !self.mode.is_full() {
             return;
         }
         let cursor = self.selections.newest_anchor().head();
-        let multibuffer = self.buffer().read(cx).snapshot(cx);
-        let syntax = cx.theme().syntax().clone();
-        let background_task = cx
-            .background_spawn(async move { multibuffer.symbols_containing(cursor, Some(&syntax)) });
-        self.refresh_outline_symbols_task = cx.spawn(async move |this, cx| {
-            let symbols = background_task.await;
-            this.update(cx, |this, cx| {
-                this.outline_symbols = symbols;
-                cx.notify();
-            })
-            .ok();
-        });
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+
+        if self.uses_lsp_document_symbols(cursor, &multi_buffer_snapshot, cx) {
+            self.outline_symbols_at_cursor =
+                self.lsp_symbols_at_cursor(cursor, &multi_buffer_snapshot, cx);
+            cx.emit(EditorEvent::OutlineSymbolsChanged);
+            cx.notify();
+        } else {
+            let syntax = cx.theme().syntax().clone();
+            let background_task = cx.background_spawn(async move {
+                multi_buffer_snapshot.symbols_containing(cursor, Some(&syntax))
+            });
+            self.refresh_outline_symbols_at_cursor_at_cursor_task =
+                cx.spawn(async move |this, cx| {
+                    let symbols = background_task.await;
+                    this.update(cx, |this, cx| {
+                        this.outline_symbols_at_cursor = symbols;
+                        cx.emit(EditorEvent::OutlineSymbolsChanged);
+                        cx.notify();
+                    })
+                    .ok();
+                });
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -23859,7 +23875,7 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_single_line_folds(window, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
-                self.refresh_outline_symbols(cx);
+                self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&self.snapshot(window, cx), cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
@@ -24191,6 +24207,7 @@ impl Editor {
 
             if language_settings_changed {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
+                self.refresh_document_symbols(None, cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -25226,6 +25243,7 @@ impl Editor {
         self.refresh_semantic_tokens(for_buffer, None, cx);
         self.refresh_document_colors(for_buffer, window, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
+        self.refresh_document_symbols(for_buffer, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
@@ -25308,10 +25326,11 @@ impl Editor {
             show_underlines: self.diagnostics_enabled(),
         }
     }
+
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let multibuffer = self.buffer().read(cx);
         let is_singleton = multibuffer.is_singleton();
-        let (buffer_id, symbols) = self.outline_symbols.as_ref()?;
+        let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
         let buffer = multibuffer.buffer(*buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -27655,6 +27674,7 @@ pub enum EditorEvent {
     },
     CursorShapeChanged,
     BreadcrumbsChanged,
+    OutlineSymbolsChanged,
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

@@ -41,21 +41,73 @@ pub fn toggle(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let outline = editor
-        .read(cx)
-        .buffer()
-        .read(cx)
-        .snapshot(cx)
-        .outline(Some(cx.theme().syntax()));
-
-    let workspace = window.root::<Workspace>().flatten();
-    if let Some((workspace, outline)) = workspace.zip(outline) {
+    let Some(workspace) = window.root::<Workspace>().flatten() else {
+        return;
+    };
+    if workspace.read(cx).active_modal::<OutlineView>(cx).is_some() {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
-                OutlineView::new(outline, editor, window, cx)
+                OutlineView::new(Outline::new(Vec::new()), editor.clone(), window, cx)
             });
-        })
+        });
+        return;
     }
+
+    let Some(task) = outline_for_editor(&editor, cx) else {
+        return;
+    };
+    let editor = editor.clone();
+    window
+        .spawn(cx, async move |cx| {
+            let items = task.await;
+            if items.is_empty() {
+                return;
+            }
+            cx.update(|window, cx| {
+                let outline = Outline::new(items);
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        OutlineView::new(outline, editor, window, cx)
+                    });
+                });
+            })
+            .ok();
+        })
+        .detach();
+}
+
+fn outline_for_editor(
+    editor: &Entity<Editor>,
+    cx: &mut App,
+) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
+    let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+    let (excerpt_id, _, buffer_snapshot) = multibuffer.as_singleton()?;
+    let excerpt_id = *excerpt_id;
+    let buffer_id = buffer_snapshot.remote_id();
+    let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
+
+    Some(cx.background_executor().spawn(async move {
+        task.await
+            .into_iter()
+            .map(|item| OutlineItem {
+                depth: item.depth,
+                range: Anchor::range_in_buffer(excerpt_id, item.range),
+                source_range_for_text: Anchor::range_in_buffer(
+                    excerpt_id,
+                    item.source_range_for_text,
+                ),
+                text: item.text,
+                highlight_ranges: item.highlight_ranges,
+                name_ranges: item.name_ranges,
+                body_range: item
+                    .body_range
+                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
+                annotation_range: item
+                    .annotation_range
+                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
+            })
+            .collect()
+    }))
 }
 
 pub struct OutlineView {
@@ -390,11 +442,16 @@ pub fn render_item<T>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
+    use language::FakeLspAdapter;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use settings::SettingsStore;
+    use smol::stream::StreamExt as _;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, Workspace};
 
@@ -533,6 +590,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Entity<Picker<OutlineViewDelegate>> {
         cx.dispatch_action(zed_actions::outline::ToggleOutline);
+        cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)
@@ -582,6 +640,190 @@ mod tests {
             editor::init(cx);
             state
         })
+    }
+
+    #[gpui::test]
+    async fn test_outline_modal_lsp_document_symbols(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    struct Foo {
+                        bar: u32,
+                        baz: String,
+                    }
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang());
+            project.languages().clone()
+        });
+
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_language_server| {
+                    #[allow(deprecated)]
+                    fake_language_server
+                        .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                                    lsp::DocumentSymbol {
+                                        name: "Foo".to_string(),
+                                        detail: None,
+                                        kind: lsp::SymbolKind::STRUCT,
+                                        tags: None,
+                                        deprecated: None,
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(3, 1),
+                                        ),
+                                        selection_range: lsp::Range::new(
+                                            lsp::Position::new(0, 7),
+                                            lsp::Position::new(0, 10),
+                                        ),
+                                        children: Some(vec![
+                                            lsp::DocumentSymbol {
+                                                name: "bar".to_string(),
+                                                detail: None,
+                                                kind: lsp::SymbolKind::FIELD,
+                                                tags: None,
+                                                deprecated: None,
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(1, 4),
+                                                    lsp::Position::new(1, 13),
+                                                ),
+                                                selection_range: lsp::Range::new(
+                                                    lsp::Position::new(1, 4),
+                                                    lsp::Position::new(1, 7),
+                                                ),
+                                                children: None,
+                                            },
+                                            lsp::DocumentSymbol {
+                                                name: "lsp_only_field".to_string(),
+                                                detail: None,
+                                                kind: lsp::SymbolKind::FIELD,
+                                                tags: None,
+                                                deprecated: None,
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(2, 4),
+                                                    lsp::Position::new(2, 15),
+                                                ),
+                                                selection_range: lsp::Range::new(
+                                                    lsp::Position::new(2, 4),
+                                                    lsp::Position::new(2, 7),
+                                                ),
+                                                children: None,
+                                            },
+                                        ]),
+                                    },
+                                ])))
+                            },
+                        );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let _fake_language_server = fake_language_servers.next().await.unwrap();
+        cx.run_until_parked();
+
+        // Step 1: tree-sitter outlines by default
+        let outline_view = open_outline_view(&workspace, cx);
+        let tree_sitter_names = outline_names(&outline_view, cx);
+        assert_eq!(
+            tree_sitter_names,
+            vec!["struct Foo", "bar", "baz"],
+            "Step 1: tree-sitter outlines should be displayed by default"
+        );
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+
+        // Step 2: Switch to LSP document symbols
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.document_symbols =
+                        Some(settings::DocumentSymbols::On);
+                });
+            });
+        });
+        let outline_view = open_outline_view(&workspace, cx);
+        let lsp_names = outline_names(&outline_view, cx);
+        assert_eq!(
+            lsp_names,
+            vec!["Foo", "bar", "lsp_only_field"],
+            "Step 2: LSP-provided symbols should be displayed"
+        );
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            Vec::<u32>::new(),
+            "Step 2: initially opened outline view should have no highlights"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::SelectNext);
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![1],
+            "Step 2: bar's row should be highlighted after SelectNext"
+        );
+        assert_single_caret_at_row(&editor, 0, cx);
+
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+        assert_single_caret_at_row(&editor, 1, cx);
+
+        // Step 3: Switch back to tree-sitter
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.document_symbols =
+                        Some(settings::DocumentSymbols::Off);
+                });
+            });
+        });
+
+        let outline_view = open_outline_view(&workspace, cx);
+        let restored_names = outline_names(&outline_view, cx);
+        assert_eq!(
+            restored_names,
+            vec!["struct Foo", "bar", "baz"],
+            "Step 3: tree-sitter outlines should be restored after switching back"
+        );
     }
 
     #[track_caller]
