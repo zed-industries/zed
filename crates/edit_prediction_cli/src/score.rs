@@ -103,13 +103,14 @@ pub async fn run_scoring_impl(example: &mut Example) -> anyhow::Result<()> {
             continue;
         };
 
-        let actual_text = match apply_diff_to_string(&actual_patch, original_text) {
-            Ok(text) => text,
-            Err(_) => {
-                scores.push(zero_scores.clone());
-                continue;
-            }
-        };
+        let (actual_text, _actual_hunk_offset) =
+            match apply_diff_to_string_with_hunk_offset(&actual_patch, original_text) {
+                Ok(result) => result,
+                Err(_) => {
+                    scores.push(zero_scores.clone());
+                    continue;
+                }
+            };
 
         let mut best_delta_chr_f = 0.0f32;
         let mut best_expected_selection: Option<Range<usize>> = None;
@@ -175,34 +176,16 @@ pub async fn run_scoring_impl(example: &mut Example) -> anyhow::Result<()> {
         );
 
         // Compute actual new editable region for diff-normalized selection comparison.
-        // We try to apply the actual patch to the old editable region. If this fails
-        // (e.g., because the patch is for the full file but we only have the editable region),
-        // we fall back to applying it to the full original text and extracting the corresponding
-        // portion.
-        let actual_new_editable_region = old_editable_region.as_ref().and_then(|old_region| {
-            // First try applying directly to the editable region
-            if let Ok((new_region, _)) =
-                apply_diff_to_string_with_hunk_offset(&actual_patch, old_region)
-            {
-                return Some(new_region);
-            }
-
-            // If that fails, apply to full text and try to extract the editable region portion.
-            // The editable region is at the start of the file for Teacher prompts.
-            let full_new_text = apply_diff_to_string(&actual_patch, original_text).ok()?;
-
-            // The editable region length changes based on the edit. We need to find where
-            // the editable region ends in the new text. Since the old editable region
-            // corresponds to the beginning of the file, we can compute the length change.
+        // We use the hunk offset from the patch application to determine where the edit
+        // occurred, then extract the corresponding portion of the new text.
+        let actual_new_editable_region = old_editable_region.as_ref().map(|old_region| {
             let old_region_len = old_region.len();
             let old_text_len = original_text.len();
-            let new_text_len = full_new_text.len();
+            let new_text_len = actual_text.len();
             let length_delta = new_text_len as isize - old_text_len as isize;
             let new_region_len = (old_region_len as isize + length_delta).max(0) as usize;
-
-            // Extract the new editable region from the start of the new full text
-            let new_region_len = new_region_len.min(full_new_text.len());
-            Some(full_new_text[..new_region_len].to_string())
+            let new_region_len = new_region_len.min(actual_text.len());
+            actual_text[..new_region_len].to_string()
         });
 
         // Compute cursor/selection position metrics
