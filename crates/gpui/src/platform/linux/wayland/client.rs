@@ -171,8 +171,10 @@ impl Globals {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct InProgressOutput {
+    global_name: u32,
+    wl_output: wl_output::WlOutput,
     name: Option<String>,
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
@@ -180,10 +182,23 @@ pub struct InProgressOutput {
 }
 
 impl InProgressOutput {
+    fn new(global_name: u32, wl_output: wl_output::WlOutput) -> Self {
+        Self {
+            global_name,
+            wl_output,
+            name: None,
+            scale: None,
+            position: None,
+            size: None,
+        }
+    }
+
     fn complete(&self) -> Option<Output> {
         if let Some((position, size)) = self.position.zip(self.size) {
             let scale = self.scale.unwrap_or(1);
             Some(Output {
+                global_name: self.global_name,
+                wl_output: self.wl_output.clone(),
                 name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
@@ -194,17 +209,13 @@ impl InProgressOutput {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Output {
+    pub global_name: u32,
+    pub wl_output: wl_output::WlOutput,
     pub name: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
-}
-
-#[derive(Clone)]
-struct OutputHandle {
-    global_name: u32,
-    wl_output: wl_output::WlOutput,
 }
 
 pub(crate) struct WaylandClientState {
@@ -225,7 +236,6 @@ pub(crate) struct WaylandClientState {
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
-    wl_outputs: HashMap<ObjectId, OutputHandle>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
@@ -470,8 +480,6 @@ impl WaylandClient {
         let mut seat: Option<wl_seat::WlSeat> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
-        #[allow(clippy::mutable_key_type)]
-        let mut wl_outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -490,14 +498,10 @@ impl WaylandClient {
                             &qh,
                             (),
                         );
-                        wl_outputs.insert(
+                        in_progress_outputs.insert(
                             output.id(),
-                            OutputHandle {
-                                global_name: global.name,
-                                wl_output: output.clone(),
-                            },
+                            InProgressOutput::new(global.name, output),
                         );
-                        in_progress_outputs.insert(output.id(), InProgressOutput::default());
                     }
                     _ => {}
                 }
@@ -603,7 +607,6 @@ impl WaylandClient {
             ime_pre_edit: None,
             composing: false,
             outputs: HashMap::default(),
-            wl_outputs,
             in_progress_outputs,
             windows: HashMap::default(),
             common,
@@ -737,11 +740,19 @@ impl LinuxClient for WaylandClient {
         let parent = state.keyboard_focused_window.clone();
         let target_output = params.display_id.and_then(|display_id| {
             state
-                .wl_outputs
+                .outputs
                 .iter()
-                .find_map(|(object_id, handle)| {
+                .find_map(|(object_id, output)| {
                     (object_id.protocol_id() == display_id.0)
-                        .then(|| handle.wl_output.clone())
+                        .then(|| output.wl_output.clone())
+                })
+                .or_else(|| {
+                    state.in_progress_outputs.iter().find_map(
+                        |(object_id, in_progress)| {
+                            (object_id.protocol_id() == display_id.0)
+                                .then(|| in_progress.wl_output.clone())
+                        },
+                    )
                 })
         });
 
@@ -973,31 +984,31 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         (),
                     );
 
-                    state.wl_outputs.insert(
-                        output.id(),
-                        OutputHandle {
-                            global_name: name,
-                            wl_output: output.clone(),
-                        },
-                    );
                     state
                         .in_progress_outputs
-                        .insert(output.id(), InProgressOutput::default());
+                        .insert(output.id(), InProgressOutput::new(name, output));
                 }
                 _ => {}
             },
             wl_registry::Event::GlobalRemove { name } => {
                 let to_remove = state
-                    .wl_outputs
+                    .outputs
                     .iter()
-                    .find_map(|(object_id, handle)| {
-                        (handle.global_name == name).then(|| object_id.clone())
+                    .find_map(|(object_id, output)| {
+                        (output.global_name == name).then(|| object_id.clone())
+                    })
+                    .or_else(|| {
+                        state.in_progress_outputs.iter().find_map(
+                            |(object_id, in_progress)| {
+                                (in_progress.global_name == name)
+                                    .then(|| object_id.clone())
+                            },
+                        )
                     });
 
                 if let Some(object_id) = to_remove {
                     state.in_progress_outputs.remove(&object_id);
                     state.outputs.remove(&object_id);
-                    state.wl_outputs.remove(&object_id);
                 }
             }
             _ => {}
