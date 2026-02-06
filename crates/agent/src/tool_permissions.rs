@@ -385,7 +385,13 @@ fn normalize_path(raw: &str) -> String {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                components.pop();
+                if components.last() == Some(&"..") {
+                    components.push("..");
+                } else if !components.is_empty() {
+                    components.pop();
+                } else if !is_absolute {
+                    components.push("..");
+                }
             }
             Component::Normal(segment) => {
                 if let Some(s) = segment.to_str() {
@@ -1489,7 +1495,7 @@ mod tests {
 
     #[test]
     fn normalize_path_parent_beyond_root_clamped() {
-        assert_eq!(normalize_path("../../../etc/passwd"), "etc/passwd");
+        assert_eq!(normalize_path("/../../../etc/passwd"), "/etc/passwd");
     }
 
     #[test]
@@ -1500,6 +1506,21 @@ mod tests {
     #[test]
     fn normalize_path_empty() {
         assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn normalize_path_relative_traversal_above_start() {
+        assert_eq!(normalize_path("../../../etc/passwd"), "../../../etc/passwd");
+    }
+
+    #[test]
+    fn normalize_path_relative_traversal_with_curdir() {
+        assert_eq!(normalize_path("../../."), "../..");
+    }
+
+    #[test]
+    fn normalize_path_relative_partial_traversal_above_start() {
+        assert_eq!(normalize_path("foo/../../bar"), "../bar");
     }
 
     #[test]
