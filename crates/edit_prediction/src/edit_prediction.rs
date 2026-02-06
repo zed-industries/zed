@@ -39,7 +39,7 @@ use std::collections::{VecDeque, hash_map};
 use std::env;
 use text::Edit;
 use workspace::Workspace;
-use zeta_prompt::{ZetaPromptInput, ZetaVersion};
+use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
 use std::mem;
 use std::ops::Range;
@@ -136,7 +136,7 @@ impl Global for EditPredictionStoreGlobal {}
 #[derive(Clone)]
 pub struct Zeta2RawConfig {
     pub model_id: Option<String>,
-    pub version: ZetaVersion,
+    pub format: ZetaFormat,
 }
 
 pub struct EditPredictionStore {
@@ -651,10 +651,10 @@ impl EditPredictionStore {
     }
 
     fn zeta2_raw_config_from_env() -> Option<Zeta2RawConfig> {
-        let version_str = env::var("ZED_ZETA_VERSION").ok()?;
-        let version = ZetaVersion::parse(&version_str).ok()?;
+        let version_str = env::var("ZED_ZETA_FORMAT").ok()?;
+        let format = ZetaFormat::parse(&version_str).ok()?;
         let model_id = env::var("ZED_ZETA_MODEL").ok();
-        Some(Zeta2RawConfig { model_id, version })
+        Some(Zeta2RawConfig { model_id, format })
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {

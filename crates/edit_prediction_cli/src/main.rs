@@ -31,7 +31,7 @@ use edit_prediction::EditPredictionStore;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use gpui::{AppContext as _, Application, BackgroundExecutor, Task};
-use zeta_prompt::ZetaVersion;
+use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -207,8 +207,8 @@ enum Command {
     Qa(qa::QaArgs),
     /// Repair predictions that received poor QA scores by generating improved predictions
     Repair(repair::RepairArgs),
-    /// Print all valid zeta versions (lowercase, one per line)
-    PrintZetaVersions,
+    /// Print all valid zeta formats (lowercase, one per line)
+    PrintZetaFormats,
 }
 
 impl Display for Command {
@@ -251,8 +251,8 @@ impl Display for Command {
             Command::Repair(_) => {
                 write!(f, "repair")
             }
-            Command::PrintZetaVersions => {
-                write!(f, "print-zeta-versions")
+            Command::PrintZetaFormats => {
+                write!(f, "print-zeta-formats")
             }
         }
     }
@@ -326,7 +326,7 @@ enum PredictionProvider {
     Sweep,
     Mercury,
     Zeta1,
-    Zeta2(ZetaVersion),
+    Zeta2(ZetaFormat),
     Teacher(TeacherBackend),
     TeacherNonBatching(TeacherBackend),
     Repair,
@@ -334,7 +334,7 @@ enum PredictionProvider {
 
 impl Default for PredictionProvider {
     fn default() -> Self {
-        PredictionProvider::Zeta2(ZetaVersion::default())
+        PredictionProvider::Zeta2(ZetaFormat::default())
     }
 }
 
@@ -344,7 +344,7 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Sweep => write!(f, "sweep"),
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
-            PredictionProvider::Zeta2(version) => write!(f, "zeta2:{version}"),
+            PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
             PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
             PredictionProvider::TeacherNonBatching(backend) => {
                 write!(f, "teacher-non-batching:{backend}")
@@ -366,8 +366,8 @@ impl std::str::FromStr for PredictionProvider {
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
             "zeta2" => {
-                let version = arg.map(ZetaVersion::parse).transpose()?.unwrap_or_default();
-                Ok(PredictionProvider::Zeta2(version))
+                let format = arg.map(ZetaFormat::parse).transpose()?.unwrap_or_default();
+                Ok(PredictionProvider::Zeta2(format))
             }
             "teacher" => {
                 let backend = arg
@@ -390,7 +390,7 @@ impl std::str::FromStr for PredictionProvider {
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  For teacher, you can specify a backend like `teacher:sonnet45` or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
-                    ZetaVersion::options_as_string()
+                    ZetaFormat::options_as_string()
                 )
             }
         }
@@ -724,10 +724,10 @@ fn main() {
             std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
             return;
         }
-        Command::PrintZetaVersions => {
+        Command::PrintZetaFormats => {
             use strum::IntoEnumIterator as _;
-            for version in ZetaVersion::iter() {
-                println!("{}", version.to_string().to_lowercase());
+            for format in ZetaFormat::iter() {
+                println!("{}", format.to_string().to_lowercase());
             }
             return;
         }
@@ -966,7 +966,7 @@ fn main() {
                                         | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::PrintZetaVersions => {
+                                        | Command::PrintZetaFormats => {
                                             unreachable!()
                                         }
                                     }
