@@ -878,4 +878,49 @@ mod tests {
         let commands = extract_commands("f() { echo hi; } > /tmp/out").expect("parse failed");
         assert_eq!(commands, vec!["echo hi", "> /tmp/out"]);
     }
+
+    #[test]
+    fn test_read_and_write_redirect() {
+        let commands = extract_commands("cmd <> /dev/tty").expect("parse failed");
+        assert_eq!(commands, vec!["cmd", "<> /dev/tty"]);
+    }
+
+    #[test]
+    fn test_case_clause_with_redirect() {
+        let commands =
+            extract_commands("case $x in a) echo hi;; esac > /tmp/out").expect("parse failed");
+        assert_eq!(commands, vec!["echo hi", "> /tmp/out"]);
+    }
+
+    #[test]
+    fn test_until_loop_with_redirect() {
+        let commands =
+            extract_commands("until false; do echo line; done > /tmp/log").expect("parse failed");
+        assert_eq!(commands, vec!["false", "echo line", "> /tmp/log"]);
+    }
+
+    #[test]
+    fn test_arithmetic_for_clause_with_redirect() {
+        let commands = extract_commands("for ((i=0; i<10; i++)); do echo $i; done > /tmp/out")
+            .expect("parse failed");
+        assert_eq!(commands, vec!["echo $i", "> /tmp/out"]);
+    }
+
+    #[test]
+    fn test_if_elif_else_with_redirect() {
+        let commands = extract_commands(
+            "if true; then echo a; elif false; then echo b; else echo c; fi > /tmp/out",
+        )
+        .expect("parse failed");
+        assert_eq!(
+            commands,
+            vec!["true", "echo a", "false", "echo b", "echo c", "> /tmp/out"]
+        );
+    }
+
+    #[test]
+    fn test_multiple_redirects_on_compound_command() {
+        let commands = extract_commands("{ cmd; } > /tmp/out 2> /tmp/err").expect("parse failed");
+        assert_eq!(commands, vec!["cmd", "> /tmp/out", "2> /tmp/err"]);
+    }
 }
