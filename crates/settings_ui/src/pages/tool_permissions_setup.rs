@@ -188,7 +188,11 @@ fn render_tool_list_item(
     let rule_summary = if rule_count > 0 || invalid_count > 0 {
         let mut parts = Vec::new();
         if rule_count > 0 {
-            parts.push(format!("{} rules", rule_count));
+            if rule_count == 1 {
+                parts.push("1 rule".to_string());
+            } else {
+                parts.push(format!("{} rules", rule_count));
+            }
         }
         if invalid_count > 0 {
             parts.push(format!("{} invalid", invalid_count));
