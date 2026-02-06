@@ -584,7 +584,7 @@ fn apply_edits(
         if earlier_range.end > later_range.start {
             anyhow::bail!(
                 "Overlapping edit ranges detected: {}..{} overlaps with {}..{}. \
-                 This is likely a bug in the edit generation.",
+                 Overlapping edit ranges are not allowed, as they would overwrite each other.",
                 earlier_range.start,
                 earlier_range.end,
                 later_range.start,
