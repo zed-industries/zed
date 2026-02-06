@@ -6871,6 +6871,7 @@ impl AcpThreadView {
     }
 
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
+        let server_view = self.server_view.clone();
         v_flex().w_full().justify_end().child(
             h_flex()
                 .p_2()
@@ -6895,11 +6896,11 @@ impl AcpThreadView {
                     Button::new("update-button", format!("Update to v{}", version))
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.server_view
+                        .on_click(move |_, window, cx| {
+                            server_view
                                 .update(cx, |view, cx| view.reset(window, cx))
                                 .ok();
-                        })),
+                        }),
                 ),
         )
     }
