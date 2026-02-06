@@ -738,7 +738,12 @@ impl LanguageServer {
         #[allow(deprecated)]
         InitializeParams {
             process_id: Some(std::process::id()),
-            root_path: None,
+            root_path: Some(
+                self.root_uri
+                    .to_file_path()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| self.root_uri.path().to_string()),
+            ),
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,
             capabilities: ClientCapabilities {
@@ -2102,6 +2107,40 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&no_tag).unwrap(),
             "{\"jsonrpc\":\"\",\"id\":0,\"error\":null}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_initialize_params_has_root_path_and_root_uri(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, _fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "test-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
+
+        #[allow(deprecated)]
+        let root_uri = params.root_uri.expect("root_uri should be set");
+        #[allow(deprecated)]
+        let root_path = params.root_path.expect("root_path should be set");
+
+        let expected_path = root_uri
+            .to_file_path()
+            .expect("root_uri should be a valid file path");
+        assert_eq!(
+            root_path,
+            expected_path.to_string_lossy(),
+            "root_path should be derived from root_uri"
         );
     }
 }
