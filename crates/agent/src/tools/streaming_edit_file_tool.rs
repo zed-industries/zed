@@ -501,8 +501,8 @@ fn apply_edits(
     let mut first_edit_line: Option<u32> = None;
 
     // First pass: resolve all edits without applying them
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     for (index, edit) in edits.iter().enumerate() {
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let result = resolve_edit(&snapshot, edit);
 
         match result {
@@ -511,9 +511,12 @@ fn apply_edits(
                     first_edit_line = Some(snapshot.offset_to_point(range.start).row);
                 }
                 // Reveal the range in the diff view
-                let start_anchor =
-                    buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(range.start));
-                let end_anchor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_after(range.end));
+                let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
+                    (
+                        buffer.anchor_before(range.start),
+                        buffer.anchor_after(range.end),
+                    )
+                });
                 diff.update(cx, |card, cx| {
                     card.reveal_range(start_anchor..end_anchor, cx)
                 });
