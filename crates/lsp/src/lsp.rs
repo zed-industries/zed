@@ -2114,8 +2114,11 @@ mod tests {
 
         let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
 
+        #[allow(deprecated)]
         let root_uri = params.root_uri.expect("root_uri should be set");
+        #[allow(deprecated)]
         let root_path = params.root_path.expect("root_path should be set");
+
 
         let expected_path = root_uri
             .to_file_path()
