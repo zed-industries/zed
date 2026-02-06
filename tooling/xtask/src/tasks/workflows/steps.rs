@@ -15,6 +15,59 @@ pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     ))
 }
 
+pub(crate) fn cargo_nextest_from_archive(platform: Platform) -> Nextest {
+    Nextest(named::run(
+        platform,
+        &format!(
+            "cargo nextest run --archive-file {} --no-fail-fast",
+            nextest_archive_file()
+        ),
+    ))
+}
+
+pub(crate) fn cargo_nextest_archive(platform: Platform) -> Step<Run> {
+    named::run(
+        platform,
+        &format!(
+            "cargo nextest archive --workspace --archive-file {}",
+            nextest_archive_file()
+        ),
+    )
+}
+
+fn nextest_archive_file() -> &'static str {
+    "nextest-archive.tar.zst"
+}
+
+fn nextest_archive_artifact_name(platform: Platform) -> String {
+    format!("nextest-archive-{platform}")
+}
+
+pub(crate) fn upload_nextest_archive(platform: Platform) -> Step<Use> {
+    let artifact_name = nextest_archive_artifact_name(platform);
+    Step::new(format!("upload nextest archive ({platform})"))
+        .uses(
+            "actions",
+            "upload-artifact",
+            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
+        )
+        .add_with(("name", artifact_name))
+        .add_with(("path", nextest_archive_file()))
+        .add_with(("if-no-files-found", "error"))
+        .add_with(("retention-days", "1"))
+}
+
+pub(crate) fn download_nextest_archive(platform: Platform) -> Step<Use> {
+    let artifact_name = nextest_archive_artifact_name(platform);
+    Step::new(format!("download nextest archive ({platform})"))
+        .uses(
+            "actions",
+            "download-artifact",
+            "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
+        )
+        .add_with(("name", artifact_name))
+}
+
 impl Nextest {
     pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
         if let Some(nextest_command) = self.0.value.run.as_mut() {

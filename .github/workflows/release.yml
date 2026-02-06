@@ -9,16 +9,9 @@ on:
     tags:
     - v*
 jobs:
-  run_tests_mac:
+  build_tests_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-mac-large
-    strategy:
-      matrix:
-        partition:
-        - 1
-        - 2
-        - 3
-      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -41,23 +34,54 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-    - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3
+    - name: steps::cargo_nextest_archive
+      run: cargo nextest archive --workspace --archive-file nextest-archive.tar.zst
+    - name: upload nextest archive (mac)
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: nextest-archive-mac
+        path: nextest-archive.tar.zst
+        if-no-files-found: error
+        retention-days: '1'
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
-  run_tests_linux:
+  run_tests_mac:
+    needs:
+    - build_tests_mac
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-mac-large
     strategy:
       matrix:
         partition:
         - 1
         - 2
         - 3
+        - 4
       fail-fast: false
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: download nextest archive (mac)
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        name: nextest-archive-mac
+    - name: steps::cargo_nextest_from_archive
+      run: cargo nextest run --archive-file nextest-archive.tar.zst --no-fail-fast --partition count:${{ matrix.partition }}/4
+    timeout-minutes: 60
+  build_tests_linux:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -86,12 +110,52 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-    - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3
+    - name: steps::cargo_nextest_archive
+      run: cargo nextest archive --workspace --archive-file nextest-archive.tar.zst
+    - name: upload nextest archive (linux)
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: nextest-archive-linux
+        path: nextest-archive.tar.zst
+        if-no-files-found: error
+        retention-days: '1'
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
+    timeout-minutes: 60
+  run_tests_linux:
+    needs:
+    - build_tests_linux
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+        - 4
+      fail-fast: false
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: download nextest archive (linux)
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        name: nextest-archive-linux
+    - name: steps::cargo_nextest_from_archive
+      run: cargo nextest run --archive-file nextest-archive.tar.zst --no-fail-fast --partition count:${{ matrix.partition }}/4
     timeout-minutes: 60
     services:
       postgres:
@@ -101,16 +165,9 @@ jobs:
         ports:
         - 5432:5432
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
-  run_tests_windows:
+  build_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
-    strategy:
-      matrix:
-        partition:
-        - 1
-        - 2
-        - 3
-      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -128,13 +185,52 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
-    - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3
+    - name: steps::cargo_nextest_archive
+      run: cargo nextest archive --workspace --archive-file nextest-archive.tar.zst
       shell: pwsh
+    - name: upload nextest archive (windows)
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: nextest-archive-windows
+        path: nextest-archive.tar.zst
+        if-no-files-found: error
+        retention-days: '1'
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
+  run_tests_windows:
+    needs:
+    - build_tests_windows
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+        - 4
+      fail-fast: false
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: download nextest archive (windows)
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        name: nextest-archive-windows
+    - name: steps::cargo_nextest_from_archive
+      run: cargo nextest run --archive-file nextest-archive.tar.zst --no-fail-fast --partition count:${{ matrix.partition }}/4
       shell: pwsh
     timeout-minutes: 60
   clippy_mac:
@@ -588,8 +684,11 @@ jobs:
     - upload_release_assets
     - validate_release_assets
     - auto_release_preview
+    - build_tests_mac
     - run_tests_mac
+    - build_tests_linux
     - run_tests_linux
+    - build_tests_windows
     - run_tests_windows
     - clippy_mac
     - clippy_linux
@@ -622,8 +721,11 @@ jobs:
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
             elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
                 FAILED_JOBS=""
+                if [ "${{ needs.build_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS build_tests_mac"; fi
                 if [ "${{ needs.run_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
+                if [ "${{ needs.build_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS build_tests_linux"; fi
                 if [ "${{ needs.run_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
+                if [ "${{ needs.build_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS build_tests_windows"; fi
                 if [ "${{ needs.run_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
                 if [ "${{ needs.clippy_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
                 if [ "${{ needs.clippy_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi

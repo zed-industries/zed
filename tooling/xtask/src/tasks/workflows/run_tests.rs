@@ -17,7 +17,12 @@ use super::{
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
-const TEST_PARTITION_COUNT: u32 = 3;
+const TEST_PARTITION_COUNT: u32 = 4;
+
+pub(crate) struct PlatformTestJobs {
+    pub build: NamedJob,
+    pub run: NamedJob,
+}
 
 pub(crate) fn run_tests() -> Workflow {
     // Specify anything which should potentially skip full test suite in this regex:
@@ -49,15 +54,22 @@ pub(crate) fn run_tests() -> Workflow {
         &should_run_tests,
     ]);
 
+    let windows_tests = run_platform_tests(Platform::Windows);
+    let linux_tests = run_platform_tests(Platform::Linux);
+    let mac_tests = run_platform_tests(Platform::Mac);
+
     let mut jobs = vec![
         orchestrate,
         check_style(),
         should_run_tests.guard(clippy(Platform::Windows)),
         should_run_tests.guard(clippy(Platform::Linux)),
         should_run_tests.guard(clippy(Platform::Mac)),
-        should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
-        should_run_tests.guard(run_platform_tests(Platform::Mac)),
+        should_run_tests.guard(windows_tests.build),
+        should_run_tests.guard(windows_tests.run),
+        should_run_tests.guard(linux_tests.build),
+        should_run_tests.guard(linux_tests.run),
+        should_run_tests.guard(mac_tests.build),
+        should_run_tests.guard(mac_tests.run),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
@@ -401,24 +413,59 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
     }
 }
 
-pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
+pub(crate) fn run_platform_tests(platform: Platform) -> PlatformTestJobs {
     run_platform_tests_impl(platform, true)
 }
 
-pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
+pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> PlatformTestJobs {
     run_platform_tests_impl(platform, false)
 }
 
-fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJob {
+fn build_platform_tests(platform: Platform) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
     NamedJob {
+        name: format!("build_tests_{platform}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(platform))
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
+            .when(
+                platform == Platform::Linux,
+                steps::install_linux_dependencies,
+            )
+            .add_step(steps::setup_node())
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
+            .add_step(steps::clear_target_dir_if_large(platform))
+            .add_step(steps::cargo_nextest_archive(platform))
+            .add_step(steps::upload_nextest_archive(platform))
+            .add_step(steps::cleanup_cargo_config(platform)),
+    }
+}
+
+fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> PlatformTestJobs {
+    let build = build_platform_tests(platform);
+
+    let runner = match platform {
+        Platform::Windows => runners::WINDOWS_DEFAULT,
+        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Mac => runners::MAC_DEFAULT,
+    };
+    let run = NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .needs(vec![build.name.clone()])
             .strategy(Strategy::default().fail_fast(false).matrix(json!({
                 "partition": (1..=TEST_PARTITION_COUNT).collect::<Vec<u32>>()
             })))
@@ -437,33 +484,28 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                 )
             })
             .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
+            .when(platform == Platform::Linux, |job| {
+                job.add_step(steps::setup_linux())
+            })
             .add_step(steps::setup_node())
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |job| job.add_step(steps::cargo_install_nextest()),
-            )
-            .add_step(steps::clear_target_dir_if_large(platform))
+            .add_step(steps::cargo_install_nextest())
+            .add_step(steps::download_nextest_archive(platform))
             .when(filter_packages, |job| {
                 job.add_step(
-                    steps::cargo_nextest(platform)
+                    steps::cargo_nextest_from_archive(platform)
                         .with_partition(TEST_PARTITION_COUNT)
                         .with_changed_packages_filter("orchestrate"),
                 )
             })
             .when(!filter_packages, |job| {
-                job.add_step(steps::cargo_nextest(platform).with_partition(TEST_PARTITION_COUNT))
-            })
-            .add_step(steps::cleanup_cargo_config(platform)),
-    }
+                job.add_step(
+                    steps::cargo_nextest_from_archive(platform)
+                        .with_partition(TEST_PARTITION_COUNT),
+                )
+            }),
+    };
+
+    PlatformTestJobs { build, run }
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {

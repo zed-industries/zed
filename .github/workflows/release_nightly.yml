@@ -25,16 +25,9 @@ jobs:
     - name: ./script/clippy
       run: ./script/clippy
     timeout-minutes: 60
-  run_tests_windows:
+  build_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
-    strategy:
-      matrix:
-        partition:
-        - 1
-        - 2
-        - 3
-      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -52,13 +45,52 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
-    - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3
+    - name: steps::cargo_nextest_archive
+      run: cargo nextest archive --workspace --archive-file nextest-archive.tar.zst
       shell: pwsh
+    - name: upload nextest archive (windows)
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: nextest-archive-windows
+        path: nextest-archive.tar.zst
+        if-no-files-found: error
+        retention-days: '1'
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+      shell: pwsh
+    timeout-minutes: 60
+  run_tests_windows:
+    needs:
+    - build_tests_windows
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+        - 4
+      fail-fast: false
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: download nextest archive (windows)
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      with:
+        name: nextest-archive-windows
+    - name: steps::cargo_nextest_from_archive
+      run: cargo nextest run --archive-file nextest-archive.tar.zst --no-fail-fast --partition count:${{ matrix.partition }}/4
       shell: pwsh
     timeout-minutes: 60
   clippy_windows:
