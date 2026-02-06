@@ -183,7 +183,7 @@ fn normalize_word(word: &ast::Word) -> Option<String> {
             piece_with_source.start_index,
             piece_with_source.end_index,
             &mut result,
-        );
+        )?;
     }
     Some(result)
 }
@@ -194,7 +194,7 @@ fn normalize_word_piece_into(
     start_index: usize,
     end_index: usize,
     result: &mut String,
-) {
+) -> Option<()> {
     match piece {
         WordPiece::Text(text) => result.push_str(text),
         WordPiece::SingleQuotedText(text) => result.push_str(text),
@@ -211,7 +211,7 @@ fn normalize_word_piece_into(
                     inner.start_index,
                     inner.end_index,
                     result,
-                );
+                )?;
             }
         }
         WordPiece::TildePrefix(prefix) => {
@@ -225,11 +225,11 @@ fn normalize_word_piece_into(
         | WordPiece::CommandSubstitution(_)
         | WordPiece::BackquotedCommandSubstitution(_)
         | WordPiece::ArithmeticExpression(_) => {
-            if let Some(source) = raw_value.get(start_index..end_index) {
-                result.push_str(source);
-            }
+            let source = raw_value.get(start_index..end_index)?;
+            result.push_str(source);
         }
     }
+    Some(())
 }
 
 fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormalization> {
