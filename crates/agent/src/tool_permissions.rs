@@ -124,7 +124,8 @@ fn matches_hardcoded_patterns(command: &str, patterns: &[CompiledRegex]) -> bool
 fn expand_rm_to_single_path_commands(command: &str) -> Vec<String> {
     let trimmed = command.trim();
 
-    if !trimmed.to_ascii_lowercase().starts_with("rm ") {
+    let first_token = trimmed.split_whitespace().next();
+    if !first_token.is_some_and(|t| t.eq_ignore_ascii_case("rm")) {
         return vec![];
     }
 
