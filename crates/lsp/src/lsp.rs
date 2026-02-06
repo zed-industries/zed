@@ -2119,7 +2119,6 @@ mod tests {
         #[allow(deprecated)]
         let root_path = params.root_path.expect("root_path should be set");
 
-
         let expected_path = root_uri
             .to_file_path()
             .expect("root_uri should be a valid file path");
