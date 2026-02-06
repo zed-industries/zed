@@ -1,3 +1,8 @@
+---
+title: Inline AI Code Editing - Zed
+description: Transform code inline with AI in Zed. Send selections to any LLM for refactoring, generation, or editing with multi-cursor support.
+---
+
 # Inline Assistant
 
 ## Usage Overview

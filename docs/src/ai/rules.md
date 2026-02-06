@@ -1,3 +1,8 @@
+---
+title: AI Rules in Zed - .rules, .cursorrules, CLAUDE.md
+description: Configure AI behavior in Zed with .rules files, .cursorrules, CLAUDE.md, AGENTS.md, and the Rules Library for project-level instructions.
+---
+
 # Using Rules {#using-rules}
 
 Rules are prompts inserted at the beginning of each agent interaction. Add them via files in your worktree (`.rules`, etc.) or through the Rules Library for reuse across projects and threads.

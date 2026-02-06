@@ -1,3 +1,8 @@
+---
+title: AI Agent Tools - Zed
+description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, and diagnostics.
+---
+
 # Tools
 
 Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
