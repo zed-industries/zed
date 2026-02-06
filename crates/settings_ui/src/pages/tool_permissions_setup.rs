@@ -449,6 +449,10 @@ fn render_verification_section(
     };
 
     let default_mode = get_tool_rules(tool_id, cx).default;
+    let denial_reason = match &decision {
+        Some(ToolPermissionDecision::Deny(reason)) if !reason.is_empty() => Some(reason.clone()),
+        _ => None,
+    };
     let (authoritative_mode, patterns_agree) = match &decision {
         Some(decision) => {
             let authoritative = decision_to_mode(decision);
@@ -514,15 +518,33 @@ fn render_verification_section(
                         }
                     })
                     .when(!patterns_agree, |this| {
-                        this.child(
-                            Label::new(
-                                "Pattern preview differs from engine — showing authoritative result.",
+                        if let Some(reason) = &denial_reason {
+                            this.child(
+                                Label::new(format!("Denied: {}", reason))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Warning),
                             )
-                            .size(LabelSize::XSmall)
-                            .color(Color::Warning),
-                        )
+                        } else {
+                            this.child(
+                                Label::new(
+                                    "Pattern preview differs from engine — showing authoritative result.",
+                                )
+                                .size(LabelSize::XSmall)
+                                .color(Color::Warning),
+                            )
+                        }
                     })
                     .child(render_verdict_label(mode))
+                    .when_some(
+                        denial_reason.filter(|_| patterns_agree),
+                        |this, reason| {
+                            this.child(
+                                Label::new(format!("Reason: {}", reason))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Error),
+                            )
+                        },
+                    )
                 }),
         )
         .into_any_element()
