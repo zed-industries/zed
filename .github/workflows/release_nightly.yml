@@ -83,8 +83,6 @@ jobs:
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: '20'
-    - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
     - name: download nextest archive (windows)
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
       with:

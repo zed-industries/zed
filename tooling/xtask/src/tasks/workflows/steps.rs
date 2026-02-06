@@ -45,27 +45,35 @@ fn nextest_archive_artifact_name(platform: Platform) -> String {
 
 pub(crate) fn upload_nextest_archive(platform: Platform) -> Step<Use> {
     let artifact_name = nextest_archive_artifact_name(platform);
-    Step::new(format!("upload nextest archive ({platform})"))
-        .uses(
+    let step = Step::new(format!("upload nextest archive ({platform})"));
+    match platform {
+        Platform::Linux | Platform::Mac => step.uses("namespace-actions", "upload-artifact", "v1"),
+        Platform::Windows => step.uses(
             "actions",
             "upload-artifact",
             "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", artifact_name))
-        .add_with(("path", nextest_archive_file()))
-        .add_with(("if-no-files-found", "error"))
-        .add_with(("retention-days", "1"))
+        ),
+    }
+    .add_with(("name", artifact_name))
+    .add_with(("path", nextest_archive_file()))
+    .add_with(("if-no-files-found", "error"))
+    .add_with(("retention-days", "1"))
 }
 
 pub(crate) fn download_nextest_archive(platform: Platform) -> Step<Use> {
     let artifact_name = nextest_archive_artifact_name(platform);
-    Step::new(format!("download nextest archive ({platform})"))
-        .uses(
+    let step = Step::new(format!("download nextest archive ({platform})"));
+    match platform {
+        Platform::Linux | Platform::Mac => {
+            step.uses("namespace-actions", "download-artifact", "v1")
+        }
+        Platform::Windows => step.uses(
             "actions",
             "download-artifact",
             "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
-        )
-        .add_with(("name", artifact_name))
+        ),
+    }
+    .add_with(("name", artifact_name))
 }
 
 impl Nextest {

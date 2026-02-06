@@ -488,7 +488,10 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> Platfor
                 job.add_step(steps::setup_linux())
             })
             .add_step(steps::setup_node())
-            .add_step(steps::cargo_install_nextest())
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
             .add_step(steps::download_nextest_archive(platform))
             .when(filter_packages, |job| {
                 job.add_step(
