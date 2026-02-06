@@ -60,31 +60,82 @@ fn check_hardcoded_security_rules(
     let rules = &*HARDCODED_SECURITY_RULES;
     let terminal_patterns = &rules.terminal_deny;
 
-    // First: check the original input as-is
-    for pattern in terminal_patterns {
-        if pattern.is_match(input) {
-            return Some(ToolPermissionDecision::Deny(
-                HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
-            ));
-        }
+    // First: check the original input as-is (and its path-normalized form)
+    if matches_hardcoded_patterns(input, terminal_patterns) {
+        return Some(ToolPermissionDecision::Deny(
+            HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
+        ));
     }
 
     // Second: parse and check individual sub-commands (for chained commands)
     if shell_kind.supports_posix_chaining() {
         if let Some(commands) = extract_commands(input) {
             for command in &commands {
-                for pattern in terminal_patterns {
-                    if pattern.is_match(command) {
-                        return Some(ToolPermissionDecision::Deny(
-                            HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
-                        ));
-                    }
+                if matches_hardcoded_patterns(command, terminal_patterns) {
+                    return Some(ToolPermissionDecision::Deny(
+                        HARDCODED_SECURITY_DENIAL_MESSAGE.into(),
+                    ));
                 }
             }
         }
     }
 
     None
+}
+
+/// Checks a single command against hardcoded patterns, both as-is and with
+/// path arguments normalized (to catch traversal bypasses like `rm -rf /tmp/../../`).
+fn matches_hardcoded_patterns(command: &str, patterns: &[CompiledRegex]) -> bool {
+    for pattern in patterns {
+        if pattern.is_match(command) {
+            return true;
+        }
+    }
+
+    if let Some(normalized) = normalize_rm_command(command) {
+        for pattern in patterns {
+            if pattern.is_match(&normalized) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// For rm commands, normalizes the trailing path argument to catch traversal bypasses
+/// like `rm -rf /tmp/../../` (which resolves to `rm -rf /`).
+/// Returns None if the command is not an rm command or normalization doesn't change it.
+fn normalize_rm_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+
+    if !trimmed.to_ascii_lowercase().starts_with("rm ") {
+        return None;
+    }
+
+    let trimmed_end = trimmed.trim_end();
+    let last_space = trimmed_end.rfind(char::is_whitespace)?;
+    let prefix = &trimmed_end[..=last_space];
+    let last_arg = &trimmed_end[last_space + 1..];
+
+    // Shell variables like $HOME/${HOME} are not filesystem paths; skip them
+    if last_arg.starts_with('$') {
+        return None;
+    }
+
+    let mut normalized = normalize_path(last_arg);
+
+    // normalize_path returns "" for relative paths like ".", "..", "./foo/.."
+    // Treat these as "." for security matching since they all resolve to cwd or above
+    if normalized.is_empty() && !Path::new(last_arg).has_root() {
+        normalized = ".".to_string();
+    }
+
+    if normalized == last_arg {
+        return None;
+    }
+
+    Some(format!("{prefix}{normalized}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1315,6 +1366,38 @@ mod tests {
         t("echo hello; rm -rf $HOME").is_deny();
         t("echo hello; rm -rf .").is_deny();
         t("echo hello; rm -rf ..").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_with_path_traversal() {
+        // Traversal to root via ..
+        t("rm -rf /tmp/../../").is_deny();
+        t("rm -rf /tmp/../..").is_deny();
+        t("rm -rf /var/log/../../").is_deny();
+        // Root via /./
+        t("rm -rf /./").is_deny();
+        t("rm -rf /.").is_deny();
+        // Double slash (equivalent to /)
+        t("rm -rf //").is_deny();
+        // Home traversal via ~/./
+        t("rm -rf ~/./").is_deny();
+        t("rm -rf ~/.").is_deny();
+        // Dot traversal via indirect paths
+        t("rm -rf ./foo/..").is_deny();
+        t("rm -rf ../foo/..").is_deny();
+        // Traversal in chained commands
+        t("ls && rm -rf /tmp/../../").is_deny();
+        t("echo hello; rm -rf /./").is_deny();
+        // Traversal cannot be bypassed by global or allow patterns
+        t("rm -rf /tmp/../../").global(true).is_deny();
+        t("rm -rf /./").allow(&[".*"]).is_deny();
+        // Safe paths with traversal should still be allowed
+        t("rm -rf /tmp/../tmp/foo")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf ~/Documents/./subdir")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 
     #[test]
