@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::patterns::migrate_language_setting;
+use crate::migrations::migrate_nested_language_setting;
 
 pub fn restore_code_actions_on_format(value: &mut Value) -> Result<()> {
-    migrate_language_setting(value, restore_code_actions_on_format_inner)
+    migrate_nested_language_setting(value, restore_code_actions_on_format_inner)
 }
 
 fn restore_code_actions_on_format_inner(value: &mut Value, path: &[&str]) -> Result<()> {

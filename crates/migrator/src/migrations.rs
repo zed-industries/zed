@@ -40,6 +40,73 @@ pub(crate) fn migrate_nested_settings(
     Ok(())
 }
 
+/// Applies a migration callback to a value and its `languages` children,
+/// at the root level as well as all nested platform, release-channel, and
+/// profile override objects.
+pub(crate) fn migrate_nested_language_setting(
+    value: &mut Value,
+    migrate_fn: fn(&mut Value, path: &[&str]) -> Result<()>,
+) -> Result<()> {
+    fn apply_to_value_and_languages(
+        value: &mut Value,
+        prefix: &[&str],
+        migrate_fn: fn(&mut Value, path: &[&str]) -> Result<()>,
+    ) -> Result<()> {
+        migrate_fn(value, prefix)?;
+        let languages = value
+            .as_object_mut()
+            .and_then(|obj| obj.get_mut("languages"))
+            .and_then(|languages| languages.as_object_mut());
+        if let Some(languages) = languages {
+            for (language_name, language) in languages.iter_mut() {
+                let mut path: Vec<&str> = prefix.to_vec();
+                path.push("languages");
+                path.push(language_name);
+                migrate_fn(language, &path)?;
+            }
+        }
+        Ok(())
+    }
+
+    if !value.is_object() {
+        return Ok(());
+    }
+
+    apply_to_value_and_languages(value, &[], migrate_fn)?;
+
+    let Some(root_object) = value.as_object_mut() else {
+        return Ok(());
+    };
+
+    let override_keys: Vec<&'static str> = ReleaseChannel::iter()
+        .map(|channel| channel.dev_name())
+        .chain(SupportedPlatform::iter().map(|platform| platform.as_str()))
+        .collect();
+
+    for key in override_keys {
+        if let Some(sub_value) = root_object.get_mut(key) {
+            apply_to_value_and_languages(sub_value, &[key], migrate_fn)?;
+        }
+    }
+
+    if let Some(profiles) = root_object.get_mut("profiles") {
+        if let Some(profiles_object) = profiles.as_object_mut() {
+            let profile_names: Vec<String> = profiles_object.keys().cloned().collect();
+            for profile_name in &profile_names {
+                if let Some(profile_settings) = profiles_object.get_mut(profile_name.as_str()) {
+                    apply_to_value_and_languages(
+                        profile_settings,
+                        &["profiles", profile_name],
+                        migrate_fn,
+                    )?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) mod m_2025_01_02 {
     mod settings;
 
