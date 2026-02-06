@@ -24,7 +24,7 @@ pub mod private {
 }
 
 use gpui::{App, Global};
-use release_channel::ReleaseChannel;
+
 use rust_embed::RustEmbed;
 use std::env;
 use std::{borrow::Cow, fmt, str};
@@ -73,21 +73,12 @@ impl UserSettingsContentExt for UserSettingsContent {
     }
 
     fn for_release_channel(&self) -> Option<&SettingsContent> {
-        match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => self.release_channel_overrides.dev.as_deref(),
-            ReleaseChannel::Nightly => self.release_channel_overrides.nightly.as_deref(),
-            ReleaseChannel::Preview => self.release_channel_overrides.preview.as_deref(),
-            ReleaseChannel::Stable => self.release_channel_overrides.stable.as_deref(),
-        }
+        self.release_channel_overrides
+            .get_by_key(release_channel::RELEASE_CHANNEL.dev_name())
     }
 
     fn for_os(&self) -> Option<&SettingsContent> {
-        match env::consts::OS {
-            "macos" => self.platform_overrides.macos.as_deref(),
-            "linux" => self.platform_overrides.linux.as_deref(),
-            "windows" => self.platform_overrides.windows.as_deref(),
-            _ => None,
-        }
+        self.platform_overrides.get_by_key(env::consts::OS)
     }
 }
 
