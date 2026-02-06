@@ -94,12 +94,13 @@ pub async fn run_format_prompt(
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
             };
             let prompt = format_zeta_prompt(&input, version);
-            let (expected_patch, expected_cursor_offset) = example
+            let (expected_patch, expected_selection) = example
                 .spec
-                .expected_patches_with_cursor_positions()
+                .expected_patches_with_selections()
                 .into_iter()
                 .next()
                 .context("expected patches is empty")?;
+            let expected_cursor_offset = expected_selection.map(|s| s.end);
             let expected_output =
                 zeta2_output_for_patch(&input, &expected_patch, expected_cursor_offset, version)?;
             let rejected_output = example

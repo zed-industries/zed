@@ -20,14 +20,15 @@ pub async fn run_distill(example: &mut Example) -> Result<()> {
                 p.actual_patch.clone()?,
                 p.actual_cursor
                     .as_ref()
-                    .and_then(|c| c.editable_region_offset),
+                    .and_then(|c| c.editable_region_offset)
+                    .map(|offset| offset..offset),
             ))
         })
         .collect();
 
     example
         .spec
-        .set_expected_patches_with_cursor_positions(expected_patches);
+        .set_expected_patches_with_selections(expected_patches);
     example.prompt = None;
     example.predictions = Vec::new();
     example.score = Vec::new();

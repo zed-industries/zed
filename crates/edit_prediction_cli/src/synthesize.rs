@@ -797,7 +797,7 @@ async fn build_example(
         human_feedback: Vec::new(),
         rating: None,
     };
-    spec.set_cursor_excerpt(&excerpt, cursor_offset, comment_prefix);
+    spec.set_cursor_excerpt_with_selection(&excerpt, cursor_offset..cursor_offset, comment_prefix);
 
     Ok(spec)
 }

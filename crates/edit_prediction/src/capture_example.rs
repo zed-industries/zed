@@ -179,9 +179,9 @@ pub fn capture_example(
             human_feedback: Vec::new(),
             rating: None,
         };
-        spec.set_cursor_excerpt(
+        spec.set_cursor_excerpt_with_selection(
             &cursor_excerpt,
-            cursor_offset_in_excerpt,
+            cursor_offset_in_excerpt..cursor_offset_in_excerpt,
             &line_comment_prefix,
         );
         Ok(spec)

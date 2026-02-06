@@ -155,7 +155,9 @@ async fn cursor_position(
             .await?
     };
 
-    let (cursor_excerpt, cursor_offset_within_excerpt) = example.spec.cursor_excerpt()?;
+    let (cursor_excerpt, selection_within_excerpt) =
+        example.spec.cursor_excerpt_with_selection()?;
+    let cursor_offset_within_excerpt = selection_within_excerpt.end;
 
     let excerpt_offset = cursor_buffer.read_with(&*cx, |buffer, _cx| {
         let text = buffer.text();

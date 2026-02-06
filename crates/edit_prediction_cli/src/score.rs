@@ -35,7 +35,7 @@ pub async fn run_scoring(
         .as_ref()
         .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?
         .content;
-    let expected_patches_with_cursors = example.spec.expected_patches_with_cursor_positions();
+    let expected_patches_with_cursors = example.spec.expected_patches_with_selections();
 
     let expected_texts: Vec<String> = expected_patches_with_cursors
         .iter()
@@ -116,10 +116,11 @@ pub async fn run_scoring(
         }
 
         if let Some(idx) = best_patch_idx {
-            // Get the raw cursor offset from the expected patch (relative to hunk new text)
+            // Get the raw cursor offset from the expected patch (relative to hunk new text).
+            // We use the end of the selection range as the cursor position.
             let expected_cursor_in_patch = expected_patches_with_cursors
                 .get(idx)
-                .and_then(|(_, cursor)| *cursor);
+                .and_then(|(_, selection)| selection.as_ref().map(|s| s.end));
 
             // For Teacher prompts, we need to apply the patch to the editable region
             // to find where the hunk matched, then compute the actual cursor position
