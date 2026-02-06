@@ -368,10 +368,9 @@ fn extract_commands_from_assignment(
 
 fn extract_commands_from_word(word: &ast::Word, commands: &mut Vec<String>) -> Option<()> {
     let options = ParserOptions::default();
-    if let Ok(pieces) = brush_parser::word::parse(&word.value, &options) {
-        for piece_with_source in pieces {
-            extract_commands_from_word_piece(&piece_with_source.piece, commands)?;
-        }
+    let pieces = brush_parser::word::parse(&word.value, &options).ok()?;
+    for piece_with_source in pieces {
+        extract_commands_from_word_piece(&piece_with_source.piece, commands)?;
     }
     Some(())
 }
