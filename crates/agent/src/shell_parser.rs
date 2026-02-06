@@ -159,7 +159,7 @@ fn extract_commands_from_simple_command(
         extract_commands_from_command_prefix(prefix, commands)?;
     }
     if let Some(word) = &simple_command.word_or_name {
-        extract_commands_from_word(word, commands);
+        extract_commands_from_word(word, commands)?;
     }
     if let Some(suffix) = &simple_command.suffix {
         extract_commands_from_command_suffix(suffix, commands)?;
@@ -302,10 +302,10 @@ fn extract_commands_from_prefix_or_suffix_item(
             extract_commands_from_io_redirect(redirect, commands)?;
         }
         ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, _word) => {
-            extract_commands_from_assignment(assignment, commands);
+            extract_commands_from_assignment(assignment, commands)?;
         }
         ast::CommandPrefixOrSuffixItem::Word(word) => {
-            extract_commands_from_word(word, commands);
+            extract_commands_from_word(word, commands)?;
         }
         ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_kind, subshell) => {
             extract_commands_from_compound_list(&subshell.list, commands)?;
@@ -324,62 +324,66 @@ fn extract_commands_from_io_redirect(
                 extract_commands_from_compound_list(&subshell.list, commands)?;
             }
             ast::IoFileRedirectTarget::Filename(word) => {
-                extract_commands_from_word(word, commands);
+                extract_commands_from_word(word, commands)?;
             }
             _ => {}
         },
         ast::IoRedirect::HereDocument(_fd, here_doc) => {
             if here_doc.requires_expansion {
-                extract_commands_from_word(&here_doc.doc, commands);
+                extract_commands_from_word(&here_doc.doc, commands)?;
             }
         }
         ast::IoRedirect::HereString(_fd, word) => {
-            extract_commands_from_word(word, commands);
+            extract_commands_from_word(word, commands)?;
         }
         ast::IoRedirect::OutputAndError(word, _) => {
-            extract_commands_from_word(word, commands);
+            extract_commands_from_word(word, commands)?;
         }
     }
     Some(())
 }
 
-fn extract_commands_from_assignment(assignment: &ast::Assignment, commands: &mut Vec<String>) {
+fn extract_commands_from_assignment(
+    assignment: &ast::Assignment,
+    commands: &mut Vec<String>,
+) -> Option<()> {
     match &assignment.value {
         ast::AssignmentValue::Scalar(word) => {
-            extract_commands_from_word(word, commands);
+            extract_commands_from_word(word, commands)?;
         }
         ast::AssignmentValue::Array(words) => {
             for (opt_word, word) in words {
                 if let Some(w) = opt_word {
-                    extract_commands_from_word(w, commands);
+                    extract_commands_from_word(w, commands)?;
                 }
-                extract_commands_from_word(word, commands);
+                extract_commands_from_word(word, commands)?;
             }
         }
     }
+    Some(())
 }
 
-fn extract_commands_from_word(word: &ast::Word, commands: &mut Vec<String>) {
+fn extract_commands_from_word(word: &ast::Word, commands: &mut Vec<String>) -> Option<()> {
     let options = ParserOptions::default();
     if let Ok(pieces) = brush_parser::word::parse(&word.value, &options) {
         for piece_with_source in pieces {
-            extract_commands_from_word_piece(&piece_with_source.piece, commands);
+            extract_commands_from_word_piece(&piece_with_source.piece, commands)?;
         }
     }
+    Some(())
 }
 
-fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String>) {
+fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String>) -> Option<()> {
     match piece {
         WordPiece::CommandSubstitution(cmd_str)
         | WordPiece::BackquotedCommandSubstitution(cmd_str) => {
-            if let Some(nested_commands) = extract_commands(cmd_str) {
-                commands.extend(nested_commands);
-            }
+            let nested_commands = extract_commands(cmd_str)?;
+            commands.extend(nested_commands);
         }
         WordPiece::DoubleQuotedSequence(pieces)
         | WordPiece::GettextDoubleQuotedSequence(pieces) => {
             for inner_piece_with_source in pieces {
-                extract_commands_from_word_piece(&inner_piece_with_source.piece, commands);
+                extract_commands_from_word_piece(&inner_piece_with_source.piece, commands)?;
             }
         }
         WordPiece::EscapeSequence(_)
@@ -390,6 +394,7 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
         | WordPiece::ParameterExpansion(_)
         | WordPiece::ArithmeticExpression(_) => {}
     }
+    Some(())
 }
 
 fn extract_commands_from_compound_command(
@@ -410,7 +415,7 @@ fn extract_commands_from_compound_command(
         ast::CompoundCommand::ForClause(for_clause) => {
             if let Some(words) = &for_clause.values {
                 for word in words {
-                    extract_commands_from_word(word, commands);
+                    extract_commands_from_word(word, commands)?;
                 }
             }
             let body_start = commands.len();
@@ -418,7 +423,7 @@ fn extract_commands_from_compound_command(
             Some(body_start)
         }
         ast::CompoundCommand::CaseClause(case_clause) => {
-            extract_commands_from_word(&case_clause.value, commands);
+            extract_commands_from_word(&case_clause.value, commands)?;
             let body_start = commands.len();
             for item in &case_clause.cases {
                 if let Some(body) = &item.cmd {
@@ -510,11 +515,11 @@ fn extract_commands_from_extended_test_expr_inner(
             extract_commands_from_extended_test_expr_inner(inner, commands)?;
         }
         ast::ExtendedTestExpr::UnaryTest(_, word) => {
-            extract_commands_from_word(word, commands);
+            extract_commands_from_word(word, commands)?;
         }
         ast::ExtendedTestExpr::BinaryTest(_, word1, word2) => {
-            extract_commands_from_word(word1, commands);
-            extract_commands_from_word(word2, commands);
+            extract_commands_from_word(word1, commands)?;
+            extract_commands_from_word(word2, commands)?;
         }
     }
     Some(())
@@ -707,6 +712,18 @@ mod tests {
     #[test]
     fn test_invalid_syntax_returns_none() {
         let result = extract_commands("ls &&");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_unparseable_nested_substitution_returns_none() {
+        let result = extract_commands("echo $(ls &&)");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_unparseable_nested_backtick_substitution_returns_none() {
+        let result = extract_commands("echo `ls &&`");
         assert!(result.is_none());
     }
 
