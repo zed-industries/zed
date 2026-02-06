@@ -728,8 +728,8 @@ impl ToolPermissionContext {
                 };
                 push_choice(
                     button_text,
-                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    format!("always_allow_pattern:{}\n{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}\n{}", tool_name, pattern),
                     acp::PermissionOptionKind::AllowAlways,
                     acp::PermissionOptionKind::RejectAlways,
                 );
@@ -3275,12 +3275,11 @@ impl ToolCallEventStream {
                 return Err(anyhow!("Permission to run tool denied by user"));
             }
 
-            // Handle "always allow pattern" - e.g., "always_allow_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_allow_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
+            // Handle "always allow pattern" - e.g., "always_allow_pattern:mcp:server:tool\n^cargo\s"
+            if let Some(rest) = response_str.strip_prefix("always_allow_pattern:") {
+                if let Some((pattern_tool_name, pattern)) = rest.split_once('\n') {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let pattern = pattern.to_string();
                     if let Some(fs) = fs.clone() {
                         cx.update(|cx| {
                             update_settings_file(fs, cx, move |settings, _| {
@@ -3291,16 +3290,17 @@ impl ToolCallEventStream {
                             });
                         });
                     }
+                } else {
+                    log::error!("Failed to parse always allow pattern: missing newline separator in '{rest}'");
                 }
                 return Ok(());
             }
 
-            // Handle "always deny pattern" - e.g., "always_deny_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_deny_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
+            // Handle "always deny pattern" - e.g., "always_deny_pattern:mcp:server:tool\n^cargo\s"
+            if let Some(rest) = response_str.strip_prefix("always_deny_pattern:") {
+                if let Some((pattern_tool_name, pattern)) = rest.split_once('\n') {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let pattern = pattern.to_string();
                     if let Some(fs) = fs.clone() {
                         cx.update(|cx| {
                             update_settings_file(fs, cx, move |settings, _| {
@@ -3311,6 +3311,8 @@ impl ToolCallEventStream {
                             });
                         });
                     }
+                } else {
+                    log::error!("Failed to parse always deny pattern: missing newline separator in '{rest}'");
                 }
                 return Err(anyhow!("Permission to run tool denied by user"));
             }
