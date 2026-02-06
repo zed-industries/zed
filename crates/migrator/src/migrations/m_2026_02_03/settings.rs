@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::migrations::migrate_nested_settings;
+use crate::migrations::migrate_settings;
 
 pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
-    migrate_nested_settings(value, |obj| {
+    migrate_settings(value, |obj| {
         migrate_one(obj);
         Ok(())
     })

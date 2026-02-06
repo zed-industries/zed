@@ -4,7 +4,7 @@ use settings_content::{PlatformOverrides, ReleaseChannelOverrides};
 
 /// Applies a migration callback to the root settings object as well as all
 /// nested platform, release-channel, and profile override objects.
-pub(crate) fn migrate_nested_settings(
+pub(crate) fn migrate_settings(
     value: &mut Value,
     mut migrate_one: impl FnMut(&mut serde_json::Map<String, Value>) -> Result<()>,
 ) -> Result<()> {
@@ -43,7 +43,7 @@ pub(crate) fn migrate_nested_settings(
 /// Applies a migration callback to a value and its `languages` children,
 /// at the root level as well as all nested platform, release-channel, and
 /// profile override objects.
-pub(crate) fn migrate_nested_language_setting(
+pub(crate) fn migrate_language_setting(
     value: &mut Value,
     migrate_fn: fn(&mut Value, path: &[&str]) -> Result<()>,
 ) -> Result<()> {

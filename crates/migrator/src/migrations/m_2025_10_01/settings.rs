@@ -1,9 +1,9 @@
-use crate::migrations::migrate_nested_language_setting;
+use crate::migrations::migrate_language_setting;
 use anyhow::Result;
 use serde_json::Value;
 
 pub fn flatten_code_actions_formatters(value: &mut Value) -> Result<()> {
-    migrate_nested_language_setting(value, |value, _path| {
+    migrate_language_setting(value, |value, _path| {
         let Some(obj) = value.as_object_mut() else {
             return Ok(());
         };
