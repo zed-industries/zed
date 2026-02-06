@@ -65,8 +65,34 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
         ast::Command::Simple(simple_command) => {
             extract_commands_from_simple_command(simple_command, commands)?;
         }
-        ast::Command::Compound(compound_command, _redirect_list) => {
+        ast::Command::Compound(compound_command, redirect_list) => {
+            let commands_before = commands.len();
             extract_commands_from_compound_command(compound_command, commands)?;
+
+            if let Some(redirects) = redirect_list {
+                let mut redirect_strings = Vec::new();
+                for redirect in &redirects.0 {
+                    if let Some(redirect_str) = normalize_io_redirect(redirect) {
+                        redirect_strings.push(redirect_str);
+                    }
+                }
+
+                if !redirect_strings.is_empty() {
+                    let redirect_suffix = redirect_strings.join(" ");
+                    if commands.len() > commands_before {
+                        if let Some(last_command) = commands.last_mut() {
+                            last_command.push(' ');
+                            last_command.push_str(&redirect_suffix);
+                        }
+                    } else {
+                        commands.push(redirect_suffix);
+                    }
+                }
+
+                for redirect in &redirects.0 {
+                    extract_commands_from_io_redirect(redirect, commands)?;
+                }
+            }
         }
         ast::Command::Function(func_def) => {
             extract_commands_from_function_body(&func_def.body, commands)?;

@@ -65,8 +65,33 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
         ast::Command::Simple(simple_command) => {
             extract_commands_from_simple_command(simple_command, commands)?;
         }
-        ast::Command::Compound(compound_command, _redirect_list) => {
+        ast::Command::Compound(compound_command, redirect_list) => {
+            let commands_before = commands.len();
             extract_commands_from_compound_command(compound_command, commands)?;
+
+            if let Some(redirects) = redirect_list {
+                let mut redirect_strings = Vec::new();
+                for redirect in &redirects.0 {
+                    if let Some(redirect_str) = normalize_io_redirect(redirect) {
+                        redirect_strings.push(redirect_str);
+                    }
+                }
+
+                if !redirect_strings.is_empty() {
+                    let suffix = format!(" {}", redirect_strings.join(" "));
+                    if commands.len() > commands_before {
+                        if let Some(last) = commands.last_mut() {
+                            last.push_str(&suffix);
+                        }
+                    } else {
+                        commands.push(redirect_strings.join(" "));
+                    }
+                }
+
+                for redirect in &redirects.0 {
+                    extract_commands_from_io_redirect(redirect, commands)?;
+                }
+            }
         }
         ast::Command::Function(func_def) => {
             extract_commands_from_function_body(&func_def.body, commands)?;
@@ -641,5 +666,31 @@ mod tests {
     fn test_fd_redirect_handled_gracefully() {
         let commands = extract_commands("cmd 2>&1").expect("parse failed");
         assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_brace_group_redirect_appended_to_last_command() {
+        let commands = extract_commands("{ echo safe; } > /etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo safe > /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_subshell_redirect_appended_to_last_command() {
+        let commands = extract_commands("(echo safe) > /etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo safe > /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_compound_command_multiple_redirects() {
+        let commands =
+            extract_commands("{ echo hello; } > /tmp/out 2> /tmp/err").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello > /tmp/out > /tmp/err"]);
+    }
+
+    #[test]
+    fn test_compound_command_redirect_with_multiple_inner_commands() {
+        let commands =
+            extract_commands("{ echo one; echo two; } > /tmp/out").expect("parse failed");
+        assert_eq!(commands, vec!["echo one", "echo two > /tmp/out"]);
     }
 }
