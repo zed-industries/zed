@@ -2,6 +2,7 @@ use super::*;
 use collections::HashSet;
 use editor::MultiBufferOffset;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
+use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
 use serde_json::json;
@@ -8856,6 +8857,237 @@ async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &["v root", "    > dir1", "      file1.txt", "      file2.txt",]
+    );
+}
+
+#[gpui::test]
+async fn test_ensure_folding_when_creating(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "dir": {
+                "subdir": {
+                    "nested_dir": {},
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+
+    select_path(&panel, "root1/dir/subdir/nested_dir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    cx.run_until_parked();
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("file_nested.txt", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    v dir/subdir/nested_dir",
+            "          file_nested.txt  <== selected  <== marked",
+        ]
+    );
+
+    select_path(&panel, "root1/dir/subdir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    cx.run_until_parked();
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("file_subdir.txt", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    v dir/subdir",
+            "        v nested_dir",
+            "              file_nested.txt",
+            "          file_subdir.txt  <== selected  <== marked"
+        ]
+    );
+
+    select_path(&panel, "root1/dir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    cx.run_until_parked();
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("file_dir.txt", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "    v dir",
+            "        v subdir",
+            "            v nested_dir",
+            "                  file_nested.txt",
+            "              file_subdir.txt",
+            "          file_dir.txt  <== selected  <== marked",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_ensure_temporary_folding_when_creating(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "dir": {
+                "subdir": {
+                    "nested_dir": {
+                        "file.txt": ""
+                    },
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+    });
+    cx.run_until_parked();
+
+    select_folded_path_with_mark(
+        &panel,
+        "root1/dir/subdir/nested_dir",
+        "root1/dir/subdir",
+        cx,
+    );
+    panel.update(cx, |panel, _| {
+        panel.marked_entries.clear();
+    });
+    panel.update(cx, |panel, _| {
+        let leaf_entry_id = panel.state.selection.unwrap().entry_id;
+        let resolved_entry_id = panel.resolve_entry(leaf_entry_id);
+        assert_ne!(
+            resolved_entry_id, leaf_entry_id,
+            "expected a folded ancestor to be active before creating a new entry"
+        );
+    });
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root1", "    > dir/subdir/nested_dir  <== selected",]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    v dir/subdir",
+            "        > nested_dir",
+            "          [EDITOR: '']  <== selected",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&Cancel, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root1", "    > dir/subdir/nested_dir  <== selected",]
     );
 }
 
