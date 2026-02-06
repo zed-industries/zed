@@ -259,7 +259,7 @@ pub enum SupportedPlatform {
 }
 
 impl SupportedPlatform {
-    /// Returns the settings key for this platform, matching `std::env::consts::OS`.
+    /// Returns the JSON key used for this platform's settings overrides (e.g. `"macos"`, `"linux"`, `"windows"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             SupportedPlatform::MacOS => "macos",
