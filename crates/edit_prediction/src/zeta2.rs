@@ -30,11 +30,17 @@ pub fn max_editable_tokens(version: ZetaVersion) -> usize {
 /// Configuration for using the raw endpoint, read from env vars at startup.
 /// When ZED_ZETA_MODEL_ID and ZED_ZETA_VERSION are both set, the client will
 /// use the raw endpoint and construct the prompt itself.
-static RAW_ENDPOINT_CONFIG: LazyLock<Option<(String, ZetaVersion)>> = LazyLock::new(|| {
+/// The version is also used as the Baseten environment name (lowercased).
+struct RawEndpointConfig {
+    model_id: String,
+    version: ZetaVersion,
+}
+
+static RAW_ENDPOINT_CONFIG: LazyLock<Option<RawEndpointConfig>> = LazyLock::new(|| {
     let model_id = env::var("ZED_ZETA_MODEL_ID").ok()?;
     let version_str = env::var("ZED_ZETA_VERSION").ok()?;
     let version = ZetaVersion::parse(&version_str).ok()?;
-    Some((model_id, version))
+    Some(RawEndpointConfig { model_id, version })
 });
 
 pub fn request_prediction_with_zeta2(
@@ -68,7 +74,7 @@ pub fn request_prediction_with_zeta2(
     let request_task = cx.background_spawn({
         async move {
             let zeta_version = raw_config
-                .map(|(_, v)| *v)
+                .map(|config| config.version)
                 .unwrap_or(ZetaVersion::default());
 
             let cursor_offset = position.to_offset(&snapshot);
@@ -96,51 +102,51 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Sending edit prediction request");
 
-            let (request_id, mut output_text, usage) =
-                if let Some((model_id, zeta_version)) = raw_config {
-                    let prompt = format_zeta_prompt(&prompt_input, *zeta_version);
-                    let request = RawCompletionRequest {
-                        model: model_id.clone(),
-                        prompt,
-                        temperature: None,
-                        stop: vec![],
-                        max_tokens: Some(2048),
-                    };
-
-                    let (mut response, usage) = EditPredictionStore::send_raw_llm_request(
-                        request,
-                        client,
-                        None,
-                        llm_token,
-                        app_version,
-                    )
-                    .await?;
-
-                    let request_id = EditPredictionId(response.id.clone().into());
-                    let output_text = response.choices.pop().map(|choice| {
-                        clean_zeta2_model_output(&choice.text, *zeta_version).to_string()
-                    });
-
-                    (request_id, output_text, usage)
-                } else {
-                    // Use V3 endpoint - server handles model/version selection and suffix stripping
-                    let (response, usage) = EditPredictionStore::send_v3_request(
-                        prompt_input.clone(),
-                        client,
-                        llm_token,
-                        app_version,
-                        trigger,
-                    )
-                    .await?;
-
-                    let request_id = EditPredictionId(response.request_id.into());
-                    let output_text = if response.output.is_empty() {
-                        None
-                    } else {
-                        Some(response.output)
-                    };
-                    (request_id, output_text, usage)
+            let (request_id, mut output_text, usage) = if let Some(config) = raw_config {
+                let prompt = format_zeta_prompt(&prompt_input, config.version);
+                let request = RawCompletionRequest {
+                    model: config.model_id.clone(),
+                    prompt,
+                    temperature: None,
+                    stop: vec![],
+                    max_tokens: Some(2048),
+                    environment: Some(config.version.to_string().to_lowercase()),
                 };
+
+                let (mut response, usage) = EditPredictionStore::send_raw_llm_request(
+                    request,
+                    client,
+                    None,
+                    llm_token,
+                    app_version,
+                )
+                .await?;
+
+                let request_id = EditPredictionId(response.id.clone().into());
+                let output_text = response.choices.pop().map(|choice| {
+                    clean_zeta2_model_output(&choice.text, config.version).to_string()
+                });
+
+                (request_id, output_text, usage)
+            } else {
+                // Use V3 endpoint - server handles model/version selection and suffix stripping
+                let (response, usage) = EditPredictionStore::send_v3_request(
+                    prompt_input.clone(),
+                    client,
+                    llm_token,
+                    app_version,
+                    trigger,
+                )
+                .await?;
+
+                let request_id = EditPredictionId(response.request_id.into());
+                let output_text = if response.output.is_empty() {
+                    None
+                } else {
+                    Some(response.output)
+                };
+                (request_id, output_text, usage)
+            };
 
             let received_response_at = Instant::now();
 

@@ -40,13 +40,13 @@ use text::Edit;
 use workspace::Workspace;
 use zeta_prompt::ZetaPromptInput;
 
+use std::mem;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::{env, mem};
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
@@ -144,7 +144,6 @@ pub struct EditPredictionStore {
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
-    custom_predict_edits_url: Option<Arc<Url>>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -634,18 +633,9 @@ impl EditPredictionStore {
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
-            custom_predict_edits_url: match env::var("ZED_PREDICT_EDITS_URL") {
-                Ok(custom_url) => Url::parse(&custom_url).log_err().map(Into::into),
-                Err(_) => None,
-            },
         };
 
         this
-    }
-
-    #[cfg(test)]
-    pub fn set_custom_predict_edits_url(&mut self, url: Url) {
-        self.custom_predict_edits_url = Some(url.into());
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
@@ -1349,15 +1339,13 @@ impl EditPredictionStore {
     ) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                if self.custom_predict_edits_url.is_none() {
-                    self.reject_predictions_tx
-                        .unbounded_send(EditPredictionRejection {
-                            request_id: prediction_id.to_string(),
-                            reason,
-                            was_shown,
-                        })
-                        .log_err();
-                }
+                self.reject_predictions_tx
+                    .unbounded_send(EditPredictionRejection {
+                        request_id: prediction_id.to_string(),
+                        reason,
+                        was_shown,
+                    })
+                    .log_err();
             }
             EditPredictionModel::Sweep | EditPredictionModel::Ollama => {}
             EditPredictionModel::Mercury => {
