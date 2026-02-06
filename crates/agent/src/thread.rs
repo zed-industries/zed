@@ -664,28 +664,28 @@ impl ToolPermissionContext {
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
-        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
+        let shell_supports_always_allow = if tool_name == TerminalTool::NAME {
             ShellKind::system().supports_posix_chaining()
         } else {
             true
         };
 
-        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
+        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
             (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
             )
-        } else if tool_name == EditFileTool::name()
-            || tool_name == DeletePathTool::name()
-            || tool_name == MovePathTool::name()
-            || tool_name == CreateDirectoryTool::name()
-            || tool_name == SaveFileTool::name()
+        } else if tool_name == EditFileTool::NAME
+            || tool_name == DeletePathTool::NAME
+            || tool_name == MovePathTool::NAME
+            || tool_name == CreateDirectoryTool::NAME
+            || tool_name == SaveFileTool::NAME
         {
             (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
             )
-        } else if tool_name == FetchTool::name() {
+        } else if tool_name == FetchTool::NAME {
             (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
@@ -721,7 +721,7 @@ impl ToolPermissionContext {
             );
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-                let button_text = if tool_name == TerminalTool::name() {
+                let button_text = if tool_name == TerminalTool::NAME {
                     format!("Always for `{}` commands", display)
                 } else {
                     format!("Always for `{}`", display)
@@ -797,6 +797,7 @@ pub struct Thread {
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
+    thinking_effort: Option<String>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -827,7 +828,16 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
@@ -859,7 +869,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -881,7 +892,16 @@ impl Thread {
         parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
@@ -921,7 +941,8 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1061,9 +1082,18 @@ impl Thread {
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = AgentSettings::get_global(cx);
         let profile_id = db_thread
             .profile
-            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+            .unwrap_or_else(|| settings.default_profile.clone());
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1119,8 +1149,9 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            // TODO: Persist this on the `DbThread`.
-            thinking_enabled: true,
+            // TODO: Should we persist this on the `DbThread`?
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1228,6 +1259,15 @@ impl Thread {
         cx.notify();
     }
 
+    pub fn thinking_effort(&self) -> Option<&String> {
+        self.thinking_effort.as_ref()
+    }
+
+    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        self.thinking_effort = effort;
+        cx.notify();
+    }
+
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1285,7 +1325,12 @@ impl Thread {
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
-        self.tools.insert(T::name().into(), tool.erase());
+        debug_assert!(
+            !self.tools.contains_key(T::NAME),
+            "Duplicate tool name: {}",
+            T::NAME,
+        );
+        self.tools.insert(T::NAME.into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -2309,6 +2354,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
         };
 
         log::debug!("Completion request built successfully");
@@ -2338,8 +2384,8 @@ impl Thread {
             .iter()
             .filter_map(|(tool_name, tool)| {
                 // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == "streaming_edit_file" {
-                    "edit_file"
+                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
+                    EditFileTool::NAME
                 } else {
                     tool_name.as_ref()
                 };
@@ -2348,10 +2394,10 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        ("streaming_edit_file", false) | ("edit_file", true) => None,
-                        ("streaming_edit_file", true) => {
+                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
+                        (StreamingEditFileTool::NAME, true) => {
                             // Expose streaming tool as "edit_file"
-                            Some((SharedString::from("edit_file"), tool.clone()))
+                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
                         }
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
@@ -2687,7 +2733,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name() -> &'static str;
+    const NAME: &'static str;
 
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2796,7 +2842,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        T::name().into()
+        T::NAME.into()
     }
 
     fn description(&self) -> SharedString {

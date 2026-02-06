@@ -1,3 +1,5 @@
+use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
+use super::save_file_tool::SaveFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
     decide_permission_from_settings,
@@ -161,7 +163,7 @@ impl EditFileTool {
     ) -> Task<Result<()>> {
         let path_str = input.path.to_string_lossy();
         let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+        let decision = decide_permission_from_settings(Self::NAME, &path_str, settings);
 
         match decision {
             ToolPermissionDecision::Allow => return Task::ready(Ok(())),
@@ -179,7 +181,7 @@ impl EditFileTool {
             component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
         }) {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -196,7 +198,7 @@ impl EditFileTool {
             && canonical_path.starts_with(paths::config_dir())
         {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
@@ -220,7 +222,7 @@ impl EditFileTool {
             Task::ready(Ok(()))
         } else {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             event_stream.authorize(&input.display_description, context, cx)
@@ -232,9 +234,7 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name() -> &'static str {
-        "edit_file"
-    }
+    const NAME: &'static str = "edit_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
@@ -342,8 +342,8 @@ impl AgentTool for EditFileTool {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let dirty = buffer.read(cx).is_dirty();
-                    let has_save = thread.has_tool("save_file");
-                    let has_restore = thread.has_tool("restore_file_from_disk");
+                    let has_save = thread.has_tool(SaveFileTool::NAME);
+                    let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
                     (last_read, current, dirty, has_save, has_restore)
                 })?;
 
