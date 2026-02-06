@@ -286,7 +286,7 @@ pub fn authorize_file_edit(
         return Task::ready(Err(anyhow!("thread was dropped")));
     };
 
-    if explicitly_allowed && project_path.is_some() {
+    if project_path.is_some() {
         Task::ready(Ok(()))
     } else {
         let context = crate::ToolPermissionContext {
