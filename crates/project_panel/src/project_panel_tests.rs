@@ -875,7 +875,6 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         });
         assert!(panel.confirm_edit(true, window, cx).is_none());
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2325,7 +2324,6 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2381,7 +2379,6 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2441,6 +2438,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         );
         panel.cancel(&menu::Cancel, window, cx);
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2531,7 +2529,6 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2587,7 +2584,6 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2647,6 +2643,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
         );
         panel.cancel(&menu::Cancel, window, cx);
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -4005,6 +4002,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             this.cancel(&menu::Cancel, window, cx);
         })
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -5326,8 +5324,34 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
 
     panel.update_in(cx, |panel, window, cx| {
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src  <== selected",
+            "    > test"
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx)
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src",
+            "    > [EDITOR: '']  <== selected",
+            "    > test"
+        ]
+    );
+    workspace.update(cx, |_, window, _| window.blur()).unwrap();
     cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
