@@ -5372,23 +5372,17 @@ impl Editor {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
             original_indent_columns: Vec::new(),
         });
-        self.insert_with_autoindent_mode(text, autoindent, window, cx);
+        self.replace_selections(text, autoindent, window, cx, false);
     }
 
-    fn insert_with_autoindent_mode(
+    /// Replaces the editor's selections with the provided `text`, applying the
+    /// given `autoindent_mode` (`None` will skip autoindentation).
+    ///
+    /// Early returns if the editor is in read-only mode, without applying any
+    /// edits.
+    fn replace_selections(
         &mut self,
         text: &str,
-        autoindent_mode: Option<AutoindentMode>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let text: Arc<str> = text.into();
-        self.replace_selections_with_text(text, autoindent_mode, window, cx, false);
-    }
-
-    fn replace_selections_with_text(
-        &mut self,
-        text: Arc<str>,
         autoindent_mode: Option<AutoindentMode>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -5398,6 +5392,7 @@ impl Editor {
             return;
         }
 
+        let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
             let mut linked_edits = HashMap::<_, Vec<_>>::default();
@@ -5407,15 +5402,15 @@ impl Editor {
                 for selection in &old_selections {
                     let start_anchor = snapshot.anchor_before(selection.start);
                     let end_anchor = snapshot.anchor_after(selection.end);
-                    if let Some(ranges) = this.linked_editing_ranges_for(
+                    if let Some(editing_ranges) = this.linked_editing_ranges_for(
                         start_anchor.text_anchor..end_anchor.text_anchor,
                         cx,
                     ) {
-                        for (buffer, edits) in ranges {
+                        for (buffer, ranges) in editing_ranges {
                             linked_edits
                                 .entry(buffer)
                                 .or_default()
-                                .extend(edits.into_iter().map(|range| (range, text.clone())));
+                                .extend(ranges.into_iter().map(|range| (range, text.clone())));
                         }
                     }
                 }
@@ -5442,15 +5437,14 @@ impl Editor {
                 anchors
             });
 
-            for (buffer, edits) in linked_edits {
+            for (buffer, ranges_edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
-                    let edits = edits
+                    let edits = ranges_edits
                         .into_iter()
                         .map(|(range, text)| {
-                            use text::ToPoint as TP;
-                            let end_point = TP::to_point(&range.end, &snapshot);
-                            let start_point = TP::to_point(&range.start, &snapshot);
+                            let end_point = text::ToPoint::to_point(&range.end, &snapshot);
+                            let start_point = text::ToPoint::to_point(&range.start, &snapshot);
                             (start_point..end_point, text)
                         })
                         .sorted_by_key(|(range, _)| range.start);
@@ -5475,8 +5469,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text: Arc<str> = Arc::from("");
-        self.replace_selections_with_text(text, None, window, cx, true);
+        self.replace_selections("", None, window, cx, true);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5496,8 +5489,8 @@ impl Editor {
         let buffer_id = buffer.remote_id();
         let mut linked_ranges = Vec::with_capacity(ranges.len());
         for (base_range, linked_ranges_points) in ranges {
-            let base_anchor = buffer.anchor_before(base_range.start)
-                ..buffer.anchor_after(base_range.end);
+            let base_anchor =
+                buffer.anchor_before(base_range.start)..buffer.anchor_after(base_range.end);
             let linked_anchors = linked_ranges_points
                 .into_iter()
                 .map(|range| buffer.anchor_before(range.start)..buffer.anchor_after(range.end))
@@ -8120,7 +8113,7 @@ impl Editor {
                                 text: text_to_insert.clone().into(),
                             });
 
-                            self.insert_with_autoindent_mode(&text_to_insert, None, window, cx);
+                            self.replace_selections(&text_to_insert, None, window, cx, false);
                             self.refresh_edit_prediction(true, true, window, cx);
                             cx.notify();
                         } else {
