@@ -123,7 +123,7 @@ impl AgentTool for MovePathTool {
             let dest = MarkdownInlineCode(&input.destination_path);
             let context = crate::ToolPermissionContext {
                 tool_name: Self::NAME.to_string(),
-                input_value: format!("{} -> {}", input.source_path, input.destination_path),
+                input_value: format!("{}\n{}", input.source_path, input.destination_path),
             };
             let title = format!("Move {src} to {dest}");
             let settings_kind = sensitive_settings_kind(Path::new(&input.source_path))

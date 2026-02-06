@@ -81,7 +81,7 @@ fn common_parent_dir(path_a: &str, path_b: &str) -> Option<PathBuf> {
 }
 
 pub fn extract_copy_move_pattern(input: &str) -> Option<String> {
-    let (source, dest) = input.split_once(" -> ")?;
+    let (source, dest) = input.split_once('\n')?;
     let common = common_parent_dir(source, dest)?;
     let common_str = common.to_str()?;
     if common_str.is_empty() || common_str == "/" {
@@ -91,7 +91,7 @@ pub fn extract_copy_move_pattern(input: &str) -> Option<String> {
 }
 
 pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
-    let (source, dest) = input.split_once(" -> ")?;
+    let (source, dest) = input.split_once('\n')?;
     let common = common_parent_dir(source, dest)?;
     let common_str = common.to_str()?;
     if common_str.is_empty() || common_str == "/" {
@@ -217,7 +217,7 @@ mod tests {
     fn test_extract_copy_move_pattern_same_directory() {
         assert_eq!(
             extract_copy_move_pattern(
-                "/Users/alice/project/src/old.rs -> /Users/alice/project/src/new.rs"
+                "/Users/alice/project/src/old.rs\n/Users/alice/project/src/new.rs"
             ),
             Some("^/Users/alice/project/src/".to_string())
         );
@@ -227,7 +227,7 @@ mod tests {
     fn test_extract_copy_move_pattern_sibling_directories() {
         assert_eq!(
             extract_copy_move_pattern(
-                "/Users/alice/project/src/old.rs -> /Users/alice/project/dst/new.rs"
+                "/Users/alice/project/src/old.rs\n/Users/alice/project/dst/new.rs"
             ),
             Some("^/Users/alice/project/".to_string())
         );
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn test_extract_copy_move_pattern_no_common_prefix() {
         assert_eq!(
-            extract_copy_move_pattern("/home/file.txt -> /tmp/file.txt"),
+            extract_copy_move_pattern("/home/file.txt\n/tmp/file.txt"),
             None
         );
     }
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn test_extract_copy_move_pattern_relative_paths() {
         assert_eq!(
-            extract_copy_move_pattern("src/old.rs -> src/new.rs"),
+            extract_copy_move_pattern("src/old.rs\nsrc/new.rs"),
             Some("^src/".to_string())
         );
     }
@@ -253,7 +253,7 @@ mod tests {
     fn test_extract_copy_move_pattern_display() {
         assert_eq!(
             extract_copy_move_pattern_display(
-                "/Users/alice/project/src/old.rs -> /Users/alice/project/dst/new.rs"
+                "/Users/alice/project/src/old.rs\n/Users/alice/project/dst/new.rs"
             ),
             Some("/Users/alice/project/".to_string())
         );
