@@ -13,7 +13,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use super::edit_file_tool::is_sensitive_settings_path;
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
+};
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 fn common_parent_for_paths(paths: &[String]) -> Option<PathBuf> {
@@ -123,6 +125,14 @@ impl AgentTool for SaveFileTool {
                 } else {
                     format!("Save {}", paths.join(", "))
                 }
+            };
+            let sensitive_kind = confirmation_paths
+                .iter()
+                .find_map(|p| sensitive_settings_kind(Path::new(p)));
+            let title = match sensitive_kind {
+                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                None => title,
             };
             let input_value = if confirmation_paths.len() == 1 {
                 confirmation_paths[0].clone()
