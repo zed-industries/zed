@@ -1,7 +1,8 @@
 use gpui::{Action as _, App};
-use settings::{LanguageSettingsContent, SettingsContent};
-use std::sync::Arc;
-use strum::IntoDiscriminant as _;
+use itertools::Itertools as _;
+use settings::{LanguageSettingsContent, SemanticTokens, SettingsContent};
+use std::sync::{Arc, OnceLock};
+use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
 use ui::IntoElement;
 
 use crate::{
@@ -8581,7 +8582,18 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Semantic Tokens",
-                description: "Whether to render semantic tokens from language servers.",
+                description: {
+                    static DESCRIPTION: OnceLock<&'static str> = OnceLock::new();
+                    DESCRIPTION.get_or_init(|| {
+                        SemanticTokens::VARIANTS
+                            .iter()
+                            .filter_map(|v| {
+                                v.get_documentation().map(|doc| format!("{v:?}: {doc}"))
+                            })
+                            .join("\n")
+                            .leak()
+                    })
+                },
                 field: Box::new(SettingField {
                     json_path: Some("languages.$(language).enable_language_server"),
                     pick: |settings_content| {
