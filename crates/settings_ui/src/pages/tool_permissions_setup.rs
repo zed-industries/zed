@@ -949,7 +949,7 @@ fn render_user_pattern_row(
             if let Some(new_pattern) = new_pattern {
                 let new_pattern = new_pattern.trim().to_string();
                 if !new_pattern.is_empty() && new_pattern != pattern_for_update {
-                    update_pattern(
+                    let updated = update_pattern(
                         &tool_id_for_update,
                         rule_type,
                         &pattern_for_update,
@@ -957,11 +957,18 @@ fn render_user_pattern_row(
                         cx,
                     );
 
-                    let validation_error = match regex::Regex::new(&new_pattern) {
-                        Err(err) => Some(format!(
-                            "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
-                        )),
-                        Ok(_) => None,
+                    let validation_error = if !updated {
+                        Some(
+                            "A pattern with that name already exists in this rule list."
+                                .to_string(),
+                        )
+                    } else {
+                        match regex::Regex::new(&new_pattern) {
+                            Err(err) => Some(format!(
+                                "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
+                            )),
+                            Ok(_) => None,
+                        }
                     };
                     settings_window
                         .update(cx, |this, cx| {
@@ -1212,7 +1219,19 @@ fn update_pattern(
     old_pattern: &str,
     new_pattern: String,
     cx: &mut App,
-) {
+) -> bool {
+    let settings = AgentSettings::get_global(cx);
+    if let Some(tool_rules) = settings.tool_permissions.tools.get(tool_name) {
+        let patterns = match rule_type {
+            ToolPermissionMode::Allow => &tool_rules.always_allow,
+            ToolPermissionMode::Deny => &tool_rules.always_deny,
+            ToolPermissionMode::Confirm => &tool_rules.always_confirm,
+        };
+        if patterns.iter().any(|r| r.pattern == new_pattern) {
+            return false;
+        }
+    }
+
     let tool_name = tool_name.to_string();
     let old_pattern = old_pattern.to_string();
 
@@ -1240,6 +1259,8 @@ fn update_pattern(
             }
         }
     });
+
+    true
 }
 
 fn delete_pattern(tool_name: &str, rule_type: ToolPermissionMode, pattern: &str, cx: &mut App) {
