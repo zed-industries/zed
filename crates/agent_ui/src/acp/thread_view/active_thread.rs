@@ -2792,7 +2792,7 @@ impl AcpThreadView {
                             selected
                                 .clone()
                                 .or(default_effort_level)
-                                .map_or("Select Effort".into(), |effort| effort.name.clone()),
+                                .map_or("Select Effort".into(), |effort| effort.name),
                         )
                         .size(LabelSize::Small),
                     )
