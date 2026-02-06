@@ -9,12 +9,30 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use super::edit_file_tool::is_sensitive_settings_path;
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+
+fn common_parent_for_paths(paths: &[String]) -> Option<PathBuf> {
+    let first = paths.first()?;
+    let mut common: Vec<Component<'_>> = Path::new(first).parent()?.components().collect();
+    for path in &paths[1..] {
+        let parent: Vec<Component<'_>> = Path::new(path).parent()?.components().collect();
+        let prefix_len = common
+            .iter()
+            .zip(parent.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        common.truncate(prefix_len);
+    }
+    if common.is_empty() {
+        return None;
+    }
+    Some(common.iter().collect())
+}
 
 /// Saves files that have unsaved changes.
 ///
@@ -110,9 +128,16 @@ impl AgentTool for SaveFileTool {
                     format!("Save {}", paths.join(", "))
                 }
             };
+            let input_value = if confirmation_paths.len() == 1 {
+                confirmation_paths[0].clone()
+            } else {
+                common_parent_for_paths(&confirmation_paths)
+                    .map(|parent| format!("{}/_", parent.display()))
+                    .unwrap_or_else(|| confirmation_paths[0].clone())
+            };
             let context = crate::ToolPermissionContext {
                 tool_name: Self::NAME.to_string(),
-                input_value: confirmation_paths.join(", "),
+                input_value,
             };
             Some(event_stream.authorize(title, context, cx))
         } else {
