@@ -532,7 +532,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         .icon_color(Color::Muted)
                         .tooltip(Tooltip::text("Close Workspace"))
                         .on_click({
-                            let multi_workspace = multi_workspace.clone();
+                            let multi_workspace = multi_workspace;
                             move |_, window, cx| {
                                 multi_workspace.update(cx, |mw, cx| {
                                     mw.remove_workspace(workspace_index, window, cx);
