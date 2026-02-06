@@ -1155,6 +1155,7 @@ mod tests {
                 cache: false,
                 reasoning_details: None,
             }],
+            thinking_effort: None,
             thread_id: None,
             prompt_id: None,
             intent: None,
