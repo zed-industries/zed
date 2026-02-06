@@ -150,16 +150,18 @@ impl ToolPermissionDecision {
     ///
     /// # Precedence Order (highest to lowest)
     ///
-    /// 1. **`always_allow_tool_actions`** - When enabled, allows all tool actions without
-    ///    prompting. This global setting bypasses all other checks including deny patterns.
-    ///    Use with caution as it disables all security rules.
-    /// 2. **`always_deny`** - If any deny pattern matches, the tool call is blocked immediately.
+    /// 1. **Hardcoded security rules** - Critical safety checks (e.g., blocking `rm -rf /`)
+    ///    that cannot be bypassed by any user settings, including `always_allow_tool_actions`.
+    /// 2. **`always_allow_tool_actions`** - When enabled, allows all tool actions without
+    ///    prompting. This global setting bypasses user-configured deny/confirm/allow patterns,
+    ///    but does **not** bypass hardcoded security rules.
+    /// 3. **`always_deny`** - If any deny pattern matches, the tool call is blocked immediately.
     ///    This takes precedence over `always_confirm` and `always_allow` patterns.
-    /// 3. **`always_confirm`** - If any confirm pattern matches (and no deny matched),
+    /// 4. **`always_confirm`** - If any confirm pattern matches (and no deny matched),
     ///    the user is prompted for confirmation.
-    /// 4. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
+    /// 5. **`always_allow`** - If any allow pattern matches (and no deny/confirm matched),
     ///    the tool call proceeds without prompting.
-    /// 5. **`default_mode`** - If no patterns match, falls back to the tool's default mode.
+    /// 6. **`default_mode`** - If no patterns match, falls back to the tool's default mode.
     ///
     /// # Shell Compatibility (Terminal Tool Only)
     ///
