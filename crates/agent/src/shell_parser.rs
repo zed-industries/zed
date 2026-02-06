@@ -721,13 +721,13 @@ mod tests {
     }
 
     #[test]
-    fn test_unparseable_nested_substitution_returns_none() {
+    fn test_unparsable_nested_substitution_returns_none() {
         let result = extract_commands("echo $(ls &&)");
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_unparseable_nested_backtick_substitution_returns_none() {
+    fn test_unparsable_nested_backtick_substitution_returns_none() {
         let result = extract_commands("echo `ls &&`");
         assert!(result.is_none());
     }
