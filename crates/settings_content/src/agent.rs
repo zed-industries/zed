@@ -152,6 +152,7 @@ impl AgentSettingsContent {
             provider: provider.into(),
             model,
             enable_thinking: false,
+            effort: None,
         });
     }
 
@@ -265,6 +266,7 @@ pub struct LanguageModelSelection {
     pub model: String,
     #[serde(default)]
     pub enable_thinking: bool,
+    pub effort: Option<String>,
 }
 
 #[with_fallible_options]

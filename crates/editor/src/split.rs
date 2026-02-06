@@ -1,4 +1,7 @@
-use std::ops::{Bound, Range, RangeInclusive};
+use std::{
+    ops::{Bound, Range, RangeInclusive},
+    sync::Arc,
+};
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
@@ -22,7 +25,11 @@ use crate::{
     display_map::CompanionExcerptPatch,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
-use workspace::{ActivatePaneLeft, ActivatePaneRight, Item, Workspace};
+use workspace::{
+    ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
+    item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
+    searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
+};
 
 use crate::{
     Autoscroll, DisplayMap, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleCodeActions,
@@ -292,7 +299,7 @@ pub struct SplittableEditor {
 struct LhsEditor {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    has_latest_selection: bool,
+    was_last_focused: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -327,7 +334,7 @@ impl SplittableEditor {
 
     pub fn last_selected_editor(&self) -> &Entity<Editor> {
         if let Some(lhs) = &self.lhs
-            && lhs.has_latest_selection
+            && lhs.was_last_focused
         {
             &lhs.editor
         } else {
@@ -349,8 +356,8 @@ impl SplittableEditor {
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
-        let subscriptions =
-            vec![cx.subscribe(
+        let subscriptions = vec![
+            cx.subscribe(
                 &rhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::ExpandExcerptsRequested {
@@ -360,15 +367,13 @@ impl SplittableEditor {
                     } => {
                         this.expand_excerpts(excerpt_ids.iter().copied(), *lines, *direction, cx);
                     }
-                    EditorEvent::SelectionsChanged { .. } => {
-                        if let Some(lhs) = &mut this.lhs {
-                            lhs.has_latest_selection = false;
-                        }
-                        cx.emit(event.clone());
-                    }
                     _ => cx.emit(event.clone()),
                 },
-            )];
+            ),
+            cx.subscribe(&rhs_editor, |_, _, event: &SearchEvent, cx| {
+                cx.emit(event.clone());
+            }),
+        ];
 
         window.defer(cx, {
             let workspace = workspace.downgrade();
@@ -429,8 +434,8 @@ impl SplittableEditor {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
-        let subscriptions =
-            vec![cx.subscribe(
+        let mut subscriptions = vec![
+            cx.subscribe(
                 &lhs_editor,
                 |this, _, event: &EditorEvent, cx| match event {
                     EditorEvent::ExpandExcerptsRequested {
@@ -473,19 +478,44 @@ impl SplittableEditor {
                             }
                         }
                     }
-                    EditorEvent::SelectionsChanged { .. } => {
-                        if let Some(lhs) = &mut this.lhs {
-                            lhs.has_latest_selection = true;
-                        }
-                        cx.emit(event.clone());
-                    }
                     _ => cx.emit(event.clone()),
                 },
-            )];
+            ),
+            cx.subscribe(&lhs_editor, |_, _, event: &SearchEvent, cx| {
+                cx.emit(event.clone());
+            }),
+        ];
+
+        let lhs_focus_handle = lhs_editor.read(cx).focus_handle(cx);
+        subscriptions.push(
+            cx.on_focus_in(&lhs_focus_handle, window, |this, _window, cx| {
+                if let Some(lhs) = &mut this.lhs {
+                    if !lhs.was_last_focused {
+                        lhs.was_last_focused = true;
+                        cx.emit(SearchEvent::MatchesInvalidated);
+                        cx.notify();
+                    }
+                }
+            }),
+        );
+
+        let rhs_focus_handle = self.rhs_editor.read(cx).focus_handle(cx);
+        subscriptions.push(
+            cx.on_focus_in(&rhs_focus_handle, window, |this, _window, cx| {
+                if let Some(lhs) = &mut this.lhs {
+                    if lhs.was_last_focused {
+                        lhs.was_last_focused = false;
+                        cx.emit(SearchEvent::MatchesInvalidated);
+                        cx.notify();
+                    }
+                }
+            }),
+        );
+
         let mut lhs = LhsEditor {
             editor: lhs_editor,
             multibuffer: lhs_multibuffer,
-            has_latest_selection: false,
+            was_last_focused: false,
             _subscriptions: subscriptions,
         };
         let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
@@ -608,14 +638,12 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(lhs) = &mut self.lhs {
-            if !lhs.has_latest_selection {
+        if let Some(lhs) = &self.lhs {
+            if !lhs.was_last_focused {
                 lhs.editor.read(cx).focus_handle(cx).focus(window, cx);
                 lhs.editor.update(cx, |editor, cx| {
                     editor.request_autoscroll(Autoscroll::fit(), cx);
                 });
-                lhs.has_latest_selection = true;
-                cx.notify();
             } else {
                 cx.propagate();
             }
@@ -630,14 +658,12 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(lhs) = &mut self.lhs {
-            if lhs.has_latest_selection {
+        if let Some(lhs) = &self.lhs {
+            if lhs.was_last_focused {
                 self.rhs_editor.read(cx).focus_handle(cx).focus(window, cx);
                 self.rhs_editor.update(cx, |editor, cx| {
                     editor.request_autoscroll(Autoscroll::fit(), cx);
                 });
-                lhs.has_latest_selection = false;
-                cx.notify();
             } else {
                 cx.propagate();
             }
@@ -738,7 +764,7 @@ impl SplittableEditor {
     ) {
         // Only block breakpoint actions when the left (lhs) editor has focus
         if let Some(lhs) = &self.lhs {
-            if lhs.has_latest_selection {
+            if lhs.was_last_focused {
                 cx.stop_propagation();
             } else {
                 cx.propagate();
@@ -756,7 +782,7 @@ impl SplittableEditor {
     ) {
         // Only block breakpoint actions when the left (lhs) editor has focus
         if let Some(lhs) = &self.lhs {
-            if lhs.has_latest_selection {
+            if lhs.was_last_focused {
                 cx.stop_propagation();
             } else {
                 cx.propagate();
@@ -774,7 +800,7 @@ impl SplittableEditor {
     ) {
         // Only block breakpoint actions when the left (lhs) editor has focus
         if let Some(lhs) = &self.lhs {
-            if lhs.has_latest_selection {
+            if lhs.was_last_focused {
                 cx.stop_propagation();
             } else {
                 cx.propagate();
@@ -792,7 +818,7 @@ impl SplittableEditor {
     ) {
         // Only block breakpoint actions when the left (lhs) editor has focus
         if let Some(lhs) = &self.lhs {
-            if lhs.has_latest_selection {
+            if lhs.was_last_focused {
                 cx.stop_propagation();
             } else {
                 cx.propagate();
@@ -824,7 +850,7 @@ impl SplittableEditor {
         if let Some(lhs) = &self.lhs {
             cx.stop_propagation();
 
-            let is_lhs_focused = lhs.has_latest_selection;
+            let is_lhs_focused = lhs.was_last_focused;
             let (focused_editor, other_editor) = if is_lhs_focused {
                 (&lhs.editor, &self.rhs_editor)
             } else {
@@ -876,23 +902,6 @@ impl SplittableEditor {
             editor.set_on_local_selections_changed(None);
         });
         cx.notify();
-    }
-
-    pub fn added_to_workspace(
-        &mut self,
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.workspace = workspace.weak_handle();
-        self.rhs_editor.update(cx, |rhs_editor, cx| {
-            rhs_editor.added_to_workspace(workspace, window, cx);
-        });
-        if let Some(lhs) = &self.lhs {
-            lhs.editor.update(cx, |lhs_editor, cx| {
-                lhs_editor.added_to_workspace(workspace, window, cx);
-            });
-        }
     }
 
     pub fn set_excerpts_for_path(
@@ -1486,12 +1495,256 @@ impl SplittableEditor {
     }
 }
 
-impl EventEmitter<EditorEvent> for SplittableEditor {}
-impl Focusable for SplittableEditor {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.rhs_editor.read(cx).focus_handle(cx)
+impl Item for SplittableEditor {
+    type Event = EditorEvent;
+
+    fn tab_content_text(&self, detail: usize, cx: &App) -> ui::SharedString {
+        self.rhs_editor.read(cx).tab_content_text(detail, cx)
+    }
+
+    fn tab_tooltip_text(&self, cx: &App) -> Option<ui::SharedString> {
+        self.rhs_editor.read(cx).tab_tooltip_text(cx)
+    }
+
+    fn tab_icon(&self, window: &Window, cx: &App) -> Option<ui::Icon> {
+        self.rhs_editor.read(cx).tab_icon(window, cx)
+    }
+
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> gpui::AnyElement {
+        self.rhs_editor.read(cx).tab_content(params, window, cx)
+    }
+
+    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+        Editor::to_item_events(event, f)
+    }
+
+    fn for_each_project_item(
+        &self,
+        cx: &App,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
+    ) {
+        self.rhs_editor.read(cx).for_each_project_item(cx, f)
+    }
+
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
+        self.rhs_editor.read(cx).buffer_kind(cx)
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.rhs_editor.read(cx).is_dirty(cx)
+    }
+
+    fn has_conflict(&self, cx: &App) -> bool {
+        self.rhs_editor.read(cx).has_conflict(cx)
+    }
+
+    fn has_deleted_file(&self, cx: &App) -> bool {
+        self.rhs_editor.read(cx).has_deleted_file(cx)
+    }
+
+    fn capability(&self, cx: &App) -> language::Capability {
+        self.rhs_editor.read(cx).capability(cx)
+    }
+
+    fn can_save(&self, cx: &App) -> bool {
+        self.rhs_editor.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.rhs_editor.read(cx).can_save_as(cx)
+    }
+
+    fn save(
+        &mut self,
+        options: SaveOptions,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        self.rhs_editor
+            .update(cx, |editor, cx| editor.save(options, project, window, cx))
+    }
+
+    fn save_as(
+        &mut self,
+        project: Entity<Project>,
+        path: project::ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        self.rhs_editor
+            .update(cx, |editor, cx| editor.save_as(project, path, window, cx))
+    }
+
+    fn reload(
+        &mut self,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        self.rhs_editor
+            .update(cx, |editor, cx| editor.reload(project, window, cx))
+    }
+
+    fn navigate(
+        &mut self,
+        data: Arc<dyn std::any::Any + Send>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.last_selected_editor()
+            .update(cx, |editor, cx| editor.navigate(data, window, cx))
+    }
+
+    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.deactivated(window, cx);
+        });
+    }
+
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace = workspace.weak_handle();
+        self.rhs_editor.update(cx, |rhs_editor, cx| {
+            rhs_editor.added_to_workspace(workspace, window, cx);
+        });
+        if let Some(lhs) = &self.lhs {
+            lhs.editor.update(cx, |lhs_editor, cx| {
+                lhs_editor.added_to_workspace(workspace, window, cx);
+            });
+        }
+    }
+
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
+        self.rhs_editor.read(cx).breadcrumb_location(cx)
+    }
+
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.rhs_editor.read(cx).breadcrumbs(cx)
+    }
+
+    fn pixel_position_of_cursor(&self, cx: &App) -> Option<gpui::Point<gpui::Pixels>> {
+        self.last_selected_editor()
+            .read(cx)
+            .pixel_position_of_cursor(cx)
     }
 }
+
+impl SearchableItem for SplittableEditor {
+    type Match = Range<Anchor>;
+
+    fn clear_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.clear_matches(window, cx);
+        });
+    }
+
+    fn update_matches(
+        &mut self,
+        matches: &[Self::Match],
+        active_match_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.update_matches(matches, active_match_index, window, cx);
+        });
+    }
+
+    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
+        self.last_selected_editor()
+            .update(cx, |editor, cx| editor.query_suggestion(window, cx))
+    }
+
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.activate_match(index, matches, window, cx);
+        });
+    }
+
+    fn select_matches(
+        &mut self,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.select_matches(matches, window, cx);
+        });
+    }
+
+    fn replace(
+        &mut self,
+        identifier: &Self::Match,
+        query: &project::search::SearchQuery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.replace(identifier, query, window, cx);
+        });
+    }
+
+    fn find_matches(
+        &mut self,
+        query: Arc<project::search::SearchQuery>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Vec<Self::Match>> {
+        self.last_selected_editor()
+            .update(cx, |editor, cx| editor.find_matches(query, window, cx))
+    }
+
+    fn active_match_index(
+        &mut self,
+        direction: workspace::searchable::Direction,
+        matches: &[Self::Match],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        self.last_selected_editor().update(cx, |editor, cx| {
+            editor.active_match_index(direction, matches, window, cx)
+        })
+    }
+}
+
+impl EventEmitter<EditorEvent> for SplittableEditor {}
+impl EventEmitter<SearchEvent> for SplittableEditor {}
+impl Focusable for SplittableEditor {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        self.last_selected_editor().read(cx).focus_handle(cx)
+    }
+}
+
+// impl Item for SplittableEditor {
+//     type Event = EditorEvent;
+
+//     fn tab_content_text(&self, detail: usize, cx: &App) -> ui::SharedString {
+//         self.rhs_editor().tab_content_text(detail, cx)
+//     }
+
+//     fn as_searchable(&self, _this: &Entity<Self>, cx: &App) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
+//         Some(Box::new(self.last_selected_editor().clone()))
+//     }
+// }
 
 impl Render for SplittableEditor {
     fn render(

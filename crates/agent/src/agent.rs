@@ -1151,8 +1151,15 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
+        // We want to reset the effort level when switching models, as the currently-selected effort level may
+        // not be compatible.
+        let effort = model
+            .default_effort_level()
+            .map(|effort_level| effort_level.value.to_string());
+
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
+            thread.set_thinking_effort(effort.clone(), cx);
         });
 
         update_settings_file(
@@ -1178,6 +1185,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
                         provider: provider.into(),
                         model,
                         enable_thinking,
+                        effort,
                     });
             },
         );
