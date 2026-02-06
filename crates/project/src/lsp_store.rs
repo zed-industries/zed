@@ -3879,7 +3879,6 @@ impl BufferLspData {
     fn remove_server_data(&mut self, for_server: LanguageServerId) {
         if let Some(document_colors) = &mut self.document_colors {
             document_colors.colors.remove(&for_server);
-            document_colors.cache_version += 1;
         }
 
         if let Some(code_lens) = &mut self.code_lens {
@@ -3905,7 +3904,6 @@ impl BufferLspData {
 #[derive(Debug, Default, Clone)]
 pub struct DocumentColors {
     pub colors: HashSet<DocumentColor>,
-    pub cache_version: Option<usize>,
 }
 
 type DocumentColorTask = Shared<Task<std::result::Result<DocumentColors, Arc<anyhow::Error>>>>;
@@ -3914,7 +3912,6 @@ type CodeLensTask = Shared<Task<std::result::Result<Option<Vec<CodeAction>>, Arc
 #[derive(Debug, Default)]
 struct DocumentColorData {
     colors: HashMap<LanguageServerId, HashSet<DocumentColor>>,
-    cache_version: usize,
     colors_update: Option<(Global, DocumentColorTask)>,
 }
 
@@ -7566,7 +7563,6 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        known_cache_version: Option<usize>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
@@ -7590,23 +7586,12 @@ impl LspStore {
                                 != cached_colors.colors.keys().copied().collect()
                         });
                     if !has_different_servers {
-                        let cache_version = cached_colors.cache_version;
-                        if Some(cache_version) == known_cache_version {
-                            return None;
-                        } else {
-                            return Some(
-                                Task::ready(Ok(DocumentColors {
-                                    colors: cached_colors
-                                        .colors
-                                        .values()
-                                        .flatten()
-                                        .cloned()
-                                        .collect(),
-                                    cache_version: Some(cache_version),
-                                }))
-                                .shared(),
-                            );
-                        }
+                        return Some(
+                            Task::ready(Ok(DocumentColors {
+                                colors: cached_colors.colors.values().flatten().cloned().collect(),
+                            }))
+                            .shared(),
+                        );
                     }
                 }
             }
@@ -7665,14 +7650,12 @@ impl LspStore {
                         if let Some(fetched_colors) = fetched_colors {
                             if lsp_data.buffer_version == buffer_version_queried_for {
                                 lsp_colors.colors.extend(fetched_colors);
-                                lsp_colors.cache_version += 1;
                             } else if !lsp_data
                                 .buffer_version
                                 .changed_since(&buffer_version_queried_for)
                             {
                                 lsp_data.buffer_version = buffer_version_queried_for;
                                 lsp_colors.colors = fetched_colors;
-                                lsp_colors.cache_version += 1;
                             }
                         }
                         lsp_colors.colors_update = None;
@@ -7682,10 +7665,7 @@ impl LspStore {
                             .flatten()
                             .cloned()
                             .collect::<HashSet<_>>();
-                        DocumentColors {
-                            colors,
-                            cache_version: Some(lsp_colors.cache_version),
-                        }
+                        DocumentColors { colors }
                     })
                     .map_err(Arc::new)
             })

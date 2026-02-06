@@ -2158,13 +2158,13 @@ impl Editor {
                         );
                     }
                     project::Event::LanguageServerRemoved(_server_id) => {
+                        editor.registered_buffers.clear();
+                        editor.register_visible_buffers(cx);
+                        editor.update_lsp_data(None, window, cx);
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
-                        editor.registered_buffers.clear();
-                        editor.register_visible_buffers(cx);
-                        editor.refresh_semantic_token_highlights(cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {

@@ -27,7 +27,6 @@ pub(super) struct LspColorData {
 struct BufferColors {
     colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
     inlay_colors: HashMap<InlayId, usize>,
-    cache_version_used: usize,
 }
 
 impl LspColorData {
@@ -94,12 +93,8 @@ impl LspColorData {
         &mut self,
         buffer_id: BufferId,
         colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
-        cache_version: Option<usize>,
     ) -> bool {
         let buffer_colors = self.buffer_colors.entry(buffer_id).or_default();
-        if let Some(cache_version) = cache_version {
-            buffer_colors.cache_version_used = cache_version;
-        }
         if buffer_colors.colors == colors {
             return false;
         }
@@ -152,7 +147,7 @@ impl Editor {
         if !self.mode().is_full() {
             return;
         }
-        let Some(project) = self.project.clone() else {
+        let Some(project) = self.project.as_ref() else {
             return;
         };
         if self
@@ -176,29 +171,20 @@ impl Editor {
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
+        let project = project.downgrade();
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(FETCH_COLORS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let Some(all_colors_task) = editor
-                .update(cx, |editor, cx| {
-                    project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            let Some(all_colors_task) = project
+                .update(cx, |project, cx| {
+                    project.lsp_store().update(cx, |lsp_store, cx| {
                         buffers_to_query
                             .into_iter()
                             .filter_map(|buffer| {
                                 let buffer_id = buffer.read(cx).remote_id();
-                                let known_cache_version =
-                                    editor.colors.as_ref().and_then(|colors| {
-                                        Some(
-                                            colors
-                                                .buffer_colors
-                                                .get(&buffer_id)?
-                                                .cache_version_used,
-                                        )
-                                    });
-                                let colors_task =
-                                    lsp_store.document_colors(known_cache_version, buffer, cx)?;
+                                let colors_task = lsp_store.document_colors(buffer, cx)?;
                                 Some(async move { (buffer_id, colors_task.await) })
                             })
                             .collect::<Vec<_>>()
@@ -236,7 +222,8 @@ impl Editor {
                 return;
             };
 
-            let mut new_editor_colors = HashMap::default();
+            let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, DocumentColor)>> =
+                HashMap::default();
             for (buffer_id, colors) in all_colors {
                 let Some(excerpts) = editor_excerpts.get(&buffer_id) else {
                     continue;
@@ -244,12 +231,10 @@ impl Editor {
                 match colors {
                     Ok(colors) => {
                         if colors.colors.is_empty() {
-                            let new_entry =
-                                new_editor_colors.entry(buffer_id).or_insert_with(|| {
-                                    (Vec::<(Range<Anchor>, DocumentColor)>::new(), None)
-                                });
-                            new_entry.0.clear();
-                            new_entry.1 = colors.cache_version;
+                            new_editor_colors
+                                .entry(buffer_id)
+                                .or_insert_with(Vec::new)
+                                .clear();
                         } else {
                             for color in colors.colors {
                                 let color_start = point_from_lsp(color.lsp_range.start);
@@ -273,12 +258,8 @@ impl Editor {
                                         continue;
                                     };
 
-                                    let new_entry =
-                                        new_editor_colors.entry(buffer_id).or_insert_with(|| {
-                                            (Vec::<(Range<Anchor>, DocumentColor)>::new(), None)
-                                        });
-                                    new_entry.1 = colors.cache_version;
-                                    let new_buffer_colors = &mut new_entry.0;
+                                    let new_buffer_colors =
+                                        new_editor_colors.entry(buffer_id).or_insert_with(Vec::new);
 
                                     let (Ok(i) | Err(i)) =
                                         new_buffer_colors.binary_search_by(|(probe, _)| {
@@ -308,7 +289,7 @@ impl Editor {
                         return;
                     };
                     let mut updated = false;
-                    for (buffer_id, (new_buffer_colors, new_cache_version)) in new_editor_colors {
+                    for (buffer_id, new_buffer_colors) in new_editor_colors {
                         let mut new_buffer_color_inlays =
                             Vec::with_capacity(new_buffer_colors.len());
                         let mut existing_buffer_colors = colors
@@ -402,11 +383,7 @@ impl Editor {
                                 .to_remove
                                 .extend(existing_buffer_colors.map(|(_, _, id)| *id));
                         }
-                        updated |= colors.set_colors(
-                            buffer_id,
-                            new_buffer_color_inlays,
-                            new_cache_version,
-                        );
+                        updated |= colors.set_colors(buffer_id, new_buffer_color_inlays);
                     }
 
                     if colors.render_mode == DocumentColorsRenderMode::Inlay
