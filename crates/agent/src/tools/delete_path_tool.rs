@@ -1,7 +1,5 @@
 use super::edit_file_tool::is_sensitive_settings_path;
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
@@ -78,7 +76,7 @@ impl AgentTool for DeletePathTool {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
-        let mut decision = decide_permission_from_settings(Self::NAME, &path, settings);
+        let mut decision = decide_permission_for_path(Self::NAME, &path, settings);
 
         if matches!(decision, ToolPermissionDecision::Allow)
             && is_sensitive_settings_path(Path::new(&path))

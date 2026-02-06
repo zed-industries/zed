@@ -3,6 +3,7 @@ use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
+use std::path::{Component, Path};
 use util::shell::ShellKind;
 
 /// Checks if input matches any hardcoded security rules that cannot be bypassed.
@@ -269,6 +270,59 @@ pub fn decide_permission_from_settings(
         &settings.tool_permissions,
         ShellKind::system(),
     )
+}
+
+/// Normalizes a path by collapsing `.` and `..` segments without touching the filesystem.
+fn normalize_path(raw: &str) -> String {
+    let mut components: Vec<&str> = Vec::new();
+    for component in Path::new(raw).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                components.pop();
+            }
+            Component::Normal(segment) => {
+                if let Some(s) = segment.to_str() {
+                    components.push(s);
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    components.join("/")
+}
+
+/// Decides permission by checking both the raw input path and a simplified/canonicalized
+/// version. Returns the most restrictive decision (Deny > Confirm > Allow).
+pub fn decide_permission_for_path(
+    tool_name: &str,
+    raw_path: &str,
+    settings: &AgentSettings,
+) -> ToolPermissionDecision {
+    let raw_decision = decide_permission_from_settings(tool_name, raw_path, settings);
+
+    let simplified = normalize_path(raw_path);
+    if simplified == raw_path {
+        return raw_decision;
+    }
+
+    let simplified_decision = decide_permission_from_settings(tool_name, &simplified, settings);
+
+    most_restrictive(raw_decision, simplified_decision)
+}
+
+fn most_restrictive(
+    a: ToolPermissionDecision,
+    b: ToolPermissionDecision,
+) -> ToolPermissionDecision {
+    match (&a, &b) {
+        (ToolPermissionDecision::Deny(_), _) => a,
+        (_, ToolPermissionDecision::Deny(_)) => b,
+        (ToolPermissionDecision::Confirm, _) | (_, ToolPermissionDecision::Confirm) => {
+            ToolPermissionDecision::Confirm
+        }
+        _ => a,
+    }
 }
 
 #[cfg(test)]
@@ -1309,5 +1363,158 @@ mod tests {
         t("storm -rf /").mode(ToolPermissionMode::Allow).is_allow();
         t("inform -rf /").mode(ToolPermissionMode::Allow).is_allow();
         t("gorm -rf ~").mode(ToolPermissionMode::Allow).is_allow();
+    }
+
+    #[test]
+    fn normalize_path_collapses_dot_segments() {
+        assert_eq!(
+            normalize_path("src/../.zed/settings.json"),
+            ".zed/settings.json"
+        );
+        assert_eq!(normalize_path("a/b/../c"), "a/c");
+        assert_eq!(normalize_path("a/./b/c"), "a/b/c");
+        assert_eq!(normalize_path("a/b/./c/../d"), "a/b/d");
+        assert_eq!(normalize_path(".zed/settings.json"), ".zed/settings.json");
+        assert_eq!(normalize_path("a/b/c"), "a/b/c");
+    }
+
+    #[test]
+    fn normalize_path_handles_multiple_parent_dirs() {
+        assert_eq!(normalize_path("a/b/c/../../d"), "a/d");
+        assert_eq!(normalize_path("a/b/c/../../../d"), "d");
+    }
+
+    #[test]
+    fn normalize_path_handles_leading_parent_dir() {
+        assert_eq!(
+            normalize_path("../.zed/settings.json"),
+            ".zed/settings.json"
+        );
+        assert_eq!(
+            normalize_path("../../.zed/settings.json"),
+            ".zed/settings.json"
+        );
+    }
+
+    fn path_perm(
+        tool: &str,
+        input: &str,
+        deny: &[&str],
+        allow: &[&str],
+        confirm: &[&str],
+    ) -> ToolPermissionDecision {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from(tool),
+            ToolRules {
+                default: None,
+                always_allow: allow
+                    .iter()
+                    .map(|p| {
+                        CompiledRegex::new(p, false)
+                            .unwrap_or_else(|| panic!("invalid regex: {p:?}"))
+                    })
+                    .collect(),
+                always_deny: deny
+                    .iter()
+                    .map(|p| {
+                        CompiledRegex::new(p, false)
+                            .unwrap_or_else(|| panic!("invalid regex: {p:?}"))
+                    })
+                    .collect(),
+                always_confirm: confirm
+                    .iter()
+                    .map(|p| {
+                        CompiledRegex::new(p, false)
+                            .unwrap_or_else(|| panic!("invalid regex: {p:?}"))
+                    })
+                    .collect(),
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions {
+            default: ToolPermissionMode::Confirm,
+            tools,
+        };
+        let raw_decision =
+            ToolPermissionDecision::from_input(tool, input, &permissions, ShellKind::Posix);
+
+        let simplified = normalize_path(input);
+        if simplified == input {
+            return raw_decision;
+        }
+
+        let simplified_decision =
+            ToolPermissionDecision::from_input(tool, &simplified, &permissions, ShellKind::Posix);
+
+        most_restrictive(raw_decision, simplified_decision)
+    }
+
+    #[test]
+    fn decide_permission_for_path_denies_traversal_to_denied_dir() {
+        let decision = path_perm(
+            "copy_path",
+            "src/../.zed/settings.json",
+            &["^\\.zed/"],
+            &[],
+            &[],
+        );
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn decide_permission_for_path_confirms_traversal_to_confirmed_dir() {
+        let decision = path_perm(
+            "copy_path",
+            "src/../.zed/settings.json",
+            &[],
+            &[],
+            &["^\\.zed/"],
+        );
+        assert!(matches!(decision, ToolPermissionDecision::Confirm));
+    }
+
+    #[test]
+    fn decide_permission_for_path_allows_when_no_traversal_issue() {
+        let decision = path_perm("copy_path", "src/main.rs", &[], &["^src/"], &[]);
+        assert!(matches!(decision, ToolPermissionDecision::Allow));
+    }
+
+    #[test]
+    fn decide_permission_for_path_most_restrictive_wins() {
+        let decision = path_perm(
+            "copy_path",
+            "allowed/../.zed/settings.json",
+            &["^\\.zed/"],
+            &["^allowed/"],
+            &[],
+        );
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn decide_permission_for_path_dot_segment_only() {
+        let decision = path_perm(
+            "delete_path",
+            "./.zed/settings.json",
+            &["^\\.zed/"],
+            &[],
+            &[],
+        );
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn decide_permission_for_path_no_change_when_already_simple() {
+        // When path has no `.` or `..` segments, behavior matches decide_permission_from_settings
+        let decision = path_perm("copy_path", ".zed/settings.json", &["^\\.zed/"], &[], &[]);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn decide_permission_for_path_raw_deny_still_works() {
+        // Even without traversal, if the raw path itself matches deny, it's denied
+        let decision = path_perm("copy_path", "secret/file.txt", &["^secret/"], &[], &[]);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
     }
 }

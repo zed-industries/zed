@@ -14,9 +14,7 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use super::edit_file_tool::is_sensitive_settings_path;
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 /// Saves files that have unsaved changes.
 ///
@@ -71,7 +69,7 @@ impl AgentTool for SaveFileTool {
 
         for path in &input.paths {
             let path_str = path.to_string_lossy();
-            let decision = decide_permission_from_settings(Self::NAME, &path_str, settings);
+            let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
             match decision {
                 ToolPermissionDecision::Allow => {
                     if is_sensitive_settings_path(Path::new(&*path_str)) {
