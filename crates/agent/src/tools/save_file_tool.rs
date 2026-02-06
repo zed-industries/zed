@@ -65,7 +65,7 @@ impl AgentTool for SaveFileTool {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let settings = AgentSettings::get_global(cx);
-        let mut needs_confirmation = false;
+        let mut confirmation_path: Option<String> = None;
 
         for path in &input.paths {
             let path_str = path.to_string_lossy();
@@ -75,19 +75,19 @@ impl AgentTool for SaveFileTool {
                     if !settings.always_allow_tool_actions
                         && is_sensitive_settings_path(Path::new(&*path_str))
                     {
-                        needs_confirmation = true;
+                        confirmation_path = Some(path_str.to_string());
                     }
                 }
                 ToolPermissionDecision::Deny(reason) => {
                     return Task::ready(Err(anyhow::anyhow!("{}", reason)));
                 }
                 ToolPermissionDecision::Confirm => {
-                    needs_confirmation = true;
+                    confirmation_path = Some(path_str.to_string());
                 }
             }
         }
 
-        let authorize = if needs_confirmation {
+        let authorize = if confirmation_path.is_some() {
             let title = if input.paths.len() == 1 {
                 format!(
                     "Save {}",
@@ -110,14 +110,9 @@ impl AgentTool for SaveFileTool {
                     format!("Save {}", paths.join(", "))
                 }
             };
-            let first_path = input
-                .paths
-                .first()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
             let context = crate::ToolPermissionContext {
                 tool_name: Self::NAME.to_string(),
-                input_value: first_path,
+                input_value: confirmation_path.unwrap_or_default(),
             };
             Some(event_stream.authorize(title, context, cx))
         } else {
