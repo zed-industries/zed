@@ -1517,4 +1517,10 @@ mod tests {
         let decision = path_perm("copy_path", "secret/file.txt", &["^secret/"], &[], &[]);
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
     }
+
+    #[test]
+    fn decide_permission_for_path_denies_edit_file_traversal_to_dotenv() {
+        let decision = path_perm(EditFileTool::NAME, "src/../.env", &["^\\.env"], &[], &[]);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
 }

@@ -2,7 +2,7 @@ use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings,
+    decide_permission_for_path,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -211,7 +211,7 @@ pub fn authorize_file_edit(
 ) -> Task<Result<()>> {
     let path_str = path.to_string_lossy();
     let settings = agent_settings::AgentSettings::get_global(cx);
-    let decision = decide_permission_from_settings(EditFileTool::NAME, &path_str, settings);
+    let decision = decide_permission_for_path(EditFileTool::NAME, &path_str, settings);
 
     if let ToolPermissionDecision::Deny(reason) = decision {
         return Task::ready(Err(anyhow!("{}", reason)));
