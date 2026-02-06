@@ -116,10 +116,10 @@ pub async fn run_prediction(
         store.set_edit_prediction_model(model);
 
         // If user specified a non-default Zeta2 version, configure raw endpoint.
-        // ZED_ZETA_MODEL_ID env var is optional.
+        // ZED_ZETA_MODEL env var is optional.
         if let PredictionProvider::Zeta2(version) = provider {
             if version != ZetaVersion::default() {
-                let model_id = std::env::var("ZED_ZETA_MODEL_ID").ok();
+                let model_id = std::env::var("ZED_ZETA_MODEL").ok();
                 store.set_zeta2_raw_config(Zeta2RawConfig { model_id, version });
             }
         }

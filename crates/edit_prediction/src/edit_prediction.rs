@@ -653,7 +653,7 @@ impl EditPredictionStore {
     fn zeta2_raw_config_from_env() -> Option<Zeta2RawConfig> {
         let version_str = env::var("ZED_ZETA_VERSION").ok()?;
         let version = ZetaVersion::parse(&version_str).ok()?;
-        let model_id = env::var("ZED_ZETA_MODEL_ID").ok();
+        let model_id = env::var("ZED_ZETA_MODEL").ok();
         Some(Zeta2RawConfig { model_id, version })
     }
 
