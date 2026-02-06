@@ -24,7 +24,7 @@ use gpui::{
 use indoc::indoc;
 use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
 use lsp::LSP_REQUEST_TIMEOUT;
-use multi_buffer::DiffbaselessAnchorRangeExt as _;
+use multi_buffer::AnchorRangeExt as _;
 use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,

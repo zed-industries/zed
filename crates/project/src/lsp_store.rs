@@ -31,7 +31,7 @@ use crate::{
     lsp_store::{
         self,
         log_store::{GlobalLogStore, LanguageServerKind},
-        semantic_tokens::SemanticTokensData,
+        semantic_tokens::{SemanticTokenConfig, SemanticTokensData},
     },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
@@ -144,7 +144,7 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
-use settings::SemanticTokenRules;
+
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
     UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
@@ -3841,12 +3841,9 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
-    semantic_token_stylizers:
-        HashMap<(LanguageServerId, Option<LanguageName>), SemanticTokenStylizer>,
-    semantic_token_rules: SemanticTokenRules,
+    semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
-    global_semantic_tokens_mode: settings::SemanticTokens,
 }
 
 #[derive(Debug)]
@@ -3993,6 +3990,7 @@ struct CoreSymbol {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
+    pub container_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4130,8 +4128,6 @@ impl LspStore {
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
 
-        let global_semantic_tokens_mode = all_language_settings(None, cx).defaults.semantic_tokens;
-
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -4185,16 +4181,11 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
-            semantic_token_stylizers: HashMap::default(),
-            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
+            semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
             _maintain_workspace_config,
-            global_semantic_tokens_mode,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
         }
     }
@@ -4237,7 +4228,6 @@ impl LspStore {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
-        let global_semantic_tokens_mode = all_language_settings(None, cx).defaults.semantic_tokens;
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
                 upstream_client: Some(upstream_client),
@@ -4247,17 +4237,12 @@ impl LspStore {
             last_formatting_failure: None,
             buffer_store,
             worktree_store,
-            global_semantic_tokens_mode,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
-            semantic_token_stylizers: HashMap::default(),
-            semantic_token_rules: crate::project_settings::ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
+            semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             active_entry: None,
@@ -5063,15 +5048,15 @@ impl LspStore {
             .global_lsp_settings
             .semantic_token_rules
             .clone();
-        if new_semantic_token_rules != self.semantic_token_rules {
-            self.semantic_token_rules = new_semantic_token_rules;
-            self.semantic_token_stylizers.clear();
-        }
+        self.semantic_token_config
+            .update_rules(new_semantic_token_rules);
 
         let new_global_semantic_tokens_mode =
             all_language_settings(None, cx).defaults.semantic_tokens;
-        if new_global_semantic_tokens_mode != self.global_semantic_tokens_mode {
-            self.global_semantic_tokens_mode = new_global_semantic_tokens_mode;
+        if self
+            .semantic_token_config
+            .update_global_mode(new_global_semantic_tokens_mode)
+        {
             self.restart_all_language_servers(cx);
         }
 
@@ -7947,7 +7932,7 @@ impl LspStore {
                 server_id: LanguageServerId,
                 lsp_adapter: Arc<CachedLspAdapter>,
                 worktree: WeakEntity<Worktree>,
-                lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
+                lsp_symbols: Vec<(String, SymbolKind, lsp::Location, Option<String>)>,
             }
 
             let mut requests = Vec::new();
@@ -8010,6 +7995,7 @@ impl LspStore {
                                                     lsp_symbol.name,
                                                     lsp_symbol.kind,
                                                     lsp_symbol.location,
+                                                    lsp_symbol.container_name,
                                                 )
                                             })
                                             .collect::<Vec<_>>()
@@ -8029,7 +8015,12 @@ impl LspStore {
                                                         return None;
                                                     }
                                                 };
-                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                                Some((
+                                                    lsp_symbol.name,
+                                                    lsp_symbol.kind,
+                                                    location,
+                                                    lsp_symbol.container_name,
+                                                ))
                                             })
                                             .collect::<Vec<_>>()
                                     }
@@ -8059,36 +8050,39 @@ impl LspStore {
                         result
                             .lsp_symbols
                             .into_iter()
-                            .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path = symbol_location.uri.to_file_path().ok()?;
-                                let source_worktree = result.worktree.upgrade()?;
-                                let source_worktree_id = source_worktree.read(cx).id();
+                            .filter_map(
+                                |(symbol_name, symbol_kind, symbol_location, container_name)| {
+                                    let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                    let source_worktree = result.worktree.upgrade()?;
+                                    let source_worktree_id = source_worktree.read(cx).id();
 
-                                let path = if let Some((tree, rel_path)) =
-                                    this.worktree_store.read(cx).find_worktree(&abs_path, cx)
-                                {
-                                    let worktree_id = tree.read(cx).id();
-                                    SymbolLocation::InProject(ProjectPath {
-                                        worktree_id,
-                                        path: rel_path,
+                                    let path = if let Some((tree, rel_path)) =
+                                        this.worktree_store.read(cx).find_worktree(&abs_path, cx)
+                                    {
+                                        let worktree_id = tree.read(cx).id();
+                                        SymbolLocation::InProject(ProjectPath {
+                                            worktree_id,
+                                            path: rel_path,
+                                        })
+                                    } else {
+                                        SymbolLocation::OutsideProject {
+                                            signature: this.symbol_signature(&abs_path),
+                                            abs_path: abs_path.into(),
+                                        }
+                                    };
+
+                                    Some(CoreSymbol {
+                                        source_language_server_id: result.server_id,
+                                        language_server_name: result.lsp_adapter.name.clone(),
+                                        source_worktree_id,
+                                        path,
+                                        kind: symbol_kind,
+                                        name: symbol_name,
+                                        range: range_from_lsp(symbol_location.range),
+                                        container_name,
                                     })
-                                } else {
-                                    SymbolLocation::OutsideProject {
-                                        signature: this.symbol_signature(&abs_path),
-                                        abs_path: abs_path.into(),
-                                    }
-                                };
-
-                                Some(CoreSymbol {
-                                    source_language_server_id: result.server_id,
-                                    language_server_name: result.lsp_adapter.name.clone(),
-                                    source_worktree_id,
-                                    path,
-                                    kind: symbol_kind,
-                                    name: symbol_name,
-                                    range: range_from_lsp(symbol_location.range),
-                                })
-                            })
+                                },
+                            )
                             .collect::<Vec<_>>()
                     });
 
@@ -10713,6 +10707,7 @@ impl LspStore {
                         kind: symbol.kind,
                         range: symbol.range,
                         label: CodeLabel::default(),
+                        container_name: symbol.container_name,
                     },
                     cx,
                 )
@@ -12213,6 +12208,7 @@ impl LspStore {
             worktree_id: Default::default(),
             path: Default::default(),
             signature: Default::default(),
+            container_name: symbol.container_name.clone(),
         };
         match &symbol.path {
             SymbolLocation::InProject(path) => {
@@ -12264,6 +12260,7 @@ impl LspStore {
             range: Unclipped(PointUtf16::new(start.row, start.column))
                 ..Unclipped(PointUtf16::new(end.row, end.column)),
             kind,
+            container_name: serialized_symbol.container_name,
         })
     }
 
@@ -12447,8 +12444,7 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
-        self.semantic_token_stylizers
-            .retain(|&(id, _), _| id != for_server);
+        self.semantic_token_config.remove_server_data(for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
         }
@@ -14703,11 +14699,11 @@ async fn populate_labels_for_symbols(
     let mut label_params = Vec::new();
     for (language, mut symbols) in symbols_by_language {
         label_params.clear();
-        label_params.extend(
-            symbols
-                .iter_mut()
-                .map(|symbol| (mem::take(&mut symbol.name), symbol.kind)),
-        );
+        label_params.extend(symbols.iter_mut().map(|symbol| language::Symbol {
+            name: mem::take(&mut symbol.name),
+            kind: symbol.kind,
+            container_name: symbol.container_name.take(),
+        }));
 
         let mut labels = Vec::new();
         if let Some(language) = language {
@@ -14726,7 +14722,17 @@ async fn populate_labels_for_symbols(
             }
         }
 
-        for ((symbol, (name, _)), label) in symbols
+        for (
+            (
+                symbol,
+                language::Symbol {
+                    name,
+                    container_name,
+                    ..
+                },
+            ),
+            label,
+        ) in symbols
             .into_iter()
             .zip(label_params.drain(..))
             .zip(labels.into_iter().chain(iter::repeat(None)))
@@ -14740,6 +14746,7 @@ async fn populate_labels_for_symbols(
                 name,
                 kind: symbol.kind,
                 range: symbol.range,
+                container_name,
             });
         }
     }

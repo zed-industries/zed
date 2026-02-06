@@ -51,9 +51,7 @@ impl AgentTool for ListDirectoryTool {
     type Input = ListDirectoryToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "list_directory"
-    }
+    const NAME: &'static str = "list_directory";
 
     fn kind() -> ToolKind {
         ToolKind::Read

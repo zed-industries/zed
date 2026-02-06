@@ -122,7 +122,7 @@ pub struct Buffer {
     reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
     completion_triggers: BTreeSet<String>,
@@ -151,16 +151,16 @@ pub struct TreeSitterData {
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
-    fn clear(&mut self, snapshot: text::BufferSnapshot) {
-        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
+    fn clear(&mut self, snapshot: &text::BufferSnapshot) {
+        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
         self.brackets_by_chunks
             .get_mut()
             .resize(self.chunks.len(), None);
     }
 
-    fn new(snapshot: text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
+    fn new(snapshot: &text::BufferSnapshot) -> Self {
+        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
             brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
             chunks,
@@ -188,12 +188,12 @@ struct BufferBranchState {
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
     pub syntax: SyntaxSnapshot,
-    file: Option<Arc<dyn File>>,
-    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
+    tree_sitter_data: Arc<TreeSitterData>,
+    diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
+    file: Option<Arc<dyn File>>,
     non_text_state_update_count: usize,
-    tree_sitter_data: Arc<TreeSitterData>,
     pub capability: Capability,
 }
 
@@ -1055,7 +1055,7 @@ impl Buffer {
             })
         }));
 
-        for (server_id, diagnostics) in &self.diagnostics {
+        for (server_id, diagnostics) in self.diagnostics.iter() {
             operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
                 lamport_timestamp: self.diagnostics_timestamp,
                 server_id: *server_id,
@@ -1168,14 +1168,14 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
-                    .snapshot();
+                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text);
+            let text = text.into_snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
-            let tree_sitter_data = TreeSitterData::new(text.clone());
+            let tree_sitter_data = TreeSitterData::new(&text);
             BufferSnapshot {
                 text,
                 syntax,
@@ -1198,10 +1198,10 @@ impl Buffer {
             buffer_id,
             Default::default(),
             Rope::new(),
-        )
-        .snapshot();
+        );
+        let text = text.into_snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
-        let tree_sitter_data = TreeSitterData::new(text.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
             text,
             syntax,
@@ -1226,12 +1226,12 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text =
             TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
-                .snapshot();
+                .into_snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
         }
-        let tree_sitter_data = TreeSitterData::new(text.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
             text,
             syntax,
@@ -1249,18 +1249,21 @@ impl Buffer {
     /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {
         let text = self.text.snapshot();
-        let mut syntax_map = self.syntax_map.lock();
-        syntax_map.interpolate(&text);
-        let syntax = syntax_map.snapshot();
+
+        let syntax = {
+            let mut syntax_map = self.syntax_map.lock();
+            syntax_map.interpolate(text);
+            syntax_map.snapshot()
+        };
 
         let tree_sitter_data = if self.text.version() != *self.tree_sitter_data.version() {
-            Arc::new(TreeSitterData::new(text.clone()))
+            Arc::new(TreeSitterData::new(text))
         } else {
             self.tree_sitter_data.clone()
         };
 
         BufferSnapshot {
-            text,
+            text: text.clone(),
             syntax,
             tree_sitter_data,
             file: self.file.clone(),
@@ -1304,7 +1307,7 @@ impl Buffer {
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
         let language = self.language().cloned();
-        let old_snapshot = self.text.snapshot();
+        let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_spawn(async move {
@@ -1323,7 +1326,7 @@ impl Buffer {
             }
             EditPreview {
                 old_snapshot,
-                applied_edits_snapshot: branch_buffer.snapshot(),
+                applied_edits_snapshot: branch_buffer.into_snapshot(),
                 syntax_snapshot,
             }
         })
@@ -1416,8 +1419,7 @@ impl Buffer {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn as_text_snapshot(&self) -> &text::BufferSnapshot {
+    pub fn as_text_snapshot(&self) -> &text::BufferSnapshot {
         &self.text
     }
 
@@ -1425,7 +1427,8 @@ impl Buffer {
     /// language-related state like the syntax tree or diagnostics.
     #[ztracing::instrument(skip_all)]
     pub fn text_snapshot(&self) -> text::BufferSnapshot {
-        self.text.snapshot()
+        // todo lw
+        self.text.snapshot().clone()
     }
 
     /// The file associated with the buffer, if any.
@@ -1480,6 +1483,9 @@ impl Buffer {
         may_block: bool,
         cx: &mut Context<Self>,
     ) {
+        if language == self.language {
+            return;
+        }
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         let old_language = std::mem::replace(&mut self.language, language);
@@ -1778,12 +1784,15 @@ impl Buffer {
         self.sync_parse_timeout = timeout;
     }
 
-    fn invalidate_tree_sitter_data(&mut self, snapshot: text::BufferSnapshot) {
-        match Arc::get_mut(&mut self.tree_sitter_data) {
+    fn invalidate_tree_sitter_data(
+        tree_sitter_data: &mut Arc<TreeSitterData>,
+        snapshot: &text::BufferSnapshot,
+    ) {
+        match Arc::get_mut(tree_sitter_data) {
             Some(tree_sitter_data) => tree_sitter_data.clear(snapshot),
             None => {
-                let tree_sitter_data = TreeSitterData::new(snapshot);
-                self.tree_sitter_data = Arc::new(tree_sitter_data)
+                let new_tree_sitter_data = TreeSitterData::new(snapshot);
+                *tree_sitter_data = Arc::new(new_tree_sitter_data)
             }
         }
     }
@@ -1814,7 +1823,7 @@ impl Buffer {
     #[ztracing::instrument(skip_all)]
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.text.version() != *self.tree_sitter_data.version() {
-            self.invalidate_tree_sitter_data(self.text.snapshot());
+            Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         }
         if self.reparse.is_some() {
             return;
@@ -1895,7 +1904,7 @@ impl Buffer {
         self.was_changed();
         self.request_autoindent(cx, block_budget);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        self.invalidate_tree_sitter_data(self.text.snapshot());
+        Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, &self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }
@@ -1939,10 +1948,10 @@ impl Buffer {
         for_server: Option<LanguageServerId>,
     ) -> Vec<&DiagnosticEntry<Anchor>> {
         match for_server {
-            Some(server_id) => match self.diagnostics.binary_search_by_key(&server_id, |v| v.0) {
-                Ok(idx) => self.diagnostics[idx].1.iter().collect(),
-                Err(_) => Vec::new(),
-            },
+            Some(server_id) => self
+                .diagnostics
+                .get(&server_id)
+                .map_or_else(Vec::new, |diagnostics| diagnostics.iter().collect()),
             None => self
                 .diagnostics
                 .iter()
@@ -3076,16 +3085,10 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
-            let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
             if diagnostics.is_empty() {
-                if let Ok(ix) = ix {
-                    self.diagnostics.remove(ix);
-                }
+                self.diagnostics.remove(&server_id);
             } else {
-                match ix {
-                    Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
-                    Ok(ix) => self.diagnostics[ix].1 = diagnostics,
-                };
+                self.diagnostics.insert(server_id, diagnostics);
             }
             self.diagnostics_timestamp = lamport_timestamp;
             self.non_text_state_update_count += 1;
@@ -5240,12 +5243,6 @@ impl BufferSnapshot {
         })
     }
 
-    /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
-    /// should be used instead.
-    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
-        &self.diagnostics
-    }
-
     /// Returns all the diagnostic groups associated with the given
     /// language server ID. If no language server ID is provided,
     /// all diagnostics groups are returned.
@@ -5256,13 +5253,8 @@ impl BufferSnapshot {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
-            if let Ok(ix) = self
-                .diagnostics
-                .binary_search_by_key(&language_server_id, |e| e.0)
-            {
-                self.diagnostics[ix]
-                    .1
-                    .groups(language_server_id, &mut groups, self);
+            if let Some(set) = self.diagnostics.get(&language_server_id) {
+                set.groups(language_server_id, &mut groups, self);
             }
         } else {
             for (language_server_id, diagnostics) in self.diagnostics.iter() {

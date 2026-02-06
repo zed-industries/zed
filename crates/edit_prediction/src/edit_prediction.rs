@@ -312,7 +312,6 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
-                        edit_prediction_types::EditPredictionDismissReason::Ignored,
                         cx,
                     );
                 })
@@ -1293,19 +1292,12 @@ impl EditPredictionStore {
         &mut self,
         reason: EditPredictionRejectReason,
         project: &Entity<Project>,
-        dismiss_reason: edit_prediction_types::EditPredictionDismissReason,
         cx: &App,
     ) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.pending_predictions.clear();
             if let Some(prediction) = project_state.current_prediction.take() {
-                self.reject_prediction(
-                    prediction.prediction.id,
-                    reason,
-                    prediction.was_shown,
-                    dismiss_reason,
-                    cx,
-                );
+                self.reject_prediction(prediction.prediction.id, reason, prediction.was_shown, cx);
             }
         };
     }
@@ -1364,7 +1356,6 @@ impl EditPredictionStore {
         prediction_id: EditPredictionId,
         reason: EditPredictionRejectReason,
         was_shown: bool,
-        dismiss_reason: edit_prediction_types::EditPredictionDismissReason,
         cx: &App,
     ) {
         match self.edit_prediction_model {
@@ -1384,7 +1375,7 @@ impl EditPredictionStore {
                 mercury::edit_prediction_rejected(
                     prediction_id,
                     was_shown,
-                    dismiss_reason,
+                    reason,
                     self.client.http_client(),
                     cx,
                 );
@@ -1638,7 +1629,6 @@ impl EditPredictionStore {
                                     this.reject_current_prediction(
                                         EditPredictionRejectReason::Replaced,
                                         &project,
-                                        edit_prediction_types::EditPredictionDismissReason::Ignored,
                                         cx,
                                     );
 
@@ -1648,7 +1638,6 @@ impl EditPredictionStore {
                                         new_prediction.prediction.id,
                                         EditPredictionRejectReason::CurrentPreferred,
                                         false,
-                                        edit_prediction_types::EditPredictionDismissReason::Ignored,
                                         cx,
                                     );
                                     None
@@ -1658,13 +1647,7 @@ impl EditPredictionStore {
                             }
                         }
                         Err(reject_reason) => {
-                            this.reject_prediction(
-                                prediction_result.id,
-                                reject_reason,
-                                false,
-                                edit_prediction_types::EditPredictionDismissReason::Ignored,
-                                cx,
-                            );
+                            this.reject_prediction(prediction_result.id, reject_reason, false, cx);
                             None
                         }
                     }

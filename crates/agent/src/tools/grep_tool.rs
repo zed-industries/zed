@@ -80,9 +80,7 @@ impl AgentTool for GrepTool {
     type Input = GrepToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "grep"
-    }
+    const NAME: &'static str = "grep";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Search

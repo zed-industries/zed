@@ -1,5 +1,5 @@
 use client::{Client, UserStore};
-use codestral::CodestralEditPredictionDelegate;
+use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{ZedEditPredictionDelegate, Zeta2FeatureFlag};
@@ -7,7 +7,7 @@ use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use language_models::MistralLanguageModelProvider;
+
 use settings::{EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
@@ -111,8 +111,7 @@ fn assign_edit_prediction_providers(
     cx: &mut App,
 ) {
     if provider == EditPredictionProvider::Codestral {
-        let mistral = MistralLanguageModelProvider::global(client.http_client(), cx);
-        mistral.load_codestral_api_key(cx).detach();
+        load_codestral_api_key(cx).detach();
     }
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {

@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use edit_prediction_types::{
-    EditPrediction, EditPredictionDelegate, EditPredictionDismissReason, EditPredictionIconSet,
+    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
     interpolate_edits,
 };
 use gpui::{App, Context, Entity, Task};
@@ -129,7 +129,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         }
     }
 
-    fn discard(&mut self, _reason: EditPredictionDismissReason, _: &mut Context<Self>) {}
+    fn discard(&mut self, _reason: EditPredictionDiscardReason, _: &mut Context<Self>) {}
 
     fn suggest(
         &mut self,

@@ -625,7 +625,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
 
     fn discard(
         &mut self,
-        _reason: edit_prediction_types::EditPredictionDismissReason,
+        _reason: edit_prediction_types::EditPredictionDiscardReason,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
@@ -701,7 +701,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
 
     fn discard(
         &mut self,
-        _reason: edit_prediction_types::EditPredictionDismissReason,
+        _reason: edit_prediction_types::EditPredictionDiscardReason,
         _cx: &mut gpui::Context<Self>,
     ) {
     }

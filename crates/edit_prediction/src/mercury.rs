@@ -4,7 +4,7 @@ use crate::{
     prediction::EditPredictionResult, zeta1::compute_edits,
 };
 use anyhow::{Context as _, Result};
-use edit_prediction_types::EditPredictionDismissReason;
+use cloud_llm_client::EditPredictionRejectReason;
 use futures::AsyncReadExt as _;
 use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
@@ -358,16 +358,17 @@ pub(crate) fn edit_prediction_accepted(
 pub(crate) fn edit_prediction_rejected(
     prediction_id: EditPredictionId,
     was_shown: bool,
-    dismiss_reason: EditPredictionDismissReason,
+    reason: EditPredictionRejectReason,
     http_client: Arc<dyn HttpClient>,
     cx: &App,
 ) {
     if !was_shown {
         return;
     }
-    let action = match dismiss_reason {
-        EditPredictionDismissReason::Rejected => MercuryUserAction::Reject,
-        EditPredictionDismissReason::Ignored => MercuryUserAction::Ignore,
+    let action = match reason {
+        EditPredictionRejectReason::Rejected => MercuryUserAction::Reject,
+        EditPredictionRejectReason::Discarded => MercuryUserAction::Ignore,
+        _ => return,
     };
     send_feedback(prediction_id, action, http_client, cx);
 }
@@ -381,14 +382,6 @@ fn send_feedback(
     let request_id = prediction_id.0;
     let app_version = AppVersion::global(cx);
     cx.background_spawn(async move {
-        if !request_id.starts_with("cmpl-") {
-            log::warn!(
-                "Mercury feedback: invalid request_id '{}' - must start with 'cmpl-'",
-                request_id
-            );
-            return anyhow::Ok(());
-        }
-
         let body = FeedbackRequest {
             request_id,
             provider_name: "zed",

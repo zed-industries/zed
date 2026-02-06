@@ -568,6 +568,7 @@ impl ConfigurationView {
             .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
+            .when(edit_prediction, |this| this.tab_index(0isize))
             .on_click(|_, window, cx| {
                 if let Some(app_state) = AppState::global(cx).upgrade()
                     && let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx)

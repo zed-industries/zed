@@ -1836,10 +1836,10 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                                     release.assets.iter().find(|a| a.name == filename)
                                 {
                                     // Strip "sha256:" prefix if present
-                                    asset.digest.as_ref().and_then(|d| {
+                                    asset.digest.as_ref().map(|d| {
                                         d.strip_prefix("sha256:")
                                             .map(|s| s.to_string())
-                                            .or_else(|| Some(d.clone()))
+                                            .unwrap_or_else(|| d.clone())
                                     })
                                 } else {
                                     None

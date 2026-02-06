@@ -1,33 +1,31 @@
-use crate::{PredictionProvider, example::Example, format_prompt::TeacherPrompt};
+use crate::{
+    PredictionProvider,
+    example::{ActualCursor, Example},
+    format_prompt::TeacherPrompt,
+    repair,
+};
 use anyhow::{Context as _, Result};
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
-    let provider = example
-        .prompt
-        .as_ref()
-        .context("prompt required (run format-prompt first)")?
-        .provider;
     example
         .prompt_inputs
         .as_ref()
         .context("prompt_inputs required")?;
 
-    let parsed_patches: Vec<_> = example
+    let to_parse: Vec<_> = example
         .predictions
         .iter()
         .enumerate()
         .filter(|(_, p)| !p.actual_output.is_empty())
-        .map(|(ix, prediction)| {
-            let result = parse_prediction_output(example, &prediction.actual_output, provider);
-            result.map(|(patch, cursor_offset)| (ix, patch, cursor_offset))
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|(ix, p)| (ix, p.actual_output.clone(), p.provider))
+        .collect();
 
-    for (ix, actual_patch, actual_cursor_offset) in parsed_patches {
+    for (ix, actual_output, provider) in to_parse {
+        let (actual_patch, actual_cursor) =
+            parse_prediction_output(example, &actual_output, provider)?;
         example.predictions[ix].actual_patch = Some(actual_patch);
-        example.predictions[ix].actual_cursor_offset = actual_cursor_offset;
-        example.predictions[ix].provider = provider;
+        example.predictions[ix].actual_cursor = actual_cursor;
     }
 
     Ok(())
@@ -37,12 +35,13 @@ pub fn parse_prediction_output(
     example: &Example,
     actual_output: &str,
     provider: PredictionProvider,
-) -> Result<(String, Option<usize>)> {
+) -> Result<(String, Option<ActualCursor>)> {
     match provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             TeacherPrompt::parse(example, actual_output)
         }
         PredictionProvider::Zeta2(version) => parse_zeta2_output(example, actual_output, version),
+        PredictionProvider::Repair => repair::parse(example, actual_output),
         _ => anyhow::bail!(
             "parse-output only supports Teacher and Zeta2 providers, got {:?}",
             provider
@@ -75,7 +74,6 @@ fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<St
         + start;
 
     let region = &prompt[start..end];
-    let region = region.strip_suffix('\n').unwrap_or(region);
     let region = region.replace(CURSOR_MARKER, "");
 
     Ok(region)
@@ -85,7 +83,7 @@ fn parse_zeta2_output(
     example: &Example,
     actual_output: &str,
     version: ZetaVersion,
-) -> Result<(String, Option<usize>)> {
+) -> Result<(String, Option<ActualCursor>)> {
     let prompt = &example.prompt.as_ref().context("prompt required")?.input;
     let prompt_inputs = example
         .prompt_inputs
@@ -155,7 +153,18 @@ fn parse_zeta2_output(
         path = example.spec.cursor_path.to_string_lossy(),
     );
 
-    Ok((formatted_diff, cursor_offset))
+    let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
+        ActualCursor::from_editable_region(
+            &example.spec.cursor_path,
+            editable_region_cursor_offset,
+            &new_text,
+            &prompt_inputs.content,
+            editable_region_offset,
+            editable_region_start_line,
+        )
+    });
+
+    Ok((formatted_diff, actual_cursor))
 }
 
 #[cfg(test)]
@@ -176,7 +185,7 @@ mod tests {
         "};
 
         let region = extract_zeta2_current_region(prompt, ZetaVersion::V0113Ordered).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -193,7 +202,7 @@ mod tests {
         "};
 
         let region = extract_zeta2_current_region(prompt, ZetaVersion::V0112MiddleAtEnd).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -210,7 +219,7 @@ mod tests {
         "};
 
         let region = extract_zeta2_current_region(prompt, ZetaVersion::V0113Ordered).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -228,7 +237,7 @@ mod tests {
 
         let region =
             extract_zeta2_current_region(prompt, ZetaVersion::V0120GitMergeMarkers).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 
     #[test]
@@ -246,6 +255,6 @@ mod tests {
 
         let region =
             extract_zeta2_current_region(prompt, ZetaVersion::V0120GitMergeMarkers).unwrap();
-        assert_eq!(region, "println!(\"hello\");");
+        assert_eq!(region, "println!(\"hello\");\n");
     }
 }
