@@ -12,7 +12,7 @@ use extension::{
     WorktreeDelegate,
 };
 use fs::Fs;
-use futures::future::LocalBoxFuture;
+use futures::future::{LocalBoxFuture, Shared};
 use futures::{
     Future, FutureExt, StreamExt as _,
     channel::{
@@ -56,6 +56,7 @@ pub struct WasmHost {
     pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
+    canonical_work_dir: Shared<Task<Result<PathBuf, Arc<anyhow::Error>>>>,
     /// The capabilities granted to extensions running on the host.
     pub(crate) granted_capabilities: Vec<ExtensionCapability>,
     _main_thread_message_task: Task<()>,
@@ -582,10 +583,26 @@ impl WasmHost {
 
         let extension_settings = ExtensionSettings::get_global(cx);
 
+        let canonical_work_dir = cx
+            .background_executor()
+            .spawn({
+                let fs = fs.clone();
+                let work_dir = work_dir.clone();
+                async move {
+                    // Ensure the directory exists before canonicalizing. This
+                    // may race with `rebuild_extension_index` which also creates
+                    // it, but `create_dir` is idempotent.
+                    fs.create_dir(&work_dir).await.map_err(Arc::new)?;
+                    fs.canonicalize(&work_dir).await.map_err(Arc::new)
+                }
+            })
+            .shared();
+
         Arc::new(Self {
             engine: wasm_engine(cx.background_executor()),
             fs,
             work_dir,
+            canonical_work_dir,
             http_client,
             node_runtime,
             proxy,
@@ -727,13 +744,52 @@ impl WasmHost {
         id: &Arc<str>,
         path: &Path,
     ) -> Result<PathBuf> {
-        let extension_work_dir = self.work_dir.join(id.as_ref());
-        let path = self.fs.canonicalize(path).await?;
+        let canonical_work_dir = self
+            .canonical_work_dir
+            .clone()
+            .await
+            .map_err(|error| anyhow!("{error}"))?;
+        let extension_work_dir = canonical_work_dir.join(id.as_ref());
+
+        let absolute = if path.is_relative() {
+            extension_work_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        let normalized = util::paths::normalize_lexically(&absolute)
+            .map_err(|_| anyhow!("path {path:?} escapes its parent"))?;
+
+        // Canonicalize the nearest existing ancestor to resolve any symlinks
+        // in the on-disk portion of the path. Components beyond that ancestor
+        // are re-appended, which lets this work for destinations that don't
+        // exist yet (e.g. nested directories created by tar extraction).
+        let mut existing = normalized.as_path();
+        let mut tail_components = Vec::new();
+        let canonical_prefix = loop {
+            match self.fs.canonicalize(existing).await {
+                Ok(canonical) => break canonical,
+                Err(_) => {
+                    if let Some(file_name) = existing.file_name() {
+                        tail_components.push(file_name.to_owned());
+                    }
+                    existing = existing
+                        .parent()
+                        .context(format!("cannot resolve path {path:?}"))?;
+                }
+            }
+        };
+
+        let mut resolved = canonical_prefix;
+        for component in tail_components.into_iter().rev() {
+            resolved.push(component);
+        }
+
         anyhow::ensure!(
-            path.starts_with(&extension_work_dir),
-            "cannot write to path {path:?}",
+            resolved.starts_with(&extension_work_dir),
+            "cannot write to path {resolved:?}",
         );
-        Ok(path)
+        Ok(resolved)
     }
 }
 
@@ -1014,6 +1070,29 @@ mod tests {
         assert!(
             result.is_ok(),
             "legitimate path should be accepted, but got: {result:?}",
+        );
+
+        // A relative path with non-existent intermediate directories should
+        // succeed, mirroring the integration test pattern where an extension
+        // downloads a tar to e.g. "gleam-v1.2.3" (creating the directory)
+        // and then references "gleam-v1.2.3/gleam" inside it.
+        let result = host
+            .writeable_path_from_extension(&extension_id, Path::new("new-dir/nested/binary"))
+            .await;
+        assert!(
+            result.is_ok(),
+            "relative path with non-existent parents should be accepted, but got: {result:?}",
+        );
+
+        // A symlink deeper than the immediate parent must still be caught.
+        // Here "escape" is a symlink to /outside, so "escape/deep/file.txt"
+        // has multiple non-existent components beyond the symlink.
+        let result = host
+            .writeable_path_from_extension(&extension_id, Path::new("escape/deep/nested/file.txt"))
+            .await;
+        assert!(
+            result.is_err(),
+            "symlink escape through deep non-existent path should be rejected, but got: {result:?}",
         );
     }
 }
