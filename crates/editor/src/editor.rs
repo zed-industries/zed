@@ -15734,10 +15734,10 @@ impl Editor {
 
         let mut new_selections = Vec::new();
 
-        let reversed = self
-            .selections
-            .oldest::<MultiBufferOffset>(&display_map)
-            .reversed;
+        let initial_selection = self.selections.oldest::<MultiBufferOffset>(&display_map);
+        let initial_range = initial_selection.directed_range();
+        let reversed = initial_selection.reversed;
+
         let buffer = display_map.buffer_snapshot();
         let query_matches = select_next_state
             .query
@@ -15751,13 +15751,18 @@ impl Editor {
                 MultiBufferOffset(query_match.start())..MultiBufferOffset(query_match.end())
             };
 
-            if !select_next_state.wordwise
-                || (!buffer.is_inside_word(offset_range.start, None)
-                    && !buffer.is_inside_word(offset_range.end, None))
+            if select_next_state.wordwise
+                && (buffer.is_inside_word(offset_range.start, None)
+                    || buffer.is_inside_word(offset_range.end, None))
             {
-                new_selections.push(offset_range.start..offset_range.end);
+                continue;
+            }
+
+            if offset_range != initial_range {
+                new_selections.push(offset_range);
             }
         }
+        new_selections.push(initial_range);
 
         select_next_state.done = true;
 
