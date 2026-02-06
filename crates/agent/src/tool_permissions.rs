@@ -20,27 +20,41 @@ pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock
     // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
     // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
     const FLAGS: &str = r"(--[a-z][-a-z]*\s+|-[a-zA-Z]+\s+)*";
+    // Trailing flags that may appear after the path operand (GNU rm accepts flags after operands)
+    const TRAILING_FLAGS: &str = r"(\s+--[a-z][-a-z]*|\s+-[a-zA-Z]+)*\s*";
 
     HardcodedSecurityRules {
         terminal_deny: vec![
-            // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?/\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?~/?\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
+            // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*", "rm / -rf"
             CompiledRegex::new(
-                &format!(r"\brm\s+{FLAGS}(--\s+)?(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
+                &format!(r"\brm\s+{FLAGS}(--\s+)?/\*?{TRAILING_FLAGS}$"),
                 false,
             )
             .expect("hardcoded regex should compile"),
-            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?\./?\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
-            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?\.\./?\*?\s*$"), false)
-                .expect("hardcoded regex should compile"),
+            // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" or "rm ~ -rf" (but not ~/subdir)
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?~/?\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or "rm $HOME -rf" or with /*
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?(\$HOME|\$\{{HOME\}})/?(\*)?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*" or "rm . -rf"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?\./?\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*" or "rm .. -rf"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?\.\./?\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
         ],
     }
 });
@@ -1368,6 +1382,47 @@ mod tests {
         t("echo hello; rm -rf $HOME").is_deny();
         t("echo hello; rm -rf .").is_deny();
         t("echo hello; rm -rf ..").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_with_trailing_flags() {
+        // GNU rm accepts flags after operands by default
+        t("rm / -rf").is_deny();
+        t("rm / -fr").is_deny();
+        t("rm / -RF").is_deny();
+        t("rm / -r -f").is_deny();
+        t("rm / --recursive --force").is_deny();
+        t("rm / -rfv").is_deny();
+        t("rm /* -rf").is_deny();
+        // Mixed: some flags before path, some after
+        t("rm -r / -f").is_deny();
+        t("rm -f / -r").is_deny();
+        // Home
+        t("rm ~ -rf").is_deny();
+        t("rm ~/ -rf").is_deny();
+        t("rm ~ -r -f").is_deny();
+        t("rm $HOME -rf").is_deny();
+        t("rm ${HOME} -rf").is_deny();
+        // Dot / dotdot
+        t("rm . -rf").is_deny();
+        t("rm ./ -rf").is_deny();
+        t("rm . -r -f").is_deny();
+        t("rm .. -rf").is_deny();
+        t("rm ../ -rf").is_deny();
+        t("rm .. -r -f").is_deny();
+        // Trailing flags in chained commands
+        t("ls && rm / -rf").is_deny();
+        t("echo hello; rm ~ -rf").is_deny();
+        // Safe paths with trailing flags should NOT be blocked
+        t("rm ./build -rf")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm /tmp/test -rf")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm ~/Documents -rf")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 
     #[test]
