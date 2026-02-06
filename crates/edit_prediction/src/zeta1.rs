@@ -81,17 +81,12 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
-    let (uri, require_auth) = match &store.custom_predict_edits_url {
-        Some(custom_url) => (custom_url.clone(), false),
-        None => {
-            match client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/v2", &[])
-            {
-                Ok(url) => (url.into(), true),
-                Err(err) => return Task::ready(Err(err)),
-            }
-        }
+    let uri = match client
+        .http_client()
+        .build_zed_llm_url("/predict_edits/v2", &[])
+    {
+        Ok(url) => Arc::from(url),
+        Err(err) => return Task::ready(Err(err)),
     };
 
     cx.spawn(async move |this, cx| {
@@ -127,7 +122,7 @@ pub(crate) fn request_prediction_with_zeta1(
             client,
             llm_token,
             app_version,
-            require_auth,
+            true,
         )
         .await;
 
