@@ -1,5 +1,5 @@
-# Labels pull requests by author: 'staff' for staff team members,
-# 'first contribution' for first-time external contributors.
+# Labels pull requests by author: 'bot' for bot accounts, 'staff' for
+# staff team members, 'first contribution' for first-time external contributors.
 name: PR Labeler
 
 on:
@@ -27,6 +27,7 @@ jobs:
         with:
           github-token: ${{ steps.get-app-token.outputs.token }}
           script: |
+            const BOT_LABEL = 'bot';
             const STAFF_LABEL = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
             const STAFF_TEAM_SLUG = 'staff';
@@ -34,9 +35,14 @@ jobs:
             const pr = context.payload.pull_request;
             const author = pr.user.login;
 
-            // Skip bots (they shouldn't have FIRST_TIME* association anyway, but just in case)
-            if (author.endsWith('[bot]')) {
-              console.log(`Skipping bot author: ${author}`);
+            if (pr.user.type === 'Bot') {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [BOT_LABEL]
+              });
+              console.log(`PR #${pr.number} by ${author}: labeled '${BOT_LABEL}' (user type: '${pr.user.type}')`);
               return;
             }
 
