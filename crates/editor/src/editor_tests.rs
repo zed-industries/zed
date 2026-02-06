@@ -7853,6 +7853,7 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.run_until_parked();
 
     cx.set_state(indoc! {"
         fn a() {
@@ -22342,6 +22343,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
         });
     });
+    cx.run_until_parked();
 
     assert_indent_guides(
         0..4,
@@ -22358,6 +22360,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
         });
     });
+    cx.run_until_parked();
 
     assert_indent_guides(
         0..4,
@@ -22374,6 +22377,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             s.select_ranges([Point::new(3, 0)..Point::new(3, 0)])
         });
     });
+    cx.run_until_parked();
 
     assert_indent_guides(
         0..4,
