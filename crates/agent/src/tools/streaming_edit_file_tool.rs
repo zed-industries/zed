@@ -572,14 +572,31 @@ fn apply_edits(
         }
     }
 
+    // Sort edits in reverse order so offsets remain valid when applied sequentially
+    let mut edits_sorted: Vec<_> = resolved_edits.into_iter().collect();
+    edits_sorted.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+
+    // Validate no overlaps (sorted descending by start)
+    for window in edits_sorted.windows(2) {
+        let (later_range, _) = &window[0];
+        let (earlier_range, _) = &window[1];
+        if earlier_range.end > later_range.start {
+            anyhow::bail!(
+                "Overlapping edit ranges detected: {}..{} overlaps with {}..{}. \
+                 This is likely a bug in the edit generation.",
+                earlier_range.start,
+                earlier_range.end,
+                later_range.start,
+                later_range.end,
+            );
+        }
+    }
+
     // Second pass: apply all edits and report to action_log in the same effect cycle.
     // This prevents the buffer subscription from treating these as user edits.
-    if !resolved_edits.is_empty() {
+    if !edits_sorted.is_empty() {
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| {
-                // Apply edits in reverse order so offsets remain valid
-                let mut edits_sorted: Vec<_> = resolved_edits.into_iter().collect();
-                edits_sorted.sort_by(|a, b| b.0.start.cmp(&a.0.start));
                 for (range, new_text) in edits_sorted {
                     buffer.edit([(range, new_text.as_str())], None, cx);
                 }
