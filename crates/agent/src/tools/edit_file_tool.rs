@@ -231,7 +231,9 @@ pub fn authorize_file_edit(
 
     let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
 
-    if explicitly_allowed {
+    if explicitly_allowed
+        && (settings.always_allow_tool_actions || !is_sensitive_settings_path(path))
+    {
         return Task::ready(Ok(()));
     }
 
