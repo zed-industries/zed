@@ -1,38 +1,13 @@
 use anyhow::Result;
-use release_channel::{ReleaseChannel, SupportedPlatform};
 use serde_json::Value;
-use strum::IntoEnumIterator as _;
+
+use crate::migrations::migrate_nested_settings;
 
 pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
-    let Some(root_object) = value.as_object_mut() else {
-        return Ok(());
-    };
-
-    migrate_one(root_object);
-
-    let override_keys = ReleaseChannel::iter()
-        .map(|channel| channel.dev_name())
-        .chain(SupportedPlatform::iter().map(|platform| platform.as_str()));
-
-    for key in override_keys {
-        if let Some(sub_object) = root_object.get_mut(key) {
-            if let Some(sub_map) = sub_object.as_object_mut() {
-                migrate_one(sub_map);
-            }
-        }
-    }
-
-    if let Some(profiles) = root_object.get_mut("profiles") {
-        if let Some(profiles_object) = profiles.as_object_mut() {
-            for (_profile_name, profile_settings) in profiles_object.iter_mut() {
-                if let Some(profile_map) = profile_settings.as_object_mut() {
-                    migrate_one(profile_map);
-                }
-            }
-        }
-    }
-
-    Ok(())
+    migrate_nested_settings(value, |obj| {
+        migrate_one(obj);
+        Ok(())
+    })
 }
 
 fn migrate_one(obj: &mut serde_json::Map<String, Value>) {
