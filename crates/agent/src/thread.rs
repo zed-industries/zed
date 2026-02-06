@@ -3143,6 +3143,9 @@ impl ToolCallEventStream {
             )))
         {
             log::error!("Failed to send tool call authorization: {error}");
+            return Task::ready(Err(anyhow!(
+                "Failed to send tool call authorization: {error}"
+            )));
         }
 
         let fs = self.fs.clone();
@@ -3211,6 +3214,9 @@ impl ToolCallEventStream {
             )))
         {
             log::error!("Failed to send tool call authorization: {error}");
+            return Task::ready(Err(anyhow!(
+                "Failed to send tool call authorization: {error}"
+            )));
         }
 
         let fs = self.fs.clone();
