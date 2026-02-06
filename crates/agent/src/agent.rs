@@ -347,12 +347,14 @@ impl NativeAgent {
 
         let thread = thread_handle.read(cx);
         let session_id = thread.id().clone();
+        let parent_session_id = thread.parent_thread_id().clone();
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
         let acp_thread = cx.new(|cx| {
             acp_thread::AcpThread::new(
+                parent_session_id,
                 title,
                 connection,
                 project.clone(),
@@ -368,14 +370,17 @@ impl NativeAgent {
 
         let weak = cx.weak_entity();
         thread_handle.update(cx, |thread, cx| {
-            thread.set_summarization_model(summarization_model, cx);
-            thread.add_default_tools(
-                Rc::new(NativeThreadEnvironment {
-                    acp_thread: acp_thread.downgrade(),
-                    agent: weak,
-                }) as _,
-                cx,
-            )
+            //todo: Remove this workaround and pass tools from the outside subagents
+            if thread.parent_thread_id().is_none() {
+                thread.set_summarization_model(summarization_model, cx);
+                thread.add_default_tools(
+                    Rc::new(NativeThreadEnvironment {
+                        acp_thread: acp_thread.downgrade(),
+                        agent: weak,
+                    }) as _,
+                    cx,
+                )
+            }
         });
 
         let subscriptions = vec![

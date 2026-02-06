@@ -1,7 +1,7 @@
 use gpui::{Corner, List};
 use language_model::LanguageModelEffortLevel;
 use settings::update_settings_file;
-use ui::SplitButton;
+use ui::{SplitButton, Tab};
 
 use super::*;
 
@@ -171,6 +171,7 @@ pub struct AcpThreadView {
     pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
     pub server_view: WeakEntity<AcpServerView>,
+    pub agent_icon: IconName,
     pub agent_name: SharedString,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -254,6 +255,7 @@ impl AcpThreadView {
         thread: Entity<AcpThread>,
         login: Option<task::SpawnInTerminal>,
         server_view: WeakEntity<AcpServerView>,
+        agent_icon: IconName,
         agent_name: SharedString,
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
@@ -344,6 +346,7 @@ impl AcpThreadView {
             thread,
             login,
             server_view,
+            agent_icon,
             agent_name,
             workspace,
             entry_view_state,
@@ -2286,32 +2289,38 @@ impl AcpThreadView {
             )
     }
 
-    pub(crate) fn maybe_render_go_to_parent_button(&mut self, cx: &App) -> AnyElement {
-        if !self.is_subagent() {
-            return div().into_any_element();
+    pub(crate) fn render_subagent_titlebar(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let Some(parent_session_id) = self.parent_id.clone() else {
+            return None;
         };
 
-        let parent_id = self.parent_id.clone();
+        let title = self.thread.read(cx).title();
         let server_view = self.server_view.clone();
-        let colors = cx.theme().colors();
 
-        h_flex()
-            .child("Back to parent")
-            .p_4()
-            .bg(colors.panel_background)
-            .border_1()
-            .border_color(colors.border)
-            .hover(|style| style.bg(colors.panel_overlay_hover))
-            .on_mouse_down(gpui::MouseButton::Left, move |_event, _window, cx| {
-                let _ = server_view.update(cx, |server_view, _cx| {
-                    if let Some(connected) = server_view.as_connected_mut()
-                        && let Some(parent_id) = parent_id.clone()
-                    {
-                        connected.navigate_to_session(parent_id);
-                    };
-                });
-            })
-            .into_any_element()
+        Some(
+            h_flex()
+                .h(Tab::container_height(cx))
+                .pl_2()
+                .pr_1p5()
+                .w_full()
+                .justify_between()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().editor_background.opacity(0.2))
+                .child(Label::new(title).color(Color::Muted))
+                .child(
+                    IconButton::new("minimize_subagent", IconName::Minimize)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Minimize Subagent"))
+                        .on_click(move |_, _window, cx| {
+                            let _ = server_view.update(cx, |server_view, _cx| {
+                                if let Some(connected) = server_view.as_connected_mut() {
+                                    connected.navigate_to_session(parent_session_id.clone());
+                                };
+                            });
+                        }),
+                ),
+        )
     }
 
     pub(crate) fn render_message_editor(
@@ -3224,6 +3233,14 @@ impl AcpThreadView {
                     .is_some_and(|checkpoint| checkpoint.show);
 
                 let agent_name = self.agent_name.clone();
+                let is_subagent = self.is_subagent();
+
+                let non_editable_icon = || {
+                    IconButton::new("non_editable", IconName::PencilUnavailable)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .style(ButtonStyle::Transparent)
+                };
 
                 v_flex()
                     .id(("user_message", entry_ix))
@@ -3273,22 +3290,28 @@ impl AcpThreadView {
                                     .py_3()
                                     .px_2()
                                     .rounded_md()
-                                    .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().shadow_sm()
                                     })
-                                    .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
-                                    .map(|this|{
-                                        if editing && editor_focus {
-                                            this.border_color(focus_border)
-                                        } else if message.id.is_some() {
-                                            this.hover(|s| s.border_color(focus_border.opacity(0.8)))
-                                        } else {
-                                            this
+                                    .map(|this| {
+                                        if is_subagent {
+                                            return this.border_dashed();
                                         }
+                                        if editing && editor_focus {
+                                            return this.border_color(focus_border);
+                                        }
+                                        if editing && !editor_focus {
+                                            return this.border_dashed()
+                                        }
+                                        if message.id.is_some() {
+                                            return this.shadow_md().hover(|s| {
+                                                s.border_color(focus_border.opacity(0.8))
+                                            });
+                                        }
+                                        this
                                     })
                                     .text_xs()
                                     .child(editor.clone().into_any_element())
@@ -3306,7 +3329,20 @@ impl AcpThreadView {
                                     .overflow_hidden();
 
                                 let is_loading_contents = self.is_loading_contents;
-                                if message.id.is_some() {
+                                if is_subagent {
+                                    this.child(
+                                        base_container.border_dashed().child(
+                                            non_editable_icon().tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    "Unavailable Editing",
+                                                    None,
+                                                    "Editing subagent messages is currently not supported.",
+                                                    cx,
+                                                )
+                                            }),
+                                        ),
+                                    )
+                                } else if message.id.is_some() {
                                     this.child(
                                         base_container
                                             .child(
@@ -3346,10 +3382,7 @@ impl AcpThreadView {
                                         base_container
                                             .border_dashed()
                                             .child(
-                                                IconButton::new("editing_unavailable", IconName::PencilUnavailable)
-                                                    .icon_size(IconSize::Small)
-                                                    .icon_color(Color::Muted)
-                                                    .style(ButtonStyle::Transparent)
+                                                non_editable_icon()
                                                     .tooltip(Tooltip::element({
                                                         move |_, _| {
                                                             v_flex()
@@ -5238,6 +5271,7 @@ impl AcpThreadView {
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
         let is_file = tool_call.kind == acp::ToolKind::Edit && has_location;
+        let is_subagent_tool_call = tool_call.is_subagent();
 
         let file_icon = if has_location {
             FileIcons::get_icon(&tool_call.locations[0].path, cx)
@@ -5269,25 +5303,27 @@ impl AcpThreadView {
                 .into_any_element()
         } else if is_file {
             div().child(file_icon).into_any_element()
-        } else {
-            div()
-                .child(
-                    Icon::new(match tool_call.kind {
-                        acp::ToolKind::Read => IconName::ToolSearch,
-                        acp::ToolKind::Edit => IconName::ToolPencil,
-                        acp::ToolKind::Delete => IconName::ToolDeleteFile,
-                        acp::ToolKind::Move => IconName::ArrowRightLeft,
-                        acp::ToolKind::Search => IconName::ToolSearch,
-                        acp::ToolKind::Execute => IconName::ToolTerminal,
-                        acp::ToolKind::Think => IconName::ToolThink,
-                        acp::ToolKind::Fetch => IconName::ToolWeb,
-                        acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
-                        acp::ToolKind::Other | _ => IconName::ToolHammer,
-                    })
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-                )
+        } else if is_subagent_tool_call {
+            Icon::new(self.agent_icon)
+                .size(IconSize::Small)
+                .color(Color::Muted)
                 .into_any_element()
+        } else {
+            Icon::new(match tool_call.kind {
+                acp::ToolKind::Read => IconName::ToolSearch,
+                acp::ToolKind::Edit => IconName::ToolPencil,
+                acp::ToolKind::Delete => IconName::ToolDeleteFile,
+                acp::ToolKind::Move => IconName::ArrowRightLeft,
+                acp::ToolKind::Search => IconName::ToolSearch,
+                acp::ToolKind::Execute => IconName::ToolTerminal,
+                acp::ToolKind::Think => IconName::ToolThink,
+                acp::ToolKind::Fetch => IconName::ToolWeb,
+                acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
+                acp::ToolKind::Other | _ => IconName::ToolHammer,
+            })
+            .size(IconSize::Small)
+            .color(Color::Muted)
+            .into_any_element()
         };
 
         let gradient_overlay = {
@@ -5712,22 +5748,29 @@ impl AcpThreadView {
     ) -> Div {
         let tool_call_status = &tool_call.status;
 
-        let Some(thread_view) = self
+        let content = if let Some(thread_view) = self
             .server_view
             .upgrade()
             .and_then(|server_view| server_view.read(cx).as_connected())
             .and_then(|connected| connected.threads.get(&subagent_session_id))
-        else {
-            return div().child("Loading subagent...");
+        {
+            let thread = thread_view.read(cx).thread.clone();
+            self.render_subagent_card(entry_ix, 0, &thread, tool_call_status, window, cx)
+        } else {
+            h_flex()
+                .p_1()
+                .w_full()
+                .gap_1p5()
+                .rounded_md()
+                .border_1()
+                .border_color(self.tool_card_border_color(cx))
+                .bg(self.tool_card_header_bg(cx))
+                .child(SpinnerLabel::new().size(LabelSize::Small))
+                .child(Label::new("Loading Subagent…").size(LabelSize::Small))
+                .into_any_element()
         };
 
-        let thread = thread_view.read(cx).thread.clone();
-
-        v_flex()
-            .mx_5()
-            .my_1p5()
-            .gap_3()
-            .child(self.render_subagent_card(entry_ix, 0, &thread, tool_call_status, window, cx))
+        v_flex().mx_5().my_1p5().gap_3().child(content)
     }
 
     fn render_subagent_card(
@@ -5758,9 +5801,8 @@ impl AcpThreadView {
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
 
-        let card_header_id =
-            SharedString::from(format!("subagent-header-{}-{}", entry_ix, context_ix));
-        let diff_stat_id = SharedString::from(format!("subagent-diff-{}-{}", entry_ix, context_ix));
+        let card_header_id = format!("subagent-header-{}-{}", entry_ix, context_ix);
+        let diff_stat_id = format!("subagent-diff-{}-{}", entry_ix, context_ix);
 
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
@@ -5798,8 +5840,8 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .group(&card_header_id)
-                    .py_1()
-                    .px_1p5()
+                    .p_1()
+                    .pl_1p5()
                     .w_full()
                     .gap_1()
                     .justify_between()
@@ -5808,11 +5850,7 @@ impl AcpThreadView {
                         h_flex()
                             .gap_1p5()
                             .child(icon)
-                            .child(
-                                Label::new(title.to_string())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Default),
-                            )
+                            .child(Label::new(title.to_string()).size(LabelSize::Small))
                             .when(files_changed > 0, |this| {
                                 this.child(
                                     h_flex()
@@ -5836,20 +5874,42 @@ impl AcpThreadView {
                     )
                     .child(
                         h_flex()
-                            .gap_1p5()
-                            .child(
-                                Button::new(
-                                    SharedString::from(format!(
-                                        "expand-subagent-{}-{}",
-                                        entry_ix, context_ix
-                                    )),
-                                    "Expand",
+                            .when(has_expandable_content, |this| {
+                                this.child(
+                                    IconButton::new(
+                                        format!("subagent-disclosure-{}-{}", entry_ix, context_ix),
+                                        if is_expanded {
+                                            IconName::ChevronUp
+                                        } else {
+                                            IconName::ChevronDown
+                                        },
+                                    )
+                                    .icon_color(Color::Muted)
+                                    .icon_size(IconSize::Small)
+                                    .disabled(!has_expandable_content)
+                                    .visible_on_hover(card_header_id.clone())
+                                    .on_click(cx.listener({
+                                        let session_id = session_id.clone();
+                                        move |this, _, _, cx| {
+                                            if this.expanded_subagents.contains(&session_id) {
+                                                this.expanded_subagents.remove(&session_id);
+                                            } else {
+                                                this.expanded_subagents.insert(session_id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    })),
                                 )
-                                .icon(IconName::ExpandVertical)
-                                .icon_position(IconPosition::Start)
+                            })
+                            .child(
+                                IconButton::new(
+                                    format!("expand-subagent-{}-{}", entry_ix, context_ix),
+                                    IconName::Maximize,
+                                )
+                                .icon_color(Color::Muted)
                                 .icon_size(IconSize::Small)
-                                .label_size(LabelSize::Small)
-                                .tooltip(Tooltip::text("Expand this subagent"))
+                                .tooltip(Tooltip::text("Expand Subagent"))
+                                .visible_on_hover(card_header_id)
                                 .on_click({
                                     let session_id = session_id.clone();
                                     cx.listener(move |this, _event, _window, cx| {
@@ -5867,19 +5927,13 @@ impl AcpThreadView {
                             )
                             .when(is_running, |buttons| {
                                 buttons.child(
-                                    Button::new(
-                                        SharedString::from(format!(
-                                            "stop-subagent-{}-{}",
-                                            entry_ix, context_ix
-                                        )),
-                                        "Stop",
+                                    IconButton::new(
+                                        format!("stop-subagent-{}-{}", entry_ix, context_ix),
+                                        IconName::Stop,
                                     )
-                                    .icon(IconName::Stop)
-                                    .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Error)
-                                    .label_size(LabelSize::Small)
-                                    .tooltip(Tooltip::text("Stop this subagent"))
+                                    .tooltip(Tooltip::text("Stop Subagent"))
                                     .on_click({
                                         let thread = thread_entity.clone();
                                         cx.listener(move |_this, _event, _window, cx| {
@@ -5889,42 +5943,7 @@ impl AcpThreadView {
                                         })
                                     }),
                                 )
-                            })
-                            .child(
-                                IconButton::new(
-                                    SharedString::from(format!(
-                                        "subagent-disclosure-{}-{}",
-                                        entry_ix, context_ix
-                                    )),
-                                    if is_expanded {
-                                        IconName::ChevronUp
-                                    } else {
-                                        IconName::ChevronDown
-                                    },
-                                )
-                                .shape(IconButtonShape::Square)
-                                .icon_color(Color::Muted)
-                                .icon_size(IconSize::Small)
-                                .disabled(!has_expandable_content)
-                                .when(has_expandable_content, |button| {
-                                    button.on_click(cx.listener({
-                                        move |this, _, _, cx| {
-                                            if this.expanded_subagents.contains(&session_id) {
-                                                this.expanded_subagents.remove(&session_id);
-                                            } else {
-                                                this.expanded_subagents.insert(session_id.clone());
-                                            }
-                                            cx.notify();
-                                        }
-                                    }))
-                                })
-                                .when(
-                                    !has_expandable_content,
-                                    |button| {
-                                        button.tooltip(Tooltip::text("Waiting for content..."))
-                                    },
-                                ),
-                            ),
+                            }),
                     ),
             )
             .when(is_expanded, |this| {
@@ -7098,6 +7117,7 @@ impl Render for AcpThreadView {
                 }
             }))
             .size_full()
+            .children(self.render_subagent_titlebar(cx))
             .child(conversation)
             .children(self.render_activity_bar(window, cx))
             .when(self.show_codex_windows_warning, |this| {
@@ -7113,7 +7133,6 @@ impl Render for AcpThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
-            .child(self.maybe_render_go_to_parent_button(cx))
             .child(self.render_message_editor(window, cx))
     }
 }

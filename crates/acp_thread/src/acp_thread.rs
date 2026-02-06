@@ -395,7 +395,8 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        self.subagent_session_id.is_some()
+        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
+            || self.subagent_session_id.is_some()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -929,6 +930,7 @@ pub struct RetryStatus {
 }
 
 pub struct AcpThread {
+    parent_session_id: Option<acp::SessionId>,
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
@@ -1144,6 +1146,7 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
+        parent_session_id: Option<acp::SessionId>,
         title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -1166,6 +1169,7 @@ impl AcpThread {
         let (user_stop_tx, _user_stop_rx) = watch::channel(false);
 
         Self {
+            parent_session_id,
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
@@ -1184,6 +1188,10 @@ impl AcpThread {
             user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             user_stop_tx,
         }
+    }
+
+    pub fn parent_session_id(&self) -> Option<&acp::SessionId> {
+        self.parent_session_id.as_ref()
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
@@ -3907,6 +3915,7 @@ mod tests {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "Test",
                     self.clone(),
                     project,

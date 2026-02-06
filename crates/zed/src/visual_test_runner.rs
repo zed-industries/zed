@@ -2072,6 +2072,7 @@ fn run_subagent_visual_tests(
         let session_id = acp::SessionId::new("subagent-1");
         cx.new(|cx| {
             let mut thread = AcpThread::new(
+                None,
                 "Exploring test-repo",
                 Rc::new(connection.clone()),
                 project.clone(),
@@ -2095,6 +2096,7 @@ fn run_subagent_visual_tests(
         let session_id = acp::SessionId::new("subagent-2");
         cx.new(|cx| {
             let mut thread = AcpThread::new(
+                None,
                 "Exploring test-worktree",
                 Rc::new(connection.clone()),
                 project.clone(),

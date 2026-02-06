@@ -558,6 +558,7 @@ impl AgentConnection for AcpConnection {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     self.server_name.clone(),
                     self.clone(),
                     project,
@@ -615,6 +616,7 @@ impl AgentConnection for AcpConnection {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
+                None,
                 self.server_name.clone(),
                 self.clone(),
                 project,
@@ -688,6 +690,7 @@ impl AgentConnection for AcpConnection {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
+                None,
                 self.server_name.clone(),
                 self.clone(),
                 project,

@@ -606,6 +606,7 @@ mod test_support {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "Test",
                     self.clone(),
                     project,

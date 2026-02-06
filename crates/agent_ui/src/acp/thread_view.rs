@@ -51,9 +51,9 @@ use text::{Anchor, ToPoint as _};
 use theme::AgentFontSize;
 use ui::{
     Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton, DecoratedIcon,
-    DiffStat, Disclosure, Divider, DividerColor, IconButtonShape, IconDecoration,
-    IconDecorationKind, KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor,
-    Tooltip, WithScrollbar, prelude::*, right_click_menu,
+    DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    right_click_menu,
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
@@ -180,6 +180,23 @@ impl AcpServerView {
     pub fn as_active_thread(&self) -> Option<Entity<AcpThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => Some(connected.current.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn parent_thread(&self, cx: &App) -> Option<Entity<AcpThreadView>> {
+        match &self.server_state {
+            ServerState::Connected(connected) => {
+                let mut current = connected.current.clone();
+                while let Some(parent_id) = current.read(cx).parent_id.clone() {
+                    if let Some(parent) = connected.threads.get(&parent_id) {
+                        current = parent.clone();
+                    } else {
+                        break;
+                    }
+                }
+                Some(current)
+            }
             _ => None,
         }
     }
@@ -713,6 +730,8 @@ impl AcpServerView {
             .agent_display_name(&ExternalAgentServerName(agent_name.clone()))
             .unwrap_or_else(|| agent_name.clone());
 
+        let agent_icon = self.agent.logo();
+
         let weak = cx.weak_entity();
         cx.new(|cx| {
             AcpThreadView::new(
@@ -720,6 +739,7 @@ impl AcpServerView {
                 thread,
                 self.login.clone(),
                 weak,
+                agent_icon,
                 agent_name,
                 agent_display_name,
                 self.workspace.clone(),
@@ -3014,6 +3034,7 @@ pub(crate) mod tests {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "ResumeOnlyAgentConnection",
                     self.clone(),
                     project,
@@ -3045,6 +3066,7 @@ pub(crate) mod tests {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "ResumeOnlyAgentConnection",
                     self.clone(),
                     project,
@@ -3107,6 +3129,7 @@ pub(crate) mod tests {
             Task::ready(Ok(cx.new(|cx| {
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
+                    None,
                     "SaboteurAgentConnection",
                     self,
                     project,
@@ -3171,6 +3194,7 @@ pub(crate) mod tests {
             Task::ready(Ok(cx.new(|cx| {
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
+                    None,
                     "RefusalAgentConnection",
                     self,
                     project,
