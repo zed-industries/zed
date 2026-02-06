@@ -45,7 +45,7 @@ use workspace::{
     },
 };
 
-pub use registrar::DivRegistrar;
+pub use registrar::{DivRegistrar, register_pane_search_actions};
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;

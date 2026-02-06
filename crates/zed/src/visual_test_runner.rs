@@ -186,6 +186,15 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         terminal_view::init(cx);
         image_viewer::init(cx);
         search::init(cx);
+        cx.set_global(workspace::PaneSearchBarCallbacks {
+            setup_search_bar: |languages, toolbar, window, cx| {
+                let search_bar = cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                toolbar.update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar, window, cx);
+                });
+            },
+            wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
+        });
         prompt_store::init(cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
