@@ -4,7 +4,8 @@ use gpui::{Focusable, ReadGlobal, ScrollHandle, TextStyleRefinement, point, prel
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{Banner, ContextMenu, Divider, PopoverMenu, Tooltip, prelude::*};
+use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
+use util::ResultExt as _;
 use util::shell::ShellKind;
 
 use crate::{SettingsWindow, components::SettingsInputField};
@@ -265,7 +266,7 @@ fn get_tool_render_fn(
 /// Renders an individual tool's permission configuration page
 pub(crate) fn render_tool_config_page(
     tool: &ToolInfo,
-    _settings_window: &SettingsWindow,
+    settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
@@ -313,6 +314,24 @@ pub(crate) fn render_tool_config_page(
             this.child(render_hardcoded_security_banner(cx))
         })
         .child(render_verification_section(tool.id, window, cx))
+        .when_some(
+            settings_window.regex_validation_error.clone(),
+            |this, error| {
+                this.child(
+                    Banner::new()
+                        .severity(Severity::Warning)
+                        .child(Label::new(error).size(LabelSize::Small))
+                        .action_slot(
+                            Button::new("dismiss-regex-error", "Dismiss")
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.regex_validation_error = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            },
+        )
         .child(
             v_flex()
                 .mt_6()
@@ -883,6 +902,7 @@ fn render_user_pattern_row(
     let tool_id_for_update = tool_id.to_string();
     let input_id = format!("{}-{:?}-pattern-{}", tool_id, rule_type, index);
     let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
+    let settings_window = cx.entity().downgrade();
 
     SettingsInputField::new()
         .with_id(input_id)
@@ -907,9 +927,22 @@ fn render_user_pattern_row(
                         &tool_id_for_update,
                         rule_type,
                         &pattern_for_update,
-                        new_pattern,
+                        new_pattern.clone(),
                         cx,
                     );
+
+                    let validation_error = match regex::Regex::new(&new_pattern) {
+                        Err(err) => Some(format!(
+                            "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
+                        )),
+                        Ok(_) => None,
+                    };
+                    settings_window
+                        .update(cx, |this, cx| {
+                            this.regex_validation_error = validation_error;
+                            cx.notify();
+                        })
+                        .log_err();
                 }
             }
         })
@@ -919,10 +952,11 @@ fn render_user_pattern_row(
 fn render_add_pattern_input(
     tool_id: &'static str,
     rule_type: ToolPermissionMode,
-    _cx: &mut Context<SettingsWindow>,
+    cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let tool_id_owned = tool_id.to_string();
     let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
+    let settings_window = cx.entity().downgrade();
 
     SettingsInputField::new()
         .with_id(input_id)
@@ -934,8 +968,22 @@ fn render_add_pattern_input(
         .clear_on_confirm()
         .on_confirm(move |pattern, _window, cx| {
             if let Some(pattern) = pattern {
-                if !pattern.trim().is_empty() {
-                    save_pattern(&tool_id_owned, rule_type, pattern.trim().to_string(), cx);
+                let trimmed = pattern.trim().to_string();
+                if !trimmed.is_empty() {
+                    save_pattern(&tool_id_owned, rule_type, trimmed.clone(), cx);
+
+                    let validation_error = match regex::Regex::new(&trimmed) {
+                        Err(err) => Some(format!(
+                            "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
+                        )),
+                        Ok(_) => None,
+                    };
+                    settings_window
+                        .update(cx, |this, cx| {
+                            this.regex_validation_error = validation_error;
+                            cx.notify();
+                        })
+                        .log_err();
                 }
             }
         })

@@ -15231,6 +15231,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "regex",
  "release_channel",
  "schemars",
  "search",

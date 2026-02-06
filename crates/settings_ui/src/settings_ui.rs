@@ -743,6 +743,7 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    pub(crate) regex_validation_error: Option<String>,
 }
 
 struct SearchIndex {
@@ -1660,6 +1661,7 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            regex_validation_error: None,
             list_state,
         };
 
@@ -4349,6 +4351,7 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
+                regex_validation_error: None,
             }
         }
     }
@@ -4473,6 +4476,7 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            regex_validation_error: None,
         };
 
         settings_window.build_filter_table();
