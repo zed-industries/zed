@@ -1424,8 +1424,9 @@ impl acp::Client for ClientDelegate {
             component.as_os_str() == <_ as AsRef<std::ffi::OsStr>>::as_ref(&local_settings_folder)
         }) {
             return Err(anyhow!(
-                "File write to '{}' targets a local settings directory (.zed/). \
-                 Use request_permission to prompt the user first.",
+                "File write to '{}' is not allowed because it targets a local settings \
+                 directory (.zed/). This path is protected and cannot be written via \
+                 write_text_file. Inform the user that this file must be edited manually.",
                 path_str
             )
             .into());
@@ -1437,8 +1438,9 @@ impl acp::Client for ClientDelegate {
         if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
             if canonical_parent.starts_with(paths::config_dir()) {
                 return Err(anyhow!(
-                    "File write to '{}' targets the global config directory. \
-                     This path is protected and cannot be written via write_text_file.",
+                    "File write to '{}' is not allowed because it targets the global config \
+                     directory. This path is protected and cannot be written via write_text_file. \
+                     Inform the user that this file must be edited manually.",
                     path_str
                 )
                 .into());
