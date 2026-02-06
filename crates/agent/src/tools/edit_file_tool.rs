@@ -161,72 +161,118 @@ impl EditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let path_str = input.path.to_string_lossy();
-        let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
+        authorize_file_edit(
+            &input.path,
+            &input.display_description,
+            &self.thread,
+            event_stream,
+            cx,
+        )
+    }
+}
 
-        match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {}
+enum SensitiveSettingsKind {
+    Local,
+    Global,
+}
+
+/// Returns the kind of sensitive settings location this path targets, if any:
+/// either inside a `.zed/` local-settings directory or inside the global config dir.
+fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
+    let local_settings_folder = paths::local_settings_folder_name();
+    if path.components().any(|component| {
+        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+    }) {
+        return Some(SensitiveSettingsKind::Local);
+    }
+
+    // Try canonicalizing the file itself first, then fall back to the parent
+    // directory so that new files being created inside the config directory
+    // are still detected.
+    let canonical_result = std::fs::canonicalize(path).or_else(|_| {
+        path.parent()
+            .map(std::fs::canonicalize)
+            .unwrap_or(Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no parent",
+            )))
+    });
+    if let Ok(canonical_path) = canonical_result {
+        let config_dir = std::fs::canonicalize(paths::config_dir())
+            .unwrap_or_else(|_| paths::config_dir().to_path_buf());
+        if canonical_path.starts_with(&config_dir) {
+            return Some(SensitiveSettingsKind::Global);
         }
+    }
 
-        // If any path component matches the local settings folder, then this could affect
-        // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_name();
-        let path = Path::new(&input.path);
-        if path.components().any(|component| {
-            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
-        }) {
+    None
+}
+
+pub fn is_sensitive_settings_path(path: &Path) -> bool {
+    sensitive_settings_kind(path).is_some()
+}
+
+pub fn authorize_file_edit(
+    path: &Path,
+    display_description: &str,
+    thread: &WeakEntity<Thread>,
+    event_stream: &ToolCallEventStream,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let path_str = path.to_string_lossy();
+    let settings = agent_settings::AgentSettings::get_global(cx);
+    let decision = decide_permission_for_path(EditFileTool::NAME, &path_str, settings);
+
+    if let ToolPermissionDecision::Deny(reason) = decision {
+        return Task::ready(Err(anyhow!("{}", reason)));
+    }
+
+    let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
+
+    match sensitive_settings_kind(path) {
+        Some(SensitiveSettingsKind::Local) => {
             let context = crate::ToolPermissionContext {
-                tool_name: Self::NAME.to_string(),
+                tool_name: EditFileTool::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
-                format!("{} (local settings)", input.display_description),
+                format!("{} (local settings)", display_description),
                 context,
                 cx,
             );
         }
-
-        // It's also possible that the global config dir is configured to be inside the project,
-        // so check for that edge case too.
-        // TODO this is broken when remoting
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
-            && canonical_path.starts_with(paths::config_dir())
-        {
+        Some(SensitiveSettingsKind::Global) => {
             let context = crate::ToolPermissionContext {
-                tool_name: Self::NAME.to_string(),
+                tool_name: EditFileTool::NAME.to_string(),
                 input_value: path_str.to_string(),
             };
             return event_stream.authorize(
-                format!("{} (global settings)", input.display_description),
+                format!("{} (settings)", display_description),
                 context,
                 cx,
             );
         }
+        None => {}
+    }
 
-        // Check if path is inside the global config directory
-        // First check if it's already inside project - if not, try to canonicalize
-        let Ok(project_path) = self.thread.read_with(cx, |thread, cx| {
-            thread.project().read(cx).find_project_path(&input.path, cx)
-        }) else {
-            return Task::ready(Err(anyhow!("thread was dropped")));
+    if explicitly_allowed {
+        return Task::ready(Ok(()));
+    }
+
+    let Ok(project_path) = thread.read_with(cx, |thread, cx| {
+        thread.project().read(cx).find_project_path(path, cx)
+    }) else {
+        return Task::ready(Err(anyhow!("thread was dropped")));
+    };
+
+    if project_path.is_some() {
+        Task::ready(Ok(()))
+    } else {
+        let context = crate::ToolPermissionContext {
+            tool_name: EditFileTool::NAME.to_string(),
+            input_value: path_str.to_string(),
         };
-
-        // If the path is inside the project, and it's not one of the above edge cases,
-        // then no confirmation is necessary. Otherwise, confirmation is necessary.
-        if project_path.is_some() {
-            Task::ready(Ok(()))
-        } else {
-            let context = crate::ToolPermissionContext {
-                tool_name: Self::NAME.to_string(),
-                input_value: path_str.to_string(),
-            };
-            event_stream.authorize(&input.display_description, context, cx)
-        }
+        event_stream.authorize(display_description, context, cx)
     }
 }
 

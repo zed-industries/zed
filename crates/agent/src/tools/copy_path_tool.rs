@@ -1,3 +1,4 @@
+use super::edit_file_tool::is_sensitive_settings_path;
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
@@ -8,6 +9,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -93,7 +95,11 @@ impl AgentTool for CopyPathTool {
         }
 
         let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
-            || matches!(dest_decision, ToolPermissionDecision::Confirm);
+            || matches!(dest_decision, ToolPermissionDecision::Confirm)
+            || (matches!(source_decision, ToolPermissionDecision::Allow)
+                && is_sensitive_settings_path(Path::new(&input.source_path)))
+            || (matches!(dest_decision, ToolPermissionDecision::Allow)
+                && is_sensitive_settings_path(Path::new(&input.destination_path)));
 
         let authorize = if needs_confirmation {
             let src = MarkdownInlineCode(&input.source_path);

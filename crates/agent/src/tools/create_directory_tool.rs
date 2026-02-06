@@ -1,3 +1,4 @@
+use super::edit_file_tool::is_sensitive_settings_path;
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -7,6 +8,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -69,7 +71,13 @@ impl AgentTool for CreateDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_for_path(Self::NAME, &input.path, settings);
+        let mut decision = decide_permission_for_path(Self::NAME, &input.path, settings);
+
+        if matches!(decision, ToolPermissionDecision::Allow)
+            && is_sensitive_settings_path(Path::new(&input.path))
+        {
+            decision = ToolPermissionDecision::Confirm;
+        }
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
