@@ -131,10 +131,7 @@ pub fn state_dir() -> &'static PathBuf {
     static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
     STATE_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            return home_dir()
-                .join(".local")
-                .join("state")
-                .join("Zed");
+            return home_dir().join(".local").join("state").join("Zed");
         }
 
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
