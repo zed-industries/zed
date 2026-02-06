@@ -132,7 +132,7 @@ impl AgentTool for SaveFileTool {
 
             let mut buffers_to_save: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
-            let mut saved_paths: Vec<PathBuf> = Vec::new();
+            let mut dirty_count: usize = 0;
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
@@ -168,7 +168,7 @@ impl AgentTool for SaveFileTool {
 
                 if is_dirty {
                     buffers_to_save.insert(buffer);
-                    saved_paths.push(path);
+                    dirty_count += 1;
                 } else {
                     clean_paths.push(path);
                 }
@@ -200,7 +200,10 @@ impl AgentTool for SaveFileTool {
 
             let mut lines: Vec<String> = Vec::new();
 
-            let successful_saves = saved_paths.len().saturating_sub(save_errors.len());
+            // `saturating_sub` because `save_errors` tracks failures from the
+            // save loop — subtracting gives the number of dirty buffers that
+            // were saved without error.
+            let successful_saves = dirty_count.saturating_sub(save_errors.len());
             if successful_saves > 0 {
                 lines.push(format!("Saved {} file(s).", successful_saves));
             }
