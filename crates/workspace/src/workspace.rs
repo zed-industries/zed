@@ -24,8 +24,9 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    DraggedSidebar, MultiWorkspace, NewWorkspaceInWindow, NextWorkspaceInWindow,
-    PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle, ToggleWorkspaceSidebar,
+    AgentThreadInfo, AgentThreadStatus, DraggedSidebar, MultiWorkspace, NewWorkspaceInWindow,
+    NextWorkspaceInWindow, PreviousWorkspaceInWindow, Sidebar, SidebarEvent, SidebarHandle,
+    ToggleWorkspaceSidebar,
 };
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};

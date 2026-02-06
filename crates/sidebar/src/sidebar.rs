@@ -11,12 +11,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{Divider, HighlightedLabel, ListItem, Tab, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Divider, HighlightedLabel, ListItem, Tab, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    CloseIntent, MultiWorkspace, NewWorkspaceInWindow, OpenOptions, OpenVisible,
-    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    AgentThreadInfo, AgentThreadStatus, CloseIntent, MultiWorkspace, NewWorkspaceInWindow,
+    OpenOptions, OpenVisible, Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar,
+    Workspace,
 };
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
@@ -29,10 +30,16 @@ struct WorkspaceThreadEntry {
     index: usize,
     worktree_label: SharedString,
     full_path: SharedString,
+    thread_info: Option<AgentThreadInfo>,
 }
 
 impl WorkspaceThreadEntry {
-    fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
+    fn new(
+        index: usize,
+        workspace: &Entity<Workspace>,
+        thread_info: Option<AgentThreadInfo>,
+        cx: &App,
+    ) -> Self {
         let workspace_ref = workspace.read(cx);
 
         let worktrees: Vec<_> = workspace_ref
@@ -65,6 +72,7 @@ impl WorkspaceThreadEntry {
             index,
             worktree_label,
             full_path,
+            thread_info,
         }
     }
 }
@@ -270,11 +278,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
 
     fn set_selected_index(
         &mut self,
-        index: usize,
+        ix: usize,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) {
-        self.selected_index = index;
+        self.selected_index = ix;
     }
 
     fn can_select(
@@ -307,13 +315,12 @@ impl PickerDelegate for WorkspacePickerDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let query = query.trim().to_string();
         self.query = query.clone();
-
         let entries = self.entries.clone();
+
         if query.is_empty() {
             self.matches = entries
                 .into_iter()
@@ -334,11 +341,9 @@ impl PickerDelegate for WorkspacePickerDelegate {
         }
 
         let executor = cx.background_executor().clone();
-
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |picker, cx| {
             let matches = cx
                 .background_spawn(async move {
-                    // Only build fuzzy candidates from data entries, skipping separators
                     let data_entries: Vec<(usize, &SidebarEntry)> = entries
                         .iter()
                         .enumerate()
@@ -402,15 +407,22 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 })
                 .await;
 
-            this.update(cx, |this, _cx| {
-                let first_selectable = matches
-                    .iter()
-                    .position(|m| !matches!(m.entry, SidebarEntry::Separator(_)))
-                    .unwrap_or(0);
-                this.delegate.matches = matches;
-                this.delegate.selected_index = first_selectable;
-            })
-            .log_err();
+            picker
+                .update_in(cx, |picker, _window, _cx| {
+                    picker.delegate.matches = matches;
+                    if picker.delegate.matches.is_empty() {
+                        picker.delegate.selected_index = 0;
+                    } else {
+                        let first_selectable = picker
+                            .delegate
+                            .matches
+                            .iter()
+                            .position(|m| !matches!(m.entry, SidebarEntry::Separator(_)))
+                            .unwrap_or(0);
+                        picker.delegate.selected_index = first_selectable;
+                    }
+                })
+                .log_err();
         })
     }
 
@@ -461,6 +473,30 @@ impl PickerDelegate for WorkspacePickerDelegate {
             }
         }
 
+        fn render_thread_status_icon(
+            workspace_index: usize,
+            status: &AgentThreadStatus,
+        ) -> AnyElement {
+            match status {
+                AgentThreadStatus::Running => Icon::new(IconName::LoadCircle)
+                    .size(IconSize::XSmall)
+                    .color(Color::Accent)
+                    .with_keyed_rotate_animation(
+                        SharedString::from(format!("workspace-{}-spinner", workspace_index)),
+                        3,
+                    )
+                    .into_any_element(),
+                AgentThreadStatus::Completed => Icon::new(IconName::Check)
+                    .size(IconSize::XSmall)
+                    .color(Color::Accent)
+                    .into_any_element(),
+                AgentThreadStatus::Errored => Icon::new(IconName::XCircle)
+                    .size(IconSize::XSmall)
+                    .color(Color::Error)
+                    .into_any_element(),
+            }
+        }
+
         match entry {
             SidebarEntry::Separator(title) => Some(
                 div()
@@ -481,16 +517,70 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 let worktree_label = thread_entry.worktree_label.clone();
                 let full_path = thread_entry.full_path.clone();
                 let title = render_title(worktree_label.clone(), positions);
+                let thread_info = thread_entry.thread_info.clone();
+                let workspace_index = thread_entry.index;
+                let multi_workspace = self.multi_workspace.clone();
+                let workspace_count = self.multi_workspace.read(_cx).workspaces().len();
+
+                let close_button = if workspace_count > 1 {
+                    Some(
+                        IconButton::new(
+                            SharedString::from(format!("close-workspace-{}", workspace_index)),
+                            IconName::Close,
+                        )
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Close Workspace"))
+                        .on_click({
+                            let multi_workspace = multi_workspace.clone();
+                            move |_, window, cx| {
+                                multi_workspace.update(cx, |mw, cx| {
+                                    mw.remove_workspace(workspace_index, window, cx);
+                                });
+                            }
+                        }),
+                    )
+                } else {
+                    None
+                };
 
                 Some(
                     ListItem::new(("workspace-item", thread_entry.index))
                         .toggle_state(selected)
-                        .start_slot(
-                            Icon::new(IconName::Folder)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
+                        .when_some(close_button, |item, button| item.end_hover_slot(button))
+                        .child(
+                            h_flex()
+                                .items_start()
+                                .gap(DynamicSpacing::Base06.rems(&*_cx))
+                                .child(
+                                    div().pt(px(4.0)).child(
+                                        Icon::new(IconName::Folder)
+                                            .color(Color::Muted)
+                                            .size(IconSize::XSmall),
+                                    ),
+                                )
+                                .child(v_flex().overflow_hidden().child(title).when_some(
+                                    thread_info,
+                                    |this, info| {
+                                        this.child(
+                                            h_flex()
+                                                .gap_1()
+                                                .items_center()
+                                                .px_0p5()
+                                                .child(render_thread_status_icon(
+                                                    workspace_index,
+                                                    &info.status,
+                                                ))
+                                                .child(
+                                                    Label::new(info.title)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .truncate(),
+                                                ),
+                                        )
+                                    },
+                                )),
                         )
-                        .child(title)
                         .when(!full_path.is_empty(), |item| {
                             item.tooltip(move |_, cx| {
                                 Tooltip::with_meta(
@@ -656,7 +746,10 @@ impl Sidebar {
             .workspaces()
             .iter()
             .enumerate()
-            .map(|(index, workspace)| WorkspaceThreadEntry::new(index, workspace, cx))
+            .map(|(index, workspace)| {
+                let thread_info = multi_workspace.workspace_thread_info(index).cloned();
+                WorkspaceThreadEntry::new(index, workspace, thread_info, cx)
+            })
             .collect();
         (entries, multi_workspace.active_workspace_index())
     }

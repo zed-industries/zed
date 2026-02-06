@@ -71,7 +71,9 @@ use {
     },
     util::ResultExt as _,
     watch,
-    workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
+    workspace::{
+        AgentThreadInfo, AgentThreadStatus, AppState, MultiWorkspace, Workspace, WorkspaceId,
+    },
     zed_actions::OpenSettingsAt,
 };
 
@@ -2992,14 +2994,27 @@ fn run_multi_workspace_sidebar_visual_tests(
         });
     });
 
-    // Notify MultiWorkspace so the sidebar's observer fires queue_refresh,
-    // which will rebuild entries (including the recent projects we just set)
-    // in a deferred callback outside the MultiWorkspace update context.
+    // Set thread info on MultiWorkspace (the sidebar reads it from there during refresh)
     multi_workspace_window
-        .update(cx, |_multi_workspace, _window, cx| {
-            cx.notify();
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.set_workspace_thread_info(
+                0,
+                Some(AgentThreadInfo {
+                    title: "Refine thread view scrolling behavior".into(),
+                    status: AgentThreadStatus::Completed,
+                }),
+                cx,
+            );
+            multi_workspace.set_workspace_thread_info(
+                1,
+                Some(AgentThreadInfo {
+                    title: "Add line numbers option to FileEditBlock".into(),
+                    status: AgentThreadStatus::Running,
+                }),
+                cx,
+            );
         })
-        .context("Failed to notify multi workspace")?;
+        .context("Failed to set thread info")?;
 
     cx.run_until_parked();
 
