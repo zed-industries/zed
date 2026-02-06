@@ -198,14 +198,11 @@ impl ToolPermissionDecision {
     /// # Shell Compatibility (Terminal Tool Only)
     ///
     /// For the terminal tool, commands are parsed to extract sub-commands for security.
-    /// This parsing only works for shells with POSIX-like `&&` / `||` / `;` / `|` syntax:
-    ///
-    /// **Compatible shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
-    /// Cmd, Xonsh, Csh, Tcsh
-    ///
-    /// **Incompatible shells:** Nushell, Elvish, Rc (Plan 9)
-    ///
-    /// For incompatible shells, `always_allow` patterns are disabled for safety.
+    /// All currently supported `ShellKind` variants are treated as compatible because
+    /// brush-parser can handle their command chaining syntax. If a new `ShellKind`
+    /// variant is added that brush-parser cannot safely parse, it should be excluded
+    /// from `ShellKind::supports_posix_chaining()`, which will cause `always_allow`
+    /// patterns to be disabled for that shell.
     ///
     /// # Pattern Matching Tips
     ///
