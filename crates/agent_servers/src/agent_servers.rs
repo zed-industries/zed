@@ -3,6 +3,7 @@ mod claude;
 mod codex;
 mod custom;
 mod gemini;
+mod shell_parser;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;

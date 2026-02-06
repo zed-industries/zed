@@ -25,6 +25,7 @@ agent_settings.workspace = true
 feature_flags.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+brush-parser.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true

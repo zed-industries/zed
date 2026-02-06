@@ -272,6 +272,7 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "async-trait",
+ "brush-parser",
  "chrono",
  "client",
  "collections",
