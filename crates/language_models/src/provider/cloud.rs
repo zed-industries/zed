@@ -747,13 +747,14 @@ impl LanguageModel for CloudLanguageModel {
         } else {
             thinking_allowed && self.model.id.0.ends_with("-thinking")
         };
-        let effort = request
-            .thinking_effort
-            .as_ref()
-            .and_then(|effort| anthropic::Effort::from_str(effort).ok());
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| anthropic::Effort::from_str(effort).ok());
+
                 let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
@@ -811,8 +812,12 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok());
 
-                let request = into_open_ai_response(
+                let mut request = into_open_ai_response(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -820,6 +825,11 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                     None,
                 );
+
+                if enable_thinking && let Some(effort) = effort {
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                }
+
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
