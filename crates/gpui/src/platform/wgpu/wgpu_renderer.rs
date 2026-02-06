@@ -113,6 +113,8 @@ pub struct WgpuRenderer {
     rendering_params: RenderingParameters,
     dual_source_blending: bool,
     adapter_info: wgpu::AdapterInfo,
+    transparent_alpha_mode: wgpu::CompositeAlphaMode,
+    opaque_alpha_mode: wgpu::CompositeAlphaMode,
 }
 
 impl WgpuRenderer {
@@ -163,15 +165,29 @@ impl WgpuRenderer {
             .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()).copied())
             .unwrap_or(surface_caps.formats[0]);
 
+        let pick_alpha_mode =
+            |preferences: &[wgpu::CompositeAlphaMode]| -> wgpu::CompositeAlphaMode {
+                preferences
+                    .iter()
+                    .find(|p| surface_caps.alpha_modes.contains(p))
+                    .copied()
+                    .unwrap_or(surface_caps.alpha_modes[0])
+            };
+
+        let transparent_alpha_mode = pick_alpha_mode(&[
+            wgpu::CompositeAlphaMode::PreMultiplied,
+            wgpu::CompositeAlphaMode::Inherit,
+        ]);
+
+        let opaque_alpha_mode = pick_alpha_mode(&[
+            wgpu::CompositeAlphaMode::Opaque,
+            wgpu::CompositeAlphaMode::Inherit,
+        ]);
+
         let alpha_mode = if config.transparent {
-            surface_caps
-                .alpha_modes
-                .iter()
-                .find(|m| **m == wgpu::CompositeAlphaMode::PreMultiplied)
-                .copied()
-                .unwrap_or(surface_caps.alpha_modes[0])
+            transparent_alpha_mode
         } else {
-            wgpu::CompositeAlphaMode::Opaque
+            opaque_alpha_mode
         };
 
         let surface_config = wgpu::SurfaceConfiguration {
@@ -312,6 +328,8 @@ impl WgpuRenderer {
             rendering_params,
             dual_source_blending,
             adapter_info,
+            transparent_alpha_mode,
+            opaque_alpha_mode,
         })
     }
 
@@ -756,9 +774,9 @@ impl WgpuRenderer {
 
     pub fn update_transparency(&mut self, transparent: bool) {
         let new_alpha_mode = if transparent {
-            wgpu::CompositeAlphaMode::PreMultiplied
+            self.transparent_alpha_mode
         } else {
-            wgpu::CompositeAlphaMode::Opaque
+            self.opaque_alpha_mode
         };
 
         if new_alpha_mode != self.surface_config.alpha_mode {
