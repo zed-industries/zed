@@ -24,22 +24,22 @@ pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock
     HardcodedSecurityRules {
         terminal_deny: vec![
             // Recursive deletion of root - "rm -rf /", "rm -rfv /", "rm -rf /*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}/\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?/\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
             // Recursive deletion of home - "rm -rf ~" or "rm -rf ~/" or "rm -rf ~/*" (but not ~/subdir)
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}~/?\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?~/?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
             // Recursive deletion of home via $HOME - "rm -rf $HOME" or "rm -rf ${HOME}" or with /*
             CompiledRegex::new(
-                &format!(r"\brm\s+{FLAGS}(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
+                &format!(r"\brm\s+{FLAGS}(--\s+)?(\$HOME|\$\{{HOME\}})/?(\*)?\s*$"),
                 false,
             )
             .expect("hardcoded regex should compile"),
             // Recursive deletion of current directory - "rm -rf ." or "rm -rf ./" or "rm -rf ./*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\./?\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
             // Recursive deletion of parent directory - "rm -rf .." or "rm -rf ../" or "rm -rf ../*"
-            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}\.\./?\*?\s*$"), false)
+            CompiledRegex::new(&format!(r"\brm\s+{FLAGS}(--\s+)?\.\./?\*?\s*$"), false)
                 .expect("hardcoded regex should compile"),
         ],
     }
@@ -1200,6 +1200,9 @@ mod tests {
         // Glob wildcards
         t("rm -rf /*").is_deny();
         t("rm -rf /* ").is_deny();
+        // End-of-options marker
+        t("rm -rf -- /").is_deny();
+        t("rm -- /").is_deny();
     }
 
     #[test]
@@ -1228,6 +1231,10 @@ mod tests {
         t("rm -rf ~/*").is_deny();
         t("rm -rf $HOME/*").is_deny();
         t("rm -rf ${HOME}/*").is_deny();
+        // End-of-options marker
+        t("rm -rf -- ~").is_deny();
+        t("rm -rf -- ~/").is_deny();
+        t("rm -rf -- $HOME").is_deny();
     }
 
     #[test]
@@ -1252,6 +1259,9 @@ mod tests {
         // Glob wildcards
         t("rm -rf ./*").is_deny();
         t("rm -rf ../*").is_deny();
+        // End-of-options marker
+        t("rm -rf -- .").is_deny();
+        t("rm -rf -- ../").is_deny();
     }
 
     #[test]
