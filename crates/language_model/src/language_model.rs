@@ -644,6 +644,10 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    fn request_multiplier(&self) -> Option<f64> {
+        None
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

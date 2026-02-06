@@ -329,6 +329,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 let is_default = default_model.as_ref() == Some(&model_info.id);
 
                 let is_favorite = *is_favorite;
+                let multiplier = model_info.multiplier;
                 let handle_action_click = {
                     let model_id = model_info.id.clone();
                     let fs = self.fs.clone();
@@ -368,6 +369,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .is_favorite(is_favorite)
+                                .multiplier(multiplier)
                                 .on_toggle_favorite(handle_action_click),
                         )
                         .into_any_element(),
@@ -552,11 +554,52 @@ mod tests {
                             name: model.to_string().into(),
                             description: None,
                             icon: None,
+                            multiplier: None,
                         })
                         .collect::<Vec<_>>(),
                 )
             },
         )))
+    }
+
+    #[test]
+    fn test_model_multiplier_propagation() {
+        let models = AgentModelList::Grouped(IndexMap::from_iter([(
+            acp_thread::AgentModelGroupName("Group".into()),
+            vec![
+                acp_thread::AgentModelInfo {
+                    id: acp::ModelId::new("model-with-multiplier".to_string()),
+                    name: "Model With Multiplier".into(),
+                    description: None,
+                    icon: None,
+                    multiplier: Some(1.5),
+                },
+                acp_thread::AgentModelInfo {
+                    id: acp::ModelId::new("model-without-multiplier".to_string()),
+                    name: "Model Without Multiplier".into(),
+                    description: None,
+                    icon: None,
+                    multiplier: None,
+                },
+            ],
+        )]));
+
+        let entries = info_list_to_picker_entries(models, &HashSet::default());
+
+        let model_entries: Vec<&acp_thread::AgentModelInfo> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                AcpModelPickerEntry::Model(model, _) => Some(model),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(model_entries.len(), 2);
+        assert_eq!(model_entries[0].id.0, "model-with-multiplier".into());
+        assert_eq!(model_entries[0].multiplier, Some(1.5));
+
+        assert_eq!(model_entries[1].id.0, "model-without-multiplier".into());
+        assert_eq!(model_entries[1].multiplier, None);
     }
 
     fn assert_models_eq(result: AgentModelList, expected: Vec<(&str, Vec<&str>)>) {
@@ -774,12 +817,14 @@ mod tests {
                 name: "Claude".into(),
                 description: None,
                 icon: None,
+                multiplier: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("zed/gemini".to_string()),
                 name: "Gemini".into(),
                 description: None,
                 icon: None,
+                multiplier: None,
             },
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
@@ -820,12 +865,14 @@ mod tests {
                 name: "Favorite".into(),
                 description: None,
                 icon: None,
+                multiplier: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("regular-model".to_string()),
                 name: "Regular".into(),
                 description: None,
                 icon: None,
+                multiplier: None,
             },
         ]);
         let favorites = create_favorites(vec!["favorite-model"]);

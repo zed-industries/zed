@@ -27,7 +27,9 @@ use language_model::{
     MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use settings::SettingsStore;
+use ui::ConfiguredApiCard;
 use ui::prelude::*;
+use ui_input::InputField;
 use util::debug_panic;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
@@ -175,21 +177,23 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     fn configuration_view(
         &self,
         _target_agent: language_model::ConfigurationViewTargetAgent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|cx| {
-            copilot_ui::ConfigurationView::new(
-                |cx| {
-                    CopilotChat::global(cx)
-                        .map(|m| m.read(cx).is_authenticated())
-                        .unwrap_or(false)
-                },
-                copilot_ui::ConfigurationMode::Chat,
-                cx,
-            )
-        })
-        .into()
+        let api_key_input = InputField::new(window, cx, "Enter API Key for user stats")
+            .label("Copilot User Stats API Key");
+
+        let initial_api_key = CopilotChat::global(cx)
+            .and_then(|chat| chat.read(cx).stats_api_key().map(|s| s.to_owned()));
+
+        if let Some(key) = initial_api_key {
+            api_key_input.set_text(&key, window, cx);
+        }
+
+        let api_key_view = cx.new(|_| api_key_input);
+
+        cx.new(|cx| CopilotChatConfigurationView::new(api_key_view, cx))
+            .into()
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -273,6 +277,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
+    }
+
+    fn request_multiplier(&self) -> Option<f64> {
+        Some(self.model.request_multiplier())
     }
 
     fn count_tokens(
@@ -1110,6 +1118,93 @@ fn into_copilot_responses(
         include: Some(vec![
             copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
         ]),
+    }
+}
+
+struct CopilotChatConfigurationView {
+    base: Entity<copilot_ui::ConfigurationView>,
+    api_key_input: Entity<InputField>,
+    _copilot_subscription: Option<Subscription>,
+}
+
+impl CopilotChatConfigurationView {
+    fn new(api_key_input: Entity<InputField>, cx: &mut Context<Self>) -> Self {
+        let base = cx.new(|cx| {
+            copilot_ui::ConfigurationView::new(
+                |cx| {
+                    CopilotChat::global(cx)
+                        .map(|m| m.read(cx).is_authenticated())
+                        .unwrap_or(false)
+                },
+                copilot_ui::ConfigurationMode::Chat,
+                cx,
+            )
+        });
+
+        let copilot_subscription =
+            CopilotChat::global(cx).map(|chat| cx.observe(&chat, |_, _, cx| cx.notify()));
+
+        Self {
+            base,
+            api_key_input,
+            _copilot_subscription: copilot_subscription,
+        }
+    }
+
+    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let api_key = self.api_key_input.read(cx).text(cx);
+        if let Some(chat) = CopilotChat::global(cx) {
+            chat.update(cx, |chat, cx| {
+                let key = if api_key.is_empty() {
+                    None
+                } else {
+                    Some(api_key)
+                };
+                chat.set_stats_api_key(key, cx).detach();
+            });
+            copilot_ui::show_toast(window, cx, "Copilot User Stats API Key saved");
+        }
+    }
+
+    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_key_input
+            .update(cx, |input, cx| input.set_text("", window, cx));
+
+        if let Some(chat) = CopilotChat::global(cx) {
+            chat.update(cx, |chat, cx| {
+                chat.set_stats_api_key(None, cx).detach();
+            });
+        }
+    }
+}
+
+impl Render for CopilotChatConfigurationView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_authenticated = CopilotChat::global(cx)
+            .map(|m| m.read(cx).is_authenticated())
+            .unwrap_or(false);
+
+        let has_api_key = CopilotChat::global(cx)
+            .and_then(|chat| chat.read(cx).stats_api_key().map(|_| ()))
+            .is_some();
+
+        v_flex()
+            .gap_3()
+            .child(self.base.clone())
+            .when(is_authenticated, |this| {
+                let api_key_section = if has_api_key {
+                    ConfiguredApiCard::new("Copilot User Stats API Key configured")
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+                        .into_any_element()
+                } else {
+                    v_flex()
+                        .gap_2()
+                        .child(self.api_key_input.clone())
+                        .on_action(cx.listener(Self::save_api_key))
+                        .into_any_element()
+                };
+                this.child(v_flex().gap_2().child(api_key_section))
+            })
     }
 }
 

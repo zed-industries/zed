@@ -34,6 +34,8 @@ paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+credentials_provider.workspace = true
+language_model.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

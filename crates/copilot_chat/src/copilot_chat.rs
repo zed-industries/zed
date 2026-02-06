@@ -3,6 +3,7 @@ pub mod responses;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
@@ -10,16 +11,19 @@ use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, prelude::*};
+use gpui::Task;
+use gpui::{App, AsyncApp, Context, Global, WeakEntity, prelude::*};
 use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use language_model::ApiKey;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
+use credentials_provider::CredentialsProvider;
 use settings::watch_config_dir;
 
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+const COPILOT_STATS_KEYCHAIN_URL: &str = "https://api.github.com/copilot_stats";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct CopilotChatConfiguration {
@@ -27,6 +31,15 @@ pub struct CopilotChatConfiguration {
 }
 
 impl CopilotChatConfiguration {
+    pub fn stats_keychain_url(&self) -> String {
+        if let Some(enterprise_uri) = &self.enterprise_uri {
+            let domain = Self::parse_domain(enterprise_uri);
+            format!("https://api.{}/copilot_stats", domain)
+        } else {
+            COPILOT_STATS_KEYCHAIN_URL.to_string()
+        }
+    }
+
     pub fn token_url(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             let domain = Self::parse_domain(enterprise_uri);
@@ -65,6 +78,15 @@ impl CopilotChatConfiguration {
             domain.split('/').next().unwrap_or(domain).to_string()
         } else {
             uri.split('/').next().unwrap_or(uri).to_string()
+        }
+    }
+
+    pub fn user_stats_url(&self) -> String {
+        if let Some(enterprise_uri) = &self.enterprise_uri {
+            let domain = Self::parse_domain(enterprise_uri);
+            format!("https://api.{}/copilot_internal/user", domain)
+        } else {
+            "https://api.github.com/copilot_internal/user".to_string()
         }
     }
 }
@@ -220,6 +242,10 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         self.name.as_str()
+    }
+
+    pub fn request_multiplier(&self) -> f64 {
+        self.billing.multiplier
     }
 
     pub fn max_token_count(&self) -> u64 {
@@ -454,6 +480,62 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct CopilotUserStats {
+    pub copilot_plan: Option<String>,
+    pub quota_reset_date: Option<String>,
+    pub quota_reset_date_utc: Option<String>,
+    pub quota_snapshots: Option<CopilotQuotaSnapshots>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CopilotQuotaSnapshots {
+    pub chat: Option<CopilotQuotaSnapshot>,
+    pub completions: Option<CopilotQuotaSnapshot>,
+    pub premium_interactions: Option<CopilotQuotaSnapshot>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CopilotQuotaSnapshot {
+    pub entitlement: f64,
+    pub overage_count: f64,
+    pub overage_permitted: bool,
+    pub percent_remaining: f64,
+    pub quota_id: String,
+    pub quota_remaining: f64,
+    pub remaining: f64,
+    pub unlimited: bool,
+    pub timestamp_utc: Option<String>,
+}
+
+impl CopilotQuotaSnapshot {
+    pub fn percent_used(&self) -> f64 {
+        if self.unlimited {
+            0.0
+        } else {
+            100.0 - self.percent_remaining
+        }
+    }
+
+    pub fn is_unlimited(&self) -> bool {
+        self.unlimited
+    }
+}
+
+impl CopilotUserStats {
+    pub fn chat_stats(&self) -> Option<&CopilotQuotaSnapshot> {
+        self.quota_snapshots.as_ref()?.chat.as_ref()
+    }
+
+    pub fn completions_stats(&self) -> Option<&CopilotQuotaSnapshot> {
+        self.quota_snapshots.as_ref()?.completions.as_ref()
+    }
+
+    pub fn premium_interactions_stats(&self) -> Option<&CopilotQuotaSnapshot> {
+        self.quota_snapshots.as_ref()?.premium_interactions.as_ref()
+    }
+}
+
 struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
@@ -464,6 +546,8 @@ pub struct CopilotChat {
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    user_stats: Option<CopilotUserStats>,
+    stats_api_key: Option<String>,
 }
 
 pub fn init(
@@ -543,7 +627,23 @@ impl CopilotChat {
             models: None,
             configuration,
             client,
+            user_stats: None,
+            stats_api_key: None,
         };
+
+        cx.spawn(async move |this, cx| {
+            if let Some(this) = this.upgrade() {
+                let task = this.update(cx, |this, cx| this.load_stats_api_key(cx));
+                let key = task.await?;
+                this.update(cx, |this, cx| {
+                    this.stats_api_key = Some(key);
+                    this.fetch_user_stats(cx).detach_and_log_err(cx);
+                    cx.notify();
+                });
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 
         if this.oauth_token.is_some() {
             cx.spawn(async move |this, cx| Self::update_models(&this, cx).await)
@@ -588,6 +688,59 @@ impl CopilotChat {
         self.models.as_deref()
     }
 
+    pub fn fetch_user_stats(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(api_key) = self.stats_api_key.clone() else {
+            return Task::ready(Err(anyhow!("No Copilot stats API key configured")));
+        };
+
+        let client = self.client.clone();
+        let url: Arc<str> = self.configuration.user_stats_url().into();
+
+        cx.spawn(async move |this, cx| {
+            let stats = request_user_stats(client, api_key, url).await?;
+            this.update(cx, |this, cx| {
+                this.user_stats = Some(stats);
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
+    }
+
+    fn get_user_stats(cx: &mut AsyncApp) {
+        cx.update(|cx| {
+            if let Some(copilot_chat) = Self::global(cx) {
+                copilot_chat.update(cx, |this, cx| {
+                    if this.has_stats_api_key() {
+                        this.fetch_user_stats(cx).detach_and_log_err(cx);
+                    }
+                })
+            }
+        });
+    }
+
+    fn monitor_stream_for_stats<T: 'static>(
+        mut stream: BoxStream<'static, T>,
+        cx: &mut AsyncApp,
+    ) -> BoxStream<'static, T> {
+        let (tx, rx) = futures::channel::oneshot::channel::<()>();
+        cx.spawn(|cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let _ = rx.await;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                Self::get_user_stats(&mut cx);
+            }
+        })
+        .detach();
+
+        futures::stream::poll_fn(move |cx| {
+            let _ = &tx;
+            stream.poll_next_unpin(cx)
+        })
+        .boxed()
+    }
+
     pub async fn stream_completion(
         request: Request,
         is_user_initiated: bool,
@@ -596,14 +749,16 @@ impl CopilotChat {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
         let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
-        stream_completion(
+        let stream = stream_completion(
             client.clone(),
             token.api_key,
             api_url.into(),
             request,
             is_user_initiated,
         )
-        .await
+        .await?;
+
+        Ok(Self::monitor_stream_for_stats(stream, &mut cx))
     }
 
     pub async fn stream_response(
@@ -614,14 +769,16 @@ impl CopilotChat {
         let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
 
         let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);
-        responses::stream_response(
+        let stream = responses::stream_response(
             client.clone(),
             token.api_key,
             api_url,
             request,
             is_user_initiated,
         )
-        .await
+        .await?;
+
+        Ok(Self::monitor_stream_for_stats(stream, &mut cx))
     }
 
     async fn get_auth_details(
@@ -674,6 +831,85 @@ impl CopilotChat {
             })
             .detach();
         }
+    }
+
+    pub fn user_stats(&self) -> Option<&CopilotUserStats> {
+        self.user_stats.as_ref()
+    }
+
+    pub fn stats_api_key(&self) -> Option<&str> {
+        self.stats_api_key.as_deref()
+    }
+
+    pub fn has_stats_api_key(&self) -> bool {
+        self.stats_api_key.is_some()
+    }
+
+    pub fn load_stats_api_key(&mut self, cx: &mut App) -> Task<Result<String>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let url = self.configuration.user_stats_url();
+        cx.spawn(async move |cx| {
+            let result =
+                ApiKey::load_from_system_keychain(&url, credentials_provider.as_ref(), cx).await;
+            Ok(result?.key().to_string())
+        })
+    }
+
+    pub fn set_stats_api_key(
+        &mut self,
+        api_key: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let url = self.configuration.user_stats_url();
+
+        cx.spawn(async move |this, cx| {
+            if let Some(key) = &api_key {
+                credentials_provider
+                    .write_credentials(&url, "Bearer", key.as_bytes(), &cx)
+                    .await?;
+            } else {
+                credentials_provider.delete_credentials(&url, &cx).await?;
+            }
+
+            this.update(cx, |this, cx| {
+                this.stats_api_key = api_key;
+                cx.notify();
+            })?;
+            Ok(())
+        })
+    }
+}
+
+async fn request_user_stats(
+    client: Arc<dyn HttpClient>,
+    api_key: String,
+    url: Arc<str>,
+) -> Result<CopilotUserStats> {
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(url.as_ref())
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Accept", "application/json")
+        .header("Cache-Control", "no-cache")
+        .body(AsyncBody::empty())?;
+
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        serde_json::from_str(body_str).context("Failed to parse Copilot user stats")
+    } else {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        anyhow::bail!(
+            "Failed to fetch Copilot user stats: {} {}",
+            response.status(),
+            body_str
+        )
     }
 }
 
@@ -1472,5 +1708,50 @@ mod tests {
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
+    }
+
+    #[test]
+    fn test_user_stats_deserialize() {
+        let json = r#"{
+            "copilot_plan": "business",
+            "quota_reset_date": "2024-03-01T00:00:00Z",
+            "quota_snapshots": {
+                "chat": {
+                    "entitlement": 100.0,
+                    "overage_count": 0.0,
+                    "overage_permitted": false,
+                    "percent_remaining": 45.5,
+                    "quota_id": "chat_quota",
+                    "quota_remaining": 45.5,
+                    "remaining": 45.5,
+                    "unlimited": false
+                }
+            }
+        }"#;
+
+        let stats: CopilotUserStats = serde_json::from_str(json).unwrap();
+        let chat = stats.chat_stats().unwrap();
+
+        assert_eq!(chat.percent_remaining, 45.5);
+        assert_eq!(chat.percent_used(), 54.5); // 100 - 45.5
+        assert!(!chat.is_unlimited());
+    }
+
+    #[test]
+    fn test_unlimited_quota() {
+        let snapshot = CopilotQuotaSnapshot {
+            entitlement: 0.0,
+            overage_count: 0.0,
+            overage_permitted: true,
+            percent_remaining: 100.0,
+            quota_id: "test".to_string(),
+            quota_remaining: 0.0,
+            remaining: 0.0,
+            unlimited: true,
+            timestamp_utc: None,
+        };
+
+        assert_eq!(snapshot.percent_used(), 0.0);
+        assert!(snapshot.is_unlimited());
     }
 }

@@ -376,12 +376,13 @@ pub enum AgentModelIcon {
     Path(SharedString),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AgentModelInfo {
     pub id: acp::ModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
+    pub multiplier: Option<f64>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {
@@ -391,6 +392,7 @@ impl From<acp::ModelInfo> for AgentModelInfo {
             name: info.name.into(),
             description: info.description.map(|desc| desc.into()),
             icon: None,
+            multiplier: None,
         }
     }
 }
@@ -744,6 +746,7 @@ mod test_support {
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                    multiplier: None,
                 })),
             }
         }
