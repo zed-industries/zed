@@ -831,8 +831,7 @@ mod tests {
     #[test]
     fn test_redirect_target_with_command_substitution() {
         let commands = extract_commands("echo > $(mktemp)").expect("parse failed");
-        assert!(commands.contains(&"echo > $(mktemp)".to_string()));
-        assert!(commands.contains(&"mktemp".to_string()));
+        assert_eq!(commands, vec!["echo > $(mktemp)", "mktemp"]);
     }
 
     #[test]
