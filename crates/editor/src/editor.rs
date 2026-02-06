@@ -25166,9 +25166,11 @@ impl Editor {
     ) {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
+            self.update_semantic_tokens(Some(buffer_id), None, cx);
+        } else {
+            self.refresh_semantic_token_highlights(cx);
         }
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
-        self.update_semantic_tokens(for_buffer, None, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
