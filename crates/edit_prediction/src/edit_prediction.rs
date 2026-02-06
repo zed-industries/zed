@@ -130,9 +130,12 @@ struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
 
 impl Global for EditPredictionStoreGlobal {}
 
+/// Configuration for using the raw Zeta2 endpoint.
+/// When set, the client uses the raw endpoint and constructs the prompt itself.
+/// The version is also used as the Baseten environment name (lowercased).
 #[derive(Clone)]
 pub struct Zeta2RawConfig {
-    pub model_id: String,
+    pub model_id: Option<String>,
     pub version: ZetaVersion,
 }
 
@@ -648,9 +651,9 @@ impl EditPredictionStore {
     }
 
     fn zeta2_raw_config_from_env() -> Option<Zeta2RawConfig> {
-        let model_id = env::var("ZED_ZETA_MODEL_ID").ok()?;
         let version_str = env::var("ZED_ZETA_VERSION").ok()?;
         let version = ZetaVersion::parse(&version_str).ok()?;
+        let model_id = env::var("ZED_ZETA_MODEL_ID").ok();
         Some(Zeta2RawConfig { model_id, version })
     }
 
