@@ -116,7 +116,7 @@ impl WgpuContext {
 
         instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::None,
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })
