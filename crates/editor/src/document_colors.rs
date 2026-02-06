@@ -13,8 +13,9 @@ use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT,
-    InlaySplice, RangeToAnchorExt, editor_settings::DocumentColorsRenderMode, inlays::Inlay,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlaySplice,
+    LSP_REQUEST_DEBOUNCE_TIMEOUT, RangeToAnchorExt, editor_settings::DocumentColorsRenderMode,
+    inlays::Inlay,
 };
 
 #[derive(Debug)]
@@ -174,7 +175,7 @@ impl Editor {
         let project = project.downgrade();
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
-                .timer(FETCH_COLORS_DEBOUNCE_TIMEOUT)
+                .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
 
             let Some(all_colors_task) = project
@@ -426,7 +427,7 @@ mod tests {
     };
 
     use crate::{
-        Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, actions::MoveToEnd, editor_tests::init_test,
+        Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, actions::MoveToEnd, editor_tests::init_test,
     };
 
     fn extract_color_inlays(editor: &Editor, cx: &gpui::App) -> Vec<Rgba> {
@@ -561,7 +562,7 @@ mod tests {
             .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
                 panic!("Should not be called");
             });
-        cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+        cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
         color_request_handle.next().await.unwrap();
         cx.run_until_parked();
         assert_eq!(
@@ -688,7 +689,7 @@ mod tests {
                 })
             })
             .unwrap();
-        cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+        cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
         cx.run_until_parked();
         let editor = workspace
             .update(cx, |workspace, _, cx| {
@@ -742,7 +743,7 @@ mod tests {
         });
         save.await.unwrap();
 
-        cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+        cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
         empty_color_request_handle.next().await.unwrap();
         cx.run_until_parked();
         assert_eq!(

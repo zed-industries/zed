@@ -12,14 +12,14 @@
 pub mod clangd_ext;
 mod code_lens;
 mod document_colors;
+mod folding_ranges;
+mod inlay_hints;
 pub mod json_language_server_ext;
 pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 mod semantic_tokens;
 pub mod vue_language_server_ext;
-
-mod inlay_hints;
 
 use self::code_lens::CodeLensData;
 use self::document_colors::DocumentColorData;
@@ -34,6 +34,7 @@ use crate::{
     lsp_command::{self, *},
     lsp_store::{
         self,
+        folding_ranges::FoldingRangeData,
         log_store::{GlobalLogStore, LanguageServerKind},
         semantic_tokens::{SemanticTokenConfig, SemanticTokensData},
     },
@@ -3857,6 +3858,7 @@ pub struct BufferLspData {
     document_colors: Option<DocumentColorData>,
     code_lens: Option<CodeLensData>,
     semantic_tokens: Option<SemanticTokensData>,
+    folding_ranges: Option<FoldingRangeData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<LspKey, HashMap<RowChunk, LspRequestId>>,
@@ -3875,6 +3877,7 @@ impl BufferLspData {
             document_colors: None,
             code_lens: None,
             semantic_tokens: None,
+            folding_ranges: None,
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
@@ -3897,6 +3900,10 @@ impl BufferLspData {
             semantic_tokens
                 .latest_invalidation_requests
                 .remove(&for_server);
+        }
+
+        if let Some(folding_ranges) = &mut self.folding_ranges {
+            folding_ranges.ranges.remove(&for_server);
         }
     }
 
@@ -8659,6 +8666,18 @@ impl LspStore {
                 )
                 .await?;
             }
+            Request::GetFoldingRanges(get_folding_ranges) => {
+                Self::query_lsp_locally::<GetFoldingRanges>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_folding_ranges,
+                    None,
+                    &mut cx,
+                )
+                .await?;
+            }
             Request::GetHover(get_hover) => {
                 let position = get_hover.position.clone().and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetHover>(
@@ -12349,6 +12368,17 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
+                "textDocument/foldingRange" => {
+                    let options = parse_register_capabilities(reg)?;
+                    let provider = match options {
+                        OneOf::Left(value) => lsp::FoldingRangeProviderCapability::Simple(value),
+                        OneOf::Right(caps) => caps,
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities.folding_range_provider = Some(provider);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
         }
@@ -12543,6 +12573,12 @@ impl LspStore {
                 "textDocument/documentColor" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.color_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/foldingRange" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.folding_range_provider = None;
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
