@@ -38,6 +38,14 @@ pub struct AudioSettings {
     ///
     /// You need to rejoin a call for this setting to apply
     pub legacy_audio_compatible: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific output audio device.
+    pub output_audio_device: Option<String>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific input audio device.
+    pub input_audio_device: Option<String>,
 }
 
 /// Configuration of audio in Zed
@@ -50,6 +58,8 @@ impl Settings for AudioSettings {
             auto_speaker_volume: audio.auto_speaker_volume.unwrap(),
             denoise: audio.denoise.unwrap(),
             legacy_audio_compatible: audio.legacy_audio_compatible.unwrap(),
+            output_audio_device: audio.output_audio_device.as_ref().map(|d| d.0.clone()),
+            input_audio_device: audio.input_audio_device.as_ref().map(|d| d.0.clone()),
         }
     }
 }

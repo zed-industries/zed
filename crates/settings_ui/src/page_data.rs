@@ -6769,7 +6769,7 @@ fn collaboration_page() -> SettingsPage {
         ]
     }
 
-    fn experimental_section() -> [SettingsPageItem; 6] {
+    fn experimental_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Experimental"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6859,6 +6859,48 @@ fn collaboration_page() -> SettingsPage {
                             .audio
                             .get_or_insert_default()
                             .legacy_audio_compatible = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Output Audio Device".into(),
+                description: "Select output audio device",
+                field: Box::new(SettingField {
+                    json_path: Some("audio.experimental.output_audio_device"),
+                    pick: |settings_content| {
+                        settings_content
+                            .audio
+                            .as_ref()
+                            .map(|a| &a.output_audio_device)
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .audio
+                            .get_or_insert_default()
+                            .output_audio_device = value.flatten();
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Input Audio Device".into(),
+                description: "Select input audio device",
+                field: Box::new(SettingField {
+                    json_path: Some("audio.experimental.input_audio_device"),
+                    pick: |settings_content| {
+                        settings_content
+                            .audio
+                            .as_ref()
+                            .map(|a| &a.input_audio_device)
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .audio
+                            .get_or_insert_default()
+                            .input_audio_device = value.flatten();
                     },
                 }),
                 metadata: None,

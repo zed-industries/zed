@@ -15239,6 +15239,7 @@ dependencies = [
  "project",
  "recent_projects",
  "release_channel",
+ "rodio",
  "schemars",
  "search",
  "serde",
