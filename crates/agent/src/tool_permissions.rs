@@ -19,9 +19,9 @@ pub struct HardcodedSecurityRules {
 pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
     // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
     // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
-    const FLAGS: &str = r"(--[a-z][-a-z]*(=[^\s]*)?\s+|-[a-zA-Z]+\s+)*";
+    const FLAGS: &str = r"(--[a-zA-Z0-9][-a-zA-Z0-9_]*(=[^\s]*)?\s+|-[a-zA-Z]+\s+)*";
     // Trailing flags that may appear after the path operand (GNU rm accepts flags after operands)
-    const TRAILING_FLAGS: &str = r"(\s+--[a-z][-a-z]*(=[^\s]*)?|\s+-[a-zA-Z]+)*\s*";
+    const TRAILING_FLAGS: &str = r"(\s+--[a-zA-Z0-9][-a-zA-Z0-9_]*(=[^\s]*)?|\s+-[a-zA-Z]+)*\s*";
 
     HardcodedSecurityRules {
         terminal_deny: vec![
