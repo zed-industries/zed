@@ -11,14 +11,15 @@
 #![cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 
 use crate::{
-    AnyWindowHandle, App, AppCell, AppContext, AssetSource, AtlasKey, AtlasTextureId, AtlasTile,
-    BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DevicePixels, DispatchEventResult,
-    DummyKeyboardMapper, Entity, ForegroundExecutor, GpuSpecs, Keymap, NoopTextSystem, Pixels,
-    Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
-    PromptButton, PromptLevel, Render, RequestFrameOptions, Scene, Size, Task, TestDispatcher,
-    TestDisplay, TextSystem, TileId, Window, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowHandle, WindowOptions, WindowParams, app::GpuiMode,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, AtlasKey, AtlasTextureId,
+    AtlasTile, BackgroundExecutor, Bounds, ClipboardItem, Context, CursorStyle, DevicePixels,
+    DispatchEventResult, DummyKeyboardMapper, Entity, ForegroundExecutor, Global, GpuSpecs, Keymap,
+    NoopTextSystem, Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Point, PromptButton, PromptLevel, Render, RequestFrameOptions, Reservation,
+    Scene, Size, Task, TestDispatcher, TestDisplay, TextSystem, TileId, Window, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowHandle, WindowOptions,
+    WindowParams, app::GpuiBorrow, app::GpuiMode,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -28,6 +29,7 @@ use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
     cell::RefCell,
+    future::Future,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{self, Arc},
@@ -248,6 +250,86 @@ impl HeadlessMetalAppContext {
     /// Returns the foreground executor.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
+    }
+}
+
+impl AppContext for HeadlessMetalAppContext {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
+        let mut app = self.app.borrow_mut();
+        app.new(build_entity)
+    }
+
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
+        let mut app = self.app.borrow_mut();
+        app.reserve_entity()
+    }
+
+    fn insert_entity<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
+    ) -> Entity<T> {
+        let mut app = self.app.borrow_mut();
+        app.insert_entity(reservation, build_entity)
+    }
+
+    fn update_entity<T: 'static, R>(
+        &mut self,
+        handle: &Entity<T>,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
+    ) -> R {
+        let mut app = self.app.borrow_mut();
+        app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> GpuiBorrow<'a, T>
+    where
+        T: 'static,
+    {
+        panic!("Cannot use as_mut with HeadlessMetalAppContext. Try calling update() first")
+    }
+
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
+    where
+        T: 'static,
+    {
+        let app = self.app.borrow();
+        app.read_entity(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> anyhow::Result<T>
+    where
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
+    {
+        let mut lock = self.app.borrow_mut();
+        lock.update_window(window, f)
+    }
+
+    fn read_window<T, R>(
+        &self,
+        window: &WindowHandle<T>,
+        read: impl FnOnce(Entity<T>, &App) -> R,
+    ) -> anyhow::Result<R>
+    where
+        T: 'static,
+    {
+        let app = self.app.borrow();
+        app.read_window(window, read)
+    }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.background_executor.spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
+    where
+        G: Global,
+    {
+        let app = self.app.borrow();
+        app.read_global(callback)
     }
 }
 
