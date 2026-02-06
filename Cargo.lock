@@ -2346,7 +2346,6 @@ dependencies = [
 name = "breadcrumbs"
 version = "0.1.0"
 dependencies = [
- "editor",
  "gpui",
  "ui",
  "workspace",
@@ -5504,6 +5503,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "assets",
+ "breadcrumbs",
  "buffer_diff",
  "client",
  "clock",
