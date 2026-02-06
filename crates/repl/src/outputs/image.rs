@@ -113,7 +113,7 @@ impl Render for ImageView {
         let settings = ReplSettings::get_global(cx);
         let line_height = window.line_height();
 
-        let max_width = plain::max_width_for_columns(settings.output_max_width_columns, window, cx);
+        let max_width = plain::max_width_for_columns(settings.max_columns, window, cx);
 
         let max_height = if settings.output_max_height_lines > 0 {
             Some(line_height * settings.output_max_height_lines as f32)

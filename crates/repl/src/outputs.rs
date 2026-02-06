@@ -255,11 +255,8 @@ impl Output {
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
-        let max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).max_columns,
-            window,
-            cx,
-        );
+        let max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),

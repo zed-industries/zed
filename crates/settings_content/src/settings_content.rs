@@ -1070,11 +1070,6 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
-    /// Maximum number of columns of output to display before scaling images.
-    /// Set to 0 to disable output width limits.
-    ///
-    /// Default: 0
-    pub output_max_width_columns: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

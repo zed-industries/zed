@@ -1061,11 +1061,8 @@ impl Render for CodeCell {
         } else {
             None
         };
-        let output_max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).output_max_width_columns,
-            window,
-            cx,
-        );
+        let output_max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
         // get the language from the editor's buffer
         let language_name = self
             .editor
