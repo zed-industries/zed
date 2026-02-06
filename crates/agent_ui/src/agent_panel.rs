@@ -515,7 +515,7 @@ impl AgentPanel {
         })
     }
 
-    fn new(
+    pub(crate) fn new(
         workspace: &Workspace,
         text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -712,7 +712,7 @@ impl AgentPanel {
         &self.context_server_registry
     }
 
-    pub fn is_hidden(workspace: &Entity<Workspace>, cx: &App) -> bool {
+    pub fn is_visible(workspace: &Entity<Workspace>, cx: &App) -> bool {
         let workspace_read = workspace.read(cx);
 
         workspace_read
@@ -720,15 +720,13 @@ impl AgentPanel {
             .map(|panel| {
                 let panel_id = Entity::entity_id(&panel);
 
-                let is_visible = workspace_read.all_docks().iter().any(|dock| {
+                workspace_read.all_docks().iter().any(|dock| {
                     dock.read(cx)
                         .visible_panel()
                         .is_some_and(|visible_panel| visible_panel.panel_id() == panel_id)
-                });
-
-                !is_visible
+                })
             })
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     pub(crate) fn active_thread_view(&self) -> Option<&Entity<AcpServerView>> {
