@@ -1,3 +1,8 @@
+---
+title: Command Palette - Zed
+description: Access any Zed action from the command palette. Fuzzy search commands, key bindings, and editor actions.
+---
+
 # Command Palette
 
 The Command Palette is the main way to access pretty much any functionality that's available in Zed. Its keybinding is the first one you should make yourself familiar with. To open it, hit: {#kb command_palette::Toggle}.

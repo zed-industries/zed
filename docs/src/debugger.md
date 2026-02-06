@@ -1,3 +1,8 @@
+---
+title: Debugger - Zed
+description: Debug code in Zed with the Debug Adapter Protocol (DAP). Breakpoints, stepping, variable inspection across multiple languages.
+---
+
 # Debugger
 
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.

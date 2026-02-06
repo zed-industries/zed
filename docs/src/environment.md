@@ -1,3 +1,8 @@
+---
+title: Environment Variables - Zed
+description: How Zed detects and uses environment variables. Shell integration, dotenv support, and troubleshooting.
+---
+
 # Environment Variables
 
 _**Note**: The following only applies to Zed 0.152.0 and later._

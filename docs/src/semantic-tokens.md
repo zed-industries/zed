@@ -1,3 +1,8 @@
+---
+title: Semantic Tokens and Syntax Highlighting - Zed
+description: Enable and configure semantic token highlighting in Zed for richer, language-server-aware syntax coloring.
+---
+
 # Semantic Tokens
 
 Semantic tokens provide richer syntax highlighting by using information from language servers. Unlike tree-sitter highlighting, which is based purely on syntax, semantic tokens understand the meaning of your code—distinguishing between local variables and parameters, or between a class definition and a class reference.
