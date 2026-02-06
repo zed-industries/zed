@@ -104,16 +104,16 @@ impl From<BufferId> for u64 {
 
 #[derive(Clone)]
 pub struct BufferSnapshot {
-    replica_id: ReplicaId,
-    remote_id: BufferId,
     visible_text: Rope,
     deleted_text: Rope,
-    line_ending: LineEnding,
-    undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     insertions: SumTree<InsertionFragment>,
     insertion_slices: TreeSet<InsertionSlice>,
+    undo_map: UndoMap,
     pub version: clock::Global,
+    remote_id: BufferId,
+    replica_id: ReplicaId,
+    line_ending: LineEnding,
 }
 
 #[derive(Clone, Debug)]
@@ -780,8 +780,12 @@ impl Buffer {
         self.version.clone()
     }
 
-    pub fn snapshot(&self) -> BufferSnapshot {
-        self.snapshot.clone()
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> BufferSnapshot {
+        self.snapshot
     }
 
     pub fn branch(&self) -> Self {

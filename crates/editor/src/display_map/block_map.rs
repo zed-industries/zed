@@ -1110,20 +1110,32 @@ impl BlockMap {
         let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
         let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
 
-        let mut determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
-            let our_wrap = our_wrap_point_cursor
+        let mut our_wrapper = |our_point: Point| {
+            our_wrap_point_cursor
                 .map(our_tab_point_cursor.map(
                     our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
                 ))
-                .row();
-            let companion_wrap = companion_wrap_point_cursor
+                .row()
+        };
+        let mut companion_wrapper = |their_point: Point| {
+            companion_wrap_point_cursor
                 .map(
                     companion_tab_point_cursor.map(
                         companion_fold_point_cursor
                             .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
                     ),
                 )
-                .row();
+                .row()
+        };
+        fn determine_spacer(
+            our_wrapper: &mut impl FnMut(Point) -> WrapRow,
+            companion_wrapper: &mut impl FnMut(Point) -> WrapRow,
+            our_point: Point,
+            their_point: Point,
+            delta: i32,
+        ) -> (i32, Option<(WrapRow, u32)>) {
+            let our_wrap = our_wrapper(our_point);
+            let companion_wrap = companion_wrapper(their_point);
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
             let spacer = if new_delta > delta {
@@ -1133,7 +1145,7 @@ impl BlockMap {
                 None
             };
             (new_delta, spacer)
-        };
+        }
 
         let mut result = Vec::new();
 
@@ -1179,12 +1191,8 @@ impl BlockMap {
                 // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
                 (first_point, edit_for_first_point.new.start)
             };
-            let our_baseline = wrap_snapshot
-                .make_wrap_point(our_baseline, Bias::Left)
-                .row();
-            let their_baseline = companion_snapshot
-                .make_wrap_point(their_baseline, Bias::Left)
-                .row();
+            let our_baseline = our_wrapper(our_baseline);
+            let their_baseline = companion_wrapper(their_baseline);
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
@@ -1201,8 +1209,13 @@ impl BlockMap {
                     current_boundary = next_point;
                 }
 
-                let (new_delta, spacer) =
-                    determine_spacer(current_boundary, current_range.end, delta);
+                let (new_delta, spacer) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.end,
+                    delta,
+                );
 
                 delta = new_delta;
                 if let Some((wrap_row, height)) = spacer {
@@ -1229,8 +1242,13 @@ impl BlockMap {
                 }
 
                 // Align the two sides at the start of this group.
-                let (delta_at_start, mut spacer_at_start) =
-                    determine_spacer(current_boundary, current_range.start, delta);
+                let (delta_at_start, mut spacer_at_start) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.start,
+                    delta,
+                );
                 delta = delta_at_start;
 
                 while let Some(next_point) = source_points.peek().copied() {
@@ -1260,8 +1278,13 @@ impl BlockMap {
                     break;
                 }
 
-                let (delta_at_end, spacer_at_end) =
-                    determine_spacer(current_boundary, current_range.end, delta);
+                let (delta_at_end, spacer_at_end) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.end,
+                    delta,
+                );
                 delta = delta_at_end;
 
                 if let Some((wrap_row, mut height)) = spacer_at_start {
@@ -1289,8 +1312,13 @@ impl BlockMap {
             }
 
             if last_source_point == excerpt.source_excerpt_range.end {
-                let (_new_delta, spacer) =
-                    determine_spacer(last_source_point, excerpt.target_excerpt_range.end, delta);
+                let (_new_delta, spacer) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    last_source_point,
+                    excerpt.target_excerpt_range.end,
+                    delta,
+                );
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),

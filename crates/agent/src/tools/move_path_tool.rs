@@ -57,9 +57,7 @@ impl AgentTool for MovePathTool {
     type Input = MovePathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "move_path"
-    }
+    const NAME: &'static str = "move_path";
 
     fn kind() -> ToolKind {
         ToolKind::Move
@@ -100,13 +98,13 @@ impl AgentTool for MovePathTool {
         let settings = AgentSettings::get_global(cx);
 
         let source_decision =
-            decide_permission_from_settings(Self::name(), &input.source_path, settings);
+            decide_permission_from_settings(Self::NAME, &input.source_path, settings);
         if let ToolPermissionDecision::Deny(reason) = source_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         let dest_decision =
-            decide_permission_from_settings(Self::name(), &input.destination_path, settings);
+            decide_permission_from_settings(Self::NAME, &input.destination_path, settings);
         if let ToolPermissionDecision::Deny(reason) = dest_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
@@ -118,7 +116,7 @@ impl AgentTool for MovePathTool {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
             let context = crate::ToolPermissionContext {
-                tool_name: "move_path".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: input.source_path.clone(),
             };
             Some(event_stream.authorize(format!("Move {src} to {dest}"), context, cx))

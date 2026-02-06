@@ -958,6 +958,22 @@ pub enum ToolChoice {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
     Enabled { budget_tokens: Option<u32> },
+    Adaptive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, EnumString)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputConfig {
+    pub effort: Option<Effort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -982,6 +998,8 @@ pub struct Request {
     pub system: Option<StringOrContents>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<OutputConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_sequences: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

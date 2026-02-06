@@ -2,36 +2,30 @@ use crate::{
     PredictionProvider,
     example::{ActualCursor, Example},
     format_prompt::TeacherPrompt,
+    repair,
 };
 use anyhow::{Context as _, Result};
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
-    let provider = example
-        .prompt
-        .as_ref()
-        .context("prompt required (run format-prompt first)")?
-        .provider;
     example
         .prompt_inputs
         .as_ref()
         .context("prompt_inputs required")?;
 
-    let parsed_patches: Vec<_> = example
+    let to_parse: Vec<_> = example
         .predictions
         .iter()
         .enumerate()
         .filter(|(_, p)| !p.actual_output.is_empty())
-        .map(|(ix, prediction)| {
-            let result = parse_prediction_output(example, &prediction.actual_output, provider);
-            result.map(|(patch, cursor_offset)| (ix, patch, cursor_offset))
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|(ix, p)| (ix, p.actual_output.clone(), p.provider))
+        .collect();
 
-    for (ix, actual_patch, actual_cursor) in parsed_patches {
+    for (ix, actual_output, provider) in to_parse {
+        let (actual_patch, actual_cursor) =
+            parse_prediction_output(example, &actual_output, provider)?;
         example.predictions[ix].actual_patch = Some(actual_patch);
         example.predictions[ix].actual_cursor = actual_cursor;
-        example.predictions[ix].provider = provider;
     }
 
     Ok(())
@@ -47,6 +41,7 @@ pub fn parse_prediction_output(
             TeacherPrompt::parse(example, actual_output)
         }
         PredictionProvider::Zeta2(version) => parse_zeta2_output(example, actual_output, version),
+        PredictionProvider::Repair => repair::parse(example, actual_output),
         _ => anyhow::bail!(
             "parse-output only supports Teacher and Zeta2 providers, got {:?}",
             provider
