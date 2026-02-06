@@ -1914,9 +1914,7 @@ fn run_subagent_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use acp_thread::{
-        AcpThread, SUBAGENT_TOOL_NAME, ToolCallUpdateSubagentThread, meta_with_tool_name,
-    };
+    use acp_thread::{AcpThread, ToolCallUpdateSubagentThread, meta_with_tool_name};
     use agent_ui::AgentPanel;
 
     // Create a temporary project directory
@@ -1960,7 +1958,7 @@ fn run_subagent_visual_tests(
     // Create a subagent tool call (in progress state)
     let tool_call = acp::ToolCall::new("subagent-tool-1", "2 subagents")
         .kind(acp::ToolKind::Other)
-        .meta(meta_with_tool_name(SUBAGENT_TOOL_NAME))
+        .meta(meta_with_tool_name("subagent"))
         .status(acp::ToolCallStatus::InProgress);
 
     connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);

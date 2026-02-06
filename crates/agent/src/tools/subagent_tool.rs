@@ -125,7 +125,7 @@ impl AgentTool for SubagentTool {
     type Input = SubagentToolInput;
     type Output = SubagentToolOutput;
 
-    const NAME: &'static str = acp_thread::SUBAGENT_TOOL_NAME;
+    const NAME: &'static str = "subagent";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
