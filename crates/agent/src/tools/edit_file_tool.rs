@@ -177,6 +177,21 @@ pub enum SensitiveSettingsKind {
     Global,
 }
 
+/// Canonicalize a path, stripping the Windows extended-length path prefix (`\\?\`)
+/// that `std::fs::canonicalize` adds on Windows. This ensures that canonicalized
+/// paths can be compared with non-canonicalized paths via `starts_with`.
+fn safe_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = std::fs::canonicalize(path)?;
+    #[cfg(target_os = "windows")]
+    {
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix("\\\\?\\") {
+            return Ok(PathBuf::from(stripped));
+        }
+    }
+    Ok(canonical)
+}
+
 /// Returns the kind of sensitive settings location this path targets, if any:
 /// either inside a `.zed/` local-settings directory or inside the global config dir.
 pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
@@ -196,7 +211,7 @@ pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
         let mut suffix_components = Vec::new();
         loop {
             match current {
-                Some(ancestor) => match std::fs::canonicalize(ancestor) {
+                Some(ancestor) => match safe_canonicalize(ancestor) {
                     Ok(canonical) => {
                         let mut result = canonical;
                         for component in suffix_components.into_iter().rev() {
@@ -216,7 +231,7 @@ pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
         }
     };
     if let Some(canonical_path) = canonical_path {
-        let config_dir = std::fs::canonicalize(paths::config_dir())
+        let config_dir = safe_canonicalize(paths::config_dir())
             .unwrap_or_else(|_| paths::config_dir().to_path_buf());
         if canonical_path.starts_with(&config_dir) {
             return Some(SensitiveSettingsKind::Global);

@@ -2,6 +2,11 @@ use crate::shell_parser::extract_commands;
 use std::path::{Path, PathBuf};
 use url::Url;
 
+/// Normalize path separators to forward slashes for consistent cross-platform patterns.
+fn normalize_separators(path_str: &str) -> String {
+    path_str.replace('\\', "/")
+}
+
 /// Extracts the command name from a shell command using the shell parser.
 ///
 /// This parses the command properly to extract just the command name (first word),
@@ -43,16 +48,16 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
 
 pub fn extract_path_pattern(path: &str) -> Option<String> {
     let parent = Path::new(path).parent()?;
-    let parent_str = parent.to_str()?;
+    let parent_str = normalize_separators(parent.to_str()?);
     if parent_str.is_empty() || parent_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(parent_str)))
+    Some(format!("^{}/", regex::escape(&parent_str)))
 }
 
 pub fn extract_path_pattern_display(path: &str) -> Option<String> {
     let parent = Path::new(path).parent()?;
-    let parent_str = parent.to_str()?;
+    let parent_str = normalize_separators(parent.to_str()?);
     if parent_str.is_empty() || parent_str == "/" {
         return None;
     }
@@ -83,17 +88,17 @@ fn common_parent_dir(path_a: &str, path_b: &str) -> Option<PathBuf> {
 pub fn extract_copy_move_pattern(input: &str) -> Option<String> {
     let (source, dest) = input.split_once('\n')?;
     let common = common_parent_dir(source, dest)?;
-    let common_str = common.to_str()?;
+    let common_str = normalize_separators(common.to_str()?);
     if common_str.is_empty() || common_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(common_str)))
+    Some(format!("^{}/", regex::escape(&common_str)))
 }
 
 pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
     let (source, dest) = input.split_once('\n')?;
     let common = common_parent_dir(source, dest)?;
-    let common_str = common.to_str()?;
+    let common_str = normalize_separators(common.to_str()?);
     if common_str.is_empty() || common_str == "/" {
         return None;
     }
