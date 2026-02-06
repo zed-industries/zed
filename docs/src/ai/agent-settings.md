@@ -288,7 +288,7 @@ MCP tools can also have per-tool defaults using the key format `mcp:server_name:
 }
 ```
 
-For MCP tools running inside the native Zed agent, the `default` key is the primary mechanism for controlling permissions. Pattern-based rules (`always_allow`, `always_deny`, `always_confirm`) are technically evaluated, but they match against an empty string, so they effectively don't apply.
+For MCP tools running inside the native Zed agent, the `default` key is the primary mechanism for controlling permissions. Pattern-based rules (`always_allow`, `always_deny`, `always_confirm`) are evaluated against an empty string, so most patterns won't match. However, patterns that can match an empty string (such as `.*` or `^$`) will still take effect — keep this in mind if you use broad catch-all patterns.
 
 For external ACP tools (including MCP servers running through an ACP bridge), patterns are matched against the tool call's **title** as provided by the server. This means pattern matching for ACP tools is best-effort and depends on the server providing descriptive titles.
 

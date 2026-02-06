@@ -3072,8 +3072,9 @@ impl ToolCallEventStream {
 
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
-    /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default` (allow/deny/confirm) per tool.
+    /// Unlike built-in tools, third-party tools evaluate patterns against an empty
+    /// string, so the `default` mode is the primary mechanism. Patterns that can
+    /// match empty strings (like `.*`) will still take effect.
     ///
     /// Uses the dropdown authorization flow with two granularities:
     /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
