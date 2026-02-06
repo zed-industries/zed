@@ -5729,7 +5729,6 @@ impl AcpThreadView {
                                 .icon(IconName::ExpandVertical)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Small)
-                                .icon_color(Color::Error)
                                 .label_size(LabelSize::Small)
                                 .tooltip(Tooltip::text("Expand this subagent"))
                                 .on_click({

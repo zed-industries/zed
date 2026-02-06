@@ -653,6 +653,33 @@ impl AcpServerView {
             cx.observe(&action_log, |_, _, cx| cx.notify()),
         ];
 
+        let parent_session_id = thread.read(cx).session_id().clone();
+        let subagent_sessions = thread
+            .read(cx)
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                AgentThreadEntry::ToolCall(call) => call.subagent_session_id.clone(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if !subagent_sessions.is_empty() {
+            cx.spawn_in(window, async move |this, cx| {
+                this.update_in(cx, |this, window, cx| {
+                    for subagent_id in subagent_sessions {
+                        this.load_subagent_session(
+                            subagent_id,
+                            parent_session_id.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                })
+            })
+            .detach();
+        }
+
         let title_editor = if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
@@ -1397,6 +1424,11 @@ impl AcpServerView {
         let Some(connected) = self.as_connected() else {
             return;
         };
+        if connected.threads.contains_key(&subagent_id)
+            || !connected.connection.supports_load_session(cx)
+        {
+            return;
+        }
         let subagent_thread_task = connected.connection.clone().load_session(
             AgentSessionInfo::new(subagent_id.clone()),
             self.project.clone(),

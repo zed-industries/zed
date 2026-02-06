@@ -3,6 +3,7 @@ use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, SharedString, Task, WeakEntity};
+use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -66,6 +67,18 @@ pub struct SubagentToolInput {
     pub allowed_tools: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SubagentToolOutput {
+    pub subagent_session_id: acp::SessionId,
+    pub summary: String,
+}
+
+impl From<SubagentToolOutput> for LanguageModelToolResultContent {
+    fn from(output: SubagentToolOutput) -> Self {
+        output.summary.into()
+    }
+}
+
 /// Tool that spawns a subagent thread to work on a task.
 pub struct SubagentTool {
     parent_thread: WeakEntity<Thread>,
@@ -110,7 +123,7 @@ impl SubagentTool {
 
 impl AgentTool for SubagentTool {
     type Input = SubagentToolInput;
-    type Output = String;
+    type Output = SubagentToolOutput;
 
     fn name() -> &'static str {
         "subagent"
@@ -135,7 +148,7 @@ impl AgentTool for SubagentTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<SubagentToolOutput>> {
         if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
             return Task::ready(Err(e));
         }
@@ -156,11 +169,11 @@ impl AgentTool for SubagentTool {
             Err(err) => return Task::ready(Err(err)),
         };
 
-        let subagent_session = subagent.id();
+        let subagent_session_id = subagent.id();
         let mut meta = acp::Meta::new();
         meta.insert(
             SUBAGENT_SESSION_ID_META_KEY.into(),
-            subagent_session.0.to_string().into(),
+            subagent_session_id.to_string().into(),
         );
 
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
@@ -170,12 +183,32 @@ impl AgentTool for SubagentTool {
                 subagent.wait_for_summary(input.summary_prompt, input.context_low_prompt, cx);
 
             futures::select_biased! {
-                summary = summary_task.fuse() => summary,
+                summary = summary_task.fuse() => summary.map(|summary| SubagentToolOutput {
+                    summary,
+                    subagent_session_id,
+                }),
                 _ = event_stream.cancelled_by_user().fuse() => {
+                    //todo: Should this be Ok("Subagent was cancelled by user?") so that we still have access to the subagent session id
                     Err(anyhow!("Subagent was cancelled by user"))
                 }
             }
         })
+    }
+
+    fn replay(
+        &self,
+        _input: Self::Input,
+        output: Self::Output,
+        event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        let mut meta = acp::Meta::new();
+        meta.insert(
+            SUBAGENT_SESSION_ID_META_KEY.into(),
+            output.subagent_session_id.to_string().into(),
+        );
+        event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
+        Ok(())
     }
 }
 

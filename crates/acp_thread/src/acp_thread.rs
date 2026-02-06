@@ -311,7 +311,9 @@ impl ToolCall {
             self.status = status.into();
         }
 
-        self.subagent_session_id = subagent_session_id_from_meta(&meta);
+        if let Some(subagent_session_id) = subagent_session_id_from_meta(&meta) {
+            self.subagent_session_id = Some(subagent_session_id);
+        }
 
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
