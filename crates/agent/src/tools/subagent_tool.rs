@@ -1,6 +1,7 @@
 use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -164,13 +165,16 @@ impl AgentTool for SubagentTool {
 
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
-        // event_stream.update_subagent_thread(acp_thread.clone());
-
         cx.spawn(async move |cx| {
-            let summary = subagent
-                .wait_for_summary(input.summary_prompt, input.context_low_prompt, cx)
-                .await?;
-            Ok(summary)
+            let summary_task =
+                subagent.wait_for_summary(input.summary_prompt, input.context_low_prompt, cx);
+
+            futures::select_biased! {
+                summary = summary_task.fuse() => summary,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    Err(anyhow!("Subagent was cancelled by user"))
+                }
+            }
         })
     }
 }

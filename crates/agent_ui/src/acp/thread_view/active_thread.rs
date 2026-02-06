@@ -5615,15 +5615,15 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         context_ix: usize,
-        thread: &Entity<AcpThread>,
+        thread_entity: &Entity<AcpThread>,
         tool_call_status: &ToolCallStatus,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let thread_read = thread.read(cx);
-        let session_id = thread_read.session_id().clone();
-        let title = thread_read.title();
-        let action_log = thread_read.action_log();
+        let thread = thread_entity.read(cx);
+        let session_id = thread.session_id().clone();
+        let title = thread.title();
+        let action_log = thread.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         let is_expanded = self.expanded_subagents.contains(&session_id);
@@ -5659,7 +5659,7 @@ impl AcpThreadView {
                 .into_any_element()
         });
 
-        let has_expandable_content = thread_read.entries().iter().rev().any(|entry| {
+        let has_expandable_content = thread.entries().iter().rev().any(|entry| {
             if let AgentThreadEntry::AssistantMessage(msg) = entry {
                 msg.chunks.iter().any(|chunk| match chunk {
                     AssistantMessageChunk::Message { block } => block.markdown().is_some(),
@@ -5733,7 +5733,7 @@ impl AcpThreadView {
                                 .label_size(LabelSize::Small)
                                 .tooltip(Tooltip::text("Expand this subagent"))
                                 .on_click({
-                                    let session_id = thread.read(cx).session_id().clone();
+                                    let session_id = session_id.clone();
                                     cx.listener(move |this, _event, _window, cx| {
                                         this.server_view
                                             .update(cx, |this, cx| {
@@ -5763,7 +5763,7 @@ impl AcpThreadView {
                                     .label_size(LabelSize::Small)
                                     .tooltip(Tooltip::text("Stop this subagent"))
                                     .on_click({
-                                        let thread = thread.clone();
+                                        let thread = thread_entity.clone();
                                         cx.listener(move |_this, _event, _window, cx| {
                                             thread.update(cx, |thread, _cx| {
                                                 thread.stop_by_user();
@@ -5810,29 +5810,29 @@ impl AcpThreadView {
                     ),
             )
             .when(is_expanded, |this| {
-                this.child(
-                    self.render_subagent_expanded_content(entry_ix, context_ix, thread, window, cx),
-                )
+                this.child(self.render_subagent_expanded_content(
+                    entry_ix,
+                    context_ix,
+                    thread_entity,
+                    window,
+                    cx,
+                ))
             })
-            .children(
-                thread_read
-                    .first_tool_awaiting_confirmation()
-                    .and_then(|tc| {
-                        if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tc.status {
-                            Some(self.render_subagent_pending_tool_call(
-                                entry_ix,
-                                context_ix,
-                                thread.clone(),
-                                tc,
-                                options,
-                                window,
-                                cx,
-                            ))
-                        } else {
-                            None
-                        }
-                    }),
-            )
+            .children(thread.first_tool_awaiting_confirmation().and_then(|tc| {
+                if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tc.status {
+                    Some(self.render_subagent_pending_tool_call(
+                        entry_ix,
+                        context_ix,
+                        thread_entity.clone(),
+                        tc,
+                        options,
+                        window,
+                        cx,
+                    ))
+                } else {
+                    None
+                }
+            }))
             .into_any_element()
     }
 

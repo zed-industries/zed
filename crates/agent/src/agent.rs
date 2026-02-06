@@ -1776,7 +1776,7 @@ impl SubagentHandle for NativeSubagentHandle {
                 timed_out || check_context_low(&thread, CONTEXT_LOW_THRESHOLD, cx);
 
             if should_interrupt {
-                thread.update(cx, |thread, cx| thread.cancel(cx).detach());
+                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
                 acp_thread
                     .update(cx, |thread, cx| {
                         thread.send(vec![context_low_prompt.into()], cx)
