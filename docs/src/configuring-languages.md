@@ -1,3 +1,8 @@
+---
+title: Language Server and Tree-sitter Config - Zed
+description: Configure language support in Zed with Tree-sitter for syntax highlighting and LSP for diagnostics, completion, and formatting.
+---
+
 # Configuring Supported Languages
 
 Zed's language support is built on two technologies:

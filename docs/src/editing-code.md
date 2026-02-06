@@ -1,3 +1,8 @@
+---
+title: Editing Code in Zed
+description: Core code editing features in Zed including multi-cursor, refactoring, code actions, and language server integration.
+---
+
 # Editing Code
 
 Zed provides tools to help you write and modify code efficiently. This section covers the core editing features that work alongside your language server.

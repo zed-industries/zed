@@ -1,3 +1,8 @@
+---
+title: Tasks - Run Commands in Zed
+description: Run and rerun shell commands from Zed with task definitions. Supports variables, templates, and language-specific tasks.
+---
+
 # Tasks
 
 Zed supports ways to spawn (and rerun) commands using its integrated [terminal](./terminal.md) to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
