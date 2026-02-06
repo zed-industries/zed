@@ -4,7 +4,9 @@
 
 use std::{env, str::FromStr, sync::LazyLock};
 
+#[cfg(feature = "gpui")]
 use gpui::{App, Global};
+#[cfg(feature = "gpui")]
 use semver::Version;
 
 /// stable | dev | nightly | preview
@@ -39,8 +41,10 @@ pub fn app_identifier() -> &'static str {
 #[derive(Clone, Eq, Debug, PartialEq)]
 pub struct AppCommitSha(String);
 
+#[cfg(feature = "gpui")]
 struct GlobalAppCommitSha(AppCommitSha);
 
+#[cfg(feature = "gpui")]
 impl Global for GlobalAppCommitSha {}
 
 impl AppCommitSha {
@@ -50,12 +54,14 @@ impl AppCommitSha {
     }
 
     /// Returns the global [`AppCommitSha`], if one is set.
+    #[cfg(feature = "gpui")]
     pub fn try_global(cx: &App) -> Option<AppCommitSha> {
         cx.try_global::<GlobalAppCommitSha>()
             .map(|sha| sha.0.clone())
     }
 
     /// Sets the global [`AppCommitSha`].
+    #[cfg(feature = "gpui")]
     pub fn set_global(sha: AppCommitSha, cx: &mut App) {
         cx.set_global(GlobalAppCommitSha(sha))
     }
@@ -71,13 +77,17 @@ impl AppCommitSha {
     }
 }
 
+#[cfg(feature = "gpui")]
 struct GlobalAppVersion(Version);
 
+#[cfg(feature = "gpui")]
 impl Global for GlobalAppVersion {}
 
 /// The version of Zed.
+#[cfg(feature = "gpui")]
 pub struct AppVersion;
 
+#[cfg(feature = "gpui")]
 impl AppVersion {
     /// Load the app version from env.
     pub fn load(
@@ -119,7 +129,7 @@ impl AppVersion {
 }
 
 /// A Zed release channel.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default, strum::EnumIter)]
 pub enum ReleaseChannel {
     /// The development release channel.
     ///
@@ -137,17 +147,21 @@ pub enum ReleaseChannel {
     Stable,
 }
 
+#[cfg(feature = "gpui")]
 struct GlobalReleaseChannel(ReleaseChannel);
 
+#[cfg(feature = "gpui")]
 impl Global for GlobalReleaseChannel {}
 
 /// Initializes the release channel.
+#[cfg(feature = "gpui")]
 pub fn init(app_version: Version, cx: &mut App) {
     cx.set_global(GlobalAppVersion(app_version));
     cx.set_global(GlobalReleaseChannel(*RELEASE_CHANNEL))
 }
 
 /// Initializes the release channel for tests that rely on fake release channel.
+#[cfg(feature = "gpui")]
 pub fn init_test(app_version: Version, release_channel: ReleaseChannel, cx: &mut App) {
     cx.set_global(GlobalAppVersion(app_version));
     cx.set_global(GlobalReleaseChannel(release_channel))
@@ -155,11 +169,13 @@ pub fn init_test(app_version: Version, release_channel: ReleaseChannel, cx: &mut
 
 impl ReleaseChannel {
     /// Returns the global [`ReleaseChannel`].
+    #[cfg(feature = "gpui")]
     pub fn global(cx: &App) -> Self {
         cx.global::<GlobalReleaseChannel>().0
     }
 
     /// Returns the global [`ReleaseChannel`], if one is set.
+    #[cfg(feature = "gpui")]
     pub fn try_global(cx: &App) -> Option<Self> {
         cx.try_global::<GlobalReleaseChannel>()
             .map(|channel| channel.0)
@@ -228,5 +244,27 @@ impl FromStr for ReleaseChannel {
             "stable" => ReleaseChannel::Stable,
             _ => return Err(InvalidReleaseChannel),
         })
+    }
+}
+
+/// A platform supported by Zed, used as override keys in settings JSON.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, strum::EnumIter)]
+pub enum SupportedPlatform {
+    /// macOS
+    MacOS,
+    /// Linux
+    Linux,
+    /// Windows
+    Windows,
+}
+
+impl SupportedPlatform {
+    /// Returns the JSON key used for this platform's settings overrides (e.g. `"macos"`, `"linux"`, `"windows"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SupportedPlatform::MacOS => "macos",
+            SupportedPlatform::Linux => "linux",
+            SupportedPlatform::Windows => "windows",
+        }
     }
 }

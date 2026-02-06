@@ -1,10 +1,7 @@
 use anyhow::Result;
+use release_channel::{ReleaseChannel, SupportedPlatform};
 use serde_json::Value;
-
-const SETTINGS_OVERRIDE_KEYS: &[&str] = &[
-    "dev", "nightly", "preview", "stable", // release channels
-    "macos", "linux", "windows", // platforms
-];
+use strum::IntoEnumIterator as _;
 
 /// Applies a migration callback to the root settings object as well as all
 /// nested platform, release-channel, and profile override objects.
@@ -18,8 +15,12 @@ pub(crate) fn migrate_nested_settings(
 
     migrate_one(root_object)?;
 
-    for key in SETTINGS_OVERRIDE_KEYS {
-        if let Some(sub_object) = root_object.get_mut(*key) {
+    let override_keys = ReleaseChannel::iter()
+        .map(|channel| channel.dev_name())
+        .chain(SupportedPlatform::iter().map(|platform| platform.as_str()));
+
+    for key in override_keys {
+        if let Some(sub_object) = root_object.get_mut(key) {
             if let Some(sub_map) = sub_object.as_object_mut() {
                 migrate_one(sub_map)?;
             }

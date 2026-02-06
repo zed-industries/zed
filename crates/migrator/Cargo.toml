@@ -20,8 +20,10 @@ log.workspace = true
 streaming-iterator.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
+release_channel = { path = "../release_channel", default-features = false }
 serde_json_lenient.workspace = true
 serde_json.workspace = true
+strum.workspace = true
 settings_json.workspace = true
 
 [dev-dependencies]

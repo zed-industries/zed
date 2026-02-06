@@ -2426,6 +2426,84 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        // Platform key: settings nested inside "linux" should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_11_25::remove_context_server_source,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "context_servers": {
+                        "my_server": {
+                            "source": "extension",
+                            "settings": {
+                                "key": "value"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "context_servers": {
+                            "my_server": {
+                                "settings": {
+                                    "key": "value"
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_11_25::remove_context_server_source,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "context_servers": {
+                            "my_server": {
+                                "source": "custom",
+                                "command": "foo",
+                                "args": ["bar"]
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "context_servers": {
+                                "my_server": {
+                                    "command": "foo",
+                                    "args": ["bar"]
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 
     #[test]
