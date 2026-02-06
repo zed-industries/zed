@@ -52,32 +52,23 @@ mod tests {
     }
 
     #[test]
-    fn test_reduce_motion_deserialize_string_variants() {
-        assert_eq!(
-            serde_json::from_str::<ReduceMotion>(r#""system""#).unwrap(),
-            ReduceMotion::System,
-        );
-        assert_eq!(
-            serde_json::from_str::<ReduceMotion>(r#""on""#).unwrap(),
-            ReduceMotion::On,
-        );
-        assert_eq!(
-            serde_json::from_str::<ReduceMotion>(r#""off""#).unwrap(),
-            ReduceMotion::Off,
-        );
-    }
+    fn test_reduce_motion_deserialize() {
+        let cases: &[(&str, ReduceMotion)] = &[
+            (r#""system""#, ReduceMotion::System),
+            (r#""on""#, ReduceMotion::On),
+            (r#""off""#, ReduceMotion::Off),
+            // serde(alias = "true") matches the JSON string "true", not the boolean true
+            (r#""true""#, ReduceMotion::On),
+            (r#""false""#, ReduceMotion::Off),
+        ];
 
-    #[test]
-    fn test_reduce_motion_deserialize_string_aliases() {
-        // serde(alias = "true") matches the JSON string "true", not the boolean true
-        assert_eq!(
-            serde_json::from_str::<ReduceMotion>(r#""true""#).unwrap(),
-            ReduceMotion::On,
-        );
-        assert_eq!(
-            serde_json::from_str::<ReduceMotion>(r#""false""#).unwrap(),
-            ReduceMotion::Off,
-        );
+        for (json, expected) in cases {
+            assert_eq!(
+                serde_json::from_str::<ReduceMotion>(json).unwrap(),
+                *expected,
+                "for JSON: {json}",
+            );
+        }
     }
 
     #[test]
@@ -99,37 +90,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_should_reduce_motion_on_returns_true(cx: &mut TestAppContext) {
+    fn test_should_reduce_motion_variants(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             assert!(ReduceMotionSetting(ReduceMotion::On).should_reduce_motion(cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_should_reduce_motion_off_returns_false(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
             assert!(!ReduceMotionSetting(ReduceMotion::Off).should_reduce_motion(cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_should_reduce_motion_system_delegates_to_platform(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            let platform_value = cx.should_reduce_motion();
-            let setting_value =
-                ReduceMotionSetting(ReduceMotion::System).should_reduce_motion(cx);
-            assert_eq!(setting_value, platform_value);
-        });
-    }
-
-    #[gpui::test]
-    fn test_from_settings_defaults_to_system(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            assert_eq!(ReduceMotionSetting::get_global(cx).0, ReduceMotion::System);
+            assert_eq!(
+                ReduceMotionSetting(ReduceMotion::System).should_reduce_motion(cx),
+                cx.should_reduce_motion(),
+            );
         });
     }
 
@@ -166,63 +135,19 @@ mod tests {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<ReduceMotionSetting>();
 
-        store
-            .set_user_settings(r#"{ "reduce_motion": "on" }"#, cx)
-            .unwrap();
-        assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
-            ReduceMotion::On,
-        );
+        let cases: &[(&str, ReduceMotion)] = &[
+            (r#"{ "reduce_motion": "on" }"#, ReduceMotion::On),
+            (r#"{ "reduce_motion": "off" }"#, ReduceMotion::Off),
+            (r#"{ "reduce_motion": "system" }"#, ReduceMotion::System),
+            (r#"{ "reduce_motion": "true" }"#, ReduceMotion::On),
+            (r#"{ "reduce_motion": "false" }"#, ReduceMotion::Off),
+            (r#"{}"#, ReduceMotion::System),
+        ];
 
-        store
-            .set_user_settings(r#"{ "reduce_motion": "off" }"#, cx)
-            .unwrap();
-        assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
-            ReduceMotion::Off,
-        );
-
-        store
-            .set_user_settings(r#"{ "reduce_motion": "system" }"#, cx)
-            .unwrap();
-        assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
-            ReduceMotion::System,
-        );
-    }
-
-    #[gpui::test]
-    fn test_settings_store_parses_string_aliases_from_json(cx: &mut App) {
-        let mut store = SettingsStore::new(cx, &default_settings());
-        store.register_setting::<ReduceMotionSetting>();
-
-        store
-            .set_user_settings(r#"{ "reduce_motion": "true" }"#, cx)
-            .unwrap();
-        assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
-            ReduceMotion::On,
-        );
-
-        store
-            .set_user_settings(r#"{ "reduce_motion": "false" }"#, cx)
-            .unwrap();
-        assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
-            ReduceMotion::Off,
-        );
-    }
-
-    #[gpui::test]
-    fn test_settings_store_defaults_when_reduce_motion_absent(cx: &mut App) {
-        let mut store = SettingsStore::new(cx, &default_settings());
-        store.register_setting::<ReduceMotionSetting>();
-
-        store.set_user_settings(r#"{}"#, cx).unwrap();
-        assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
-            ReduceMotion::System,
-        );
+        for (json, expected) in cases {
+            store.set_user_settings(json, cx).unwrap();
+            assert_eq!(store.get::<ReduceMotionSetting>(None).0, *expected, "for JSON: {json}");
+        }
     }
 
     #[gpui::test]
