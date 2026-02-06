@@ -190,20 +190,12 @@ You can configure fine-grained permission rules for individual tools using the `
       "tools": {
         "terminal": {
           "default": "allow",
-          "always_deny": [
-            { "pattern": "rm\\s+-rf" }
-          ],
-          "always_allow": [
-            { "pattern": "^git\\s" }
-          ],
-          "always_confirm": [
-            { "pattern": "sudo" }
-          ]
+          "always_deny": [{ "pattern": "rm\\s+-rf" }],
+          "always_allow": [{ "pattern": "^git\\s" }],
+          "always_confirm": [{ "pattern": "sudo" }]
         },
         "edit_file": {
-          "always_deny": [
-            { "pattern": "\\.env$" }
-          ]
+          "always_deny": [{ "pattern": "\\.env$" }]
         }
       }
     }
@@ -230,9 +222,7 @@ Patterns are case-insensitive by default. Set `"case_sensitive": true` on an ind
     "tool_permissions": {
       "tools": {
         "terminal": {
-          "always_deny": [
-            { "pattern": "PRODUCTION", "case_sensitive": true }
-          ]
+          "always_deny": [{ "pattern": "PRODUCTION", "case_sensitive": true }]
         }
       }
     }
@@ -252,14 +242,10 @@ For example, the following rule prevents copying or moving anything into a `secr
     "tool_permissions": {
       "tools": {
         "copy_path": {
-          "always_deny": [
-            { "pattern": "^secrets/" }
-          ]
+          "always_deny": [{ "pattern": "^secrets/" }]
         },
         "move_path": {
-          "always_deny": [
-            { "pattern": "^secrets/" }
-          ]
+          "always_deny": [{ "pattern": "^secrets/" }]
         }
       }
     }
