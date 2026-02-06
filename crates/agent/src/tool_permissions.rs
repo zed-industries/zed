@@ -448,8 +448,47 @@ mod tests {
     use crate::AgentTool;
     use crate::pattern_extraction::extract_terminal_pattern;
     use crate::tools::{EditFileTool, TerminalTool};
-    use agent_settings::{CompiledRegex, InvalidRegexPattern, ToolRules};
+    use agent_settings::{AgentProfileId, CompiledRegex, InvalidRegexPattern, ToolRules};
+    use gpui::px;
+    use settings::{DefaultAgentView, DockPosition, DockSide, NotifyWhenAgentWaiting};
     use std::sync::Arc;
+
+    fn test_agent_settings(
+        tool_permissions: ToolPermissions,
+        always_allow_tool_actions: bool,
+    ) -> AgentSettings {
+        AgentSettings {
+            enabled: true,
+            button: true,
+            dock: DockPosition::Right,
+            agents_panel_dock: DockSide::Left,
+            default_width: px(300.),
+            default_height: px(600.),
+            default_model: None,
+            inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: false,
+            commit_message_model: None,
+            thread_summary_model: None,
+            inline_alternatives: vec![],
+            favorite_models: vec![],
+            default_profile: AgentProfileId::default(),
+            default_view: DefaultAgentView::Thread,
+            profiles: Default::default(),
+            always_allow_tool_actions,
+            notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
+            play_sound_when_agent_done: false,
+            single_file_review: false,
+            model_parameters: vec![],
+            enable_feedback: false,
+            expand_edit_card: true,
+            expand_terminal_card: true,
+            cancel_generation_on_terminal_stop: true,
+            use_modifier_to_send: true,
+            message_editor_min_lines: 1,
+            tool_permissions,
+            show_turn_stats: false,
+        }
+    }
 
     fn pattern(command: &str) -> &'static str {
         Box::leak(
@@ -1611,29 +1650,19 @@ mod tests {
     #[test]
     fn decide_permission_for_path_no_dots_early_return() {
         // When the path has no `.` or `..`, normalize_path returns the same string,
-        // so decide_permission_for_path would return the raw decision directly.
-        let raw_path = "src/main.rs";
-        let simplified = normalize_path(raw_path);
-        assert_eq!(simplified, raw_path);
-
-        let decision = ToolPermissionDecision::from_input(
-            EditFileTool::NAME,
-            raw_path,
-            &ToolPermissions {
+        // so decide_permission_for_path returns the raw decision directly.
+        let settings = test_agent_settings(
+            ToolPermissions {
                 tools: Default::default(),
             },
             false,
-            ShellKind::Posix,
         );
+        let decision = decide_permission_for_path(EditFileTool::NAME, "src/main.rs", &settings);
         assert_eq!(decision, ToolPermissionDecision::Confirm);
     }
 
     #[test]
     fn decide_permission_for_path_traversal_triggers_deny() {
-        let raw_path = "/tmp/../etc/passwd";
-        let simplified = normalize_path(raw_path);
-        assert_eq!(simplified, "/etc/passwd");
-
         let deny_regex = CompiledRegex::new("/etc/passwd", false).unwrap();
         let mut tools = collections::HashMap::default();
         tools.insert(
@@ -1646,23 +1675,10 @@ mod tests {
                 invalid_patterns: vec![],
             },
         );
-        let permissions = ToolPermissions { tools };
+        let settings = test_agent_settings(ToolPermissions { tools }, false);
 
-        let raw_decision = ToolPermissionDecision::from_input(
-            EditFileTool::NAME,
-            raw_path,
-            &permissions,
-            false,
-            ShellKind::Posix,
-        );
-        let simplified_decision = ToolPermissionDecision::from_input(
-            EditFileTool::NAME,
-            &simplified,
-            &permissions,
-            false,
-            ShellKind::Posix,
-        );
-        let decision = most_restrictive(raw_decision, simplified_decision);
+        let decision =
+            decide_permission_for_path(EditFileTool::NAME, "/tmp/../etc/passwd", &settings);
         assert!(
             matches!(decision, ToolPermissionDecision::Deny(_)),
             "expected Deny for traversal to /etc/passwd, got {:?}",
