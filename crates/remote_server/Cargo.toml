@@ -53,7 +53,7 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 proto.workspace = true
-release_channel = { workspace = true, features = ["gpui"] }
+release_channel.workspace = true
 remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true

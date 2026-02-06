@@ -42,7 +42,7 @@ open_ai.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
-release_channel = { workspace = true, features = ["gpui"] }
+release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true

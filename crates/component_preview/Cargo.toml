@@ -29,7 +29,7 @@ log.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
 project.workspace = true
-release_channel = { workspace = true, features = ["gpui"] }
+release_channel.workspace = true
 reqwest_client.workspace = true
 session.workspace = true
 settings.workspace = true

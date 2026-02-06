@@ -24,7 +24,7 @@ gpui.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true
-release_channel = { workspace = true, features = ["gpui"] }
+release_channel.workspace = true
 remote.workspace = true
 semver.workspace = true
 settings.workspace = true

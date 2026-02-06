@@ -84,7 +84,7 @@ project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 rand.workspace = true
-release_channel = { workspace = true, features = ["gpui"] }
+release_channel.workspace = true
 rope.workspace = true
 rules_library.workspace = true
 schemars.workspace = true
