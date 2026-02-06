@@ -3573,6 +3573,14 @@ impl Workspace {
         let mut serialize = false;
         for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                if !dock
+                    .read(cx)
+                    .panel::<T>()
+                    .is_some_and(|panel| panel.read(cx).enabled(cx))
+                {
+                    continue;
+                }
+
                 let mut focus_center = false;
                 let panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, window, cx);
@@ -3612,6 +3620,14 @@ impl Workspace {
     pub fn open_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                if !dock
+                    .read(cx)
+                    .panel::<T>()
+                    .is_some_and(|panel| panel.read(cx).enabled(cx))
+                {
+                    return;
+                }
+
                 dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, window, cx);
                     dock.set_open(true, window, cx);
@@ -12346,6 +12362,81 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 1);
             assert_eq!(pane.active_item().unwrap().item_id(), item_a_id);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disabled_panel_cannot_be_toggled_or_opened(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Toggling focus to an enabled panel works.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // Close the dock and unfocus the panel.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // Disable the panel.
+        panel.update_in(cx, |panel, _, _| {
+            panel.enabled = false;
+        });
+
+        // toggle_panel_focus should not open or focus a disabled panel.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // open_panel should not open a disabled panel.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_panel::<TestPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+        });
+
+        // Re-enable the panel. Toggling focus should work again.
+        panel.update_in(cx, |panel, _, _| {
+            panel.enabled = true;
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
