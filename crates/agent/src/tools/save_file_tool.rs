@@ -106,23 +106,19 @@ impl AgentTool for SaveFileTool {
         }
 
         let authorize = if !confirmation_paths.is_empty() {
-            let title = if input.paths.len() == 1 {
-                format!(
-                    "Save {}",
-                    MarkdownInlineCode(&input.paths[0].to_string_lossy())
-                )
+            let title = if confirmation_paths.len() == 1 {
+                format!("Save {}", MarkdownInlineCode(&confirmation_paths[0]))
             } else {
-                let paths: Vec<_> = input
-                    .paths
+                let paths: Vec<_> = confirmation_paths
                     .iter()
                     .take(3)
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| p.as_str())
                     .collect();
-                if input.paths.len() > 3 {
+                if confirmation_paths.len() > 3 {
                     format!(
                         "Save {}, and {} more",
                         paths.join(", "),
-                        input.paths.len() - 3
+                        confirmation_paths.len() - 3
                     )
                 } else {
                     format!("Save {}", paths.join(", "))
