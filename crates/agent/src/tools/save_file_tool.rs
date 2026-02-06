@@ -72,7 +72,9 @@ impl AgentTool for SaveFileTool {
             let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
             match decision {
                 ToolPermissionDecision::Allow => {
-                    if is_sensitive_settings_path(Path::new(&*path_str)) {
+                    if !settings.always_allow_tool_actions
+                        && is_sensitive_settings_path(Path::new(&*path_str))
+                    {
                         needs_confirmation = true;
                     }
                 }

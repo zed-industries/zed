@@ -229,6 +229,10 @@ pub fn authorize_file_edit(
 
     let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
 
+    if explicitly_allowed {
+        return Task::ready(Ok(()));
+    }
+
     match sensitive_settings_kind(path) {
         Some(SensitiveSettingsKind::Local) => {
             let context = crate::ToolPermissionContext {
@@ -253,10 +257,6 @@ pub fn authorize_file_edit(
             );
         }
         None => {}
-    }
-
-    if explicitly_allowed {
-        return Task::ready(Ok(()));
     }
 
     let Ok(project_path) = thread.read_with(cx, |thread, cx| {

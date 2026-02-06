@@ -74,6 +74,7 @@ impl AgentTool for CreateDirectoryTool {
         let mut decision = decide_permission_for_path(Self::NAME, &input.path, settings);
 
         if matches!(decision, ToolPermissionDecision::Allow)
+            && !settings.always_allow_tool_actions
             && is_sensitive_settings_path(Path::new(&input.path))
         {
             decision = ToolPermissionDecision::Confirm;

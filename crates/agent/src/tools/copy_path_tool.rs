@@ -96,9 +96,11 @@ impl AgentTool for CopyPathTool {
 
         let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
             || matches!(dest_decision, ToolPermissionDecision::Confirm)
-            || (matches!(source_decision, ToolPermissionDecision::Allow)
+            || (!settings.always_allow_tool_actions
+                && matches!(source_decision, ToolPermissionDecision::Allow)
                 && is_sensitive_settings_path(Path::new(&input.source_path)))
-            || (matches!(dest_decision, ToolPermissionDecision::Allow)
+            || (!settings.always_allow_tool_actions
+                && matches!(dest_decision, ToolPermissionDecision::Allow)
                 && is_sensitive_settings_path(Path::new(&input.destination_path)));
 
         let authorize = if needs_confirmation {
