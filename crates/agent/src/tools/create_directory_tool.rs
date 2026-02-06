@@ -1,4 +1,4 @@
-use super::edit_file_tool::is_sensitive_settings_path;
+use super::edit_file_tool::{SensitiveSettingsKind, sensitive_settings_kind};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -72,10 +72,11 @@ impl AgentTool for CreateDirectoryTool {
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
         let mut decision = decide_permission_for_path(Self::NAME, &input.path, settings);
+        let sensitive_kind = sensitive_settings_kind(Path::new(&input.path));
 
         if matches!(decision, ToolPermissionDecision::Allow)
             && !settings.always_allow_tool_actions
-            && is_sensitive_settings_path(Path::new(&input.path))
+            && sensitive_kind.is_some()
         {
             decision = ToolPermissionDecision::Confirm;
         }
@@ -86,15 +87,17 @@ impl AgentTool for CreateDirectoryTool {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
+                let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
+                let title = match &sensitive_kind {
+                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                    None => title,
+                };
                 let context = crate::ToolPermissionContext {
                     tool_name: Self::NAME.to_string(),
                     input_value: input.path.clone(),
                 };
-                Some(event_stream.authorize(
-                    format!("Create directory {}", MarkdownInlineCode(&input.path)),
-                    context,
-                    cx,
-                ))
+                Some(event_stream.authorize(title, context, cx))
             }
         };
 

@@ -172,14 +172,14 @@ impl EditFileTool {
     }
 }
 
-enum SensitiveSettingsKind {
+pub enum SensitiveSettingsKind {
     Local,
     Global,
 }
 
 /// Returns the kind of sensitive settings location this path targets, if any:
 /// either inside a `.zed/` local-settings directory or inside the global config dir.
-fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
+pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
     if path.components().any(|component| {
         component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)

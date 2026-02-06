@@ -1,4 +1,6 @@
-use super::edit_file_tool::is_sensitive_settings_path;
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
+};
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
@@ -95,11 +97,13 @@ impl AgentTool for DeletePathTool {
                     tool_name: Self::NAME.to_string(),
                     input_value: path.clone(),
                 };
-                Some(event_stream.authorize(
-                    format!("Delete {}", MarkdownInlineCode(&path)),
-                    context,
-                    cx,
-                ))
+                let title = format!("Delete {}", MarkdownInlineCode(&path));
+                let title = match sensitive_settings_kind(Path::new(&path)) {
+                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                    None => title,
+                };
+                Some(event_stream.authorize(title, context, cx))
             }
         };
 
