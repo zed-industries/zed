@@ -77,15 +77,17 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
                     }
                 }
                 if !normalized_redirects.is_empty() {
-                    let last_command = commands.get_mut(start..).and_then(|s| s.last_mut());
-                    match last_command {
-                        Some(last_command) => {
-                            for redirect in &normalized_redirects {
-                                last_command.push(' ');
-                                last_command.push_str(redirect);
+                    let new_commands = commands.get_mut(start..);
+                    match new_commands {
+                        Some(new_commands) if !new_commands.is_empty() => {
+                            for command in new_commands {
+                                for redirect in &normalized_redirects {
+                                    command.push(' ');
+                                    command.push_str(redirect);
+                                }
                             }
                         }
-                        None => return None,
+                        _ => return None,
                     }
                 }
             }
@@ -766,7 +768,10 @@ mod tests {
     fn test_brace_group_multi_command_redirect() {
         let commands =
             extract_commands("{ echo hello; cat; } > /etc/passwd").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello", "cat > /etc/passwd"]);
+        assert_eq!(
+            commands,
+            vec!["echo hello > /etc/passwd", "cat > /etc/passwd"]
+        );
     }
 
     #[test]
