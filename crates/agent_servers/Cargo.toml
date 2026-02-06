@@ -25,7 +25,7 @@ agent_settings.workspace = true
 feature_flags.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-brush-parser.workspace = true
+
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -33,6 +33,7 @@ env_logger = { workspace = true, optional = true }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+shell_command_parser.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 credentials_provider.workspace = true
 google_ai.workspace = true

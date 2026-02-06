@@ -1,0 +1,16 @@
+[package]
+name = "shell_command_parser"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/shell_command_parser.rs"
+doctest = false
+
+[dependencies]
+brush-parser.workspace = true
