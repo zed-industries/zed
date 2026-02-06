@@ -34,6 +34,7 @@ pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -746,10 +747,14 @@ impl LanguageModel for CloudLanguageModel {
         } else {
             thinking_allowed && self.model.id.0.ends_with("-thinking")
         };
+        let effort = request
+            .thinking_effort
+            .as_ref()
+            .and_then(|effort| anthropic::Effort::from_str(effort).ok());
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
-                let request = into_anthropic(
+                let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
@@ -762,6 +767,12 @@ impl LanguageModel for CloudLanguageModel {
                         AnthropicModelMode::Default
                     },
                 );
+
+                if enable_thinking && effort.is_some() {
+                    request.thinking = Some(anthropic::Thinking::Adaptive);
+                    request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {

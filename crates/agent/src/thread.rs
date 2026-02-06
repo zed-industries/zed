@@ -2354,7 +2354,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
-            thinking_effort: None,
+            thinking_effort: self.thinking_effort.clone(),
         };
 
         log::debug!("Completion request built successfully");
