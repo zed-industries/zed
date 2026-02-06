@@ -1259,6 +1259,10 @@ impl Thread {
         cx.notify();
     }
 
+    pub fn thinking_effort(&self) -> Option<&String> {
+        self.thinking_effort.as_ref()
+    }
+
     pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
         self.thinking_effort = effort;
         cx.notify();

@@ -1,4 +1,5 @@
 use gpui::{Corner, List};
+use language_model::LanguageModelEffortLevel;
 use settings::update_settings_file;
 use ui::SplitButton;
 
@@ -2694,14 +2695,15 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<SplitButton> {
+    fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
             return None;
         }
 
         let thread = self.as_native_thread(cx)?.read(cx);
+        let model = thread.model()?;
 
-        let supports_thinking = thread.model()?.supports_thinking();
+        let supports_thinking = model.supports_thinking();
         if !supports_thinking {
             return None;
         }
@@ -2741,18 +2743,56 @@ impl AcpThreadView {
                 }
             }));
 
-        Some(SplitButton::new(
-            thinking_toggle,
-            self.render_effort_selector(cx).into_any_element(),
-        ))
+        if model.supported_effort_levels().is_empty() {
+            return Some(thinking_toggle.into_any_element());
+        }
+
+        Some(
+            SplitButton::new(
+                thinking_toggle,
+                self.render_effort_selector(
+                    model.supported_effort_levels(),
+                    thread.thinking_effort().cloned(),
+                    cx,
+                )
+                .into_any_element(),
+            )
+            .style(ui::SplitButtonStyle::Outlined)
+            .into_any_element(),
+        )
     }
 
-    fn render_effort_selector(&self, _cx: &App) -> impl IntoElement {
+    fn render_effort_selector(
+        &self,
+        supported_effort_levels: Vec<LanguageModelEffortLevel>,
+        selected_effort: Option<String>,
+        _cx: &App,
+    ) -> impl IntoElement {
+        let default_effort_level = supported_effort_levels
+            .iter()
+            .find(|effort_level| effort_level.is_default)
+            .cloned();
+
+        let selected = selected_effort.and_then(|effort| {
+            supported_effort_levels
+                .iter()
+                .find(|level| level.value == effort)
+                .cloned()
+        });
+
         PopoverMenu::new("effort-selector")
             .trigger(
                 ui::ButtonLike::new_rounded_right("effort-selector-trigger")
                     .layer(ui::ElevationIndex::ModalSurface)
                     .size(ui::ButtonSize::None)
+                    .child(
+                        Label::new(
+                            selected
+                                .or(default_effort_level)
+                                .map_or("Select Effort".into(), |effort| effort.name.clone()),
+                        )
+                        .size(LabelSize::Small),
+                    )
                     .child(
                         div()
                             .px_1()
@@ -2760,14 +2800,15 @@ impl AcpThreadView {
                     ),
             )
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                    menu.action("low", gpui::NoAction.boxed_clone())
-                        .action("medium", gpui::NoAction.boxed_clone())
-                        .action("high", gpui::NoAction.boxed_clone())
-                        .action("max", gpui::NoAction.boxed_clone())
+                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                    for effort_level in supported_effort_levels.clone() {
+                        menu = menu.action(effort_level.name, gpui::NoAction.boxed_clone());
+                    }
+
+                    menu
                 }))
             })
-            .anchor(Corner::TopRight)
+            .anchor(Corner::BottomRight)
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
