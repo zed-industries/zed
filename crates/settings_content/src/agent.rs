@@ -118,10 +118,10 @@ pub struct AgentSettingsContent {
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
-    /// The global `default` applies to both the native Zed agent and external
-    /// agent servers (e.g. Claude Code) that don't define their own permission
-    /// modes. Per-tool regex patterns (`always_allow`, `always_deny`,
-    /// `always_confirm`) only apply to the native Zed agent.
+    /// The global `default` and per-tool regex patterns (`always_allow`,
+    /// `always_deny`, `always_confirm`) apply to both the native Zed agent
+    /// and external agent servers. For external agents, patterns are matched
+    /// against the tool call's title rather than raw tool input.
     pub tool_permissions: Option<ToolPermissionsContent>,
 }
 

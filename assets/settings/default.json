@@ -960,16 +960,17 @@
     // "deny" and "confirm" still take precedence — the external agent's
     // permission system is only used when Zed would allow the action.
     //
-    // Per-tool regex patterns ("tools" below) only apply to the native Zed
-    // agent, since external agents handle tool input differently.
+    // Per-tool regex patterns ("tools" below) apply to both the native Zed
+    // agent and external agents. For external agents, patterns are matched
+    // against the tool call's title rather than raw tool input.
     "tool_permissions": {
       // Global default permission when no tool-specific rules match.
       // "allow" - Auto-approve without prompting
       // "deny" - Auto-reject
       // "confirm" - Always prompt (default)
       "default": "confirm",
-      // Per-tool permission rules. Regex patterns only apply to the native Zed
-      // agent. The per-tool "default" also applies to MCP tools.
+      // Per-tool permission rules. Regex patterns apply to both the native Zed
+      // agent and external agents. The per-tool "default" also applies to MCP tools.
       // Each tool can have its own default and regex patterns.
       "tools": {
         // "terminal": {
