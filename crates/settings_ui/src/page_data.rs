@@ -68,7 +68,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 9] {
+    fn general_settings_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -184,30 +184,6 @@ fn general_page() -> SettingsPage {
                     }
                     .unimplemented(),
                 ),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Semantic Tokens",
-                description: "If semantic tokens from language servers should be rendered.",
-                field: Box::new(SettingField {
-                    json_path: Some("semantic_tokens"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .defaults
-                            .semantic_tokens
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .defaults
-                            .semantic_tokens = value;
-                    },
-                }),
                 metadata: None,
                 files: USER,
             }),
@@ -8521,7 +8497,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 5] {
+    fn lsp_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8598,6 +8574,30 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                     write: |settings_content, value| {
                         settings_content.editor.go_to_definition_fallback = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Semantic Tokens",
+                description: "Whether to render semantic tokens from language servers.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).enable_language_server"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .semantic_tokens
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .semantic_tokens = value;
                     },
                 }),
                 metadata: None,
