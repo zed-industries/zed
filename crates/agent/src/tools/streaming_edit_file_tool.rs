@@ -573,7 +573,7 @@ fn apply_edits(
     }
 
     // Sort edits by position so buffer.edit() can handle offset translation
-    let mut edits_sorted: Vec<_> = resolved_edits.into_iter().collect();
+    let mut edits_sorted = resolved_edits;
     edits_sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start));
 
     // Validate no overlaps (sorted ascending by start)
