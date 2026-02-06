@@ -279,13 +279,13 @@ impl AgentTool for SubagentTool {
                     cx,
                 ).fuse() => result,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    let _ = subagent_thread.update(cx, |thread, cx| {
+                    subagent_thread.update(cx, |thread, cx| {
                         thread.cancel(cx).detach();
                     });
                     Err(anyhow!("Subagent cancelled by user"))
                 }
                 _ = wait_for_user_stop.fuse() => {
-                    let _ = subagent_thread.update(cx, |thread, cx| {
+                    subagent_thread.update(cx, |thread, cx| {
                         thread.cancel(cx).detach();
                     });
                     Err(anyhow!("Subagent stopped by user"))
@@ -293,7 +293,7 @@ impl AgentTool for SubagentTool {
             };
 
             if let Some(parent) = parent_thread_weak.upgrade() {
-                let _ = parent.update(cx, |thread, _cx| {
+                parent.update(cx, |thread, _cx| {
                     thread.unregister_running_subagent(&subagent_weak);
                 });
             }
