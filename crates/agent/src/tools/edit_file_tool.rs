@@ -171,6 +171,26 @@ impl EditFileTool {
     }
 }
 
+/// Returns `true` if the given path targets a sensitive settings location:
+/// either inside a `.zed/` local-settings directory or inside the global config dir.
+pub fn is_sensitive_settings_path(path: &Path) -> bool {
+    let local_settings_folder = paths::local_settings_folder_name();
+    if path.components().any(|component| {
+        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+    }) {
+        return true;
+    }
+
+    // TODO this is broken when remoting
+    if let Ok(canonical_path) = std::fs::canonicalize(path)
+        && canonical_path.starts_with(paths::config_dir())
+    {
+        return true;
+    }
+
+    false
+}
+
 pub fn authorize_file_edit(
     path: &Path,
     display_description: &str,
@@ -188,38 +208,12 @@ pub fn authorize_file_edit(
 
     let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
 
-    // If any path component matches the local settings folder, then this could affect
-    // the editor in ways beyond the project source, so prompt.
-    let local_settings_folder = paths::local_settings_folder_name();
-    if path.components().any(|component| {
-        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
-    }) {
+    if is_sensitive_settings_path(path) {
         let context = crate::ToolPermissionContext {
             tool_name: EditFileTool::NAME.to_string(),
             input_value: path_str.to_string(),
         };
-        return event_stream.authorize(
-            format!("{} (local settings)", display_description),
-            context,
-            cx,
-        );
-    }
-
-    // It's also possible that the global config dir is configured to be inside the project,
-    // so check for that edge case too.
-    // TODO this is broken when remoting
-    if let Ok(canonical_path) = std::fs::canonicalize(path)
-        && canonical_path.starts_with(paths::config_dir())
-    {
-        let context = crate::ToolPermissionContext {
-            tool_name: EditFileTool::NAME.to_string(),
-            input_value: path_str.to_string(),
-        };
-        return event_stream.authorize(
-            format!("{} (global settings)", display_description),
-            context,
-            cx,
-        );
+        return event_stream.authorize(format!("{} (settings)", display_description), context, cx);
     }
 
     let Ok(project_path) = thread.read_with(cx, |thread, cx| {

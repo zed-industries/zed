@@ -1,3 +1,4 @@
+use super::edit_file_tool::is_sensitive_settings_path;
 use crate::{
     AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
 };
@@ -110,7 +111,11 @@ impl AgentTool for MovePathTool {
         }
 
         let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
-            || matches!(dest_decision, ToolPermissionDecision::Confirm);
+            || matches!(dest_decision, ToolPermissionDecision::Confirm)
+            || (matches!(source_decision, ToolPermissionDecision::Allow)
+                && is_sensitive_settings_path(Path::new(&input.source_path)))
+            || (matches!(dest_decision, ToolPermissionDecision::Allow)
+                && is_sensitive_settings_path(Path::new(&input.destination_path)));
 
         let authorize = if needs_confirmation {
             let src = MarkdownInlineCode(&input.source_path);

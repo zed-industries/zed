@@ -1,3 +1,4 @@
+use super::edit_file_tool::is_sensitive_settings_path;
 use crate::{
     AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
 };
@@ -11,6 +12,7 @@ use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -76,7 +78,13 @@ impl AgentTool for DeletePathTool {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &path, settings);
+        let mut decision = decide_permission_from_settings(Self::NAME, &path, settings);
+
+        if matches!(decision, ToolPermissionDecision::Allow)
+            && is_sensitive_settings_path(Path::new(&path))
+        {
+            decision = ToolPermissionDecision::Confirm;
+        }
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,

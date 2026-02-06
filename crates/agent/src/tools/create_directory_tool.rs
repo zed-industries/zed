@@ -7,9 +7,11 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
+use super::edit_file_tool::is_sensitive_settings_path;
 use crate::{
     AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
 };
@@ -72,6 +74,14 @@ impl AgentTool for CreateDirectoryTool {
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
         let decision = decide_permission_from_settings(Self::NAME, &input.path, settings);
+
+        let decision = if matches!(decision, ToolPermissionDecision::Allow)
+            && is_sensitive_settings_path(Path::new(&input.path))
+        {
+            ToolPermissionDecision::Confirm
+        } else {
+            decision
+        };
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
