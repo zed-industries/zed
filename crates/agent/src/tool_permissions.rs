@@ -1356,6 +1356,10 @@ mod tests {
         // End-of-options marker
         t("rm -rf -- /").is_deny();
         t("rm -- /").is_deny();
+        // Prefixed with sudo or other commands
+        t("sudo rm -rf /").is_deny();
+        t("sudo rm -rf /*").is_deny();
+        t("sudo rm -rf --no-preserve-root /").is_deny();
     }
 
     #[test]
@@ -1540,9 +1544,20 @@ mod tests {
         t("rm --no-preserve-root=yes -rf .").is_deny();
         t("rm --no-preserve-root=yes -rf ..").is_deny();
         t("rm --no-preserve-root=yes -rf $HOME").is_deny();
+        // --flag (without =value) should also not bypass the rules
+        t("rm -rf --no-preserve-root /").is_deny();
+        t("rm --no-preserve-root -rf /").is_deny();
+        t("rm --no-preserve-root --recursive --force /").is_deny();
+        t("rm -rf --no-preserve-root ~").is_deny();
+        t("rm -rf --no-preserve-root .").is_deny();
+        t("rm -rf --no-preserve-root ..").is_deny();
+        t("rm -rf --no-preserve-root $HOME").is_deny();
         // Trailing --flag=value after path
         t("rm / --no-preserve-root=yes -rf").is_deny();
         t("rm ~ -rf --no-preserve-root=yes").is_deny();
+        // Trailing --flag (without =value) after path
+        t("rm / -rf --no-preserve-root").is_deny();
+        t("rm ~ -rf --no-preserve-root").is_deny();
         // Safe paths with --flag=value should NOT be blocked
         t("rm --no-preserve-root=yes -rf ./build")
             .mode(ToolPermissionMode::Allow)
@@ -1550,11 +1565,16 @@ mod tests {
         t("rm --interactive=never -rf /tmp/test")
             .mode(ToolPermissionMode::Allow)
             .is_allow();
+        // Safe paths with --flag (without =value) should NOT be blocked
+        t("rm --no-preserve-root -rf ./build")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
     }
 
     #[test]
     fn hardcoded_blocks_rm_with_path_traversal() {
         // Traversal to root via ..
+        t("rm -rf /etc/../").is_deny();
         t("rm -rf /tmp/../../").is_deny();
         t("rm -rf /tmp/../..").is_deny();
         t("rm -rf /var/log/../../").is_deny();
@@ -1618,6 +1638,26 @@ mod tests {
         t("rm -rf /safe /tmp/../../").is_deny();
         t("rm -rf /tmp/../../ /safe").is_deny();
         t("rm -rf /safe /var/log/../../").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_user_reported_bypass_variants() {
+        // User report: "rm -rf /etc/../" normalizes to "rm -rf /" via path traversal
+        t("rm -rf /etc/../").is_deny();
+        t("rm -rf /etc/..").is_deny();
+        // User report: --no-preserve-root (without =value) should not bypass
+        t("rm -rf --no-preserve-root /").is_deny();
+        t("rm --no-preserve-root -rf /").is_deny();
+        // User report: "rm -rf /*" should be caught (glob expands to all top-level entries)
+        t("rm -rf /*").is_deny();
+        // Chained with sudo
+        t("sudo rm -rf /").is_deny();
+        t("sudo rm -rf --no-preserve-root /").is_deny();
+        // Traversal cannot be bypassed even with global allow or allow patterns
+        t("rm -rf /etc/../").global(true).is_deny();
+        t("rm -rf /etc/../").allow(&[".*"]).is_deny();
+        t("rm -rf --no-preserve-root /").global(true).is_deny();
+        t("rm -rf --no-preserve-root /").allow(&[".*"]).is_deny();
     }
 
     #[test]
