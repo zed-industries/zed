@@ -584,13 +584,17 @@ fn apply_edits(
         if let [(earlier_range, _), (later_range, _)] = window
             && (earlier_range.end > later_range.start || earlier_range.start == later_range.start)
         {
+            let earlier_start_line = snapshot.offset_to_point(earlier_range.start).row + 1;
+            let earlier_end_line = snapshot.offset_to_point(earlier_range.end).row + 1;
+            let later_start_line = snapshot.offset_to_point(later_range.start).row + 1;
+            let later_end_line = snapshot.offset_to_point(later_range.end).row + 1;
             anyhow::bail!(
-                "Conflicting edit ranges detected: {}..{} conflicts with {}..{}. \
+                "Conflicting edit ranges detected: lines {}-{} conflicts with lines {}-{}. \
                  Conflicting edit ranges are not allowed, as they would overwrite each other.",
-                earlier_range.start,
-                earlier_range.end,
-                later_range.start,
-                later_range.end,
+                earlier_start_line,
+                earlier_end_line,
+                later_start_line,
+                later_end_line,
             );
         }
     }
