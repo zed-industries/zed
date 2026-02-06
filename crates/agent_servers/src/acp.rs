@@ -9,6 +9,7 @@ use anyhow::anyhow;
 use collections::HashMap;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
+use futures::FutureExt as _;
 use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
@@ -20,6 +21,7 @@ use util::process::Child;
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 use std::{any::Any, cell::RefCell};
 use std::{path::Path, rc::Rc};
 use thiserror::Error;
@@ -182,6 +184,7 @@ pub async fn connect(
 }
 
 const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1;
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl AcpConnection {
     pub async fn stdio(
@@ -280,27 +283,40 @@ impl AcpConnection {
             });
         });
 
-        let response = connection
-            .initialize(
-                acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                    .client_capabilities(
-                        acp::ClientCapabilities::new()
-                            .fs(acp::FileSystemCapability::new()
-                                .read_text_file(true)
-                                .write_text_file(true))
-                            .terminal(true)
-                            // Experimental: Allow for rendering terminal output from the agents
-                            .meta(acp::Meta::from_iter([
-                                ("terminal_output".into(), true.into()),
-                                ("terminal-auth".into(), true.into()),
-                            ])),
-                    )
-                    .client_info(
-                        acp::Implementation::new("zed", version)
-                            .title(release_channel.map(ToOwned::to_owned)),
-                    ),
-            )
-            .await?;
+        let response = {
+            let mut initialize_timeout = cx.background_executor().timer(INITIALIZE_TIMEOUT).fuse();
+            let connection_for_init = connection.clone();
+            let mut initialize = connection_for_init
+                .initialize(
+                    acp::InitializeRequest::new(acp::ProtocolVersion::V1)
+                        .client_capabilities(
+                            acp::ClientCapabilities::new()
+                                .fs(acp::FileSystemCapability::new()
+                                    .read_text_file(true)
+                                    .write_text_file(true))
+                                .terminal(true)
+                                // Experimental: Allow for rendering terminal output from the agents
+                                .meta(acp::Meta::from_iter([
+                                    ("terminal_output".into(), true.into()),
+                                    ("terminal-auth".into(), true.into()),
+                                ])),
+                        )
+                        .client_info(
+                            acp::Implementation::new("zed", version)
+                                .title(release_channel.map(ToOwned::to_owned)),
+                        ),
+                )
+                .fuse();
+            futures::select_biased! {
+                response = initialize => response?,
+                _ = initialize_timeout => {
+                    child.kill().log_err();
+                    return Err(anyhow!(LoadError::Other(
+                        format!("Timed out waiting for {} to initialize.", server_name).into(),
+                    )));
+                }
+            }
+        };
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());

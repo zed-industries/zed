@@ -399,8 +399,9 @@ impl AcpServerView {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
                             this.handle_load_error(err, window, cx);
-                        } else if let Some(active) = this.as_active_thread() {
-                            active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
+                        } else {
+                            let load_error = LoadError::Other(format!("{:#}", err).into());
+                            this.handle_load_error(anyhow!(load_error), window, cx);
                         }
                         cx.notify();
                     })
