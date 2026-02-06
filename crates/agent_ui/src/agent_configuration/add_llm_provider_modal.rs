@@ -154,6 +154,7 @@ impl ModelInput {
             parallel_tool_calls,
             prompt_cache_key,
             chat_completions,
+            ..
         } = ModelCapabilities::default();
 
         Self {
@@ -205,6 +206,7 @@ impl ModelInput {
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
                 chat_completions: self.capabilities.supports_chat_completions.selected(),
+                thinking_mode: Default::default(),
             },
         })
     }

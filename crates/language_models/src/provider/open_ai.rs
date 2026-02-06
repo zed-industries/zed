@@ -26,7 +26,8 @@ use open_ai::{
     },
     stream_completion,
 };
-use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
+
+use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore, ThinkingMode};
 use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
@@ -376,6 +377,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
                 self.model.reasoning_effort(),
+                ThinkingMode::default(),
             );
             let completions = self.stream_completion(request, cx);
             async move {
@@ -391,6 +393,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
                 self.model.reasoning_effort(),
+                ThinkingMode::default(),
             );
             let completions = self.stream_response(request, cx);
             async move {
@@ -402,6 +405,58 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 }
 
+/// Determines whether thinking content at a given message index should be included
+/// based on the thinking mode configuration.
+///
+/// # Arguments
+/// * `thinking_mode` - The mode configured for handling thinking content
+/// * `msg_idx` - The index of the current message being processed
+/// * `last_user_idx` - The index of the last user message in the conversation
+///
+/// # Returns
+/// `true` if the thinking content should be included, `false` otherwise
+///
+/// # Behavior by Mode
+/// - `Openai`: Always includes thinking content (treated as standard text)
+/// - `Preserved`: Always includes thinking content (preserved in original position)
+/// - `Interleave`: Only includes thinking from messages after the last user message,
+///   discarding older thinking to save tokens
+fn should_include_thinking(
+    thinking_mode: ThinkingMode,
+    msg_idx: usize,
+    last_user_idx: Option<usize>,
+) -> bool {
+    match thinking_mode {
+        ThinkingMode::Openai | ThinkingMode::Preserved => true,
+        ThinkingMode::Interleave => {
+            if let Some(last_user) = last_user_idx {
+                msg_idx > last_user
+            } else {
+                true
+            }
+        }
+    }
+}
+
+/// Converts a language model request to an OpenAI-compatible request format.
+///
+/// This function handles the transformation of thinking content based on the
+/// configured thinking mode. Thinking blocks can be:
+/// - Included as regular text (Openai mode)
+/// - Preserved in their original position (Preserved mode)
+/// - Interleaved only after the last user message (Interleave mode)
+///
+/// # Arguments
+/// * `request` - The language model request to convert
+/// * `model_id` - The model identifier to use
+/// * `supports_parallel_tool_calls` - Whether the model supports parallel tool calls
+/// * `supports_prompt_cache_key` - Whether prompt caching is supported
+/// * `max_output_tokens` - Optional maximum tokens for model output
+/// * `reasoning_effort` - Optional reasoning effort parameter (for o-series models)
+/// * `thinking_mode` - The mode for handling thinking content
+///
+/// # Returns
+/// An OpenAI-compatible request struct
 pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
@@ -409,14 +464,31 @@ pub fn into_open_ai(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
+    thinking_mode: ThinkingMode,
 ) -> open_ai::Request {
     let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
-    for message in request.messages {
+
+    // Find the index of the most recent user message
+    let last_user_message_idx = request
+        .messages
+        .iter()
+        .rposition(|msg| msg.role == Role::User);
+
+    for (msg_idx, message) in request.messages.into_iter().enumerate() {
+        let mut current_reasoning: Option<String> = None;
+
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                MessageContent::Thinking { text, .. } => {
+                    if should_include_thinking(thinking_mode, msg_idx, last_user_message_idx)
+                        && !text.trim().is_empty()
+                    {
+                        current_reasoning.get_or_insert_default().push_str(&text);
+                    }
+                }
+                MessageContent::Text(text) => {
                     let should_add = if message.role == Role::User {
                         // Including whitespace-only user messages can cause error with OpenAI compatible APIs
                         // See https://github.com/zed-industries/zed/issues/40097
@@ -429,10 +501,13 @@ pub fn into_open_ai(
                             open_ai::MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            &mut current_reasoning,
                         );
                     }
                 }
-                MessageContent::RedactedThinking(_) => {}
+                MessageContent::RedactedThinking(_) => {
+                    // Redacted thinking is always skipped in all modes
+                }
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_ai::MessagePart::Image {
@@ -443,6 +518,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        &mut current_reasoning,
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -465,6 +541,7 @@ pub fn into_open_ai(
                         messages.push(open_ai::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_content: current_reasoning.take(),
                         });
                     }
                 }
@@ -488,6 +565,30 @@ pub fn into_open_ai(
                     messages.push(open_ai::RequestMessage::Tool {
                         content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+
+        // Flush any remaining reasoning content that wasn't consumed.
+        // This handles the case where a message contains only thinking content,
+        // ensuring it is properly attached to an assistant message or creates a standalone message.
+        if let Some(reasoning) = current_reasoning {
+            if message.role == Role::Assistant {
+                if let Some(open_ai::RequestMessage::Assistant {
+                    reasoning_content, ..
+                }) = messages.last_mut()
+                {
+                    // Append to the just-added assistant message
+                    reasoning_content
+                        .get_or_insert_default()
+                        .push_str(&reasoning);
+                } else {
+                    // Create a standalone assistant message with only reasoning content
+                    messages.push(open_ai::RequestMessage::Assistant {
+                        content: None,
+                        tool_calls: Vec::new(),
+                        reasoning_content: Some(reasoning),
                     });
                 }
             }
@@ -539,8 +640,15 @@ pub fn into_open_ai_response(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
+    thinking_mode: ThinkingMode,
 ) -> ResponseRequest {
     let stream = !model_id.starts_with("o1-");
+
+    // Find the index of the most recent user message
+    let last_user_message_idx = request
+        .messages
+        .iter()
+        .rposition(|msg| msg.role == Role::User);
 
     let LanguageModelRequest {
         thread_id,
@@ -556,8 +664,14 @@ pub fn into_open_ai_response(
     } = request;
 
     let mut input_items = Vec::new();
-    for (index, message) in messages.into_iter().enumerate() {
-        append_message_to_response_items(message, index, &mut input_items);
+    for (msg_idx, message) in messages.into_iter().enumerate() {
+        append_message_to_response_items(
+            message,
+            msg_idx,
+            &mut input_items,
+            Some(thinking_mode),
+            last_user_message_idx,
+        );
     }
 
     let tools: Vec<_> = tools
@@ -601,6 +715,8 @@ fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
     input_items: &mut Vec<ResponseInputItem>,
+    thinking_mode: Option<ThinkingMode>,
+    last_user_message_idx: Option<usize>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
@@ -610,7 +726,11 @@ fn append_message_to_response_items(
                 push_response_text_part(&message.role, text, &mut content_parts);
             }
             MessageContent::Thinking { text, .. } => {
-                push_response_text_part(&message.role, text, &mut content_parts);
+                if thinking_mode.map_or(true, |mode| {
+                    should_include_thinking(mode, index, last_user_message_idx)
+                }) {
+                    push_response_text_part(&message.role, text, &mut content_parts);
+                }
             }
             MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
@@ -713,20 +833,43 @@ fn tool_result_output(result: &LanguageModelToolResult) -> String {
     }
 }
 
+/// Adds a content part to the OpenAI message, handling message continuation and merging.
+///
+/// This function manages the addition of content (text or image) to a message by:
+/// - Appending to an existing message of the same role when possible
+/// - Creating a new message when no compatible message exists
+/// - Merging any pending reasoning content when extending an existing assistant message
+///
+/// # Arguments
+/// * `new_part` - The content part to add (text or image)
+/// * `role` - The role of the message (User, Assistant, or System)
+/// * `messages` - The mutable vector of OpenAI messages
+/// * `current_reasoning` - Optional pending reasoning content to attach
 fn add_message_content_part(
     new_part: open_ai::MessagePart,
     role: Role,
     messages: &mut Vec<open_ai::RequestMessage>,
+    current_reasoning: &mut Option<String>,
 ) {
     match (role, messages.last_mut()) {
-        (Role::User, Some(open_ai::RequestMessage::User { content }))
-        | (
+        // Handle Assistant messages separately to correctly merge reasoning_content
+        (
             Role::Assistant,
             Some(open_ai::RequestMessage::Assistant {
                 content: Some(content),
+                reasoning_content,
                 ..
             }),
-        )
+        ) => {
+            content.push_part(new_part);
+            // Merge reasoning content when adding to an existing Assistant message
+            if let Some(new_reasoning) = current_reasoning.take() {
+                reasoning_content
+                    .get_or_insert_default()
+                    .push_str(&new_reasoning);
+            }
+        }
+        (Role::User, Some(open_ai::RequestMessage::User { content }))
         | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
             content.push_part(new_part);
         }
@@ -738,6 +881,7 @@ fn add_message_content_part(
                 Role::Assistant => open_ai::RequestMessage::Assistant {
                     content: Some(open_ai::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
+                    reasoning_content: current_reasoning.take(),
                 },
                 Role::System => open_ai::RequestMessage::System {
                     content: open_ai::MessageContent::from(vec![new_part]),
@@ -799,7 +943,7 @@ impl OpenAiEventMapper {
                 }
             }
             if let Some(content) = delta.content.clone() {
-                if !content.is_empty() {
+                                if !content.is_empty() {
                     events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                 }
             }
@@ -1399,6 +1543,64 @@ mod tests {
         })
     }
 
+    fn map_completion_events(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        block_on(async {
+            OpenAiEventMapper::new()
+                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .collect()
+        })
+    }
+
+    #[test]
+    fn stream_completion_maps_thinking() {
+        use open_ai::{ChoiceDelta, ResponseMessageDelta, ResponseStreamEvent, Role};
+
+        let events = vec![
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: Some(Role::Assistant),
+                        content: None,
+                        reasoning_content: Some("Thinking...".to_string()),
+                        tool_calls: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: Some("Result".to_string()),
+                        reasoning_content: None,
+                        tool_calls: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+        ];
+
+        let mapped = map_completion_events(events);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Thinking { ref text, .. } if text == "Thinking..."
+        ));
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Text(ref text) if text == "Result"
+        ));
+    }
+
     fn response_item_message(id: &str) -> ResponseOutputItem {
         ResponseOutputItem::Message(ResponseOutputMessage {
             id: Some(id.to_string()),
@@ -1582,6 +1784,7 @@ mod tests {
             true,
             Some(2048),
             Some(ReasoningEffort::Low),
+            ThinkingMode::default(),
         );
 
         let serialized = serde_json::to_value(&response).unwrap();
@@ -1927,5 +2130,502 @@ mod tests {
             mapped[1],
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
         ));
+    }
+
+    fn message_contains_text(message: &open_ai::RequestMessage, text_to_find: &str) -> bool {
+        let content = match message {
+            open_ai::RequestMessage::User { content } => Some(content),
+            open_ai::RequestMessage::Assistant { content, .. } => content.as_ref(),
+            open_ai::RequestMessage::System { content, .. } => Some(content),
+            open_ai::RequestMessage::Tool { .. } => None,
+        };
+
+        let has_text = content
+            .map(|c| match c {
+                open_ai::MessageContent::Plain(text) => text.contains(text_to_find),
+                open_ai::MessageContent::Multipart(parts) => parts.iter().any(|p| {
+                    if let open_ai::MessagePart::Text { text } = p {
+                        text.contains(text_to_find)
+                    } else {
+                        false
+                    }
+                }),
+            })
+            .unwrap_or(false);
+
+        // Also check reasoning_content for Assistant messages
+        let has_reasoning = if let open_ai::RequestMessage::Assistant {
+            reasoning_content, ..
+        } = message
+        {
+            reasoning_content
+                .as_ref()
+                .map(|r| r.contains(text_to_find))
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        has_text || has_reasoning
+    }
+
+    fn create_test_request_with_thinking() -> LanguageModelRequest {
+        LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "I need to think about this".to_string(),
+                            signature: None,
+                        },
+                        MessageContent::Text("Response".to_string()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+        }
+    }
+
+    #[test]
+    fn test_preserve_thinking_openai_default() {
+        let request = create_test_request_with_thinking();
+        let openai_request = into_open_ai(
+            request,
+            "test-model",
+            false,
+            false,
+            None,
+            None,
+            ThinkingMode::Openai,
+        );
+
+        // Verify all thinking content is converted to text
+        let assistant_message = openai_request.messages.last().unwrap();
+        assert!(
+            message_contains_text(assistant_message, "I need to think about this"),
+            "Thinking content should be present in default mode"
+        );
+    }
+
+    #[test]
+    fn test_preserve_thinking_interleave() {
+        let mut request = create_test_request_with_thinking();
+        // Add another assistant message
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("Second question".to_string())],
+            cache: false,
+            reasoning_details: None,
+        });
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: vec![
+                MessageContent::Thinking {
+                    text: "New thinking".to_string(),
+                    signature: None,
+                },
+                MessageContent::Text("Second response".to_string()),
+            ],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        let openai_request = into_open_ai(
+            request,
+            "test-model",
+            false,
+            false,
+            None,
+            None,
+            ThinkingMode::Interleave,
+        );
+
+        // Verify only last assistant message's thinking is preserved
+        let has_old_thinking = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "I need to think about this"));
+
+        let has_new_thinking = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "New thinking"));
+
+        assert!(
+            !has_old_thinking,
+            "Old thinking should be skipped in interleave mode"
+        );
+        assert!(
+            has_new_thinking,
+            "New thinking should be preserved in interleave mode"
+        );
+    }
+
+    #[test]
+    fn test_preserve_thinking_preserved() {
+        let mut request = create_test_request_with_thinking();
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("Second question".to_string())],
+            cache: false,
+            reasoning_details: None,
+        });
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: vec![
+                MessageContent::Thinking {
+                    text: "New thinking".to_string(),
+                    signature: None,
+                },
+                MessageContent::Text("Second response".to_string()),
+            ],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        let openai_request = into_open_ai(
+            request,
+            "test-model",
+            false,
+            false,
+            None,
+            None,
+            ThinkingMode::Preserved,
+        );
+
+        // Verify all thinking content is preserved
+        let old_thinking_present = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "I need to think about this"));
+        let new_thinking_present = openai_request
+            .messages
+            .iter()
+            .any(|msg| message_contains_text(msg, "New thinking"));
+
+        assert!(
+            old_thinking_present && new_thinking_present,
+            "All thinking should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_redacted_thinking_always_skipped() {
+        let mut request = create_test_request_with_thinking();
+        request.messages[1]
+            .content
+            .push(MessageContent::RedactedThinking("encrypted".to_string()));
+
+        for mode in [
+            ThinkingMode::Openai,
+            ThinkingMode::Interleave,
+            ThinkingMode::Preserved,
+        ] {
+            let openai_request = into_open_ai(
+                request.clone(),
+                "test-model",
+                false,
+                false,
+                None,
+                None,
+                mode,
+            );
+
+            // Verify redacted thinking is never included
+            let has_encrypted = openai_request
+                .messages
+                .iter()
+                .any(|msg| message_contains_text(msg, "encrypted"));
+
+            assert!(
+                !has_encrypted,
+                "Redacted thinking should never be included in mode {:?}",
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn test_thinking_state_reset() {
+        // Test that thinking from one message doesn't leak into the next
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Thinking {
+                        text: "Old thinking".to_string(),
+                        signature: None,
+                    }],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hi".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("Response".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+        };
+
+        for mode in [
+            ThinkingMode::Openai,
+            ThinkingMode::Interleave,
+            ThinkingMode::Preserved,
+        ] {
+            let openai_request = into_open_ai(
+                request.clone(),
+                "test-model",
+                false,
+                false,
+                None,
+                None,
+                mode,
+            );
+
+            // Find the final assistant message
+            let final_assistant_msg = openai_request
+                .messages
+                .iter()
+                .filter_map(|msg| match msg {
+                    open_ai::RequestMessage::Assistant {
+                        content,
+                        reasoning_content,
+                        ..
+                    } => Some((content, reasoning_content)),
+                    _ => None,
+                })
+                .next_back();
+
+            // The final message should NOT contain "Old thinking"
+            if let Some((content, reasoning_content)) = final_assistant_msg {
+                let empty_string = String::new();
+                let text_content = content
+                    .as_ref()
+                    .and_then(|c| match c {
+                        open_ai::MessageContent::Plain(text) => Some(text),
+                        open_ai::MessageContent::Multipart(parts) => parts
+                            .iter()
+                            .filter_map(|p| {
+                                if let open_ai::MessagePart::Text { text } = p {
+                                    Some(text)
+                                } else {
+                                    None
+                                }
+                            })
+                            .next(),
+                    })
+                    .unwrap_or(&empty_string);
+
+                let has_old_thinking = text_content.contains("Old thinking")
+                    || reasoning_content
+                        .as_ref()
+                        .map(|r| r.contains("Old thinking"))
+                        .unwrap_or(false);
+
+                assert!(
+                    !has_old_thinking,
+                    "Old thinking should not leak into next message in mode {:?}",
+                    mode
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_interleaved_thinking_merge() {
+        // Test that interleaved thinking content is merged correctly
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Text("Part A".to_string()),
+                        MessageContent::Thinking {
+                            text: "Thinking content".to_string(),
+                            signature: None,
+                        },
+                        MessageContent::Text("Part B".to_string()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+        };
+
+        let openai_request = into_open_ai(
+            request,
+            "test-model",
+            false,
+            false,
+            None,
+            None,
+            ThinkingMode::Preserved,
+        );
+
+        let assistant_msg = openai_request.messages.last().unwrap();
+        if let open_ai::RequestMessage::Assistant {
+            content,
+            reasoning_content,
+            ..
+        } = assistant_msg
+        {
+            // Verify text content is merged
+            let empty_string = String::new();
+            let text_content = content
+                .as_ref()
+                .map(|c| match c {
+                    open_ai::MessageContent::Plain(text) => text.clone(),
+                    open_ai::MessageContent::Multipart(parts) => parts
+                        .iter()
+                        .filter_map(|p| {
+                            if let open_ai::MessagePart::Text { text } = p {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                })
+                .unwrap_or(empty_string);
+
+            assert!(
+                text_content == "Part A Part B",
+                "Text content should be merged correctly: {}",
+                text_content
+            );
+
+            // Verify reasoning content is preserved
+            assert!(
+                reasoning_content
+                    .as_ref()
+                    .map_or(false, |r| r.contains("Thinking content")),
+                "Reasoning content should be preserved"
+            );
+        } else {
+            panic!("Expected Assistant message");
+        }
+    }
+
+    #[test]
+    fn test_thinking_only_message() {
+        // Test that a message containing only thinking content is properly handled
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Thinking {
+                        text: "Just thinking".to_string(),
+                        signature: None,
+                    }],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+        };
+
+        let openai_request = into_open_ai(
+            request,
+            "test-model",
+            false,
+            false,
+            None,
+            None,
+            ThinkingMode::Preserved,
+        );
+
+        // Should have 2 messages: User + Assistant
+        assert_eq!(
+            openai_request.messages.len(),
+            2,
+            "Should have exactly 2 messages"
+        );
+
+        let assistant_msg = openai_request.messages.last().unwrap();
+        if let open_ai::RequestMessage::Assistant {
+            content,
+            reasoning_content,
+            ..
+        } = assistant_msg
+        {
+            // Content should be None (no text)
+            assert!(
+                content.is_none(),
+                "Content should be None for thinking-only message"
+            );
+
+            // Reasoning content should be preserved
+            assert!(
+                reasoning_content
+                    .as_ref()
+                    .map_or(false, |r| r.contains("Just thinking")),
+                "Reasoning content should contain 'Just thinking'"
+            );
+        } else {
+            panic!("Expected Assistant message");
+        }
     }
 }
