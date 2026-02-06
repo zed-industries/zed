@@ -1,8 +1,9 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
-    Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Strategy,
+    Use, Workflow,
 };
 use indexmap::IndexMap;
+use serde_json::json;
 
 use crate::tasks::workflows::{
     nix_build::build_nix,
@@ -15,6 +16,8 @@ use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
+
+const TEST_PARTITION_COUNT: u32 = 3;
 
 pub(crate) fn run_tests() -> Workflow {
     // Specify anything which should potentially skip full test suite in this regex:
@@ -416,6 +419,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .strategy(Strategy::default().fail_fast(false).matrix(json!({
+                "partition": (1..=TEST_PARTITION_COUNT).collect::<Vec<u32>>()
+            })))
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -448,11 +454,13 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .add_step(steps::clear_target_dir_if_large(platform))
             .when(filter_packages, |job| {
                 job.add_step(
-                    steps::cargo_nextest(platform).with_changed_packages_filter("orchestrate"),
+                    steps::cargo_nextest(platform)
+                        .with_partition(TEST_PARTITION_COUNT)
+                        .with_changed_packages_filter("orchestrate"),
                 )
             })
             .when(!filter_packages, |job| {
-                job.add_step(steps::cargo_nextest(platform))
+                job.add_step(steps::cargo_nextest(platform).with_partition(TEST_PARTITION_COUNT))
             })
             .add_step(steps::cleanup_cargo_config(platform)),
     }

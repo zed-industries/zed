@@ -215,6 +215,13 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: self-32vcpu-windows-2022
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -233,7 +240,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -246,6 +253,13 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -275,7 +289,7 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -294,6 +308,13 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-mac-large
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -317,7 +338,7 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::cleanup_cargo_config
       if: always()
       run: |

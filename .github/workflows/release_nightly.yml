@@ -28,6 +28,13 @@ jobs:
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
+    strategy:
+      matrix:
+        partition:
+        - 1
+        - 2
+        - 3
+      fail-fast: false
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -46,7 +53,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast
+      run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.partition }}/3
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()

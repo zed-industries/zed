@@ -31,6 +31,15 @@ impl Nextest {
         self
     }
 
+    pub(crate) fn with_partition(mut self, total: u32) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(
+                r#" --partition count:${{{{ matrix.partition }}}}/{total}"#
+            ));
+        }
+        self
+    }
+
     pub(crate) fn with_changed_packages_filter(mut self, orchestrate_job: &str) -> Self {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
             nextest_command.push_str(&format!(
