@@ -136,7 +136,6 @@ impl AgentTool for SaveFileTool {
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
-            let dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
@@ -201,8 +200,9 @@ impl AgentTool for SaveFileTool {
 
             let mut lines: Vec<String> = Vec::new();
 
-            if !saved_paths.is_empty() {
-                lines.push(format!("Saved {} file(s).", saved_paths.len()));
+            let successful_saves = saved_paths.len().saturating_sub(save_errors.len());
+            if successful_saves > 0 {
+                lines.push(format!("Saved {} file(s).", successful_saves));
             }
             if !clean_paths.is_empty() {
                 lines.push(format!("{} clean.", clean_paths.len()));
@@ -217,15 +217,6 @@ impl AgentTool for SaveFileTool {
             if !open_errors.is_empty() {
                 lines.push(format!("Open failed ({}):", open_errors.len()));
                 for (path, error) in &open_errors {
-                    lines.push(format!("- {}: {}", path.display(), error));
-                }
-            }
-            if !dirty_check_errors.is_empty() {
-                lines.push(format!(
-                    "Dirty check failed ({}):",
-                    dirty_check_errors.len()
-                ));
-                for (path, error) in &dirty_check_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
             }
