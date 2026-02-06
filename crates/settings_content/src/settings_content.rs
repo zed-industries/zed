@@ -400,6 +400,62 @@ pub struct AudioSettingsContent {
     /// You need to rejoin a call for this setting to apply
     #[serde(rename = "experimental.legacy_audio_compatible")]
     pub legacy_audio_compatible: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific output audio device.
+    #[serde(rename = "experimental.output_audio_device")]
+    pub output_audio_device: Option<AudioOutputDeviceName>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific input audio device.
+    #[serde(rename = "experimental.input_audio_device")]
+    pub input_audio_device: Option<AudioInputDeviceName>,
+}
+
+/// Audio output device name for speaker/headphone selection.
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioOutputDeviceName(pub String);
+
+impl AsRef<str> for AudioOutputDeviceName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for AudioOutputDeviceName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<AudioOutputDeviceName> for String {
+    fn from(name: AudioOutputDeviceName) -> Self {
+        name.0
+    }
+}
+
+/// Audio input device name for microphone selection.
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioInputDeviceName(pub String);
+
+impl AsRef<str> for AudioInputDeviceName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for AudioInputDeviceName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<AudioInputDeviceName> for String {
+    fn from(name: AudioInputDeviceName) -> Self {
+        name.0
+    }
 }
 
 /// Control what info is collected by Zed.

@@ -15260,6 +15260,7 @@ dependencies = [
  "recent_projects",
  "regex",
  "release_channel",
+ "rodio",
  "schemars",
  "search",
  "serde",

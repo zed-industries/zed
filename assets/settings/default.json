@@ -486,6 +486,14 @@
     //
     // You need to rejoin a call for this setting to apply
     "experimental.legacy_audio_compatible": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Select specific output audio device. Set to null to use system default.
+    "experimental.output_audio_device": null,
+    // Requires 'rodio_audio: true'
+    //
+    // Select specific input audio device. Set to null to use system default.
+    "experimental.input_audio_device": null,
   },
   // Scrollbar related settings
   "scrollbar": {

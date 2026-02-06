@@ -51,6 +51,7 @@ use crate::components::{
     SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
     theme_picker,
 };
+use crate::pages::{render_input_audio_device_dropdown, render_output_audio_device_dropdown};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -544,6 +545,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
+        .add_basic_renderer::<Option<settings::AudioInputDeviceName>>(render_input_audio_device_dropdown)
+        .add_basic_renderer::<Option<settings::AudioOutputDeviceName>>(render_output_audio_device_dropdown)
         // please semicolon stay on next line
         ;
 }
