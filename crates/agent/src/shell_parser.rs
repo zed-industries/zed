@@ -77,12 +77,15 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
                     }
                 }
                 if !normalized_redirects.is_empty() {
-                    if let Some(last_command) = commands.get_mut(start..).and_then(|s| s.last_mut())
-                    {
-                        for redirect in &normalized_redirects {
-                            last_command.push(' ');
-                            last_command.push_str(redirect);
+                    let last_command = commands.get_mut(start..).and_then(|s| s.last_mut());
+                    match last_command {
+                        Some(last_command) => {
+                            for redirect in &normalized_redirects {
+                                last_command.push(' ');
+                                last_command.push_str(redirect);
+                            }
                         }
+                        None => return None,
                     }
                 }
             }
@@ -788,5 +791,11 @@ mod tests {
     fn test_fd_to_fd_redirect_skipped() {
         let commands = extract_commands("cmd 1>&2").expect("parse failed");
         assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_arithmetic_with_redirect_returns_none() {
+        let result = extract_commands("(( x = 1 )) > /tmp/file");
+        assert!(result.is_none());
     }
 }
