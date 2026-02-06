@@ -966,7 +966,7 @@ impl LanguageServer {
                         line_folding_only: Some(false),
                         range_limit: None,
                         folding_range: Some(FoldingRangeCapability {
-                            collapsed_text: Some(false),
+                            collapsed_text: Some(true),
                         }),
                         folding_range_kind: Some(FoldingRangeKindCapability {
                             value_set: Some(vec![

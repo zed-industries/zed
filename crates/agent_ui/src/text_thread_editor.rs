@@ -2999,6 +2999,7 @@ fn invoked_slash_command_fold_placeholder(
     text_thread: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
+        collapsed_text: None,
         constrain_width: false,
         merge_adjacent: false,
         render: Arc::new(move |fold_id, _, cx| {

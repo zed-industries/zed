@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspStore},
+    lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -4737,7 +4737,7 @@ impl LspCommand for GetDocumentColor {
 
 #[async_trait(?Send)]
 impl LspCommand for GetFoldingRanges {
-    type Response = Vec<Range<Anchor>>;
+    type Response = Vec<LspFoldingRange>;
     type LspRequest = lsp::request::FoldingRangeRequest;
     type ProtoRequest = proto::GetFoldingRanges;
 
@@ -4786,17 +4786,32 @@ impl LspCommand for GetFoldingRanges {
             .into_iter()
             .filter(|range| range.start_line < range.end_line)
             .filter(|range| range.start_line <= max_point.row && range.end_line <= max_point.row)
-            .map(|range| {
-                let start_col = range
+            .map(|folding_range| {
+                let start_col = folding_range
                     .start_character
-                    .unwrap_or(snapshot.line_len(range.start_line));
-                let end_col = range
+                    .unwrap_or(snapshot.line_len(folding_range.start_line));
+                let end_col = folding_range
                     .end_character
-                    .unwrap_or(snapshot.line_len(range.end_line));
-                let start =
-                    snapshot.anchor_after(language::Point::new(range.start_line, start_col));
-                let end = snapshot.anchor_before(language::Point::new(range.end_line, end_col));
-                start..end
+                    .unwrap_or(snapshot.line_len(folding_range.end_line));
+                let start = snapshot
+                    .anchor_after(language::Point::new(folding_range.start_line, start_col));
+                let end =
+                    snapshot.anchor_before(language::Point::new(folding_range.end_line, end_col));
+                let collapsed_text =
+                    folding_range
+                        .collapsed_text
+                        .filter(|t| !t.is_empty())
+                        .map(|t| {
+                            if t.contains('\n') {
+                                SharedString::from(t.replace('\n', " "))
+                            } else {
+                                SharedString::from(t)
+                            }
+                        });
+                LspFoldingRange {
+                    range: start..end,
+                    collapsed_text,
+                }
             })
             .collect())
     }
@@ -4825,8 +4840,20 @@ impl LspCommand for GetFoldingRanges {
         buffer_version: &clock::Global,
         _: &mut App,
     ) -> proto::GetFoldingRangesResponse {
+        let mut ranges = Vec::with_capacity(response.len());
+        let mut collapsed_texts = Vec::with_capacity(response.len());
+        for folding_range in response {
+            ranges.push(serialize_anchor_range(folding_range.range));
+            collapsed_texts.push(
+                folding_range
+                    .collapsed_text
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+            );
+        }
         proto::GetFoldingRangesResponse {
-            ranges: response.into_iter().map(serialize_anchor_range).collect(),
+            ranges,
+            collapsed_texts,
             version: serialize_version(buffer_version),
         }
     }
@@ -4841,7 +4868,21 @@ impl LspCommand for GetFoldingRanges {
         message
             .ranges
             .into_iter()
-            .map(deserialize_anchor_range)
+            .zip(
+                message
+                    .collapsed_texts
+                    .into_iter()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(range, collapsed_text)| {
+                Ok(LspFoldingRange {
+                    range: deserialize_anchor_range(range)?,
+                    collapsed_text: collapsed_text
+                        .filter(|t| !t.is_empty())
+                        .map(SharedString::from),
+                })
+            })
             .collect()
     }
 
