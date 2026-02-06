@@ -33,7 +33,7 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }

@@ -8,6 +8,11 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+default = ["gpui"]
+gpui = ["dep:gpui", "dep:semver"]
+
 [dependencies]
-gpui.workspace = true
-semver.workspace = true
+gpui = { workspace = true, optional = true }
+semver = { workspace = true, optional = true }
+strum.workspace = true

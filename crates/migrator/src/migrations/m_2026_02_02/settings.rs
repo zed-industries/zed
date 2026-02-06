@@ -1,9 +1,7 @@
 use anyhow::Result;
+use release_channel::{ReleaseChannel, SupportedPlatform};
 use serde_json::Value;
-
-const PLATFORM_AND_CHANNEL_KEYS: &[&str] = &[
-    "macos", "linux", "windows", "dev", "nightly", "preview", "stable",
-];
+use strum::IntoEnumIterator as _;
 
 pub fn move_edit_prediction_provider_to_edit_predictions(value: &mut Value) -> Result<()> {
     let Some(root_object) = value.as_object_mut() else {
@@ -12,8 +10,12 @@ pub fn move_edit_prediction_provider_to_edit_predictions(value: &mut Value) -> R
 
     migrate_one(root_object)?;
 
-    for key in PLATFORM_AND_CHANNEL_KEYS {
-        if let Some(sub_object) = root_object.get_mut(*key) {
+    let override_keys = ReleaseChannel::iter()
+        .map(|channel| channel.dev_name())
+        .chain(SupportedPlatform::iter().map(|platform| platform.as_str()));
+
+    for key in override_keys {
+        if let Some(sub_object) = root_object.get_mut(key) {
             if let Some(sub_map) = sub_object.as_object_mut() {
                 migrate_one(sub_map)?;
             }

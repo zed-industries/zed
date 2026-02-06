@@ -30,7 +30,7 @@ serde_json.workspace = true
 schemars.workspace = true
 smol.workspace = true
 util.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 
 [dev-dependencies]
 async-pipe.workspace = true

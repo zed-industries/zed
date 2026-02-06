@@ -21,7 +21,7 @@ gpui.workspace = true
 indoc.workspace = true
 log.workspace = true
 paths.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 smol.workspace = true
 sqlez.workspace = true
 sqlez_macros.workspace = true

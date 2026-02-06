@@ -10134,10 +10134,12 @@ dependencies = [
  "convert_case 0.8.0",
  "log",
  "pretty_assertions",
+ "release_channel",
  "serde_json",
  "serde_json_lenient",
  "settings_json",
  "streaming-iterator",
+ "strum 0.27.2",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
@@ -13701,6 +13703,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "semver",
+ "strum 0.27.2",
 ]
 
 [[package]]

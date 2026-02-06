@@ -24,7 +24,7 @@ menu.workspace = true
 picker.workspace = true
 platform_title_bar.workspace = true
 prompt_store.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 rope.workspace = true
 serde.workspace = true
 settings.workspace = true

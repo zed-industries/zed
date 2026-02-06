@@ -28,7 +28,7 @@ collections.workspace = true
 ipc-channel = "0.19"
 parking_lot.workspace = true
 paths.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 serde.workspace = true
 util.workspace = true
 tempfile.workspace = true

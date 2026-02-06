@@ -40,7 +40,7 @@ paths.workspace = true
 postage.workspace = true
 rand.workspace = true
 regex.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 rpc = { workspace = true, features = ["gpui"] }
 serde.workspace = true
 serde_json.workspace = true

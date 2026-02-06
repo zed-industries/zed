@@ -26,7 +26,7 @@ inventory.workspace = true
 log.workspace = true
 migrator.workspace = true
 paths.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 rust-embed = { workspace = true, features = ["debug-embed"] }
 schemars.workspace = true
 serde.workspace = true

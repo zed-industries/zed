@@ -25,7 +25,7 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 postage.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 rpc.workspace = true
 settings.workspace = true
 text.workspace = true

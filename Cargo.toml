@@ -382,7 +382,7 @@ prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
-release_channel = { path = "crates/release_channel" }
+release_channel = { path = "crates/release_channel", default-features = false }
 remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }

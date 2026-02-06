@@ -173,7 +173,7 @@ project_symbols.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 remote.workspace = true
 repl.workspace = true
 reqwest.workspace = true

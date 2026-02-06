@@ -18,7 +18,7 @@ test-support = []
 anyhow.workspace = true
 client.workspace = true
 gpui.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 smol.workspace = true
 util.workspace = true
 workspace.workspace = true

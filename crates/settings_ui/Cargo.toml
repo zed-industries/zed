@@ -40,7 +40,7 @@ paths.workspace = true
 picker.workspace = true
 platform_title_bar.workspace = true
 project.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true

@@ -37,7 +37,7 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 remote.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

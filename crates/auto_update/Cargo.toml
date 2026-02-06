@@ -21,7 +21,7 @@ gpui.workspace = true
 http_client.workspace = true
 log.workspace = true
 paths.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

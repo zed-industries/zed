@@ -13,7 +13,7 @@ extension_host.workspace = true
 log.workspace = true
 minidumper.workspace = true
 paths.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 smol.workspace = true
 serde.workspace = true
 serde_json.workspace = true

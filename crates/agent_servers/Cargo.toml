@@ -39,7 +39,7 @@ indoc.workspace = true
 language_model.workspace = true
 log.workspace = true
 project.workspace = true
-release_channel.workspace = true
+release_channel = { workspace = true, features = ["gpui"] }
 reqwest_client = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

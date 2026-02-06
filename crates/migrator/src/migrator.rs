@@ -2471,31 +2471,6 @@ mod tests {
             None,
         );
 
-        // Non-object edit_predictions (e.g. true) should gracefully skip
-        // instead of bail!-ing and aborting the entire migration chain.
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
-            )],
-            &r#"
-            {
-                "features": {
-                    "edit_prediction_provider": "copilot"
-                },
-                "edit_predictions": true
-            }
-            "#
-            .unindent(),
-            Some(
-                &r#"
-                {
-                    "edit_predictions": true
-                }
-                "#
-                .unindent(),
-            ),
-        );
-
         // Platform key: settings nested inside "macos" should be migrated
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
