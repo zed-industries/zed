@@ -328,7 +328,11 @@ fn extract_commands_from_io_redirect(
             }
             _ => {}
         },
-        ast::IoRedirect::HereDocument(_fd, _here_doc) => {}
+        ast::IoRedirect::HereDocument(_fd, here_doc) => {
+            if here_doc.requires_expansion {
+                extract_commands_from_word(&here_doc.doc, commands);
+            }
+        }
         ast::IoRedirect::HereString(_fd, word) => {
             extract_commands_from_word(word, commands);
         }
@@ -922,5 +926,25 @@ mod tests {
     fn test_multiple_redirects_on_compound_command() {
         let commands = extract_commands("{ cmd; } > /tmp/out 2> /tmp/err").expect("parse failed");
         assert_eq!(commands, vec!["cmd", "> /tmp/out", "2> /tmp/err"]);
+    }
+
+    #[test]
+    fn test_here_document_command_substitution_extracted() {
+        let commands = extract_commands("cat <<EOF\n$(rm -rf /)\nEOF").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("cat")));
+        assert!(commands.contains(&"rm -rf /".to_string()));
+    }
+
+    #[test]
+    fn test_here_document_quoted_delimiter_no_extraction() {
+        let commands = extract_commands("cat <<'EOF'\n$(rm -rf /)\nEOF").expect("parse failed");
+        assert_eq!(commands, vec!["cat"]);
+    }
+
+    #[test]
+    fn test_here_document_backtick_substitution_extracted() {
+        let commands = extract_commands("cat <<EOF\n`whoami`\nEOF").expect("parse failed");
+        assert!(commands.iter().any(|c| c.contains("cat")));
+        assert!(commands.contains(&"whoami".to_string()));
     }
 }
