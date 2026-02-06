@@ -853,4 +853,16 @@ mod tests {
             extract_commands("if true; then echo yes; fi > /tmp/out").expect("parse failed");
         assert_eq!(commands, vec!["true", "echo yes > /tmp/out"]);
     }
+
+    #[test]
+    fn test_pipe_with_redirect_on_last_command() {
+        let commands = extract_commands("ls | grep foo > /tmp/out").expect("parse failed");
+        assert_eq!(commands, vec!["ls", "grep foo > /tmp/out"]);
+    }
+
+    #[test]
+    fn test_pipe_with_stderr_redirect_on_first_command() {
+        let commands = extract_commands("ls 2>/dev/null | grep foo").expect("parse failed");
+        assert_eq!(commands, vec!["ls 2> /dev/null", "grep foo"]);
+    }
 }
