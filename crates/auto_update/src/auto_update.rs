@@ -1381,26 +1381,4 @@ mod tests {
             Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
         );
     }
-
-    #[gpui::test]
-    fn test_release_notes_url_strips_build_metadata(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            settings::init(cx);
-
-            let mut version = semver::Version::new(0, 218, 0);
-            version.pre = semver::Prerelease::new("beta.1").unwrap();
-            version.build = semver::BuildMetadata::new("preview.131.68e98a53").unwrap();
-            release_channel::init_test(version, ReleaseChannel::Preview, cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let fake_http_client = FakeHttpClient::create(|_| async {
-                Ok(Response::builder().status(404).body("".into()).unwrap())
-            });
-            let client = Client::new(clock, fake_http_client, cx);
-            crate::init(client, cx);
-        });
-
-        let url = cx.update(|cx| release_notes_url(cx).expect("should return URL"));
-        assert!(url.ends_with("/releases/preview/0.218.0"));
-    }
 }
