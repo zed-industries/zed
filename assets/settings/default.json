@@ -190,6 +190,16 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to reduce motion in UI animations.
+  // 1. Follow the OS accessibility setting
+  //    "system"
+  // 2. Always reduce motion (skip animations)
+  //    "on"
+  // 3. Never reduce motion (always animate)
+  //    "off"
+  //
+  // Default: "system"
+  "reduce_motion": "system",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,

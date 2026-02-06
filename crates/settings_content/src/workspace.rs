@@ -116,6 +116,13 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Whether to reduce motion in UI animations.
+    /// When set to "system", follows the OS accessibility setting.
+    /// When set to "on", animations are always reduced.
+    /// When set to "off", animations always play.
+    ///
+    /// Default: system
+    pub reduce_motion: Option<ReduceMotion>,
 }
 
 #[with_fallible_options]
@@ -334,6 +341,33 @@ pub enum WindowDecorations {
     Client,
     /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
     Server,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduceMotion {
+    /// Follow the OS accessibility setting for reduced motion
+    #[default]
+    System,
+    /// Always reduce motion (skip animations)
+    #[serde(alias = "true")]
+    On,
+    /// Never reduce motion (always animate)
+    #[serde(alias = "false")]
+    Off,
 }
 
 #[derive(
