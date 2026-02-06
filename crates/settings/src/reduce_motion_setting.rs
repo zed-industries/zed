@@ -20,7 +20,7 @@ pub fn should_reduce_motion(cx: &gpui::App) -> bool {
 
 impl Settings for ReduceMotionSetting {
     fn from_settings(settings: &crate::settings_content::SettingsContent) -> Self {
-        ReduceMotionSetting(settings.workspace.reduce_motion.unwrap_or_default())
+        ReduceMotionSetting(settings.workspace.reduce_motion.unwrap())
     }
 }
 
