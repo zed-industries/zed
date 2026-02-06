@@ -279,13 +279,13 @@ impl AgentTool for SubagentTool {
                     cx,
                 ).fuse() => result,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    let _ = subagent_thread.update(cx, |thread, cx| {
+                    subagent_thread.update(cx, |thread, cx| {
                         thread.cancel(cx).detach();
                     });
                     Err(anyhow!("Subagent cancelled by user"))
                 }
                 _ = wait_for_user_stop.fuse() => {
-                    let _ = subagent_thread.update(cx, |thread, cx| {
+                    subagent_thread.update(cx, |thread, cx| {
                         thread.cancel(cx).detach();
                     });
                     Err(anyhow!("Subagent stopped by user"))
@@ -293,7 +293,7 @@ impl AgentTool for SubagentTool {
             };
 
             if let Some(parent) = parent_thread_weak.upgrade() {
-                let _ = parent.update(cx, |thread, _cx| {
+                parent.update(cx, |thread, _cx| {
                     thread.unregister_running_subagent(&subagent_weak);
                 });
             }
@@ -433,7 +433,7 @@ fn forward_event_to_acp_thread(
             ..
         }) => {
             let outcome_task = acp_thread.update(cx, |thread, cx| {
-                thread.request_tool_call_authorization(tool_call, options, true, cx)
+                thread.request_tool_call_authorization(tool_call, options, cx)
             });
             if let Ok(Ok(task)) = outcome_task {
                 cx.background_spawn(async move {

@@ -1,27 +1,29 @@
-use super::edit_file_tool::EditFileTool;
+use super::edit_file_tool::authorize_file_edit;
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    AgentTool, Templates, Thread, ToolCallEventStream,
+    edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
 };
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
+use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
+use language::language_settings::{self, FormatOnSave};
 use language_model::LanguageModelToolResultContent;
-use paths;
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
-use std::ffi::OsStr;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use text::BufferSnapshot;
 use ui::SharedString;
+use util::ResultExt;
 use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
@@ -163,69 +165,28 @@ impl StreamingEditFileTool {
         }
     }
 
+    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
+        Self {
+            project: self.project.clone(),
+            thread: new_thread,
+            language_registry: self.language_registry.clone(),
+            templates: self.templates.clone(),
+        }
+    }
+
     fn authorize(
         &self,
         input: &StreamingEditFileToolInput,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let path_str = input.path.to_string_lossy();
-        let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &path_str, settings);
-
-        match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {}
-        }
-
-        let local_settings_folder = paths::local_settings_folder_name();
-        let path = Path::new(&input.path);
-        if path.components().any(|component| {
-            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
-        }) {
-            let context = crate::ToolPermissionContext {
-                tool_name: EditFileTool::NAME.to_string(),
-                input_value: path_str.to_string(),
-            };
-            return event_stream.authorize(
-                format!("{} (local settings)", input.display_description),
-                context,
-                cx,
-            );
-        }
-
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
-            && canonical_path.starts_with(paths::config_dir())
-        {
-            let context = crate::ToolPermissionContext {
-                tool_name: EditFileTool::NAME.to_string(),
-                input_value: path_str.to_string(),
-            };
-            return event_stream.authorize(
-                format!("{} (global settings)", input.display_description),
-                context,
-                cx,
-            );
-        }
-
-        let Ok(project_path) = self.thread.read_with(cx, |thread, cx| {
-            thread.project().read(cx).find_project_path(&input.path, cx)
-        }) else {
-            return Task::ready(Err(anyhow!("thread was dropped")));
-        };
-
-        if project_path.is_some() {
-            Task::ready(Ok(()))
-        } else {
-            let context = crate::ToolPermissionContext {
-                tool_name: EditFileTool::NAME.to_string(),
-                input_value: path_str.to_string(),
-            };
-            event_stream.authorize(&input.display_description, context, cx)
-        }
+        authorize_file_edit(
+            &input.path,
+            &input.display_description,
+            &self.thread,
+            event_stream,
+            cx,
+        )
     }
 }
 
@@ -424,9 +385,45 @@ impl AgentTool for StreamingEditFileTool {
                 }
             }
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-                .await?;
+            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
+                let settings = language_settings::language_settings(
+                    buffer.language().map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                );
+                settings.format_on_save != FormatOnSave::Off
+            });
+
+            if format_on_save_enabled {
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx);
+                });
+
+                let format_task = project.update(cx, |project, cx| {
+                    project.format(
+                        HashSet::from_iter([buffer.clone()]),
+                        LspFormatTarget::Buffers,
+                        false,
+                        FormatTrigger::Save,
+                        cx,
+                    )
+                });
+                futures::select! {
+                    result = format_task.fuse() => { result.log_err(); },
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Edit cancelled by user");
+                    }
+                };
+            }
+
+            let save_task = project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
+            futures::select! {
+                result = save_task.fuse() => { result?; },
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Edit cancelled by user");
+                }
+            };
 
             action_log.update(cx, |log, cx| {
                 log.buffer_edited(buffer.clone(), cx);
@@ -483,6 +480,13 @@ impl AgentTool for StreamingEditFileTool {
             )
         }));
         Ok(())
+    }
+
+    fn rebind_thread(
+        &self,
+        new_thread: gpui::WeakEntity<crate::Thread>,
+    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
+        Some(self.with_thread(new_thread).erase())
     }
 }
 
@@ -709,7 +713,7 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal as _};
     use language_model::fake_provider::FakeLanguageModel;
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -1235,6 +1239,15 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .ensure_final_newline_on_save = Some(false);
+                });
+            });
         });
     }
 }

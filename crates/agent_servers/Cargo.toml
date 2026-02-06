@@ -21,9 +21,11 @@ acp_tools.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
+agent_settings.workspace = true
 feature_flags.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -31,6 +33,7 @@ env_logger = { workspace = true, optional = true }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+shell_command_parser.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 credentials_provider.workspace = true
 google_ai.workspace = true
@@ -38,6 +41,7 @@ http_client.workspace = true
 indoc.workspace = true
 language_model.workspace = true
 log.workspace = true
+paths.workspace = true
 project.workspace = true
 release_channel.workspace = true
 reqwest_client = { workspace = true, optional = true }
@@ -68,3 +72,4 @@ acp_thread = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

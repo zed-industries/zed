@@ -23,6 +23,8 @@ pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
 
+pub use shell_parser::extract_commands;
+
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse, UserMessageId,
@@ -1030,9 +1032,7 @@ impl NativeAgentConnection {
                                 context: _,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
-                                        tool_call, options, true, cx,
-                                    )
+                                    thread.request_tool_call_authorization(tool_call, options, cx)
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp::RequestPermissionOutcome::Selected(

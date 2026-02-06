@@ -4944,7 +4944,7 @@ pub(crate) mod tests {
         assert!(
             allow_ids
                 .iter()
-                .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+                .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
             "Missing allow pattern option"
         );
     }
@@ -4969,7 +4969,7 @@ pub(crate) mod tests {
         assert!(
             deny_ids
                 .iter()
-                .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+                .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
             "Missing deny pattern option"
         );
     }

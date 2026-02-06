@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
@@ -161,7 +160,6 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
- "brush-parser",
  "chrono",
  "client",
  "clock",
@@ -205,6 +203,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shell_command_parser",
  "smallvec",
  "smol",
  "sqlez",
@@ -270,6 +269,7 @@ dependencies = [
  "acp_tools",
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "async-trait",
  "chrono",
@@ -290,12 +290,14 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "paths",
  "project",
  "release_channel",
  "reqwest_client",
  "serde",
  "serde_json",
  "settings",
+ "shell_command_parser",
  "smol",
  "task",
  "tempfile",
@@ -305,6 +307,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace",
 ]
 
 [[package]]
@@ -15238,6 +15241,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "regex",
  "release_channel",
  "schemars",
  "search",
@@ -15308,6 +15312,13 @@ name = "shell-words"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
+
+[[package]]
+name = "shell_command_parser"
+version = "0.1.0"
+dependencies = [
+ "brush-parser",
+]
 
 [[package]]
 name = "shellexpand"

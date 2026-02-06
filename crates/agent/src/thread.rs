@@ -646,15 +646,12 @@ impl ToolPermissionContext {
     /// sub-command matches the pattern. Otherwise, an attacker could craft a command like
     /// `cargo build && rm -rf /` that would bypass the security check.
     ///
-    /// **Supported shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
-    /// Cmd, Xonsh, Csh, Tcsh
-    ///
-    /// **Unsupported shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
-    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
-    ///
-    /// For unsupported shells, we hide the "Always allow" UI options entirely, and if
-    /// the user has `always_allow` rules configured in settings, `ToolPermissionDecision::from_input`
-    /// will return a `Deny` with an explanatory error message.
+    /// All current `ShellKind` variants are supported — see
+    /// `ShellKind::supports_posix_chaining()` for the canonical list. If a shell
+    /// does not support POSIX-like chaining, we hide the "Always allow" UI options
+    /// entirely, and if the user has `always_allow` rules configured in settings,
+    /// `ToolPermissionDecision::from_input` will return a `Deny` with an
+    /// explanatory error message.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
         use util::shell::ShellKind;
@@ -675,9 +672,21 @@ impl ToolPermissionContext {
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
             )
+        } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
+            // input_value is "source -> destination"; extract pattern from destination
+            // because that's the more security-relevant path (where data is being written).
+            // Both paths are checked independently by decide_permission_from_settings,
+            // so a pattern matching the destination directory covers the common case.
+            let dest = input_value
+                .split_once(" -> ")
+                .map(|(_, d)| d)
+                .unwrap_or(input_value);
+            (
+                extract_path_pattern(dest),
+                extract_path_pattern_display(dest),
+            )
         } else if tool_name == EditFileTool::NAME
             || tool_name == DeletePathTool::NAME
-            || tool_name == MovePathTool::NAME
             || tool_name == CreateDirectoryTool::NAME
             || tool_name == SaveFileTool::NAME
         {
@@ -728,8 +737,8 @@ impl ToolPermissionContext {
                 };
                 push_choice(
                     button_text,
-                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    format!("always_allow_pattern:{}\n{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}\n{}", tool_name, pattern),
                     acp::PermissionOptionKind::AllowAlways,
                     acp::PermissionOptionKind::RejectAlways,
                 );
@@ -3104,11 +3113,12 @@ impl ToolCallEventStream {
 
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
-    /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    /// Unlike built-in tools, third-party tools evaluate patterns against an empty
+    /// string, so the `default` mode is the primary mechanism. Patterns that can
+    /// match empty strings (like `.*`) will still take effect.
     ///
     /// Uses the dropdown authorization flow with two granularities:
-    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
     /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
@@ -3128,7 +3138,8 @@ impl ToolCallEventStream {
         }
 
         let (response_tx, response_rx) = oneshot::channel();
-        self.stream
+        if let Err(error) = self
+            .stream
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
@@ -3172,7 +3183,12 @@ impl ToolCallEventStream {
                     context: None,
                 },
             )))
-            .ok();
+        {
+            log::error!("Failed to send tool call authorization: {error}");
+            return Task::ready(Err(anyhow!(
+                "Failed to send tool call authorization: {error}"
+            )));
+        }
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
@@ -3185,7 +3201,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3198,7 +3214,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Deny);
                         });
                     });
                 }
@@ -3224,7 +3240,8 @@ impl ToolCallEventStream {
         let options = context.build_permission_options();
 
         let (response_tx, response_rx) = oneshot::channel();
-        self.stream
+        if let Err(error) = self
+            .stream
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
@@ -3237,7 +3254,12 @@ impl ToolCallEventStream {
                     context: Some(context),
                 },
             )))
-            .ok();
+        {
+            log::error!("Failed to send tool call authorization: {error}");
+            return Task::ready(Err(anyhow!(
+                "Failed to send tool call authorization: {error}"
+            )));
+        }
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
@@ -3252,7 +3274,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3268,19 +3290,18 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Deny);
                         });
                     });
                 }
                 return Err(anyhow!("Permission to run tool denied by user"));
             }
 
-            // Handle "always allow pattern" - e.g., "always_allow_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_allow_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
+            // Handle "always allow pattern" - e.g., "always_allow_pattern:mcp:server:tool\n^cargo\s"
+            if let Some(rest) = response_str.strip_prefix("always_allow_pattern:") {
+                if let Some((pattern_tool_name, pattern)) = rest.split_once('\n') {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let pattern = pattern.to_string();
                     if let Some(fs) = fs.clone() {
                         cx.update(|cx| {
                             update_settings_file(fs, cx, move |settings, _| {
@@ -3295,12 +3316,11 @@ impl ToolCallEventStream {
                 return Ok(());
             }
 
-            // Handle "always deny pattern" - e.g., "always_deny_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_deny_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
+            // Handle "always deny pattern" - e.g., "always_deny_pattern:mcp:server:tool\n^cargo\s"
+            if let Some(rest) = response_str.strip_prefix("always_deny_pattern:") {
+                if let Some((pattern_tool_name, pattern)) = rest.split_once('\n') {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let pattern = pattern.to_string();
                     if let Some(fs) = fs.clone() {
                         cx.update(|cx| {
                             update_settings_file(fs, cx, move |settings, _| {

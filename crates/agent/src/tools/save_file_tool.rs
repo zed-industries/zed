@@ -9,13 +9,12 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use super::edit_file_tool::is_sensitive_settings_path;
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 /// Saves files that have unsaved changes.
 ///
@@ -70,9 +69,13 @@ impl AgentTool for SaveFileTool {
 
         for path in &input.paths {
             let path_str = path.to_string_lossy();
-            let decision = decide_permission_from_settings(Self::NAME, &path_str, settings);
+            let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
             match decision {
-                ToolPermissionDecision::Allow => {}
+                ToolPermissionDecision::Allow => {
+                    if is_sensitive_settings_path(Path::new(&*path_str)) {
+                        needs_confirmation = true;
+                    }
+                }
                 ToolPermissionDecision::Deny(reason) => {
                     return Task::ready(Err(anyhow::anyhow!("{}", reason)));
                 }
@@ -129,11 +132,10 @@ impl AgentTool for SaveFileTool {
 
             let mut buffers_to_save: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
-            let mut saved_paths: Vec<PathBuf> = Vec::new();
+            let mut dirty_count: usize = 0;
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
-            let dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
@@ -166,7 +168,7 @@ impl AgentTool for SaveFileTool {
 
                 if is_dirty {
                     buffers_to_save.insert(buffer);
-                    saved_paths.push(path);
+                    dirty_count += 1;
                 } else {
                     clean_paths.push(path);
                 }
@@ -198,8 +200,12 @@ impl AgentTool for SaveFileTool {
 
             let mut lines: Vec<String> = Vec::new();
 
-            if !saved_paths.is_empty() {
-                lines.push(format!("Saved {} file(s).", saved_paths.len()));
+            // `saturating_sub` because `save_errors` tracks failures from the
+            // save loop — subtracting gives the number of dirty buffers that
+            // were saved without error.
+            let successful_saves = dirty_count.saturating_sub(save_errors.len());
+            if successful_saves > 0 {
+                lines.push(format!("Saved {} file(s).", successful_saves));
             }
             if !clean_paths.is_empty() {
                 lines.push(format!("{} clean.", clean_paths.len()));
@@ -214,15 +220,6 @@ impl AgentTool for SaveFileTool {
             if !open_errors.is_empty() {
                 lines.push(format!("Open failed ({}):", open_errors.len()));
                 for (path, error) in &open_errors {
-                    lines.push(format!("- {}: {}", path.display(), error));
-                }
-            }
-            if !dirty_check_errors.is_empty() {
-                lines.push(format!(
-                    "Dirty check failed ({}):",
-                    dirty_check_errors.len()
-                ));
-                for (path, error) in &dirty_check_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
             }
@@ -259,7 +256,7 @@ mod tests {
         });
         cx.update(|cx| {
             let mut settings = AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
     }

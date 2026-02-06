@@ -205,7 +205,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
 fn always_allow_tools(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = true;
+        settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 }
@@ -1065,7 +1065,7 @@ fn test_permission_option_ids_for_terminal() {
     assert!(
         allow_ids
             .iter()
-            .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+            .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
         "Missing allow pattern option"
     );
 
@@ -1074,7 +1074,7 @@ fn test_permission_option_ids_for_terminal() {
     assert!(
         deny_ids
             .iter()
-            .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+            .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
         "Missing deny pattern option"
     );
 }
@@ -1220,7 +1220,9 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         paths::settings_file(),
         json!({
             "agent": {
-                "always_allow_tool_actions": true,
+                "tool_permissions": {
+                    "default": "allow"
+                },
                 "profiles": {
                     "test": {
                         "name": "Test Profile",
@@ -3662,7 +3664,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Confirm,
+                    default: Some(settings::ToolPermissionMode::Confirm),
                     always_allow: vec![],
                     always_deny: vec![
                         agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap(),
@@ -3702,7 +3704,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 2: Allow rule skips confirmation (and overrides default_mode: Deny)
+    // Test 2: Allow rule skips confirmation (and overrides default: Deny)
     {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
@@ -3711,11 +3713,10 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = false;
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Deny,
+                    default: Some(settings::ToolPermissionMode::Deny),
                     always_allow: vec![
                         agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap(),
                     ],
@@ -3760,7 +3761,8 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 3: always_allow_tool_actions=true overrides always_confirm patterns
+    // Test 3: global default: allow does NOT override always_confirm patterns
+    // This is a key behavioral change from always_allow_tool_actions
     {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
@@ -3769,11 +3771,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Allow,
+                    default: Some(settings::ToolPermissionMode::Allow),
                     always_allow: vec![],
                     always_deny: vec![],
                     always_confirm: vec![
@@ -3787,7 +3789,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         #[allow(clippy::arc_with_non_send_sync)]
         let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
-        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
         let task = cx.update(|cx| {
             tool.run(
@@ -3801,12 +3803,15 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        // With always_allow_tool_actions=true, confirm patterns are overridden
-        task.await
-            .expect("command should be allowed with always_allow_tool_actions=true");
+        // With global default: allow, confirm patterns are still respected
+        // The expect_authorization() call will panic if no authorization is requested,
+        // which validates that the confirm pattern still triggers confirmation
+        let _auth = rx.expect_authorization().await;
+
+        drop(task);
     }
 
-    // Test 4: always_allow_tool_actions=true overrides default_mode: Deny
+    // Test 4: tool-specific default: deny is respected even with global default: allow
     {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
         let environment = Rc::new(FakeThreadEnvironment {
@@ -3815,11 +3820,11 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Deny,
+                    default: Some(settings::ToolPermissionMode::Deny),
                     always_allow: vec![],
                     always_deny: vec![],
                     always_confirm: vec![],
@@ -3845,9 +3850,12 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        // With always_allow_tool_actions=true, even default_mode: Deny is overridden
-        task.await
-            .expect("command should be allowed with always_allow_tool_actions=true");
+        // Tool-specific default: deny takes precedence over global default: allow
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be denied - tool-specific default: deny should take precedence"
+        );
     }
 }
 
@@ -5046,7 +5054,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             EditFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"sensitive", false).unwrap()],
                 always_confirm: vec![],
@@ -5114,7 +5122,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
         settings.tool_permissions.tools.insert(
             DeletePathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"important", false).unwrap()],
                 always_confirm: vec![],
@@ -5168,7 +5176,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         settings.tool_permissions.tools.insert(
             MovePathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"protected", false).unwrap()],
                 always_confirm: vec![],
@@ -5224,7 +5232,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             MovePathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"secret", false).unwrap()],
                 always_confirm: vec![],
@@ -5280,7 +5288,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             CopyPathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"confidential", false).unwrap(),
@@ -5337,7 +5345,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
         settings.tool_permissions.tools.insert(
             SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"readonly", false).unwrap()],
                 always_confirm: vec![],
@@ -5386,11 +5394,10 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
             SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"\.secret$", false).unwrap()],
                 always_confirm: vec![],
@@ -5431,7 +5438,7 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             WebSearchTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"internal\.company", false).unwrap(),
@@ -5471,11 +5478,10 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
             EditFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Confirm,
+                default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -5531,6 +5537,71 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {
+                "settings.json": "{}"
+            },
+            "README.md": "# Hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let context_server_registry =
+        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let templates = crate::Templates::new();
+    let thread = cx.new(|cx| {
+        crate::Thread::new(
+            project.clone(),
+            cx.new(|_cx| prompt_store::ProjectContext::default()),
+            context_server_registry,
+            templates.clone(),
+            None,
+            cx,
+        )
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::EditFileTool::new(
+        project,
+        thread.downgrade(),
+        language_registry,
+        templates,
+    ));
+
+    // Editing a file inside .zed/ should still prompt even with global default: allow,
+    // because local settings paths are sensitive and require confirmation regardless.
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+    let _task = cx.update(|cx| {
+        tool.run(
+            crate::EditFileToolInput {
+                display_description: "Edit local settings".to_string(),
+                path: "root/.zed/settings.json".into(),
+                mode: crate::EditFileMode::Edit,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let _update = rx.expect_update_fields().await;
+    let _auth = rx.expect_authorization().await;
+}
+
+#[gpui::test]
 async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -5539,7 +5610,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             FetchTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"internal\.company\.com", false).unwrap(),
@@ -5576,11 +5647,10 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
             FetchTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Confirm,
+                default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"docs\.rs", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -5607,6 +5677,193 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
     assert!(
         !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed docs.rs URL"
+    );
+}
+
+#[gpui::test]
+async fn test_create_directory_tool_deny_rule_blocks_creation(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({"existing.txt": "content"}))
+        .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            CreateDirectoryTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![
+                    agent_settings::CompiledRegex::new(r"restricted", false).unwrap(),
+                ],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::CreateDirectoryTool::new(project));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::CreateDirectoryToolInput {
+                path: "root/restricted_area".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let result = task.await;
+    assert!(result.is_err(), "expected directory creation to be blocked");
+    assert!(
+        result.unwrap_err().to_string().contains("blocked"),
+        "error should mention the creation was blocked"
+    );
+
+    assert!(
+        !fs.is_dir(Path::new("/root/restricted_area")).await,
+        "directory should not have been created"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_path_tool_deny_by_user(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "data.txt": "original content",
+            "backup": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            CopyPathTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Confirm),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::CopyPathTool::new(project));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::CopyPathToolInput {
+                source_path: "root/data.txt".to_string(),
+                destination_path: "root/backup/data.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let auth = rx.expect_authorization().await;
+    auth.response
+        .send(acp::PermissionOptionId::new("deny"))
+        .unwrap();
+
+    let result = task.await;
+    assert!(result.is_err(), "expected copy to be denied by user");
+    assert!(
+        result.unwrap_err().to_string().contains("denied by user"),
+        "error should mention denial by user"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/data.txt")).await,
+        "source file should still exist"
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/backup/data.txt")).await,
+        "destination file should not have been created"
+    );
+}
+
+#[gpui::test]
+async fn test_move_path_tool_deny_by_user(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "file.txt": "important data",
+            "archive": {}
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            MovePathTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Confirm),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::MovePathTool::new(project));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let task = cx.update(|cx| {
+        tool.run(
+            crate::MovePathToolInput {
+                source_path: "root/file.txt".to_string(),
+                destination_path: "root/archive/file.txt".to_string(),
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let auth = rx.expect_authorization().await;
+    auth.response
+        .send(acp::PermissionOptionId::new("deny"))
+        .unwrap();
+
+    let result = task.await;
+    assert!(result.is_err(), "expected move to be denied by user");
+    assert!(
+        result.unwrap_err().to_string().contains("denied by user"),
+        "error should mention denial by user"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/file.txt")).await,
+        "source file should still exist after denied move"
+    );
+    assert!(
+        !fs.is_file(Path::new("/root/archive/file.txt")).await,
+        "destination file should not exist after denied move"
     );
 }
 
