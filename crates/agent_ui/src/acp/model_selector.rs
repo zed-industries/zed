@@ -367,6 +367,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 })
                                 .is_selected(is_selected)
                                 .is_focused(selected)
+                                .is_latest(true)
                                 .is_favorite(is_favorite)
                                 .on_toggle_favorite(handle_action_click),
                         )
