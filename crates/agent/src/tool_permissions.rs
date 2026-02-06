@@ -19,9 +19,9 @@ pub struct HardcodedSecurityRules {
 pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
     // Flag group matches any short flags (-rf, -rfv, -v, etc.) or long flags (--recursive, --force, etc.)
     // This ensures extra flags like -rfv, -v -rf, --recursive --force don't bypass the rules.
-    const FLAGS: &str = r"(--[a-z][-a-z]*\s+|-[a-zA-Z]+\s+)*";
+    const FLAGS: &str = r"(--[a-z][-a-z]*(=[^\s]*)?\s+|-[a-zA-Z]+\s+)*";
     // Trailing flags that may appear after the path operand (GNU rm accepts flags after operands)
-    const TRAILING_FLAGS: &str = r"(\s+--[a-z][-a-z]*|\s+-[a-zA-Z]+)*\s*";
+    const TRAILING_FLAGS: &str = r"(\s+--[a-z][-a-z]*(=[^\s]*)?|\s+-[a-zA-Z]+)*\s*";
 
     HardcodedSecurityRules {
         terminal_deny: vec![
@@ -1466,6 +1466,29 @@ mod tests {
             .mode(ToolPermissionMode::Allow)
             .is_allow();
         t("rm ~/Documents -rf")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_with_flag_equals_value() {
+        // --flag=value syntax should not bypass the rules
+        t("rm --no-preserve-root=yes -rf /").is_deny();
+        t("rm --no-preserve-root=yes --recursive --force /").is_deny();
+        t("rm -rf --no-preserve-root=yes /").is_deny();
+        t("rm --interactive=never -rf /").is_deny();
+        t("rm --no-preserve-root=yes -rf ~").is_deny();
+        t("rm --no-preserve-root=yes -rf .").is_deny();
+        t("rm --no-preserve-root=yes -rf ..").is_deny();
+        t("rm --no-preserve-root=yes -rf $HOME").is_deny();
+        // Trailing --flag=value after path
+        t("rm / --no-preserve-root=yes -rf").is_deny();
+        t("rm ~ -rf --no-preserve-root=yes").is_deny();
+        // Safe paths with --flag=value should NOT be blocked
+        t("rm --no-preserve-root=yes -rf ./build")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm --interactive=never -rf /tmp/test")
             .mode(ToolPermissionMode::Allow)
             .is_allow();
     }
