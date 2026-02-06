@@ -1478,7 +1478,9 @@ impl BlockMap {
             companion_snapshot,
             (Bound::Included(their_point), Bound::Included(their_point)),
         );
-        let my_excerpt = my_patches.first().unwrap();
+        let my_excerpt = my_patches
+            .first()
+            .expect("at least one companion excerpt exists");
         let my_range = my_excerpt.patch.edit_for_old_position(their_point).new;
         let my_point = my_range.start;
         let anchor = snapshot.buffer_snapshot().anchor_before(my_point);
