@@ -646,15 +646,12 @@ impl ToolPermissionContext {
     /// sub-command matches the pattern. Otherwise, an attacker could craft a command like
     /// `cargo build && rm -rf /` that would bypass the security check.
     ///
-    /// **Supported shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
-    /// Cmd, Xonsh, Csh, Tcsh
-    ///
-    /// **Unsupported shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
-    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
-    ///
-    /// For unsupported shells, we hide the "Always allow" UI options entirely, and if
-    /// the user has `always_allow` rules configured in settings, `ToolPermissionDecision::from_input`
-    /// will return a `Deny` with an explanatory error message.
+    /// All current `ShellKind` variants are supported — see
+    /// `ShellKind::supports_posix_chaining()` for the canonical list. If a shell
+    /// does not support POSIX-like chaining, we hide the "Always allow" UI options
+    /// entirely, and if the user has `always_allow` rules configured in settings,
+    /// `ToolPermissionDecision::from_input` will return a `Deny` with an
+    /// explanatory error message.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
         use util::shell::ShellKind;
