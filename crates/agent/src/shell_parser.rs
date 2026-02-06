@@ -469,7 +469,27 @@ fn extract_commands_from_function_body(
     func_body: &ast::FunctionBody,
     commands: &mut Vec<String>,
 ) -> Option<()> {
-    extract_commands_from_compound_command(&func_body.0, commands)?;
+    let body_start = extract_commands_from_compound_command(&func_body.0, commands)?;
+    if let Some(redirect_list) = &func_body.1 {
+        let mut normalized_redirects = Vec::new();
+        for redirect in &redirect_list.0 {
+            match normalize_io_redirect(redirect)? {
+                RedirectNormalization::Normalized(s) => normalized_redirects.push(s),
+                RedirectNormalization::Skip => {}
+            }
+        }
+        if !normalized_redirects.is_empty() {
+            if body_start >= commands.len() {
+                return None;
+            }
+            for command in &mut commands[body_start..] {
+                for redirect in &normalized_redirects {
+                    command.push(' ');
+                    command.push_str(redirect);
+                }
+            }
+        }
+    }
     Some(())
 }
 
@@ -864,5 +884,11 @@ mod tests {
     fn test_pipe_with_stderr_redirect_on_first_command() {
         let commands = extract_commands("ls 2>/dev/null | grep foo").expect("parse failed");
         assert_eq!(commands, vec!["ls 2> /dev/null", "grep foo"]);
+    }
+
+    #[test]
+    fn test_function_definition_redirect() {
+        let commands = extract_commands("f() { echo hi; } > /tmp/out").expect("parse failed");
+        assert_eq!(commands, vec!["echo hi > /tmp/out"]);
     }
 }
