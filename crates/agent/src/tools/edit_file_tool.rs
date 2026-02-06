@@ -182,7 +182,18 @@ pub fn is_sensitive_settings_path(path: &Path) -> bool {
     }
 
     // TODO this is broken when remoting
-    if let Ok(canonical_path) = std::fs::canonicalize(path)
+    // Try canonicalizing the file itself first, then fall back to the parent
+    // directory so that new files being created inside the config directory
+    // are still detected.
+    let canonical_result = std::fs::canonicalize(path).or_else(|_| {
+        path.parent()
+            .map(std::fs::canonicalize)
+            .unwrap_or(Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no parent",
+            )))
+    });
+    if let Ok(canonical_path) = canonical_result
         && canonical_path.starts_with(paths::config_dir())
     {
         return true;

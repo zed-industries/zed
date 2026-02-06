@@ -1431,11 +1431,14 @@ impl acp::Client for ClientDelegate {
             .into());
         }
 
-        if let Ok(canonical_path) = std::fs::canonicalize(&arguments.path) {
-            if canonical_path.starts_with(paths::config_dir()) {
+        // Check the parent directory (which is more likely to exist) to catch
+        // new files being created inside the config directory.
+        let parent = arguments.path.parent().unwrap_or(&arguments.path);
+        if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
+            if canonical_parent.starts_with(paths::config_dir()) {
                 return Err(anyhow!(
                     "File write to '{}' targets the global config directory. \
-                     Use request_permission to prompt the user first.",
+                     This path is protected and cannot be written via write_text_file.",
                     path_str
                 )
                 .into());
