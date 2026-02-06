@@ -4,7 +4,7 @@ use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -128,29 +128,30 @@ impl AgentTool for MovePathTool {
             None
         };
 
-        let rename_task = self.project.update(cx, |project, cx| {
-            match project
-                .find_project_path(&input.source_path, cx)
-                .and_then(|project_path| project.entry_for_path(&project_path, cx))
-            {
-                Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => project.rename_entry(entity.id, project_path, cx),
-                    None => Task::ready(Err(anyhow!(
-                        "Destination path {} was outside the project.",
-                        input.destination_path
-                    ))),
-                },
-                None => Task::ready(Err(anyhow!(
-                    "Source path {} was not found in the project.",
-                    input.source_path
-                ))),
-            }
-        });
-
-        cx.background_spawn(async move {
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
             if let Some(authorize) = authorize {
                 authorize.await?;
             }
+
+            let rename_task = project.update(cx, |project, cx| {
+                match project
+                    .find_project_path(&input.source_path, cx)
+                    .and_then(|project_path| project.entry_for_path(&project_path, cx))
+                {
+                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
+                        Some(project_path) => Ok(project.rename_entry(entity.id, project_path, cx)),
+                        None => Err(anyhow!(
+                            "Destination path {} was outside the project.",
+                            input.destination_path
+                        )),
+                    },
+                    None => Err(anyhow!(
+                        "Source path {} was not found in the project.",
+                        input.source_path
+                    )),
+                }
+            })?;
 
             let result = futures::select! {
                 result = rename_task.fuse() => result,

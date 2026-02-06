@@ -106,14 +106,15 @@ impl AgentTool for CreateDirectoryTool {
         };
         let destination_path: Arc<str> = input.path.as_str().into();
 
-        let create_entry = self.project.update(cx, |project, cx| {
-            project.create_entry(project_path.clone(), true, cx)
-        });
-
-        cx.spawn(async move |_cx| {
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
             if let Some(authorize) = authorize {
                 authorize.await?;
             }
+
+            let create_entry = project.update(cx, |project, cx| {
+                project.create_entry(project_path.clone(), true, cx)
+            });
 
             futures::select! {
                 result = create_entry.fuse() => {
