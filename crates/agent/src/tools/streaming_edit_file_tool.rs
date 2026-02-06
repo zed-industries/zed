@@ -998,6 +998,70 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_ascending_order_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let result = cx
+            .update(|cx| {
+                let input = StreamingEditFileToolInput {
+                    display_description: "Edit multiple lines in ascending order".into(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![
+                        EditOperation {
+                            old_text: "line 1".into(),
+                            new_text: "modified line 1".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 5".into(),
+                            new_text: "modified line 5".into(),
+                        },
+                    ]),
+                };
+                Arc::new(StreamingEditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(
+            output.new_text,
+            "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_nonexistent_file(cx: &mut TestAppContext) {
         init_test(cx);
 
