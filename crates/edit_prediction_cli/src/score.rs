@@ -13,6 +13,7 @@ use anyhow::Context as _;
 use edit_prediction::udiff::{apply_diff_to_string, apply_diff_to_string_with_hunk_offset};
 use gpui::AsyncApp;
 use serde::Serialize;
+
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -30,8 +31,12 @@ pub async fn run_scoring(
     run_prediction(example, args, app_state, example_progress, cx).await?;
 
     let progress = example_progress.start(Step::Score);
+    progress.set_substatus("computing metrics");
 
-    progress.set_substatus("applying patches");
+    run_scoring_impl(example).await
+}
+
+pub async fn run_scoring_impl(example: &mut Example) -> anyhow::Result<()> {
     let original_text = &example
         .prompt_inputs
         .as_ref()
@@ -76,6 +81,8 @@ pub async fn run_scoring(
         reversal_ratio: 0.0,
         cursor_distance: None,
         cursor_exact_match: None,
+        selection_start_distance: None,
+        selection_exact_match: None,
         wrong_editable_region: None,
         has_isolated_whitespace_changes: false,
     };
@@ -83,7 +90,6 @@ pub async fn run_scoring(
     let prompt_inputs = example.prompt_inputs.as_ref().unwrap();
     let cursor_path = example.spec.cursor_path.as_ref();
 
-    progress.set_substatus("computing metrics");
     let mut scores = vec![];
     for prediction in &example.predictions {
         let actual_patch = prediction.actual_patch.clone().or_else(|| {
@@ -107,6 +113,7 @@ pub async fn run_scoring(
 
         let mut best_delta_chr_f = 0.0f32;
         let mut best_expected_selection: Option<Range<usize>> = None;
+        let mut best_expected_new_editable_region: Option<String> = None;
         let mut best_patch_idx: Option<usize> = None;
 
         for (idx, expected) in expected_texts.iter().enumerate() {
@@ -118,31 +125,32 @@ pub async fn run_scoring(
         }
 
         if let Some(idx) = best_patch_idx {
+            let (patch, _) = &expected_patches_with_cursors[idx];
+
             // Get the selection range from the expected patch (relative to hunk new text).
             let expected_selection_in_patch = expected_patches_with_cursors
                 .get(idx)
                 .and_then(|(_, selection)| selection.clone());
 
             // For Teacher prompts, we need to apply the patch to the editable region
-            // to find where the hunk matched, then compute the actual selection position
-            if let (Some(editable_region), Some(selection_in_patch)) =
-                (&old_editable_region, expected_selection_in_patch)
-            {
-                let (patch, _) = &expected_patches_with_cursors[idx];
-                if let Ok((_, hunk_offset)) =
+            // to find where the hunk matched, then compute the expected selection position
+            // and the new editable region text (for diff normalization).
+            if let Some(editable_region) = &old_editable_region {
+                if let Ok((new_editable_region, hunk_offset)) =
                     apply_diff_to_string_with_hunk_offset(patch, editable_region)
                 {
-                    let hunk_start = hunk_offset.unwrap_or(0);
-                    // Shift the selection range by hunk offset
-                    best_expected_selection = Some(
-                        (hunk_start + selection_in_patch.start)
-                            ..(hunk_start + selection_in_patch.end),
-                    );
+                    best_expected_new_editable_region = Some(new_editable_region);
+
+                    if let Some(selection_in_patch) = expected_selection_in_patch.clone() {
+                        let hunk_start = hunk_offset.unwrap_or(0);
+                        // Shift the selection range by hunk offset
+                        best_expected_selection = Some(
+                            (hunk_start + selection_in_patch.start)
+                                ..(hunk_start + selection_in_patch.end),
+                        );
+                    }
                 }
-            } else if let Some(selection) = expected_patches_with_cursors
-                .get(idx)
-                .and_then(|(_, sel)| sel.clone())
-            {
+            } else if let Some(selection) = expected_selection_in_patch {
                 // For non-Teacher prompts or if we can't compute, use raw selection
                 best_expected_selection = Some(selection);
             }
@@ -166,10 +174,43 @@ pub async fn run_scoring(
             cursor_path,
         );
 
+        // Compute actual new editable region for diff-normalized selection comparison.
+        // We try to apply the actual patch to the old editable region. If this fails
+        // (e.g., because the patch is for the full file but we only have the editable region),
+        // we fall back to applying it to the full original text and extracting the corresponding
+        // portion.
+        let actual_new_editable_region = old_editable_region.as_ref().and_then(|old_region| {
+            // First try applying directly to the editable region
+            if let Ok((new_region, _)) =
+                apply_diff_to_string_with_hunk_offset(&actual_patch, old_region)
+            {
+                return Some(new_region);
+            }
+
+            // If that fails, apply to full text and try to extract the editable region portion.
+            // The editable region is at the start of the file for Teacher prompts.
+            let full_new_text = apply_diff_to_string(&actual_patch, original_text).ok()?;
+
+            // The editable region length changes based on the edit. We need to find where
+            // the editable region ends in the new text. Since the old editable region
+            // corresponds to the beginning of the file, we can compute the length change.
+            let old_region_len = old_region.len();
+            let old_text_len = original_text.len();
+            let new_text_len = full_new_text.len();
+            let length_delta = new_text_len as isize - old_text_len as isize;
+            let new_region_len = (old_region_len as isize + length_delta).max(0) as usize;
+
+            // Extract the new editable region from the start of the new full text
+            let new_region_len = new_region_len.min(full_new_text.len());
+            Some(full_new_text[..new_region_len].to_string())
+        });
+
         // Compute cursor/selection position metrics
-        let (cursor_distance, cursor_exact_match) = compute_cursor_metrics(
+        let selection_metrics = compute_cursor_metrics(
             best_expected_selection.clone(),
             prediction.actual_cursor.as_ref(),
+            actual_new_editable_region.as_deref(),
+            best_expected_new_editable_region.as_deref(),
         );
 
         // Compute approximation of editable region correctness
@@ -188,8 +229,10 @@ pub async fn run_scoring(
             exact_lines_fp: best_exact_lines.false_positives,
             exact_lines_fn: best_exact_lines.false_negatives,
             reversal_ratio,
-            cursor_distance,
-            cursor_exact_match,
+            cursor_distance: selection_metrics.cursor_distance,
+            cursor_exact_match: selection_metrics.cursor_exact_match,
+            selection_start_distance: selection_metrics.selection_start_distance,
+            selection_exact_match: selection_metrics.selection_exact_match,
             wrong_editable_region,
             has_isolated_whitespace_changes,
         });
@@ -199,29 +242,122 @@ pub async fn run_scoring(
     Ok(())
 }
 
+/// Result of comparing expected and actual selection ranges.
+struct SelectionMetrics {
+    /// Distance between expected and actual cursor (end of selection) positions.
+    cursor_distance: Option<usize>,
+    /// Whether the cursor (end of selection) positions match exactly.
+    cursor_exact_match: Option<bool>,
+    /// Distance between expected and actual selection start positions.
+    selection_start_distance: Option<usize>,
+    /// Whether the full selection (both start and end) matches exactly.
+    selection_exact_match: Option<bool>,
+}
+
+/// Maps a selection range from the actual text's coordinate space to the expected text's
+/// coordinate space using a word-level diff.
+///
+/// This allows comparing selections even when the actual and expected texts differ slightly
+/// (e.g., different placeholder variable names). If the selection covers a region that was
+/// changed, it maps to the corresponding changed region in the expected text.
+fn map_selection_through_diff(
+    actual_text: &str,
+    expected_text: &str,
+    actual_selection: Range<usize>,
+) -> Range<usize> {
+    if actual_text == expected_text {
+        return actual_selection;
+    }
+
+    let edits = language::text_diff(actual_text, expected_text);
+
+    let map_position = |actual_pos: usize| -> usize {
+        let mut actual_cursor = 0usize;
+        let mut expected_cursor = 0usize;
+
+        for (old_range, new_text) in &edits {
+            // Check if position is in the unchanged region before this edit.
+            if actual_pos < old_range.start {
+                return expected_cursor + (actual_pos - actual_cursor);
+            }
+
+            // Advance expected_cursor past the unchanged region.
+            expected_cursor += old_range.start - actual_cursor;
+
+            // Check if position is within the changed region.
+            if actual_pos <= old_range.end {
+                if actual_pos == old_range.start {
+                    return expected_cursor;
+                } else if actual_pos == old_range.end {
+                    return expected_cursor + new_text.len();
+                } else if old_range.len() > 0 {
+                    // Position is in the middle - map proportionally.
+                    let ratio = (actual_pos - old_range.start) as f64 / old_range.len() as f64;
+                    return expected_cursor + (ratio * new_text.len() as f64) as usize;
+                } else {
+                    return expected_cursor;
+                }
+            }
+
+            expected_cursor += new_text.len();
+            actual_cursor = old_range.end;
+        }
+
+        // Position is after all edits.
+        expected_cursor + (actual_pos - actual_cursor)
+    };
+
+    map_position(actual_selection.start)..map_position(actual_selection.end)
+}
+
 fn compute_cursor_metrics(
     expected_selection: Option<Range<usize>>,
     actual_cursor: Option<&ActualCursor>,
-) -> (Option<usize>, Option<bool>) {
-    // Compare cursor positions (end of selection ranges).
-    // For now we only compare the cursor/head position; full selection range
-    // comparison can be added in the future if needed.
-    let expected_cursor = expected_selection.map(|s| s.end);
-    let actual_cursor_offset = actual_cursor.and_then(|c| c.editable_region_offset);
+    actual_text: Option<&str>,
+    expected_text: Option<&str>,
+) -> SelectionMetrics {
+    let actual_selection = actual_cursor.and_then(|c| c.editable_region_selection());
 
-    match (expected_cursor, actual_cursor_offset) {
+    match (&expected_selection, &actual_selection) {
         (Some(expected), Some(actual)) => {
-            let distance = expected.abs_diff(actual);
-            let exact_match = distance == 0;
-            (Some(distance), Some(exact_match))
+            // If we have both texts, map the actual selection through the diff
+            // to normalize for minor text differences (e.g., different placeholder names).
+            let normalized_actual = match (actual_text, expected_text) {
+                (Some(actual_txt), Some(expected_txt)) => {
+                    map_selection_through_diff(actual_txt, expected_txt, actual.clone())
+                }
+                _ => actual.clone(),
+            };
+
+            let cursor_distance = expected.end.abs_diff(normalized_actual.end);
+            let start_distance = expected.start.abs_diff(normalized_actual.start);
+            let cursor_exact_match = cursor_distance == 0;
+            let selection_exact_match = cursor_exact_match && start_distance == 0;
+
+            SelectionMetrics {
+                cursor_distance: Some(cursor_distance),
+                cursor_exact_match: Some(cursor_exact_match),
+                selection_start_distance: Some(start_distance),
+                selection_exact_match: Some(selection_exact_match),
+            }
         }
         (None, None) => {
-            // Neither has cursor position - skip cursor scoring
-            (None, None)
+            // Neither has selection - skip scoring
+            SelectionMetrics {
+                cursor_distance: None,
+                cursor_exact_match: None,
+                selection_start_distance: None,
+                selection_exact_match: None,
+            }
         }
         (Some(_), None) | (None, Some(_)) => {
-            // Only one has cursor position - count as miss
-            (None, Some(false))
+            // Only one has selection - count as miss
+            SelectionMetrics {
+                cursor_distance: None,
+                cursor_exact_match: Some(false),
+                selection_start_distance: None,
+                selection_exact_match: Some(false),
+            }
         }
     }
 }
@@ -252,6 +388,10 @@ pub fn print_report(examples: &[Example]) {
     let mut cursor_total: usize = 0;
     let mut cursor_distance_sum: usize = 0;
     let mut cursor_distance_count: usize = 0;
+    let mut selection_exact_matches: usize = 0;
+    let mut selection_total: usize = 0;
+    let mut selection_start_distance_sum: usize = 0;
+    let mut selection_start_distance_count: usize = 0;
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
     let mut isolated_whitespace_count: usize = 0;
@@ -349,6 +489,18 @@ pub fn print_report(examples: &[Example]) {
                 cursor_distance_sum += dist;
                 cursor_distance_count += 1;
             }
+
+            // Accumulate selection metrics
+            if let Some(exact_match) = score.selection_exact_match {
+                selection_total += 1;
+                if exact_match {
+                    selection_exact_matches += 1;
+                }
+            }
+            if let Some(dist) = score.selection_start_distance {
+                selection_start_distance_sum += dist;
+                selection_start_distance_count += 1;
+            }
         }
     }
 
@@ -408,6 +560,11 @@ pub fn print_report(examples: &[Example]) {
         } else {
             None
         };
+        let avg_selection_start_distance = if selection_start_distance_count > 0 {
+            Some(selection_start_distance_sum as f32 / selection_start_distance_count as f32)
+        } else {
+            None
+        };
 
         println!(
             "{:<40} {:>8.2} {:>5.1} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6} {:>5}",
@@ -431,6 +588,22 @@ pub fn print_report(examples: &[Example]) {
                 cursor_total,
                 cursor_exact_matches as f32 / cursor_total as f32 * 100.0,
                 avg_dist
+            );
+        }
+
+        // Print selection metrics if available
+        if selection_total > 0 {
+            let selection_exact_match_rate =
+                selection_exact_matches as f32 / selection_total as f32 * 100.0;
+            let avg_start_dist_str = avg_selection_start_distance
+                .map(|d| format!("{:.1}", d))
+                .unwrap_or("-".to_string());
+            println!(
+                "Selection: {}/{} exact matches ({:.0}%), avg start distance: {} bytes",
+                selection_exact_matches,
+                selection_total,
+                selection_exact_match_rate,
+                avg_start_dist_str
             );
         }
 
@@ -474,6 +647,10 @@ pub struct SummaryJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_total_evaluated: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_exact_match_rate: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_start_avg_distance: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub wrong_editable_region_rate: Option<f32>,
     pub isolated_whitespace_rate: Option<f32>,
 }
@@ -494,6 +671,10 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut cursor_total: usize = 0;
     let mut cursor_distance_sum: usize = 0;
     let mut cursor_distance_count: usize = 0;
+    let mut selection_exact_matches: usize = 0;
+    let mut selection_total: usize = 0;
+    let mut selection_start_distance_sum: usize = 0;
+    let mut selection_start_distance_count: usize = 0;
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
     let mut isolated_whitespace_count: usize = 0;
@@ -546,6 +727,18 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
                 cursor_distance_sum += dist;
                 cursor_distance_count += 1;
             }
+
+            // Accumulate selection metrics
+            if let Some(exact_match) = score.selection_exact_match {
+                selection_total += 1;
+                if exact_match {
+                    selection_exact_matches += 1;
+                }
+            }
+            if let Some(dist) = score.selection_start_distance {
+                selection_start_distance_sum += dist;
+                selection_start_distance_count += 1;
+            }
         }
     }
 
@@ -597,6 +790,18 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         None
     };
 
+    let selection_exact_match_rate = if selection_total > 0 {
+        Some(selection_exact_matches as f32 / selection_total as f32)
+    } else {
+        None
+    };
+
+    let selection_start_avg_distance = if selection_start_distance_count > 0 {
+        Some(selection_start_distance_sum as f32 / selection_start_distance_count as f32)
+    } else {
+        None
+    };
+
     let wrong_editable_region_rate = if wrong_editable_region_total > 0 {
         Some(wrong_editable_region_count as f32 / wrong_editable_region_total as f32)
     } else {
@@ -625,6 +830,8 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         cursor_exact_match_rate,
         cursor_avg_distance,
         cursor_total_evaluated,
+        selection_exact_match_rate,
+        selection_start_avg_distance,
         wrong_editable_region_rate,
         isolated_whitespace_rate,
     }
@@ -639,4 +846,55 @@ pub fn write_summary_json(examples: &[Example], path: &Path) -> anyhow::Result<(
         .with_context(|| format!("Failed to write summary JSON to: {}", path.display()))?;
     eprintln!("Wrote summary JSON to: {}", path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests that selection scoring uses diff normalization to handle different placeholder names.
+    ///
+    /// When a model predicts a different placeholder name (e.g., "module_name" instead of "module"),
+    /// but correctly selects that placeholder, the scoring should recognize this as a perfect
+    /// selection match by mapping positions through the diff between actual and expected text.
+    #[test]
+    fn test_selection_scoring_normalizes_through_diff() {
+        // Scenario: expected text has "module", actual text has "module_name"
+        // The selection covers the placeholder in both cases.
+        let expected_text = "import module\nfrom werkzeug.local import LocalProxy\n";
+        let actual_text = "import module_name\nfrom werkzeug.local import LocalProxy\n";
+
+        // Expected selection: "module" at positions 7..13
+        let expected_selection = Some(7..13);
+
+        // Actual selection: "module_name" at positions 7..18
+        let actual_cursor = ActualCursor {
+            path: "test.py".to_string(),
+            row: 0,
+            column: 18,
+            offset: 18,
+            editable_region_offset: Some(18),
+            selection_start_offset: Some(7),
+            selection_start_editable_region_offset: Some(7),
+        };
+
+        // Call compute_cursor_metrics with diff normalization enabled
+        let metrics = compute_cursor_metrics(
+            expected_selection,
+            Some(&actual_cursor),
+            Some(actual_text),
+            Some(expected_text),
+        );
+
+        // With diff normalization, the actual selection (7..18 for "module_name")
+        // should map to the expected selection (7..13 for "module")
+        assert_eq!(
+            metrics.selection_exact_match,
+            Some(true),
+            "Selection should match after diff normalization maps 'module_name' to 'module'"
+        );
+        assert_eq!(metrics.cursor_exact_match, Some(true));
+        assert_eq!(metrics.cursor_distance, Some(0));
+        assert_eq!(metrics.selection_start_distance, Some(0));
+    }
 }
