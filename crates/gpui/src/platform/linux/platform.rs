@@ -120,7 +120,6 @@ pub trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
-    fn quit(&self);
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
@@ -148,7 +147,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
-    pub(crate) signal: Option<LoopSignal>,
+    pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
 }
 
@@ -174,7 +173,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             callbacks,
-            signal: Some(signal),
+            signal,
             menus: Vec::new(),
         };
 
@@ -225,7 +224,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        LinuxClient::quit(self);
+        self.with_common(|common| common.signal.stop());
     }
 
     fn compositor_name(&self) -> &'static str {

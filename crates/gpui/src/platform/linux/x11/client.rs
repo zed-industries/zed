@@ -1438,14 +1438,6 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn quit(&self) {
-        self.with_common(|common| {
-            if let Some(ref signal) = common.signal {
-                signal.stop();
-            }
-        });
-    }
-
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         Box::new(state.keyboard_layout.clone())

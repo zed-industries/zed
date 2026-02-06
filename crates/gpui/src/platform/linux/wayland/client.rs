@@ -809,14 +809,6 @@ impl LinuxClient for WaylandClient {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn quit(&self) {
-        self.with_common(|common| {
-            if let Some(ref signal) = common.signal {
-                signal.stop();
-            }
-        });
-    }
-
     fn run(&self) {
         let mut event_loop = self
             .0
