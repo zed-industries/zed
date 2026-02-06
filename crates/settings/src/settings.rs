@@ -74,18 +74,18 @@ impl UserSettingsContentExt for UserSettingsContent {
 
     fn for_release_channel(&self) -> Option<&SettingsContent> {
         match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => self.dev.as_deref(),
-            ReleaseChannel::Nightly => self.nightly.as_deref(),
-            ReleaseChannel::Preview => self.preview.as_deref(),
-            ReleaseChannel::Stable => self.stable.as_deref(),
+            ReleaseChannel::Dev => self.release_channel_overrides.dev.as_deref(),
+            ReleaseChannel::Nightly => self.release_channel_overrides.nightly.as_deref(),
+            ReleaseChannel::Preview => self.release_channel_overrides.preview.as_deref(),
+            ReleaseChannel::Stable => self.release_channel_overrides.stable.as_deref(),
         }
     }
 
     fn for_os(&self) -> Option<&SettingsContent> {
         match env::consts::OS {
-            "macos" => self.macos.as_deref(),
-            "linux" => self.linux.as_deref(),
-            "windows" => self.windows.as_deref(),
+            "macos" => self.platform_overrides.macos.as_deref(),
+            "linux" => self.platform_overrides.linux.as_deref(),
+            "windows" => self.platform_overrides.windows.as_deref(),
             _ => None,
         }
     }

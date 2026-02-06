@@ -1,7 +1,6 @@
 use anyhow::Result;
-use release_channel::{ReleaseChannel, SupportedPlatform};
 use serde_json::Value;
-use strum::IntoEnumIterator as _;
+use settings_content::{PlatformOverrides, ReleaseChannelOverrides};
 
 /// Applies a migration callback to the root settings object as well as all
 /// nested platform, release-channel, and profile override objects.
@@ -15,9 +14,10 @@ pub(crate) fn migrate_nested_settings(
 
     migrate_one(root_object)?;
 
-    let override_keys = ReleaseChannel::iter()
-        .map(|channel| channel.dev_name())
-        .chain(SupportedPlatform::iter().map(|platform| platform.as_str()));
+    let override_keys = ReleaseChannelOverrides::OVERRIDE_KEYS
+        .iter()
+        .copied()
+        .chain(PlatformOverrides::OVERRIDE_KEYS.iter().copied());
 
     for key in override_keys {
         if let Some(sub_object) = root_object.get_mut(key) {
@@ -78,10 +78,10 @@ pub(crate) fn migrate_nested_language_setting(
         return Ok(());
     };
 
-    let override_keys: Vec<&'static str> = ReleaseChannel::iter()
-        .map(|channel| channel.dev_name())
-        .chain(SupportedPlatform::iter().map(|platform| platform.as_str()))
-        .collect();
+    let override_keys = ReleaseChannelOverrides::OVERRIDE_KEYS
+        .iter()
+        .copied()
+        .chain(PlatformOverrides::OVERRIDE_KEYS.iter().copied());
 
     for key in override_keys {
         if let Some(sub_value) = root_object.get_mut(key) {

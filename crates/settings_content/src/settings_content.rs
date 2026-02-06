@@ -219,18 +219,46 @@ impl RootUserSettings for UserSettingsContent {
 
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct UserSettingsContent {
-    #[serde(flatten)]
-    pub content: Box<SettingsContent>,
-
+pub struct ReleaseChannelOverrides {
     pub dev: Option<Box<SettingsContent>>,
     pub nightly: Option<Box<SettingsContent>>,
     pub preview: Option<Box<SettingsContent>>,
     pub stable: Option<Box<SettingsContent>>,
+}
 
+impl ReleaseChannelOverrides {
+    /// The JSON keys for release-channel overrides in settings, matching the
+    /// field names on this struct. Used by the migrator to apply migrations
+    /// inside these nested sections.
+    pub const OVERRIDE_KEYS: &[&str] = &["dev", "nightly", "preview", "stable"];
+}
+
+#[with_fallible_options]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PlatformOverrides {
     pub macos: Option<Box<SettingsContent>>,
-    pub windows: Option<Box<SettingsContent>>,
     pub linux: Option<Box<SettingsContent>>,
+    pub windows: Option<Box<SettingsContent>>,
+}
+
+impl PlatformOverrides {
+    /// The JSON keys for platform overrides in settings, matching the field
+    /// names on this struct. Used by the migrator to apply migrations inside
+    /// these nested sections.
+    pub const OVERRIDE_KEYS: &[&str] = &["macos", "linux", "windows"];
+}
+
+#[with_fallible_options]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct UserSettingsContent {
+    #[serde(flatten)]
+    pub content: Box<SettingsContent>,
+
+    #[serde(flatten)]
+    pub release_channel_overrides: ReleaseChannelOverrides,
+
+    #[serde(flatten)]
+    pub platform_overrides: PlatformOverrides,
 
     #[serde(default)]
     pub profiles: IndexMap<String, SettingsContent>,
