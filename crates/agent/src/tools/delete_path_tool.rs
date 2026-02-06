@@ -49,9 +49,7 @@ impl AgentTool for DeletePathTool {
     type Input = DeletePathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "delete_path"
-    }
+    const NAME: &'static str = "delete_path";
 
     fn kind() -> ToolKind {
         ToolKind::Delete
@@ -78,7 +76,7 @@ impl AgentTool for DeletePathTool {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path, settings);
+        let decision = decide_permission_from_settings(Self::NAME, &path, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -87,7 +85,7 @@ impl AgentTool for DeletePathTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "delete_path".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: path.clone(),
                 };
                 Some(event_stream.authorize(

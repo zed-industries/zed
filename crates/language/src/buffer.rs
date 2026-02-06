@@ -151,16 +151,16 @@ pub struct TreeSitterData {
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
-    fn clear(&mut self, snapshot: text::BufferSnapshot) {
-        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
+    fn clear(&mut self, snapshot: &text::BufferSnapshot) {
+        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
         self.brackets_by_chunks
             .get_mut()
             .resize(self.chunks.len(), None);
     }
 
-    fn new(snapshot: text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
+    fn new(snapshot: &text::BufferSnapshot) -> Self {
+        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
             brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
             chunks,
@@ -188,12 +188,12 @@ struct BufferBranchState {
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
     pub syntax: SyntaxSnapshot,
-    file: Option<Arc<dyn File>>,
+    tree_sitter_data: Arc<TreeSitterData>,
     diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
+    file: Option<Arc<dyn File>>,
     non_text_state_update_count: usize,
-    tree_sitter_data: Arc<TreeSitterData>,
     pub capability: Capability,
 }
 
@@ -1168,14 +1168,14 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
-                    .snapshot();
+                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text);
+            let text = text.into_snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
-            let tree_sitter_data = TreeSitterData::new(text.clone());
+            let tree_sitter_data = TreeSitterData::new(&text);
             BufferSnapshot {
                 text,
                 syntax,
@@ -1198,10 +1198,10 @@ impl Buffer {
             buffer_id,
             Default::default(),
             Rope::new(),
-        )
-        .snapshot();
+        );
+        let text = text.into_snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
-        let tree_sitter_data = TreeSitterData::new(text.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
             text,
             syntax,
@@ -1226,12 +1226,12 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text =
             TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
-                .snapshot();
+                .into_snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
         }
-        let tree_sitter_data = TreeSitterData::new(text.clone());
+        let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
             text,
             syntax,
@@ -1249,18 +1249,21 @@ impl Buffer {
     /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {
         let text = self.text.snapshot();
-        let mut syntax_map = self.syntax_map.lock();
-        syntax_map.interpolate(&text);
-        let syntax = syntax_map.snapshot();
+
+        let syntax = {
+            let mut syntax_map = self.syntax_map.lock();
+            syntax_map.interpolate(text);
+            syntax_map.snapshot()
+        };
 
         let tree_sitter_data = if self.text.version() != *self.tree_sitter_data.version() {
-            Arc::new(TreeSitterData::new(text.clone()))
+            Arc::new(TreeSitterData::new(text))
         } else {
             self.tree_sitter_data.clone()
         };
 
         BufferSnapshot {
-            text,
+            text: text.clone(),
             syntax,
             tree_sitter_data,
             file: self.file.clone(),
@@ -1304,7 +1307,7 @@ impl Buffer {
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
         let language = self.language().cloned();
-        let old_snapshot = self.text.snapshot();
+        let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_spawn(async move {
@@ -1323,7 +1326,7 @@ impl Buffer {
             }
             EditPreview {
                 old_snapshot,
-                applied_edits_snapshot: branch_buffer.snapshot(),
+                applied_edits_snapshot: branch_buffer.into_snapshot(),
                 syntax_snapshot,
             }
         })
@@ -1416,8 +1419,7 @@ impl Buffer {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn as_text_snapshot(&self) -> &text::BufferSnapshot {
+    pub fn as_text_snapshot(&self) -> &text::BufferSnapshot {
         &self.text
     }
 
@@ -1425,7 +1427,8 @@ impl Buffer {
     /// language-related state like the syntax tree or diagnostics.
     #[ztracing::instrument(skip_all)]
     pub fn text_snapshot(&self) -> text::BufferSnapshot {
-        self.text.snapshot()
+        // todo lw
+        self.text.snapshot().clone()
     }
 
     /// The file associated with the buffer, if any.
@@ -1781,12 +1784,15 @@ impl Buffer {
         self.sync_parse_timeout = timeout;
     }
 
-    fn invalidate_tree_sitter_data(&mut self, snapshot: text::BufferSnapshot) {
-        match Arc::get_mut(&mut self.tree_sitter_data) {
+    fn invalidate_tree_sitter_data(
+        tree_sitter_data: &mut Arc<TreeSitterData>,
+        snapshot: &text::BufferSnapshot,
+    ) {
+        match Arc::get_mut(tree_sitter_data) {
             Some(tree_sitter_data) => tree_sitter_data.clear(snapshot),
             None => {
-                let tree_sitter_data = TreeSitterData::new(snapshot);
-                self.tree_sitter_data = Arc::new(tree_sitter_data)
+                let new_tree_sitter_data = TreeSitterData::new(snapshot);
+                *tree_sitter_data = Arc::new(new_tree_sitter_data)
             }
         }
     }
@@ -1817,7 +1823,7 @@ impl Buffer {
     #[ztracing::instrument(skip_all)]
     pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.text.version() != *self.tree_sitter_data.version() {
-            self.invalidate_tree_sitter_data(self.text.snapshot());
+            Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, self.text.snapshot());
         }
         if self.reparse.is_some() {
             return;
@@ -1898,7 +1904,7 @@ impl Buffer {
         self.was_changed();
         self.request_autoindent(cx, block_budget);
         self.parse_status.0.send(ParseStatus::Idle).unwrap();
-        self.invalidate_tree_sitter_data(self.text.snapshot());
+        Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, &self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
     }

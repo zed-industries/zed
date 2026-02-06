@@ -165,6 +165,7 @@ impl LanguageModels {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
+            is_latest: model.is_latest(),
         }
     }
 
@@ -1151,22 +1152,41 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
+        // We want to reset the effort level when switching models, as the currently-selected effort level may
+        // not be compatible.
+        let effort = model
+            .default_effort_level()
+            .map(|effort_level| effort_level.value.to_string());
+
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
+            thread.set_thinking_effort(effort.clone(), cx);
         });
 
         update_settings_file(
             self.connection.0.read(cx).fs.clone(),
             cx,
-            move |settings, _cx| {
+            move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
+                let enable_thinking = settings
+                    .agent
+                    .as_ref()
+                    .and_then(|agent| {
+                        agent
+                            .default_model
+                            .as_ref()
+                            .map(|default_model| default_model.enable_thinking)
+                    })
+                    .unwrap_or_else(|| thread.read(cx).thinking_enabled());
                 settings
                     .agent
                     .get_or_insert_default()
                     .set_model(LanguageModelSelection {
                         provider: provider.into(),
                         model,
+                        enable_thinking,
+                        effort,
                     });
             },
         );
@@ -1749,6 +1769,7 @@ mod internal_tests {
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
+                    is_latest: false,
                 }]
             )])
         );
