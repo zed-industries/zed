@@ -2313,10 +2313,9 @@ impl Buffer {
             }
             self.edit([(offset..len, "\n")], None, cx);
         } else {
-            // When preserving whitespace on empty lines, we need to handle the case
-            // where the last line contains only whitespace - append newline after it
+            // When preserving whitespace on empty lines, just ensure the buffer
+            // ends with a newline without stripping any trailing whitespace.
             if self.as_rope().chars_at(len - 1).next() == Some('\n') {
-                // Already ends with newline - nothing to do
                 return;
             }
             self.edit([(len..len, "\n")], None, cx);
