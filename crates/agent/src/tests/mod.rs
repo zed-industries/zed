@@ -401,6 +401,100 @@ async fn test_thinking(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cancel_mid_think_produces_invalid_thinking_block(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Send a message to start a completion.
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Think about something"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Simulate the model starting to think (text arrives, but no signature yet).
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Thinking {
+        text: "Let me think about this...".to_string(),
+        signature: None,
+    });
+    cx.run_until_parked();
+
+    // Cancel the thread mid-think, before a signature or stop event arrives.
+    // This simulates the user pressing "Stop" while the model is still thinking.
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    cx.run_until_parked();
+
+    // Verify the flushed message has a thinking block with no signature.
+    thread.read_with(cx, |thread, _cx| {
+        let message = thread.last_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+        assert_eq!(
+            agent_message.content,
+            vec![AgentMessageContent::Thinking {
+                text: "Let me think about this...".to_string(),
+                signature: None,
+            }],
+            "Expected a thinking block with no signature after cancel-mid-think"
+        );
+    });
+
+    // Now send a follow-up message. This will build a new request that includes
+    // the previous assistant message with the invalid thinking block.
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Continue"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Inspect the request that was sent to the model. Thinking blocks without
+    // a valid signature must be stripped from the request, otherwise the
+    // Anthropic API rejects it with "Invalid signature in thinking block".
+    // Since the only content in the assistant message was the signatureless
+    // thinking block, the entire assistant message should be omitted.
+    let pending = fake_model.pending_completions();
+    let completion = pending.last().unwrap();
+
+    let assistant_messages: Vec<_> = completion
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .collect();
+    assert_eq!(
+        assistant_messages.len(),
+        0,
+        "The assistant message containing only a signatureless thinking block \
+         should be omitted entirely from the request. Found: {:?}",
+        assistant_messages
+    );
+
+    // Also verify no thinking blocks with missing signatures leak into
+    // any message in the request.
+    let signatureless_thinking_blocks: Vec<_> = completion
+        .messages
+        .iter()
+        .flat_map(|m| &m.content)
+        .filter(|c| {
+            matches!(
+                c,
+                MessageContent::Thinking {
+                    signature: None,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        signatureless_thinking_blocks.len(),
+        0,
+        "No thinking blocks without signatures should appear in the request. \
+         Found: {:?}",
+        signatureless_thinking_blocks
+    );
+}
+
+#[gpui::test]
 async fn test_system_prompt(cx: &mut TestAppContext) {
     let ThreadTest {
         model,

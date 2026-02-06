@@ -509,12 +509,14 @@ impl AgentMessage {
                         .push(language_model::MessageContent::Text(text.clone()));
                 }
                 AgentMessageContent::Thinking { text, signature } => {
-                    assistant_message
-                        .content
-                        .push(language_model::MessageContent::Thinking {
-                            text: text.clone(),
-                            signature: signature.clone(),
-                        });
+                    if signature.is_some() {
+                        assistant_message
+                            .content
+                            .push(language_model::MessageContent::Thinking {
+                                text: text.clone(),
+                                signature: signature.clone(),
+                            });
+                    }
                 }
                 AgentMessageContent::RedactedThinking(value) => {
                     assistant_message.content.push(

@@ -258,12 +258,16 @@ pub fn into_anthropic_count_tokens_request(
                             text: thinking,
                             signature,
                         } => {
-                            if !thinking.is_empty() {
-                                Some(anthropic::RequestContent::Thinking {
-                                    thinking,
-                                    signature: signature.unwrap_or_default(),
-                                    cache_control: None,
-                                })
+                            if let Some(signature) = signature {
+                                if !thinking.is_empty() {
+                                    Some(anthropic::RequestContent::Thinking {
+                                        thinking,
+                                        signature,
+                                        cache_control: None,
+                                    })
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -644,12 +648,16 @@ pub fn into_anthropic(
                             text: thinking,
                             signature,
                         } => {
-                            if !thinking.is_empty() {
-                                Some(anthropic::RequestContent::Thinking {
-                                    thinking,
-                                    signature: signature.unwrap_or_default(),
-                                    cache_control: None,
-                                })
+                            if let Some(signature) = signature {
+                                if !thinking.is_empty() {
+                                    Some(anthropic::RequestContent::Thinking {
+                                        thinking,
+                                        signature,
+                                        cache_control: None,
+                                    })
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
