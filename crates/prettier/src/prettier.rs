@@ -283,8 +283,6 @@ impl Prettier {
         }))
     }
 
-    // NB: request_timeout is passed as a parameter from lsp_store to prevent circular dependency issues
-    // between this and the `project` crate
     #[cfg(not(any(test, feature = "test-support")))]
     pub async fn start(
         server_id: LanguageServerId,
@@ -355,7 +353,6 @@ impl Prettier {
     ) -> anyhow::Result<Diff> {
         match self {
             Self::Real(local) => {
-                // TODO: This seems a tad bit chunky
                 let params = buffer
                     .update(cx, |buffer, cx| {
                         let buffer_language = buffer.language().map(|language| language.as_ref());

@@ -10,11 +10,13 @@ use futures::future::{Shared, join_all};
 use gpui::{AppContext as _, Context, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::Buffer;
-use lsp::{LSP_REQUEST_TIMEOUT, LanguageServerId};
+use lsp::LanguageServerId;
+use settings::Settings as _;
 use text::Anchor;
 
 use crate::lsp_command::{GetFoldingRanges, LspCommand as _};
 use crate::lsp_store::LspStore;
+use crate::project_settings::ProjectSettings;
 
 #[derive(Clone, Debug)]
 pub struct LspFoldingRange {
@@ -162,10 +164,13 @@ impl LspStore {
                 return Task::ready(Ok(None));
             }
 
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
             let request_task = client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );

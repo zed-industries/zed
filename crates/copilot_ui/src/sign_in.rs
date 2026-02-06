@@ -9,9 +9,10 @@ use gpui::{
     Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
 use project::project_settings::ProjectSettings;
+use settings::Settings as _;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{AppState, Toast, Workspace, item::Settings, notifications::NotificationId};
+use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
@@ -242,50 +243,6 @@ impl CopilotCodeVerification {
             "Connect to GitHub"
         };
 
-        let command = data.command.clone();
-        let on_connect_click = cx.listener(move |this, _, _window, cx| {
-            let Some(copilot) = Copilot::global(cx) else {
-                this.connect_clicked = true;
-                return;
-            };
-            let command = command.clone();
-            let copilot_clone = copilot.clone();
-            copilot.update(cx, |copilot, cx| {
-                let Some(server) = copilot.language_server() else {
-                    return;
-                };
-                let server = server.clone();
-                let request_timeout = ProjectSettings::get_global(cx)
-                    .global_lsp_settings
-                    .get_request_timeout();
-
-                cx.spawn(async move |_, cx| {
-                    let result = server
-                        .request::<lsp::request::ExecuteCommand>(
-                            lsp::ExecuteCommandParams {
-                                command: command.command.clone(),
-                                arguments: command.arguments.clone().unwrap_or_default(),
-                                ..Default::default()
-                            },
-                            request_timeout,
-                        )
-                        .await
-                        .into_response()
-                        .ok()
-                        .flatten();
-                    if let Some(value) = result
-                        && let Ok(status) = serde_json::from_value::<request::SignInStatus>(value)
-                    {
-                        copilot_clone.update(cx, |copilot, cx| {
-                            copilot.update_sign_in_status(status, cx);
-                        });
-                    }
-                })
-                .detach();
-            });
-            this.connect_clicked = true;
-        });
-
         v_flex()
             .flex_1()
             .gap_2p5()
@@ -310,7 +267,54 @@ impl CopilotCodeVerification {
                             .full_width()
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
-                            .on_click(on_connect_click),
+                            .on_click({
+                                let command = data.command.clone();
+                                cx.listener(move |this, _, _window, cx| {
+                                    let command = command.clone();
+                                    let copilot_clone = copilot.clone();
+                                    let request_timeout = ProjectSettings::get_global(cx)
+                                        .global_lsp_settings
+                                        .get_request_timeout();
+                                    copilot.update(cx, |copilot, cx| {
+                                        if let Some(server) = copilot.language_server() {
+                                            let server = server.clone();
+                                            cx.spawn(async move |_, cx| {
+                                                let result = server
+                                                    .request::<lsp::request::ExecuteCommand>(
+                                                        lsp::ExecuteCommandParams {
+                                                            command: command.command.clone(),
+                                                            arguments: command
+                                                                .arguments
+                                                                .clone()
+                                                                .unwrap_or_default(),
+                                                            ..Default::default()
+                                                        },
+                                                        request_timeout,
+                                                    )
+                                                    .await
+                                                    .into_response()
+                                                    .ok()
+                                                    .flatten();
+                                                if let Some(value) = result {
+                                                    if let Ok(status) = serde_json::from_value::<
+                                                        request::SignInStatus,
+                                                    >(
+                                                        value
+                                                    ) {
+                                                        copilot_clone.update(cx, |copilot, cx| {
+                                                            copilot
+                                                                .update_sign_in_status(status, cx);
+                                                        });
+                                                    }
+                                                }
+                                            })
+                                            .detach();
+                                        }
+                                    });
+
+                                    this.connect_clicked = true;
+                                })
+                            }),
                     )
                     .child(
                         Button::new("copilot-enable-cancel-button", "Cancel")

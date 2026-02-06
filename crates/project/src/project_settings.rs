@@ -168,6 +168,14 @@ pub struct LspNotificationSettings {
     pub dismiss_timeout_ms: Option<u64>,
 }
 
+impl Default for LspNotificationSettings {
+    fn default() -> Self {
+        Self {
+            dismiss_timeout_ms: Some(5000),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettings {

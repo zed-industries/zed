@@ -1362,8 +1362,8 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         requests_completed.load(atomic::Ordering::Acquire),
-        3,
-        "After enough time, all 3 LSP requests should have been served by the language server"
+        1,
+        "After enough time, a single, deduplicated, LSP request should have been served by the language server"
     );
     let resulting_lens_actions = editor_b
         .update(cx_b, |editor, cx| {
@@ -1382,7 +1382,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         resulting_lens_actions.first().unwrap().lsp_action.title(),
-        "LSP Command 3",
+        "LSP Command 1",
         "Only the final code lens action should be in the data"
     )
 }
@@ -5185,7 +5185,7 @@ async fn test_semantic_token_refresh_is_forwarded(
 
     other_tokens.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::SemanticTokensRefresh>(())
+        .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("semantic tokens refresh request failed");

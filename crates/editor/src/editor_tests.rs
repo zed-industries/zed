@@ -16628,10 +16628,10 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
                 trigger_characters: Some(vec![".".to_string()]),
-                resolve_provider: Some(true),
-                ..Default::default()
+                resolve_provider: Some(false),
+                ..lsp::CompletionOptions::default()
             }),
-            ..Default::default()
+            ..lsp::ServerCapabilities::default()
         },
         cx,
     )
@@ -27992,6 +27992,8 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS),
                     button: Some(true),
+                    notifications: None,
+                    semantic_token_rules: None,
                 });
             });
         });
@@ -28100,6 +28102,8 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS * 4),
                     button: Some(true),
+                    notifications: None,
+                    semantic_token_rules: None,
                 });
             });
         });
