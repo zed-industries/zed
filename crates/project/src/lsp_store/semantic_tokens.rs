@@ -10,7 +10,7 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
 use itertools::Itertools;
-use language::{Buffer, LanguageName};
+use language::{Buffer, LanguageName, language_settings::all_language_settings};
 use lsp::{AdapterServerCapabilities, LSP_REQUEST_TIMEOUT, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
 use settings::{SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore};
@@ -26,6 +26,48 @@ use crate::{
     },
     project_settings::ProjectSettings,
 };
+
+pub(super) struct SemanticTokenConfig {
+    stylizers: HashMap<(LanguageServerId, Option<LanguageName>), SemanticTokenStylizer>,
+    rules: SemanticTokenRules,
+    global_mode: settings::SemanticTokens,
+}
+
+impl SemanticTokenConfig {
+    pub(super) fn new(cx: &App) -> Self {
+        Self {
+            stylizers: HashMap::default(),
+            rules: ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone(),
+            global_mode: all_language_settings(None, cx).defaults.semantic_tokens,
+        }
+    }
+
+    pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
+        self.stylizers.retain(|&(id, _), _| id != server_id);
+    }
+
+    pub(super) fn update_rules(&mut self, new_rules: SemanticTokenRules) -> bool {
+        if new_rules != self.rules {
+            self.rules = new_rules;
+            self.stylizers.clear();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn update_global_mode(&mut self, new_mode: settings::SemanticTokens) -> bool {
+        if new_mode != self.global_mode {
+            self.global_mode = new_mode;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct RefreshForServer {
@@ -326,7 +368,8 @@ impl LspStore {
         cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
         let stylizer = match self
-            .semantic_token_stylizers
+            .semantic_token_config
+            .stylizers
             .entry((server_id, language.cloned()))
         {
             hash_map::Entry::Occupied(o) => o.into_mut(),

@@ -121,7 +121,7 @@ use std::{
     },
     time::Duration,
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext};
+use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -183,7 +183,7 @@ pub trait DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::{AgentTool, EditFileTool, ReadFileTool};
 use acp_thread::UserMessageId;
 use action_log::ActionLog;
 use fs::FakeFs;
@@ -74,7 +75,7 @@ async fn test_edit_file_tool_in_thread_context(cx: &mut TestAppContext) {
     // Model calls read_file tool
     let read_tool_use = LanguageModelToolUse {
         id: "read_tool_1".into(),
-        name: "read_file".into(),
+        name: ReadFileTool::NAME.into(),
         raw_input: json!({"path": "project/src/main.rs"}).to_string(),
         input: json!({"path": "project/src/main.rs"}),
         is_input_complete: true,
@@ -96,7 +97,7 @@ async fn test_edit_file_tool_in_thread_context(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_text_chunk("I'll edit the file now.");
     let edit_tool_use = LanguageModelToolUse {
         id: "edit_tool_1".into(),
-        name: "edit_file".into(),
+        name: EditFileTool::NAME.into(),
         raw_input: json!({
             "display_description": "Change greeting message",
             "path": "project/src/main.rs",
@@ -261,7 +262,7 @@ async fn test_subagent_uses_read_file_tool(cx: &mut TestAppContext) {
         let mut tools: BTreeMap<gpui::SharedString, std::sync::Arc<dyn crate::AnyAgentTool>> =
             BTreeMap::new();
         tools.insert(
-            "read_file".into(),
+            ReadFileTool::NAME.into(),
             crate::ReadFileTool::new(fake_parent_thread.downgrade(), project.clone(), action_log)
                 .erase(),
         );
@@ -288,7 +289,7 @@ async fn test_subagent_uses_read_file_tool(cx: &mut TestAppContext) {
     // Verify the subagent has the read_file tool
     subagent.read_with(cx, |thread, _| {
         assert!(
-            thread.has_registered_tool("read_file"),
+            thread.has_registered_tool(ReadFileTool::NAME),
             "subagent should have read_file tool"
         );
     });
@@ -304,7 +305,7 @@ async fn test_subagent_uses_read_file_tool(cx: &mut TestAppContext) {
     // Simulate the model calling the read_file tool
     let read_tool_use = LanguageModelToolUse {
         id: "read_tool_1".into(),
-        name: "read_file".into(),
+        name: ReadFileTool::NAME.into(),
         raw_input: json!({"path": "project/src/lib.rs"}).to_string(),
         input: json!({"path": "project/src/lib.rs"}),
         is_input_complete: true,
@@ -414,12 +415,12 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
         let mut tools: BTreeMap<gpui::SharedString, std::sync::Arc<dyn crate::AnyAgentTool>> =
             BTreeMap::new();
         tools.insert(
-            "read_file".into(),
+            ReadFileTool::NAME.into(),
             crate::ReadFileTool::new(parent_thread.downgrade(), project.clone(), action_log)
                 .erase(),
         );
         tools.insert(
-            "edit_file".into(),
+            EditFileTool::NAME.into(),
             crate::EditFileTool::new(
                 project.clone(),
                 parent_thread.downgrade(),
@@ -464,11 +465,11 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
     // Verify the subagent has the tools
     subagent.read_with(cx, |thread, _| {
         assert!(
-            thread.has_registered_tool("read_file"),
+            thread.has_registered_tool(ReadFileTool::NAME),
             "subagent should have read_file tool"
         );
         assert!(
-            thread.has_registered_tool("edit_file"),
+            thread.has_registered_tool(EditFileTool::NAME),
             "subagent should have edit_file tool"
         );
     });
@@ -484,7 +485,7 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
     // First, model calls read_file to see the current content
     let read_tool_use = LanguageModelToolUse {
         id: "read_tool_1".into(),
-        name: "read_file".into(),
+        name: ReadFileTool::NAME.into(),
         raw_input: json!({"path": "project/src/config.rs"}).to_string(),
         input: json!({"path": "project/src/config.rs"}),
         is_input_complete: true,
@@ -511,7 +512,7 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_text_chunk("I'll update the version now.");
     let edit_tool_use = LanguageModelToolUse {
         id: "edit_tool_1".into(),
-        name: "edit_file".into(),
+        name: EditFileTool::NAME.into(),
         raw_input: json!({
             "display_description": "Update version to 2.0.0",
             "path": "project/src/config.rs",

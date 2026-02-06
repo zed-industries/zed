@@ -104,16 +104,16 @@ impl From<BufferId> for u64 {
 
 #[derive(Clone)]
 pub struct BufferSnapshot {
-    replica_id: ReplicaId,
-    remote_id: BufferId,
     visible_text: Rope,
     deleted_text: Rope,
-    line_ending: LineEnding,
-    undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     insertions: SumTree<InsertionFragment>,
     insertion_slices: TreeSet<InsertionSlice>,
+    undo_map: UndoMap,
     pub version: clock::Global,
+    remote_id: BufferId,
+    replica_id: ReplicaId,
+    line_ending: LineEnding,
 }
 
 #[derive(Clone, Debug)]
@@ -780,8 +780,12 @@ impl Buffer {
         self.version.clone()
     }
 
-    pub fn snapshot(&self) -> BufferSnapshot {
-        self.snapshot.clone()
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> BufferSnapshot {
+        self.snapshot
     }
 
     pub fn branch(&self) -> Self {
@@ -2508,15 +2512,14 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        let fragments_cursor = if *since == self.version {
-            None
-        } else {
-            let mut cursor = self.fragments.filter(&None, move |summary| {
-                !since.observed_all(&summary.max_version)
-            });
-            cursor.next();
-            Some(cursor)
-        };
+        if *since == self.version {
+            return None.into_iter().flatten();
+        }
+        let mut cursor = self.fragments.filter(&None, move |summary| {
+            !since.observed_all(&summary.max_version)
+        });
+        cursor.next();
+        let fragments_cursor = Some(cursor);
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
         let (start, _, item) = self
             .fragments
@@ -2537,7 +2540,7 @@ impl BufferSnapshot {
         }
         let end_fragment_id = self.fragment_id_for_anchor(&range.end);
 
-        Edits {
+        Some(Edits {
             visible_cursor: self.visible_text.cursor(visible_start),
             deleted_cursor: self.deleted_text.cursor(deleted_start),
             fragments_cursor,
@@ -2547,7 +2550,9 @@ impl BufferSnapshot {
             new_end: D::zero(()),
             range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
             buffer_id: self.remote_id,
-        }
+        })
+        .into_iter()
+        .flatten()
     }
 
     pub fn has_edits_since_in_range(&self, since: &clock::Global, range: Range<Anchor>) -> bool {

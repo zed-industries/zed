@@ -122,9 +122,7 @@ impl AgentTool for FetchTool {
     type Input = FetchToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "fetch"
-    }
+    const NAME: &'static str = "fetch";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
@@ -148,7 +146,7 @@ impl AgentTool for FetchTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.url, settings);
+        let decision = decide_permission_from_settings(Self::NAME, &input.url, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -157,7 +155,7 @@ impl AgentTool for FetchTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "fetch".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.url.clone(),
                 };
                 Some(event_stream.authorize(

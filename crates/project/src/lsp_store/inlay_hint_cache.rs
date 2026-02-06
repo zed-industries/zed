@@ -78,7 +78,7 @@ const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl BufferInlayHints {
     pub fn new(buffer: &Entity<Buffer>, cx: &mut App) -> Self {
-        let chunks = RowChunks::new(buffer.read(cx).text_snapshot(), MAX_ROWS_IN_A_CHUNK);
+        let chunks = RowChunks::new(buffer.read(cx).as_text_snapshot(), MAX_ROWS_IN_A_CHUNK);
 
         Self {
             hints_by_chunks: vec![None; chunks.len()],

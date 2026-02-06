@@ -59,7 +59,7 @@ Your IAM policy should look similar to:
 }
 ```
 
-With that done, choose one of the two authentication methods:
+With that done, choose one of the three authentication methods:
 
 #### Authentication via Named Profile (Recommended)
 
@@ -86,6 +86,27 @@ To do this:
 2. Create security credentials for that User, save them and keep them secure.
 3. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
 4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
+
+#### Authentication via Bedrock API Key
+
+Amazon Bedrock also supports [API Keys](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html), which authenticate directly without requiring IAM users or named profiles.
+
+1. Create an API Key in the [Amazon Bedrock Console](https://console.aws.amazon.com/bedrock/)
+2. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
+3. Enter your Bedrock API key in the **API Key** field and select your **Region**
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "api_key",
+      "region": "your-aws-region"
+    }
+  }
+}
+```
+
+The API key itself is stored securely in your OS keychain, not in your settings file.
 
 #### Cross-Region Inference
 

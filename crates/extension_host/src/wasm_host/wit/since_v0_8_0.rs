@@ -786,6 +786,7 @@ impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAs
         Self {
             name: value.name,
             download_url: value.browser_download_url,
+            digest: value.digest,
         }
     }
 }

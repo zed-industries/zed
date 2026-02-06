@@ -1105,6 +1105,7 @@ impl RulesLibrary {
                                     stop: Vec::new(),
                                     temperature: None,
                                     thinking_allowed: true,
+                                    thinking_effort: None,
                                 },
                                 cx,
                             )

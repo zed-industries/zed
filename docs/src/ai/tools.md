@@ -64,6 +64,14 @@ Deletes a file or directory (including contents recursively) at the specified pa
 
 Edits files by replacing specific text with new content.
 
+### `restore_file_from_disk`
+
+Reloads a file from disk, discarding any unsaved changes in the buffer.
+
+### `save_file`
+
+Saves a buffer's current contents to disk, preserving unsaved changes before the agent modifies the file.
+
 ### `move_path`
 
 Moves or renames a file or directory in the project, performing a rename if only the filename differs.
