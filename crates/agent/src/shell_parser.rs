@@ -242,6 +242,10 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormaliza
                 ast::IoFileRedirectKind::Append => ">>",
                 ast::IoFileRedirectKind::ReadAndWrite => "<>",
                 ast::IoFileRedirectKind::Clobber => ">|",
+                // The parser pairs DuplicateInput/DuplicateOutput with
+                // IoFileRedirectTarget::Duplicate (not Filename), so the
+                // target match above will return Skip before we reach here.
+                // These arms are kept for defensiveness.
                 ast::IoFileRedirectKind::DuplicateInput => "<&",
                 ast::IoFileRedirectKind::DuplicateOutput => ">&",
             };
