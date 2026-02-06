@@ -19,11 +19,11 @@ pub mod rust_analyzer_ext;
 mod semantic_tokens;
 pub mod vue_language_server_ext;
 
-mod inlay_hint_cache;
+mod inlay_hints;
 
 use self::code_lens::CodeLensData;
 use self::document_colors::DocumentColorData;
-use self::inlay_hint_cache::BufferInlayHints;
+use self::inlay_hints::BufferInlayHints;
 use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
     CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
@@ -143,7 +143,7 @@ use util::{
 pub use document_colors::DocumentColors;
 pub use fs::*;
 pub use language::Location;
-pub use lsp_store::inlay_hint_cache::{CacheInlayHints, InvalidationStrategy};
+pub use lsp_store::inlay_hints::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use semantic_tokens::{
@@ -5410,69 +5410,6 @@ impl LspStore {
         None
     }
 
-    fn resolve_inlay_hint(
-        &self,
-        mut hint: InlayHint,
-        buffer: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<InlayHint>> {
-        if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_if_capable_for_proto_request(&buffer, InlayHints::can_resolve_inlays, cx)
-            {
-                hint.resolve_state = ResolveState::Resolved;
-                return Task::ready(Ok(hint));
-            }
-            let request = proto::ResolveInlayHint {
-                project_id,
-                buffer_id: buffer.read(cx).remote_id().into(),
-                language_server_id: server_id.0 as u64,
-                hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
-            };
-            cx.background_spawn(async move {
-                let response = upstream_client
-                    .request(request)
-                    .await
-                    .context("inlay hints proto request")?;
-                match response.hint {
-                    Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
-                        .context("inlay hints proto resolve response conversion"),
-                    None => Ok(hint),
-                }
-            })
-        } else {
-            let Some(lang_server) = buffer.update(cx, |buffer, cx| {
-                self.language_server_for_local_buffer(buffer, server_id, cx)
-                    .map(|(_, server)| server.clone())
-            }) else {
-                return Task::ready(Ok(hint));
-            };
-            if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
-                return Task::ready(Ok(hint));
-            }
-            let buffer_snapshot = buffer.read(cx).snapshot();
-            cx.spawn(async move |_, cx| {
-                let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
-                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
-                );
-                let resolved_hint = resolve_task
-                    .await
-                    .into_response()
-                    .context("inlay hint resolve LSP request")?;
-                let resolved_hint = InlayHints::lsp_to_project_hint(
-                    resolved_hint,
-                    &buffer,
-                    server_id,
-                    ResolveState::Resolved,
-                    false,
-                    cx,
-                )
-                .await?;
-                Ok(resolved_hint)
-            })
-        }
-    }
-
     pub(crate) fn linked_edits(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -10057,20 +9994,6 @@ impl LspStore {
         Ok(proto::OnTypeFormattingResponse { transaction })
     }
 
-    async fn handle_refresh_inlay_hints(
-        lsp_store: Entity<Self>,
-        envelope: TypedEnvelope<proto::RefreshInlayHints>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        lsp_store.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshInlayHints {
-                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
-                request_id: envelope.payload.request_id.map(|id| id as usize),
-            });
-        });
-        Ok(proto::Ack {})
-    }
-
     async fn handle_pull_workspace_diagnostics(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::PullWorkspaceDiagnostics>,
@@ -10081,37 +10004,6 @@ impl LspStore {
             lsp_store.pull_workspace_diagnostics(server_id);
         });
         Ok(proto::Ack {})
-    }
-
-    async fn handle_resolve_inlay_hint(
-        lsp_store: Entity<Self>,
-        envelope: TypedEnvelope<proto::ResolveInlayHint>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::ResolveInlayHintResponse> {
-        let proto_hint = envelope
-            .payload
-            .hint
-            .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
-        let hint = InlayHints::proto_to_project_hint(proto_hint)
-            .context("resolved proto inlay hint conversion")?;
-        let buffer = lsp_store.update(&mut cx, |lsp_store, cx| {
-            let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-            lsp_store.buffer_store.read(cx).get_existing(buffer_id)
-        })?;
-        let response_hint = lsp_store
-            .update(&mut cx, |lsp_store, cx| {
-                lsp_store.resolve_inlay_hint(
-                    hint,
-                    buffer,
-                    LanguageServerId(envelope.payload.language_server_id as usize),
-                    cx,
-                )
-            })
-            .await
-            .context("inlay hints fetch")?;
-        Ok(proto::ResolveInlayHintResponse {
-            hint: Some(InlayHints::project_to_proto_hint(response_hint)),
-        })
     }
 
     async fn handle_open_buffer_for_symbol(
