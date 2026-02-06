@@ -190,7 +190,7 @@ impl WgpuRenderer {
         let queue = Arc::clone(&context.queue);
         let dual_source_blending = context.supports_dual_source_blending();
 
-        let rendering_params = RenderingParameters::from_env(&context.adapter);
+        let rendering_params = RenderingParameters::new(&context.adapter, surface_format);
         let bind_group_layouts = Self::create_bind_group_layouts(&device);
         let pipelines = Self::create_pipelines(
             &device,
@@ -686,9 +686,7 @@ impl WgpuRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1325,29 +1323,13 @@ struct RenderingParameters {
 }
 
 impl RenderingParameters {
-    fn from_env(adapter: &wgpu::Adapter) -> Self {
+    fn new(adapter: &wgpu::Adapter, surface_format: wgpu::TextureFormat) -> Self {
         use std::env;
 
-        let sample_count_mask = (adapter
-            .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
-            .flags
-            .sample_count_supported(4) as u32
-            * 4)
-            | (adapter
-                .get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm)
-                .flags
-                .sample_count_supported(2) as u32
-                * 2)
-            | 1;
-
-        let path_sample_count = env::var("ZED_PATH_SAMPLE_COUNT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .or_else(|| {
-                [4, 2, 1]
-                    .into_iter()
-                    .find(|&n| (sample_count_mask & n) != 0)
-            })
+        let format_features = adapter.get_texture_format_features(surface_format);
+        let path_sample_count = [4, 2, 1]
+            .into_iter()
+            .find(|&n| format_features.flags.sample_count_supported(n))
             .unwrap_or(1);
 
         let gamma = env::var("ZED_FONTS_GAMMA")
