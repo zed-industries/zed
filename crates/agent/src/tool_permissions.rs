@@ -312,6 +312,7 @@ pub fn decide_permission_from_settings(
 
 /// Normalizes a path by collapsing `.` and `..` segments without touching the filesystem.
 fn normalize_path(raw: &str) -> String {
+    let is_absolute = Path::new(raw).has_root();
     let mut components: Vec<&str> = Vec::new();
     for component in Path::new(raw).components() {
         match component {
@@ -327,7 +328,12 @@ fn normalize_path(raw: &str) -> String {
             Component::RootDir | Component::Prefix(_) => {}
         }
     }
-    components.join("/")
+    let joined = components.join("/");
+    if is_absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
 }
 
 /// Decides permission by checking both the raw input path and a simplified/canonicalized
@@ -1299,5 +1305,197 @@ mod tests {
         t("echo hello; rm -rf $HOME").is_deny();
         t("echo hello; rm -rf .").is_deny();
         t("echo hello; rm -rf ..").is_deny();
+    }
+
+    #[test]
+    fn normalize_path_relative_no_change() {
+        assert_eq!(normalize_path("foo/bar"), "foo/bar");
+    }
+
+    #[test]
+    fn normalize_path_relative_with_curdir() {
+        assert_eq!(normalize_path("foo/./bar"), "foo/bar");
+    }
+
+    #[test]
+    fn normalize_path_relative_with_parent() {
+        assert_eq!(normalize_path("foo/bar/../baz"), "foo/baz");
+    }
+
+    #[test]
+    fn normalize_path_absolute_preserved() {
+        assert_eq!(normalize_path("/etc/passwd"), "/etc/passwd");
+    }
+
+    #[test]
+    fn normalize_path_absolute_with_traversal() {
+        assert_eq!(normalize_path("/tmp/../etc/passwd"), "/etc/passwd");
+    }
+
+    #[test]
+    fn normalize_path_root() {
+        assert_eq!(normalize_path("/"), "/");
+    }
+
+    #[test]
+    fn normalize_path_parent_beyond_root_clamped() {
+        assert_eq!(normalize_path("../../../etc/passwd"), "etc/passwd");
+    }
+
+    #[test]
+    fn normalize_path_curdir_only() {
+        assert_eq!(normalize_path("."), "");
+    }
+
+    #[test]
+    fn normalize_path_empty() {
+        assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn most_restrictive_deny_vs_allow() {
+        assert!(matches!(
+            most_restrictive(
+                ToolPermissionDecision::Deny("x".into()),
+                ToolPermissionDecision::Allow
+            ),
+            ToolPermissionDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn most_restrictive_allow_vs_deny() {
+        assert!(matches!(
+            most_restrictive(
+                ToolPermissionDecision::Allow,
+                ToolPermissionDecision::Deny("x".into())
+            ),
+            ToolPermissionDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn most_restrictive_deny_vs_confirm() {
+        assert!(matches!(
+            most_restrictive(
+                ToolPermissionDecision::Deny("x".into()),
+                ToolPermissionDecision::Confirm
+            ),
+            ToolPermissionDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn most_restrictive_confirm_vs_deny() {
+        assert!(matches!(
+            most_restrictive(
+                ToolPermissionDecision::Confirm,
+                ToolPermissionDecision::Deny("x".into())
+            ),
+            ToolPermissionDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn most_restrictive_deny_vs_deny() {
+        assert!(matches!(
+            most_restrictive(
+                ToolPermissionDecision::Deny("a".into()),
+                ToolPermissionDecision::Deny("b".into())
+            ),
+            ToolPermissionDecision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn most_restrictive_confirm_vs_allow() {
+        assert_eq!(
+            most_restrictive(
+                ToolPermissionDecision::Confirm,
+                ToolPermissionDecision::Allow
+            ),
+            ToolPermissionDecision::Confirm
+        );
+    }
+
+    #[test]
+    fn most_restrictive_allow_vs_confirm() {
+        assert_eq!(
+            most_restrictive(
+                ToolPermissionDecision::Allow,
+                ToolPermissionDecision::Confirm
+            ),
+            ToolPermissionDecision::Confirm
+        );
+    }
+
+    #[test]
+    fn most_restrictive_allow_vs_allow() {
+        assert_eq!(
+            most_restrictive(ToolPermissionDecision::Allow, ToolPermissionDecision::Allow),
+            ToolPermissionDecision::Allow
+        );
+    }
+
+    #[test]
+    fn decide_permission_for_path_no_dots_early_return() {
+        // When the path has no `.` or `..`, normalize_path returns the same string,
+        // so decide_permission_for_path would return the raw decision directly.
+        let raw_path = "src/main.rs";
+        let simplified = normalize_path(raw_path);
+        assert_eq!(simplified, raw_path);
+
+        let decision = ToolPermissionDecision::from_input(
+            EditFileTool::NAME,
+            raw_path,
+            &ToolPermissions {
+                tools: Default::default(),
+            },
+            false,
+            ShellKind::Posix,
+        );
+        assert_eq!(decision, ToolPermissionDecision::Confirm);
+    }
+
+    #[test]
+    fn decide_permission_for_path_traversal_triggers_deny() {
+        let raw_path = "/tmp/../etc/passwd";
+        let simplified = normalize_path(raw_path);
+        assert_eq!(simplified, "/etc/passwd");
+
+        let deny_regex = CompiledRegex::new("/etc/passwd", false).unwrap();
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from(EditFileTool::NAME),
+            ToolRules {
+                default_mode: ToolPermissionMode::Allow,
+                always_allow: vec![],
+                always_deny: vec![deny_regex],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions { tools };
+
+        let raw_decision = ToolPermissionDecision::from_input(
+            EditFileTool::NAME,
+            raw_path,
+            &permissions,
+            false,
+            ShellKind::Posix,
+        );
+        let simplified_decision = ToolPermissionDecision::from_input(
+            EditFileTool::NAME,
+            &simplified,
+            &permissions,
+            false,
+            ShellKind::Posix,
+        );
+        let decision = most_restrictive(raw_decision, simplified_decision);
+        assert!(
+            matches!(decision, ToolPermissionDecision::Deny(_)),
+            "expected Deny for traversal to /etc/passwd, got {:?}",
+            decision
+        );
     }
 }
