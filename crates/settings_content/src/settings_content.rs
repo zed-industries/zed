@@ -404,56 +404,33 @@ pub struct AudioSettingsContent {
     ///
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
-    pub output_audio_device: Option<AudioOutputDeviceName>,
+    pub output_audio_device: Option<AudioDeviceName>,
     /// Requires 'rodio_audio: true'
     ///
     /// Select specific input audio device.
     #[serde(rename = "experimental.input_audio_device")]
-    pub input_audio_device: Option<AudioInputDeviceName>,
+    pub input_audio_device: Option<AudioDeviceName>,
 }
 
-/// Audio output device name for speaker/headphone selection.
+/// Serialized audio device name
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
-pub struct AudioOutputDeviceName(pub String);
+pub struct AudioDeviceName(pub String);
 
-impl AsRef<str> for AudioOutputDeviceName {
+impl AsRef<str> for AudioDeviceName {
     fn as_ref(&self) -> &str {
         &self.0
     }
 }
 
-impl From<String> for AudioOutputDeviceName {
+impl From<String> for AudioDeviceName {
     fn from(s: String) -> Self {
         Self(s)
     }
 }
 
-impl From<AudioOutputDeviceName> for String {
-    fn from(name: AudioOutputDeviceName) -> Self {
-        name.0
-    }
-}
-
-/// Audio input device name for microphone selection.
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-#[serde(transparent)]
-pub struct AudioInputDeviceName(pub String);
-
-impl AsRef<str> for AudioInputDeviceName {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for AudioInputDeviceName {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-impl From<AudioInputDeviceName> for String {
-    fn from(name: AudioInputDeviceName) -> Self {
+impl From<AudioDeviceName> for String {
+    fn from(name: AudioDeviceName) -> Self {
         name.0
     }
 }
