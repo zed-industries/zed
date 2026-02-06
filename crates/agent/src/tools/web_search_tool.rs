@@ -46,9 +46,7 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    fn name() -> &'static str {
-        "web_search"
-    }
+    const NAME: &'static str = "web_search";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
@@ -74,7 +72,7 @@ impl AgentTool for WebSearchTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.query, settings);
+        let decision = decide_permission_from_settings(Self::NAME, &input.query, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -83,7 +81,7 @@ impl AgentTool for WebSearchTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "web_search".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.query.clone(),
                 };
                 Some(event_stream.authorize(

@@ -46,7 +46,7 @@ impl FeatureFlag for SubagentsFeatureFlag {
     const NAME: &'static str = "subagents";
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
 
@@ -60,14 +60,14 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     }
 }
 
-/// Whether to use the OpenAI Responses API format when sending requests to Cloud.
-pub struct OpenAiResponsesApiFeatureFlag;
+/// Controls whether we show the new thinking and effort level controls in the Agent Panel when using applicable models
+/// through the Zed provider (Cloud).
+pub struct CloudThinkingEffortFeatureFlag;
 
-impl FeatureFlag for OpenAiResponsesApiFeatureFlag {
-    const NAME: &'static str = "open-ai-responses-api";
+impl FeatureFlag for CloudThinkingEffortFeatureFlag {
+    const NAME: &'static str = "cloud-thinking-effort";
 
     fn enabled_for_staff() -> bool {
-        // Add yourself to the flag manually to test it out.
         false
     }
 }

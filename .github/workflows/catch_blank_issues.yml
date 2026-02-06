@@ -12,7 +12,7 @@ permissions:
 jobs:
   add-triage-label:
     if: github.repository == 'zed-industries/zed'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
     steps:
       - id: get-app-token

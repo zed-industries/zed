@@ -5,7 +5,7 @@ use crate::{
     state::Mode,
 };
 use editor::{
-    Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
+    Anchor, Bias, Editor, EditorSnapshot, HighlightKey, SelectionEffects, ToOffset, ToPoint,
     display_map::ToDisplayPoint,
 };
 use gpui::{ClipboardEntry, Context, Window, actions};
@@ -39,8 +39,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.undo_replace(count, window, cx)
     });
 }
-
-struct VimExchange;
 
 impl Vim {
     pub(crate) fn multi_replace(
@@ -181,7 +179,7 @@ impl Vim {
     pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
-            editor.clear_background_highlights::<VimExchange>(cx);
+            editor.clear_background_highlights(HighlightKey::VimExchange, cx);
         });
         self.clear_operator(window, cx);
     }
@@ -197,7 +195,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let mut selection = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
@@ -229,7 +227,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
+        if let Some((_, ranges)) = editor.clear_background_highlights(HighlightKey::VimExchange, cx)
+        {
             let previous_range = ranges[0].clone();
 
             let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot());
@@ -271,7 +270,8 @@ impl Vim {
             }
         } else {
             let ranges = [new_range];
-            editor.highlight_background::<VimExchange>(
+            editor.highlight_background(
+                HighlightKey::VimExchange,
                 &ranges,
                 |_, theme| theme.colors().editor_document_highlight_read_background,
                 cx,

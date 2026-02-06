@@ -52,6 +52,7 @@ use std::{
 };
 use util::path;
 
+mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
@@ -558,7 +559,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
 
     let tool_use = LanguageModelToolUse {
         id: "tool_1".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
@@ -572,7 +573,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     let completion = fake_model.pending_completions().pop().unwrap();
     let tool_result = LanguageModelToolResult {
         tool_use_id: "tool_1".into(),
-        tool_name: EchoTool::name().into(),
+        tool_name: EchoTool::NAME.into(),
         is_error: false,
         content: "test".into(),
         output: Some("test".into()),
@@ -649,7 +650,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     // Test a tool calls that's likely to complete *after* streaming stops.
     let events = thread
         .update(cx, |thread, cx| {
-            thread.remove_tool(&EchoTool::name());
+            thread.remove_tool(&EchoTool::NAME);
             thread.add_tool(DelayTool);
             thread.send(
                 UserMessageId::new(),
@@ -753,7 +754,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_1".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -763,7 +764,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_2".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -795,14 +796,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_1.tool_call.tool_call_id.0.to_string().into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }),
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.tool_call_id.0.to_string().into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
                 output: Some("Permission to run tool denied by user".into())
@@ -814,7 +815,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_3".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -840,7 +841,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![language_model::MessageContent::ToolResult(
             LanguageModelToolResult {
                 tool_use_id: tool_call_auth_3.tool_call.tool_call_id.0.to_string().into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
@@ -852,7 +853,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "tool_id_4".into(),
-            name: ToolRequiringPermission::name().into(),
+            name: ToolRequiringPermission::NAME.into(),
             raw_input: "{}".into(),
             input: json!({}),
             is_input_complete: true,
@@ -868,7 +869,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![language_model::MessageContent::ToolResult(
             LanguageModelToolResult {
                 tool_use_id: "tool_id_4".into(),
-                tool_name: ToolRequiringPermission::name().into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
@@ -969,7 +970,8 @@ async fn next_tool_call_authorization(
 #[test]
 fn test_permission_options_terminal_with_pattern() {
     let permission_options =
-        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -988,7 +990,7 @@ fn test_permission_options_terminal_with_pattern() {
 #[test]
 fn test_permission_options_edit_file_with_path_pattern() {
     let permission_options =
-        ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+        ToolPermissionContext::new(EditFileTool::NAME, "src/main.rs").build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1004,8 +1006,8 @@ fn test_permission_options_edit_file_with_path_pattern() {
 
 #[test]
 fn test_permission_options_fetch_with_domain_pattern() {
-    let permission_options =
-        ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+    let permission_options = ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui")
+        .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1021,8 +1023,9 @@ fn test_permission_options_fetch_with_domain_pattern() {
 
 #[test]
 fn test_permission_options_without_pattern() {
-    let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
-        .build_permission_options();
+    let permission_options =
+        ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1041,7 +1044,8 @@ fn test_permission_options_without_pattern() {
 #[test]
 fn test_permission_option_ids_for_terminal() {
     let permission_options =
-        ToolPermissionContext::new("terminal", "cargo build --release").build_permission_options();
+        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1142,14 +1146,14 @@ async fn test_profiles(cx: &mut TestAppContext) {
                     "test-1": {
                         "name": "Test Profile 1",
                         "tools": {
-                            EchoTool::name(): true,
-                            DelayTool::name(): true,
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
                         }
                     },
                     "test-2": {
                         "name": "Test Profile 2",
                         "tools": {
-                            InfiniteTool::name(): true,
+                            InfiniteTool::NAME: true,
                         }
                     }
                 }
@@ -1178,7 +1182,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
         .iter()
         .map(|tool| tool.name.clone())
         .collect();
-    assert_eq!(tool_names, vec![DelayTool::name(), EchoTool::name()]);
+    assert_eq!(tool_names, vec![DelayTool::NAME, EchoTool::NAME]);
     fake_model.end_last_completion_stream();
 
     // Switch to test-2 profile, and verify that it has only the infinite tool.
@@ -1197,7 +1201,7 @@ async fn test_profiles(cx: &mut TestAppContext) {
         .iter()
         .map(|tool| tool.name.clone())
         .collect();
-    assert_eq!(tool_names, vec![InfiniteTool::name()]);
+    assert_eq!(tool_names, vec![InfiniteTool::NAME]);
 }
 
 #[gpui::test]
@@ -1222,7 +1226,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                         "name": "Test Profile",
                         "enable_all_context_servers": true,
                         "tools": {
-                            EchoTool::name(): true,
+                            EchoTool::NAME: true,
                         }
                     },
                 }
@@ -1387,11 +1391,11 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                         "name": "Test Profile",
                         "enable_all_context_servers": true,
                         "tools": {
-                            EchoTool::name(): true,
-                            DelayTool::name(): true,
-                            WordListTool::name(): true,
-                            ToolRequiringPermission::name(): true,
-                            InfiniteTool::name(): true,
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
+                            WordListTool::NAME: true,
+                            ToolRequiringPermission::NAME: true,
+                            InfiniteTool::NAME: true,
                         }
                     },
                 }
@@ -1645,7 +1649,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -1928,7 +1932,7 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -1992,7 +1996,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -2002,7 +2006,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_2".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 2000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 2000", "cd": "."}),
             is_input_complete: true,
@@ -2105,7 +2109,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": "."}"#.into(),
             input: json!({"command": "sleep 1000", "cd": "."}),
             is_input_complete: true,
@@ -2199,7 +2203,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "terminal_tool_1".into(),
-            name: "terminal".into(),
+            name: TerminalTool::NAME.into(),
             raw_input: r#"{"command": "sleep 1000", "cd": ".", "timeout_ms": 100}"#.into(),
             input: json!({"command": "sleep 1000", "cd": ".", "timeout_ms": 100}),
             is_input_complete: true,
@@ -2678,7 +2682,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
 
     let permission_tool_use = LanguageModelToolUse {
         id: "tool_id_1".into(),
-        name: ToolRequiringPermission::name().into(),
+        name: ToolRequiringPermission::NAME.into(),
         raw_input: "{}".into(),
         input: json!({}),
         is_input_complete: true,
@@ -2686,7 +2690,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
     };
     let echo_tool_use = LanguageModelToolUse {
         id: "tool_id_2".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
@@ -2889,7 +2893,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "1".into(),
-            name: ThinkingTool::name().into(),
+            name: ThinkingTool::NAME.into(),
             raw_input: input.to_string(),
             input,
             is_input_complete: false,
@@ -3084,7 +3088,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let tool_use_1 = LanguageModelToolUse {
         id: "tool_1".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "test"}).to_string(),
         input: json!({"text": "test"}),
         is_input_complete: true,
@@ -3252,14 +3256,14 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                     "test-profile": {
                         "name": "Test Profile",
                         "tools": {
-                            EchoTool::name(): true,
-                            DelayTool::name(): true,
-                            WordListTool::name(): true,
-                            ToolRequiringPermission::name(): true,
-                            InfiniteTool::name(): true,
-                            CancellationAwareTool::name(): true,
-                            ThinkingTool::name(): true,
-                            "terminal": true,
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
+                            WordListTool::NAME: true,
+                            ToolRequiringPermission::NAME: true,
+                            InfiniteTool::NAME: true,
+                            CancellationAwareTool::NAME: true,
+                            ThinkingTool::NAME: true,
+                            (TerminalTool::NAME): true,
                         }
                     }
                 }
@@ -3352,11 +3356,12 @@ fn watch_settings(fs: Arc<dyn Fs>, cx: &mut App) {
     let fs = fs.clone();
     cx.spawn({
         async move |cx| {
-            let mut new_settings_content_rx = settings::watch_config_file(
+            let (mut new_settings_content_rx, watcher_task) = settings::watch_config_file(
                 cx.background_executor(),
                 fs,
                 paths::settings_file().clone(),
             );
+            let _watcher_task = watcher_task;
 
             while let Some(new_settings_content) = new_settings_content_rx.next().await {
                 cx.update(|cx| {
@@ -3655,7 +3660,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Confirm,
                     always_allow: vec![],
@@ -3690,8 +3695,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by deny rule"
         );
+        let err_msg = result.unwrap_err().to_string().to_lowercase();
         assert!(
-            result.unwrap_err().to_string().contains("blocked"),
+            err_msg.contains("blocked"),
             "error should mention the command was blocked"
         );
     }
@@ -3707,7 +3713,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = false;
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Deny,
                     always_allow: vec![
@@ -3765,7 +3771,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = true;
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Allow,
                     always_allow: vec![],
@@ -3811,7 +3817,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = true;
             settings.tool_permissions.tools.insert(
-                "terminal".into(),
+                TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
                     default_mode: settings::ToolPermissionMode::Deny,
                     always_allow: vec![],
@@ -3880,7 +3886,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 
     thread.read_with(cx, |thread, _| {
         assert!(
-            thread.has_registered_tool("subagent"),
+            thread.has_registered_tool(SubagentTool::NAME),
             "subagent tool should be present when feature flag is enabled"
         );
     });
@@ -3977,7 +3983,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     deep_subagent.read_with(cx, |thread, _| {
         assert_eq!(thread.depth(), MAX_SUBAGENT_DEPTH);
         assert!(
-            !thread.has_registered_tool("subagent"),
+            !thread.has_registered_tool(SubagentTool::NAME),
             "subagent tool should not be present at max depth"
         );
     });
@@ -4291,19 +4297,8 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
         )
     });
 
-    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
-        std::collections::BTreeMap::new();
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx, mut cancellation_tx) =
         crate::ToolCallEventStream::test_with_cancellation();
@@ -4312,14 +4307,12 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Long running task".to_string(),
-                    task_prompt: "Do a very long task that takes forever".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Long running task".to_string(),
+                task_prompt: "Do a very long task that takes forever".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream.clone(),
             cx,
@@ -4589,32 +4582,12 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
         thread
     });
 
-    let mut parent_tools: std::collections::BTreeMap<
-        gpui::SharedString,
-        Arc<dyn crate::AnyAgentTool>,
-    > = std::collections::BTreeMap::new();
-    parent_tools.insert("echo".into(), EchoTool.erase());
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project,
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
-    let subagent_configs = vec![crate::SubagentConfig {
-        label: "Test".to_string(),
-        task_prompt: "Do something".to_string(),
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-        timeout_ms: None,
-        allowed_tools: Some(vec!["nonexistent_tool".to_string()]),
-    }];
-    let result = tool.validate_subagents(&subagent_configs);
+    let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
+    let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx));
+
     assert!(result.is_err(), "should reject unknown tool");
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -4824,7 +4797,7 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     let tool_use = LanguageModelToolUse {
         id: "tool_call_1".into(),
-        name: EchoTool::name().into(),
+        name: EchoTool::NAME.into(),
         raw_input: json!({"text": "hello world"}).to_string(),
         input: json!({"text": "hello world"}),
         is_input_complete: true,
@@ -4917,33 +4890,20 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
         );
     });
 
-    let parent_tools: std::collections::BTreeMap<gpui::SharedString, Arc<dyn crate::AnyAgentTool>> =
-        std::collections::BTreeMap::new();
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let result = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Test".to_string(),
-                    task_prompt: "Do something".to_string(),
-                    summary_prompt: "Summarize".to_string(),
-                    context_low_prompt: "Context low".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Test".to_string(),
+                task_prompt: "Do something".to_string(),
+                summary_prompt: "Summarize".to_string(),
+                context_low_prompt: "Context low".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -4992,36 +4952,20 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
         thread
     });
 
-    let mut parent_tools: std::collections::BTreeMap<
-        gpui::SharedString,
-        Arc<dyn crate::AnyAgentTool>,
-    > = std::collections::BTreeMap::new();
-    parent_tools.insert("echo".into(), EchoTool.erase());
-
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(
-        parent.downgrade(),
-        project.clone(),
-        project_context,
-        context_server_registry,
-        Templates::new(),
-        0,
-        parent_tools,
-    ));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
         tool.run(
             SubagentToolInput {
-                subagents: vec![crate::SubagentConfig {
-                    label: "Research task".to_string(),
-                    task_prompt: "Find all TODOs in the codebase".to_string(),
-                    summary_prompt: "Summarize what you found".to_string(),
-                    context_low_prompt: "Context low, wrap up".to_string(),
-                    timeout_ms: None,
-                    allowed_tools: None,
-                }],
+                label: "Research task".to_string(),
+                task_prompt: "Find all TODOs in the codebase".to_string(),
+                summary_prompt: "Summarize what you found".to_string(),
+                context_low_prompt: "Context low, wrap up".to_string(),
+                timeout_ms: None,
+                allowed_tools: None,
             },
             event_stream,
             cx,
@@ -5100,7 +5044,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "edit_file".into(),
+            EditFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5168,7 +5112,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "delete_path".into(),
+            DeletePathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5222,7 +5166,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "move_path".into(),
+            MovePathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5278,7 +5222,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "move_path".into(),
+            MovePathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5334,7 +5278,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "copy_path".into(),
+            CopyPathTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5391,7 +5335,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "save_file".into(),
+            SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5444,7 +5388,7 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
-            "save_file".into(),
+            SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5485,7 +5429,7 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "web_search".into(),
+            WebSearchTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5529,7 +5473,7 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
-            "edit_file".into(),
+            EditFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Confirm,
                 always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
@@ -5593,7 +5537,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            "fetch".into(),
+            FetchTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Allow,
                 always_allow: vec![],
@@ -5634,7 +5578,7 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
-            "fetch".into(),
+            FetchTool::NAME.into(),
             agent_settings::ToolRules {
                 default_mode: settings::ToolPermissionMode::Confirm,
                 always_allow: vec![agent_settings::CompiledRegex::new(r"docs\.rs", false).unwrap()],
@@ -5701,14 +5645,9 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
 
-    // Queue a message before ending the stream
+    // Signal that a message is queued before ending the stream
     thread.update(cx, |thread, _cx| {
-        thread.queue_message(
-            vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "This is my queued message".to_string(),
-            ))],
-            vec![],
-        );
+        thread.set_has_queued_message(true);
     });
 
     // Now end the stream - tool will run, and the boundary check should see the queue
@@ -5739,14 +5678,12 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
         "Turn should have ended after tool completion due to queued message"
     );
 
-    // Verify the queued message is still there
+    // Verify the queued message flag is still set
     thread.update(cx, |thread, _cx| {
-        let queued = thread.queued_messages();
-        assert_eq!(queued.len(), 1, "Should still have one queued message");
-        assert!(matches!(
-            &queued[0].content[0],
-            acp::ContentBlock::Text(t) if t.text == "This is my queued message"
-        ));
+        assert!(
+            thread.has_queued_message(),
+            "Should still have queued message flag set"
+        );
     });
 
     // Thread should be idle now

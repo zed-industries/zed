@@ -48,8 +48,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, Shell, ShellBuilder, SpawnInTerminal, TaskContext,
-    ZedDebugConfig, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
+    TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -335,55 +335,48 @@ pub(crate) fn new_debugger_pane(
             let source = tab.pane.clone();
             let item_id_to_move = item.item_id();
 
-            let Ok(new_split_pane) = pane
-                .drag_split_direction()
-                .map(|split_direction| {
-                    weak_running.update(cx, |running, cx| {
-                        let new_pane =
-                            new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-                        let _previous_subscription = running.pane_close_subscriptions.insert(
-                            new_pane.entity_id(),
-                            cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
-                        );
-                        debug_assert!(_previous_subscription.is_none());
-                        running
-                            .panes
-                            .split(&this_pane, &new_pane, split_direction, cx)?;
-                        anyhow::Ok(new_pane)
-                    })
-                })
-                .transpose()
-            else {
-                return ControlFlow::Break(());
-            };
-
-            match new_split_pane.transpose() {
-                // Source pane may be the one currently updated, so defer the move.
-                Ok(Some(new_pane)) => cx
-                    .spawn_in(window, async move |_, cx| {
-                        cx.update(|window, cx| {
-                            move_item(
-                                &source,
-                                &new_pane,
-                                item_id_to_move,
-                                new_pane.read(cx).active_item_index(),
-                                true,
-                                window,
-                                cx,
-                            );
-                        })
-                        .ok();
-                    })
-                    .detach(),
+            let Some(split_direction) = pane.drag_split_direction() else {
                 // If we drop into existing pane or current pane,
                 // regular pane drop handler will take care of it,
                 // using the right tab index for the operation.
-                Ok(None) => return ControlFlow::Continue(()),
-                err @ Err(_) => {
-                    err.log_err();
-                    return ControlFlow::Break(());
-                }
+                return ControlFlow::Continue(());
             };
+
+            let workspace = workspace.clone();
+            let weak_running = weak_running.clone();
+            // Source pane may be the one currently updated, so defer the move.
+            window.defer(cx, move |window, cx| {
+                let new_pane = weak_running.update(cx, |running, cx| {
+                    let new_pane =
+                        new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+                    let _previous_subscription = running.pane_close_subscriptions.insert(
+                        new_pane.entity_id(),
+                        cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
+                    );
+                    debug_assert!(_previous_subscription.is_none());
+                    running
+                        .panes
+                        .split(&this_pane, &new_pane, split_direction, cx)?;
+                    anyhow::Ok(new_pane)
+                });
+
+                match new_pane.and_then(|r| r) {
+                    Ok(new_pane) => {
+                        move_item(
+                            &source,
+                            &new_pane,
+                            item_id_to_move,
+                            new_pane.read(cx).active_item_index(),
+                            true,
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(err) => {
+                        log::error!("{err:?}");
+                    }
+                };
+            });
 
             ControlFlow::Break(())
         }
@@ -963,7 +956,7 @@ impl RunningState {
     pub(crate) fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &Window,

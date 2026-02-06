@@ -1,6 +1,6 @@
 # Tools
 
-Zed's built-in agent has access to a variety of tools that allow it to interact with your codebase and perform tasks.
+Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
 
 ## Read & Search Tools
 
@@ -63,6 +63,14 @@ Deletes a file or directory (including contents recursively) at the specified pa
 ### `edit_file`
 
 Edits files by replacing specific text with new content.
+
+### `restore_file_from_disk`
+
+Reloads a file from disk, discarding any unsaved changes in the buffer.
+
+### `save_file`
+
+Saves a buffer's current contents to disk, preserving unsaved changes before the agent modifies the file.
 
 ### `move_path`
 

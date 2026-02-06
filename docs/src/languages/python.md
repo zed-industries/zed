@@ -63,7 +63,7 @@ Zed will recognize `.py` files automatically using its native tree-sitter-python
 
 ### Step 2: Use the Integrated Terminal (Optional)
 
-Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../configuring-zed.md#terminal-detect_venv) setting.
+Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../reference/all-settings.md#terminal-detect_venv) setting.
 
 ## Configure Python Language Servers in Zed
 
@@ -360,9 +360,9 @@ requirements.txt
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
-## Troubleshoot and Maintain a Productive Python Setup
+## Troubleshooting
 
-Zed is designed to minimize configuration overhead, but occasional issues can still arise—especially around environments, language servers, or tooling. Here's how to keep your Python setup working smoothly.
+Issues with Python in Zed typically involve virtual environments, language servers, or tooling configuration.
 
 ### Resolve Language Server Startup Issues
 

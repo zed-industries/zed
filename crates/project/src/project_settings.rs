@@ -17,12 +17,13 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use settings::BinarySettings;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, EditorconfigEvent, InvalidSettingsError, LocalSettingsKind,
-    LocalSettingsPath, RegisterSetting, Settings, SettingsLocation, SettingsStore,
-    parse_json_with_comments, watch_config_file,
+    LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
+    SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -131,6 +132,10 @@ pub struct GlobalLspSettings {
     ///
     /// Default: `120`
     pub request_timeout: u64,
+    pub notifications: LspNotificationSettings,
+
+    /// Rules for highlighting semantic tokens.
+    pub semantic_token_rules: SemanticTokenRules,
 }
 
 impl Default for GlobalLspSettings {
@@ -138,6 +143,8 @@ impl Default for GlobalLspSettings {
         Self {
             button: true,
             request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+            notifications: LspNotificationSettings::default(),
+            semantic_token_rules: SemanticTokenRules::default(),
         }
     }
 }
@@ -149,6 +156,16 @@ impl GlobalLspSettings {
     pub const fn get_request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout)
     }
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub struct LspNotificationSettings {
+    /// Timeout in milliseconds for automatically dismissing language server notifications.
+    /// Set to 0 to disable auto-dismiss.
+    ///
+    /// Default: 5000
+    pub dismiss_timeout_ms: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -646,6 +663,24 @@ impl Settings for ProjectSettings {
                     .unwrap()
                     .request_timeout
                     .unwrap(),
+                notifications: LspNotificationSettings {
+                    dismiss_timeout_ms: content
+                        .global_lsp_settings
+                        .as_ref()
+                        .unwrap()
+                        .notifications
+                        .as_ref()
+                        .unwrap()
+                        .dismiss_timeout_ms,
+                },
+                semantic_token_rules: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .semantic_token_rules
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
             },
             dap: project
                 .dap
@@ -723,6 +758,7 @@ impl SettingsObserver {
         fs: Arc<dyn Fs>,
         worktree_store: Entity<WorktreeStore>,
         task_store: Entity<TaskStore>,
+        watch_global_configs: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -819,16 +855,24 @@ impl SettingsObserver {
             _user_settings_watcher: None,
             _editorconfig_watcher: Some(_editorconfig_watcher),
             project_id: REMOTE_SERVER_PROJECT_ID,
-            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
-                fs.clone(),
-                paths::tasks_file().clone(),
-                cx,
-            ),
-            _global_debug_config_watcher: Self::subscribe_to_global_debug_scenarios_changes(
-                fs.clone(),
-                paths::debug_scenarios_file().clone(),
-                cx,
-            ),
+            _global_task_config_watcher: if watch_global_configs {
+                Self::subscribe_to_global_task_file_changes(
+                    fs.clone(),
+                    paths::tasks_file().clone(),
+                    cx,
+                )
+            } else {
+                Task::ready(())
+            },
+            _global_debug_config_watcher: if watch_global_configs {
+                Self::subscribe_to_global_debug_scenarios_changes(
+                    fs.clone(),
+                    paths::debug_scenarios_file().clone(),
+                    cx,
+                )
+            } else {
+                Task::ready(())
+            },
         }
     }
 
@@ -1340,11 +1384,12 @@ impl SettingsObserver {
         file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let mut user_tasks_file_rx =
+        let (mut user_tasks_file_rx, watcher_task) =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
+            let _watcher_task = watcher_task;
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
                 settings_observer.task_store.clone()
             }) else {
@@ -1391,11 +1436,12 @@ impl SettingsObserver {
         file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let mut user_tasks_file_rx =
+        let (mut user_tasks_file_rx, watcher_task) =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
+            let _watcher_task = watcher_task;
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
                 settings_observer.task_store.clone()
             }) else {
@@ -1494,8 +1540,8 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
 #[derive(Debug, Clone)]
 pub struct DapSettings {
     pub binary: DapBinary,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
+    pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 impl From<DapSettingsContent> for DapSettings {
@@ -1504,8 +1550,8 @@ impl From<DapSettingsContent> for DapSettings {
             binary: content
                 .binary
                 .map_or_else(|| DapBinary::Default, |binary| DapBinary::Custom(binary)),
-            args: content.args.unwrap_or_default(),
-            env: content.env.unwrap_or_default(),
+            args: content.args,
+            env: content.env,
         }
     }
 }

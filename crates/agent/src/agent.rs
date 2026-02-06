@@ -4,6 +4,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod shell_parser;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -164,6 +165,7 @@ impl LanguageModels {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
+            is_latest: model.is_latest(),
         }
     }
 
@@ -303,6 +305,36 @@ impl NativeAgent {
                 _subscriptions: subscriptions,
             }
         }))
+    }
+
+    fn new_session(
+        &mut self,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Entity<AcpThread> {
+        // Create Thread
+        // Fetch default model from registry settings
+        let registry = LanguageModelRegistry::read_global(cx);
+        // Log available models for debugging
+        let available_count = registry.available_models(cx).count();
+        log::debug!("Total available models: {}", available_count);
+
+        let default_model = registry.default_model().and_then(|default_model| {
+            self.models
+                .model_from_id(&LanguageModels::model_id(&default_model.model))
+        });
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                self.project_context.clone(),
+                self.context_server_registry.clone(),
+                self.templates.clone(),
+                default_model,
+                cx,
+            )
+        });
+
+        self.register_session(thread, cx)
     }
 
     fn register_session(
@@ -1120,22 +1152,41 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
+        // We want to reset the effort level when switching models, as the currently-selected effort level may
+        // not be compatible.
+        let effort = model
+            .default_effort_level()
+            .map(|effort_level| effort_level.value.to_string());
+
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
+            thread.set_thinking_effort(effort.clone(), cx);
         });
 
         update_settings_file(
             self.connection.0.read(cx).fs.clone(),
             cx,
-            move |settings, _cx| {
+            move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
+                let enable_thinking = settings
+                    .agent
+                    .as_ref()
+                    .and_then(|agent| {
+                        agent
+                            .default_model
+                            .as_ref()
+                            .map(|default_model| default_model.enable_thinking)
+                    })
+                    .unwrap_or_else(|| thread.read(cx).thinking_enabled());
                 settings
                     .agent
                     .get_or_insert_default()
                     .set_model(LanguageModelSelection {
                         provider: provider.into(),
                         model,
+                        enable_thinking,
+                        effort,
                     });
             },
         );
@@ -1186,38 +1237,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        let agent = self.0.clone();
-        log::debug!("Creating new thread for project at: {:?}", cwd);
-
-        cx.spawn(async move |cx| {
-            log::debug!("Starting thread creation in async context");
-
-            // Create Thread
-            let thread = agent.update(cx, |agent, cx| {
-                // Fetch default model from registry settings
-                let registry = LanguageModelRegistry::read_global(cx);
-                // Log available models for debugging
-                let available_count = registry.available_models(cx).count();
-                log::debug!("Total available models: {}", available_count);
-
-                let default_model = registry.default_model().and_then(|default_model| {
-                    agent
-                        .models
-                        .model_from_id(&LanguageModels::model_id(&default_model.model))
-                });
-                cx.new(|cx| {
-                    Thread::new(
-                        project.clone(),
-                        agent.project_context.clone(),
-                        agent.context_server_registry.clone(),
-                        agent.templates.clone(),
-                        default_model,
-                        cx,
-                    )
-                })
-            });
-            Ok(agent.update(cx, |agent, cx| agent.register_session(thread, cx)))
-        })
+        log::debug!("Creating new thread for project at: {cwd:?}");
+        Task::ready(Ok(self
+            .0
+            .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
     fn supports_load_session(&self, _cx: &App) -> bool {
@@ -1317,12 +1340,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         })
     }
 
-    fn resume(
+    fn retry(
         &self,
         session_id: &acp::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionResume>> {
-        Some(Rc::new(NativeAgentSessionResume {
+    ) -> Option<Rc<dyn acp_thread::AgentSessionRetry>> {
+        Some(Rc::new(NativeAgentSessionRetry {
             connection: self.clone(),
             session_id: session_id.clone(),
         }) as _)
@@ -1399,18 +1422,23 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
-    updates_rx: watch::Receiver<()>,
+    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
 
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
-        let (mut tx, rx) = watch::channel(());
+        let (tx, rx) = smol::channel::unbounded();
+        let this_tx = tx.clone();
         let subscription = cx.observe(&thread_store, move |_, _| {
-            tx.send(()).ok();
+            this_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .ok();
         });
         Self {
             thread_store,
+            updates_tx: tx,
             updates_rx: rx,
             _subscription: subscription,
         }
@@ -1460,8 +1488,17 @@ impl AgentSessionList for NativeAgentSessionList {
             .update(cx, |store, cx| store.delete_threads(cx))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
+    }
+
+    fn notify_refresh(&self) {
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::Refresh)
+            .ok();
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1493,12 +1530,12 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
     }
 }
 
-struct NativeAgentSessionResume {
+struct NativeAgentSessionRetry {
     connection: NativeAgentConnection,
     session_id: acp::SessionId,
 }
 
-impl acp_thread::AgentSessionResume for NativeAgentSessionResume {
+impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>> {
         self.connection
             .run_turn(self.session_id.clone(), cx, |thread, cx| {
@@ -1732,6 +1769,7 @@ mod internal_tests {
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
+                    is_latest: false,
                 }]
             )])
         );

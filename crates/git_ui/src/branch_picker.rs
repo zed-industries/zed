@@ -20,11 +20,12 @@ use ui::{
     Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip,
     prelude::*,
 };
+use ui_input::ErasedEditor;
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast};
+use crate::{branch_picker, git_panel::show_error_toast, resolve_active_repository};
 
 actions!(
     branch_picker,
@@ -61,33 +62,7 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let project = workspace.project().clone();
-
-    // Check if there's a worktree override from the project dropdown.
-    // This ensures the branch picker shows branches for the project the user
-    // explicitly selected in the title bar, not just the focused file's project.
-    // This is only relevant if for multi-projects workspaces.
-    let repository = workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            let project_ref = project.read(cx);
-            project_ref
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project_ref.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .cloned()
-                })
-        })
-        .or_else(|| project.read(cx).active_repository(cx));
+    let repository = resolve_active_repository(workspace, cx);
 
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(
@@ -611,11 +586,12 @@ impl PickerDelegate for BranchListDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
+        editor: &Arc<dyn ErasedEditor>,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let focus_handle = self.focus_handle.clone();
+        let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
 
         v_flex()
             .when(
@@ -1325,6 +1301,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
         });
     }
 

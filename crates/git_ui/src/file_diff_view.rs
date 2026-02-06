@@ -178,7 +178,7 @@ async fn build_buffer_diff(
             diff.update_diff(
                 new_buffer_snapshot.text.clone(),
                 Some(old_buffer_snapshot.text().into()),
-                true,
+                Some(true),
                 new_buffer_snapshot.language().cloned(),
                 cx,
             )
@@ -323,8 +323,8 @@ impl Item for FileDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(cx)
     }
 
     fn added_to_workspace(

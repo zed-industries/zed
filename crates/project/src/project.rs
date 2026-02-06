@@ -1,7 +1,7 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod buffer_store;
-mod color_extractor;
+pub mod color_extractor;
 pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
@@ -10,21 +10,18 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
-mod manifest_tree;
+pub mod manifest_tree;
 pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
 pub mod search;
-mod task_inventory;
+pub mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;
 pub mod trusted_worktrees;
 pub mod worktree_store;
-
-#[cfg(test)]
-mod project_tests;
 
 mod environment;
 use buffer_diff::BufferDiff;
@@ -33,7 +30,7 @@ pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
-mod yarn;
+pub mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use itertools::Either;
@@ -43,6 +40,7 @@ use crate::{
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
+    worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{
@@ -72,10 +70,9 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
-use encoding_rs;
+
 pub use environment::ProjectEnvironment;
-#[cfg(test)]
-use futures::future::join_all;
+
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -107,6 +104,8 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
+#[cfg(target_os = "windows")]
+use remote::wsl_path_to_windows_path;
 use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
@@ -163,6 +162,21 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
+#[derive(Clone, Copy, Debug)]
+pub struct LocalProjectFlags {
+    pub init_worktree_trust: bool,
+    pub watch_global_configs: bool,
+}
+
+impl Default for LocalProjectFlags {
+    fn default() -> Self {
+        Self {
+            init_worktree_trust: true,
+            watch_global_configs: true,
+        }
+    }
+}
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -227,6 +241,14 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
+    downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+}
+
+struct DownloadingFile {
+    destination_path: PathBuf,
+    chunks: Vec<u8>,
+    total_size: u64,
+    file_id: Option<u64>, // Set when we receive the State message
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -292,6 +314,13 @@ enum ProjectClientState {
     },
 }
 
+/// A link to display in a toast notification, useful to point to documentation.
+#[derive(PartialEq, Debug, Clone)]
+pub struct ToastLink {
+    pub label: &'static str,
+    pub url: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
@@ -313,6 +342,8 @@ pub enum Event {
     Toast {
         notification_id: SharedString,
         message: String,
+        /// Optional link to display as a button in the toast.
+        link: Option<ToastLink>,
     },
     HideToast {
         notification_id: SharedString,
@@ -352,6 +383,10 @@ pub enum Event {
     Reshared,
     Rejoined,
     RefreshInlayHints {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
+    RefreshSemanticTokens {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
@@ -705,7 +740,7 @@ impl LspAction {
         }
     }
 
-    fn action_kind(&self) -> Option<lsp::CodeActionKind> {
+    pub fn action_kind(&self) -> Option<lsp::CodeActionKind> {
         match self {
             Self::Action(action) => action.kind.clone(),
             Self::Command(_) => Some(lsp::CodeActionKind::new("command")),
@@ -798,6 +833,7 @@ pub struct Symbol {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
+    pub container_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -993,7 +1029,7 @@ impl DirectoryLister {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
@@ -1068,6 +1104,7 @@ impl Project {
         client.add_entity_message_handler(Self::handle_create_image_for_peer);
         client.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
         client.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
+        client.add_entity_message_handler(Self::handle_create_file_for_peer);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1088,7 +1125,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
-        init_worktree_trust: bool,
+        flags: LocalProjectFlags,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1096,8 +1133,9 @@ impl Project {
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
-            let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            if init_worktree_trust {
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+            if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
                     None,
@@ -1185,6 +1223,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    flags.watch_global_configs,
                     cx,
                 )
             });
@@ -1274,6 +1313,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
+                downloading_files: Default::default(),
             }
         })
     }
@@ -1302,12 +1342,13 @@ impl Project {
                         remote.connection_options(),
                     )
                 });
-            let worktree_store = cx.new(|_| {
+            let worktree_store = cx.new(|cx| {
                 WorktreeStore::remote(
                     false,
                     remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
                     path_style,
+                    WorktreeIdCounter::get(cx),
                 )
             });
 
@@ -1503,6 +1544,7 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
+                downloading_files: Default::default(),
             };
 
             // remote server -> local machine handlers
@@ -1518,6 +1560,7 @@ impl Project {
 
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_create_image_for_peer);
+            remote_proto.add_entity_message_handler(Self::handle_create_file_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
@@ -1530,6 +1573,7 @@ impl Project {
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
             BufferStore::init(&remote_proto);
+            WorktreeStore::init_remote(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
             TaskStore::init(Some(&remote_proto));
@@ -1609,12 +1653,13 @@ impl Project {
             PathStyle::Posix
         };
 
-        let worktree_store = cx.new(|_| {
+        let worktree_store = cx.new(|cx| {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
                 response.payload.project_id,
                 path_style,
+                WorktreeIdCounter::get(cx),
             )
         });
         let buffer_store = cx.new(|cx| {
@@ -1693,7 +1738,7 @@ impl Project {
             )
         });
 
-        let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx));
+        let agent_server_store = cx.new(|_cx| AgentServerStore::collab());
         let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let project = cx.new(|cx| {
@@ -1775,6 +1820,7 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
+                downloading_files: Default::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -1878,7 +1924,7 @@ impl Project {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
@@ -1899,7 +1945,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                false,
+                LocalProjectFlags {
+                    init_worktree_trust: false,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -1916,7 +1965,7 @@ impl Project {
         project
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1925,7 +1974,7 @@ impl Project {
         Self::test_project(fs, root_paths, false, cx).await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub async fn test_with_worktree_trust(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1934,7 +1983,7 @@ impl Project {
         Self::test_project(fs, root_paths, true, cx).await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     async fn test_project(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1956,7 +2005,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                init_worktree_trust,
+                LocalProjectFlags {
+                    init_worktree_trust,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -2065,7 +2117,7 @@ impl Project {
         });
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     #[inline]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &App) -> bool {
         self.buffer_store
@@ -2112,6 +2164,27 @@ impl Project {
         self.remote_client
             .as_ref()
             .map(|remote| remote.read(cx).connection_options())
+    }
+
+    /// Reveals the given path in the system file manager.
+    ///
+    /// On Windows with a WSL remote connection, this converts the POSIX path
+    /// to a Windows UNC path before revealing.
+    pub fn reveal_path(&self, path: &Path, cx: &mut Context<Self>) {
+        #[cfg(target_os = "windows")]
+        if let Some(RemoteConnectionOptions::Wsl(wsl_options)) = self.remote_connection_options(cx)
+        {
+            let path = path.to_path_buf();
+            cx.spawn(async move |_, cx| {
+                wsl_path_to_windows_path(&wsl_options, &path)
+                    .await
+                    .map(|windows_path| cx.update(|cx| cx.reveal_path(&windows_path)))
+            })
+            .detach_and_log_err(cx);
+            return;
+        }
+
+        cx.reveal_path(path);
     }
 
     #[inline]
@@ -2813,7 +2886,7 @@ impl Project {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn open_local_buffer_with_lsp(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -2824,6 +2897,73 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("no such path")))
         }
+    }
+
+    pub fn download_file(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        destination_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        log::debug!(
+            "download_file called: worktree_id={:?}, path={:?}, destination={:?}",
+            worktree_id,
+            path,
+            destination_path
+        );
+
+        let Some(remote_client) = &self.remote_client else {
+            log::error!("download_file: not a remote project");
+            return Task::ready(Err(anyhow!("not a remote project")));
+        };
+
+        let proto_client = remote_client.read(cx).proto_client();
+        // For SSH remote projects, use REMOTE_SERVER_PROJECT_ID instead of remote_id()
+        // because SSH projects have client_state: Local but still need to communicate with remote server
+        let project_id = self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID);
+        let downloading_files = self.downloading_files.clone();
+        let path_str = path.to_proto();
+
+        static NEXT_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let file_id = NEXT_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        // Register BEFORE sending request to avoid race condition
+        let key = (worktree_id, path_str.clone());
+        log::debug!(
+            "download_file: pre-registering download with key={:?}, file_id={}",
+            key,
+            file_id
+        );
+        downloading_files.lock().insert(
+            key,
+            DownloadingFile {
+                destination_path: destination_path,
+                chunks: Vec::new(),
+                total_size: 0,
+                file_id: Some(file_id),
+            },
+        );
+        log::debug!(
+            "download_file: sending DownloadFileByPath request, path_str={}",
+            path_str
+        );
+
+        cx.spawn(async move |_this, _cx| {
+            log::debug!("download_file: sending request with file_id={}...", file_id);
+            let response = proto_client
+                .request(proto::DownloadFileByPath {
+                    project_id,
+                    worktree_id: worktree_id.to_proto(),
+                    path: path_str.clone(),
+                    file_id,
+                })
+                .await?;
+
+            log::debug!("download_file: got response, file_id={}", response.file_id);
+            // The file_id is set from the State message, we just confirm the request succeeded
+            Ok(())
+        })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -2841,7 +2981,7 @@ impl Project {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn open_buffer_with_lsp(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -3174,6 +3314,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: "dap".into(),
                 message: message.clone(),
+                link: None,
             });
         }
     }
@@ -3213,6 +3354,13 @@ impl Project {
                 server_id,
                 request_id,
             } => cx.emit(Event::RefreshInlayHints {
+                server_id: *server_id,
+                request_id: *request_id,
+            }),
+            LspStoreEvent::RefreshSemanticTokens {
+                server_id,
+                request_id,
+            } => cx.emit(Event::RefreshSemanticTokens {
                 server_id: *server_id,
                 request_id: *request_id,
             }),
@@ -3304,6 +3452,7 @@ impl Project {
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
                 notification_id: "lsp".into(),
                 message: message.clone(),
+                link: None,
             }),
             LspStoreEvent::SnippetEdit {
                 buffer_id,
@@ -3354,6 +3503,7 @@ impl Project {
                     let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-settings-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -3367,6 +3517,10 @@ impl Project {
                     let message = format!("Failed to set local tasks in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-tasks-{path:?}").into(),
+                        link: Some(ToastLink {
+                            label: "Open Tasks Documentation",
+                            url: "https://zed.dev/docs/tasks",
+                        }),
                         message,
                     });
                 }
@@ -3381,6 +3535,7 @@ impl Project {
                         format!("Failed to set local debug scenarios in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-debug-scenarios-{path:?}").into(),
+                        link: None,
                         message,
                     });
                 }
@@ -4847,6 +5002,7 @@ impl Project {
             cx.emit(Event::Toast {
                 notification_id: envelope.payload.notification_id.into(),
                 message: envelope.payload.message,
+                link: None,
             });
             Ok(())
         })
@@ -4868,13 +5024,15 @@ impl Project {
             })
             .collect();
         this.update(&mut cx, |_, cx| {
-            cx.emit(Event::LanguageServerPrompt(LanguageServerPromptRequest {
-                level: proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
-                message: envelope.payload.message,
-                actions: actions.clone(),
-                lsp_name: envelope.payload.lsp_name,
-                response_channel: tx,
-            }));
+            cx.emit(Event::LanguageServerPrompt(
+                LanguageServerPromptRequest::new(
+                    proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
+                    envelope.payload.message,
+                    actions.clone(),
+                    envelope.payload.lsp_name,
+                    tx,
+                ),
+            ));
 
             anyhow::Ok(())
         })?;
@@ -5284,6 +5442,128 @@ impl Project {
         })
     }
 
+    async fn handle_create_file_for_peer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CreateFileForPeer>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        use proto::create_file_for_peer::Variant;
+        log::debug!("handle_create_file_for_peer: received message");
+
+        let downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>> =
+            this.update(&mut cx, |this, _| this.downloading_files.clone());
+
+        match &envelope.payload.variant {
+            Some(Variant::State(state)) => {
+                log::debug!(
+                    "handle_create_file_for_peer: got State: id={}, content_size={}",
+                    state.id,
+                    state.content_size
+                );
+
+                // Extract worktree_id and path from the File field
+                if let Some(ref file) = state.file {
+                    let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                    let path = file.path.clone();
+                    let key = (worktree_id, path);
+                    log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
+
+                    let mut files = downloading_files.lock();
+                    log::trace!(
+                        "handle_create_file_for_peer: current downloading_files keys: {:?}",
+                        files.keys().collect::<Vec<_>>()
+                    );
+
+                    if let Some(file_entry) = files.get_mut(&key) {
+                        file_entry.total_size = state.content_size;
+                        file_entry.file_id = Some(state.id);
+                        log::debug!(
+                            "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
+                            state.content_size,
+                            state.id
+                        );
+                    } else {
+                        log::warn!(
+                            "handle_create_file_for_peer: key={:?} not found in downloading_files",
+                            key
+                        );
+                    }
+                } else {
+                    log::warn!("handle_create_file_for_peer: State has no file field");
+                }
+            }
+            Some(Variant::Chunk(chunk)) => {
+                log::debug!(
+                    "handle_create_file_for_peer: got Chunk: file_id={}, data_len={}",
+                    chunk.file_id,
+                    chunk.data.len()
+                );
+
+                // Extract data while holding the lock, then release it before await
+                let (key_to_remove, write_info): (
+                    Option<(WorktreeId, String)>,
+                    Option<(PathBuf, Vec<u8>)>,
+                ) = {
+                    let mut files = downloading_files.lock();
+                    let mut found_key: Option<(WorktreeId, String)> = None;
+                    let mut write_data: Option<(PathBuf, Vec<u8>)> = None;
+
+                    for (key, file_entry) in files.iter_mut() {
+                        if file_entry.file_id == Some(chunk.file_id) {
+                            file_entry.chunks.extend_from_slice(&chunk.data);
+                            log::debug!(
+                                "handle_create_file_for_peer: accumulated {} bytes, total_size={}",
+                                file_entry.chunks.len(),
+                                file_entry.total_size
+                            );
+
+                            if file_entry.chunks.len() as u64 >= file_entry.total_size
+                                && file_entry.total_size > 0
+                            {
+                                let destination = file_entry.destination_path.clone();
+                                let content = std::mem::take(&mut file_entry.chunks);
+                                found_key = Some(key.clone());
+                                write_data = Some((destination, content));
+                            }
+                            break;
+                        }
+                    }
+                    (found_key, write_data)
+                }; // MutexGuard is dropped here
+
+                // Perform the async write outside the lock
+                if let Some((destination, content)) = write_info {
+                    log::debug!(
+                        "handle_create_file_for_peer: writing {} bytes to {:?}",
+                        content.len(),
+                        destination
+                    );
+                    match smol::fs::write(&destination, &content).await {
+                        Ok(_) => log::info!(
+                            "handle_create_file_for_peer: successfully wrote file to {:?}",
+                            destination
+                        ),
+                        Err(e) => log::error!(
+                            "handle_create_file_for_peer: failed to write file: {:?}",
+                            e
+                        ),
+                    }
+                }
+
+                // Remove the completed entry
+                if let Some(key) = key_to_remove {
+                    downloading_files.lock().remove(&key);
+                    log::debug!("handle_create_file_for_peer: removed completed download entry");
+                }
+            }
+            None => {
+                log::warn!("handle_create_file_for_peer: got None variant");
+            }
+        }
+
+        Ok(())
+    }
+
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let project_id = match self.client_state {
             ProjectClientState::Remote {
@@ -5446,6 +5726,32 @@ impl Project {
         })
     }
 
+    pub fn any_language_server_supports_semantic_tokens(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> bool {
+        let Some(language) = buffer.language().cloned() else {
+            return false;
+        };
+        let lsp_store = self.lsp_store.read(cx);
+        let relevant_language_servers = lsp_store
+            .languages
+            .lsp_adapters(&language.name())
+            .into_iter()
+            .map(|lsp_adapter| lsp_adapter.name())
+            .collect::<HashSet<_>>();
+        lsp_store
+            .language_server_statuses()
+            .filter_map(|(server_id, server_status)| {
+                relevant_language_servers
+                    .contains(&server_status.name)
+                    .then_some(server_id)
+            })
+            .filter_map(|server_id| lsp_store.lsp_server_capabilities.get(&server_id))
+            .any(|capabilities| capabilities.semantic_tokens_provider.is_some())
+    }
+
     pub fn language_server_id_for_name(
         &self,
         buffer: &Buffer,
@@ -5473,7 +5779,7 @@ impl Project {
             })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(feature = "test-support")]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.running_language_servers_for_local_buffer(buffer, cx)
@@ -5505,8 +5811,9 @@ impl Project {
         &self.agent_server_store
     }
 
-    #[cfg(test)]
-    fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+    #[cfg(feature = "test-support")]
+    pub fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+        use futures::future::join_all;
         cx.spawn(async move |this, cx| {
             let scans_complete = this
                 .read_with(cx, |this, cx| {
@@ -5595,48 +5902,6 @@ impl Project {
             .map_or(false, |worktree| {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
-    }
-
-    pub fn update_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: Arc<RelPath>,
-        cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
-    ) {
-        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            // todo(settings_ui) error?
-            return;
-        };
-        cx.spawn(async move |cx| {
-            let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))
-                .await
-                .context("Failed to load settings file")?;
-
-            let has_bom = file.has_bom;
-
-            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
-                store.new_text_for_update(file.text, move |settings| update(settings, cx))
-            });
-            worktree
-                .update(cx, |worktree, cx| {
-                    let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        new_text.into(),
-                        line_ending,
-                        encoding_rs::UTF_8,
-                        has_bom,
-                        cx,
-                    )
-                })
-                .await
-                .context("Failed to write settings file")?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
     }
 }
 
@@ -5967,56 +6232,4 @@ fn provide_inline_values(
     }
 
     variables
-}
-
-#[cfg(test)]
-mod disable_ai_settings_tests {
-    use super::*;
-    use gpui::TestAppContext;
-    use settings::Settings;
-
-    #[gpui::test]
-    async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            settings::init(cx);
-
-            // Test 1: Default is false (AI enabled)
-            assert!(
-                !DisableAiSettings::get_global(cx).disable_ai,
-                "Default should allow AI"
-            );
-        });
-
-        let disable_true = serde_json::json!({
-            "disable_ai": true
-        })
-        .to_string();
-        let disable_false = serde_json::json!({
-            "disable_ai": false
-        })
-        .to_string();
-
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.set_user_settings(&disable_false, cx).unwrap();
-            store.set_global_settings(&disable_true, cx).unwrap();
-        });
-        cx.update(|cx| {
-            assert!(
-                DisableAiSettings::get_global(cx).disable_ai,
-                "Local false cannot override global true"
-            );
-        });
-
-        cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.set_global_settings(&disable_false, cx).unwrap();
-            store.set_user_settings(&disable_true, cx).unwrap();
-        });
-
-        cx.update(|cx| {
-            assert!(
-                DisableAiSettings::get_global(cx).disable_ai,
-                "Local false cannot override global true"
-            );
-        });
-    }
 }

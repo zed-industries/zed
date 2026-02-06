@@ -35,4 +35,13 @@ impl PlanDefinitions {
             .child(ListBulletItem::new("$5 of tokens"))
             .child(ListBulletItem::new("Usage-based billing beyond $5"))
     }
+
+    pub fn student_plan(&self) -> impl IntoElement {
+        List::new()
+            .child(ListBulletItem::new("Unlimited edit predictions"))
+            .child(ListBulletItem::new("$10 of tokens"))
+            .child(ListBulletItem::new(
+                "Optional credit packs for additional usage",
+            ))
+    }
 }

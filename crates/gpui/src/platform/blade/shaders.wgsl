@@ -129,6 +129,7 @@ struct Background {
     // 0u is Solid
     // 1u is LinearGradient
     // 2u is PatternSlash
+    // 3u is Checkerboard
     tag: u32,
     // 0u is sRGB linear color
     // 1u is Oklab color
@@ -399,7 +400,7 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
     solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
     var result = GradientColor();
 
-    if (tag == 0u || tag == 2u) {
+    if (tag == 0u || tag == 2u || tag == 3u) {
         result.solid = hsla_to_rgba(solid);
     } else if (tag == 1u) {
         // The hsla_to_rgba is returns a linear sRGB color
@@ -473,6 +474,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             }
         }
         case 2u: {
+            // pattern slash
             let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
             let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
             let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
@@ -489,6 +491,18 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             let distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             background_color = solid_color;
             background_color.a *= saturate(0.5 - distance);
+        }
+        case 3u: {
+            // checkerboard
+            let size = background.gradient_angle_or_pattern_height;
+            let relative_position = position - bounds.origin;
+            
+            let x_index = floor(relative_position.x / size);
+            let y_index = floor(relative_position.y / size);
+            let should_be_colored = (x_index + y_index) % 2.0;
+            
+            background_color = solid_color;
+            background_color.a *= saturate(should_be_colored);
         }
     }
 

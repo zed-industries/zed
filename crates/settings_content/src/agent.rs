@@ -70,6 +70,11 @@ pub struct AgentSettingsContent {
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
+    /// **Security note**: Even with this enabled, Zed's built-in security rules
+    /// still block some tool actions, such as the terminal tool running `rm -rf /`, `rm -rf ~`,
+    /// `rm -rf $HOME`, `rm -rf .`, or `rm -rf ..`, to prevent certain classes of failures
+    /// from happening.
+    ///
     /// This setting has no effect on external agents that support permission modes, such as Claude Code.
     ///
     /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
@@ -109,6 +114,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    ///
+    /// Default: true
+    pub cancel_generation_on_terminal_stop: Option<bool>,
     /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     ///
     /// Default: false
@@ -134,12 +144,6 @@ impl AgentSettingsContent {
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
-        // let model = language_model.id().0.to_string();
-        // let provider = language_model.provider_id().0.to_string();
-        // self.default_model = Some(LanguageModelSelection {
-        //     provider: provider.into(),
-        //     model,
-        // });
         self.default_model = Some(language_model)
     }
 
@@ -147,40 +151,9 @@ impl AgentSettingsContent {
         self.inline_assistant_model = Some(LanguageModelSelection {
             provider: provider.into(),
             model,
+            enable_thinking: false,
+            effort: None,
         });
-    }
-    pub fn set_inline_assistant_use_streaming_tools(&mut self, use_tools: bool) {
-        self.inline_assistant_use_streaming_tools = Some(use_tools);
-    }
-
-    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
-        self.commit_message_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
-    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
-        self.thread_summary_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
-    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
-        self.always_allow_tool_actions = Some(allow);
-    }
-
-    pub fn set_play_sound_when_agent_done(&mut self, allow: bool) {
-        self.play_sound_when_agent_done = Some(allow);
-    }
-
-    pub fn set_single_file_review(&mut self, allow: bool) {
-        self.single_file_review = Some(allow);
-    }
-
-    pub fn set_use_modifier_to_send(&mut self, always_use: bool) {
-        self.use_modifier_to_send = Some(always_use);
     }
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
@@ -291,6 +264,9 @@ pub enum NotifyWhenAgentWaiting {
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
     pub model: String,
+    #[serde(default)]
+    pub enable_thinking: bool,
+    pub effort: Option<String>,
 }
 
 #[with_fallible_options]
@@ -405,21 +381,21 @@ pub struct BuiltinAgentServerSettings {
     /// These are the model IDs as reported by the agent.
     ///
     /// Default: []
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favorite_models: Vec<String>,
     /// Default values for session config options.
     ///
     /// This is a map from config option ID to value ID.
     ///
     /// Default: {}
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub default_config_options: HashMap<String, String>,
     /// Favorited values for session config options.
     ///
     /// This is a map from config option ID to a list of favorited value IDs.
     ///
     /// Default: {}
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
@@ -430,9 +406,11 @@ pub enum CustomAgentServerSettings {
     Custom {
         #[serde(rename = "command")]
         path: PathBuf,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
-        env: Option<HashMap<String, String>>,
+        /// Default: {}
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -450,24 +428,29 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         default_config_options: HashMap<String, String>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Extension {
+        /// Additional environment variables to pass to the agent.
+        ///
+        /// Default: {}
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -485,24 +468,29 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         default_config_options: HashMap<String, String>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
+        /// Additional environment variables to pass to the agent.
+        ///
+        /// Default: {}
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        env: HashMap<String, String>,
         /// The default mode to use for this agent.
         ///
         /// Note: Not only all agents support modes.
@@ -520,21 +508,21 @@ pub enum CustomAgentServerSettings {
         /// These are the model IDs as reported by the agent.
         ///
         /// Default: []
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         default_config_options: HashMap<String, String>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
         ///
         /// Default: {}
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
 }

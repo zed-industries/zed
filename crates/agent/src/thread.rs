@@ -2,9 +2,9 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SubagentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ThinkingTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
+    WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -18,7 +18,8 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
-use cloud_llm_client::{CompletionIntent, Plan};
+use cloud_api_types::Plan;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -31,7 +32,6 @@ use futures::{
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
-use language::Buffer;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
@@ -316,6 +316,17 @@ impl UserMessage {
                         }
                         MentionUri::Diagnostics { .. } => {
                             write!(&mut diagnostics_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::TerminalSelection { .. } => {
+                            write!(
+                                &mut selection_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "console",
+                                    text: content
+                                }
+                            )
+                            .ok();
                         }
                     }
 
@@ -624,26 +635,63 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
+    ///
+    /// # Shell Compatibility for Terminal Tool
+    ///
+    /// For the terminal tool, "Always allow" options are only shown when the user's
+    /// shell supports POSIX-like command chaining syntax (`&&`, `||`, `;`, `|`).
+    ///
+    /// **Why this matters:** When a user sets up an "always allow" pattern like `^cargo`,
+    /// we need to parse the command to extract all sub-commands and verify that EVERY
+    /// sub-command matches the pattern. Otherwise, an attacker could craft a command like
+    /// `cargo build && rm -rf /` that would bypass the security check.
+    ///
+    /// **Supported shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
+    ///
+    /// **Unsupported shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
+    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
+    ///
+    /// For unsupported shells, we hide the "Always allow" UI options entirely, and if
+    /// the user has `always_allow` rules configured in settings, `ToolPermissionDecision::from_input`
+    /// will return a `Deny` with an explanatory error message.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
+        use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
         let input_value = &self.input_value;
 
-        let (pattern, pattern_display) = match tool_name.as_str() {
-            "terminal" => (
+        // Check if the user's shell supports POSIX-like command chaining.
+        // See the doc comment above for the full explanation of why this is needed.
+        let shell_supports_always_allow = if tool_name == TerminalTool::NAME {
+            ShellKind::system().supports_posix_chaining()
+        } else {
+            true
+        };
+
+        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
+            (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
-            ),
-            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+            )
+        } else if tool_name == EditFileTool::NAME
+            || tool_name == DeletePathTool::NAME
+            || tool_name == MovePathTool::NAME
+            || tool_name == CreateDirectoryTool::NAME
+            || tool_name == SaveFileTool::NAME
+        {
+            (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
-            ),
-            "fetch" => (
+            )
+        } else if tool_name == FetchTool::NAME {
+            (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
-            ),
-            _ => (None, None),
+            )
+        } else {
+            (None, None)
         };
 
         let mut choices = Vec::new();
@@ -663,27 +711,29 @@ impl ToolPermissionContext {
             });
         };
 
-        push_choice(
-            format!("Always for {}", tool_name.replace('_', " ")),
-            format!("always_allow:{}", tool_name),
-            format!("always_deny:{}", tool_name),
-            acp::PermissionOptionKind::AllowAlways,
-            acp::PermissionOptionKind::RejectAlways,
-        );
-
-        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-            let button_text = match tool_name.as_str() {
-                "terminal" => format!("Always for `{}` commands", display),
-                "fetch" => format!("Always for `{}`", display),
-                _ => format!("Always for `{}`", display),
-            };
+        if shell_supports_always_allow {
             push_choice(
-                button_text,
-                format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                format!("Always for {}", tool_name.replace('_', " ")),
+                format!("always_allow:{}", tool_name),
+                format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
                 acp::PermissionOptionKind::RejectAlways,
             );
+
+            if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+                let button_text = if tool_name == TerminalTool::NAME {
+                    format!("Always for `{}` commands", display)
+                } else {
+                    format!("Always for `{}`", display)
+                };
+                push_choice(
+                    button_text,
+                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::RejectAlways,
+                );
+            }
         }
 
         push_choice(
@@ -716,11 +766,6 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub struct QueuedMessage {
-    pub content: Vec<acp::ContentBlock>,
-    pub tracked_buffers: Vec<Entity<Buffer>>,
-}
-
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
@@ -735,20 +780,24 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
-    queued_messages: Vec<QueuedMessage>,
+    /// Flag indicating the UI has a queued message waiting to be sent.
+    /// Used to signal that the turn should end at the next message boundary.
+    has_queued_message: bool,
     pending_message: Option<AgentMessage>,
-    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
-    context_server_registry: Entity<ContextServerRegistry>,
+    pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
-    templates: Arc<Templates>,
+    pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
+    thinking_enabled: bool,
+    thinking_effort: Option<String>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -779,7 +828,16 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
@@ -794,7 +852,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -811,6 +869,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -832,10 +892,32 @@ impl Thread {
         parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
+
+        // Rebind tools that hold thread references to use this subagent's thread
+        // instead of the parent's thread. This is critical for tools like EditFileTool
+        // that make model requests using the thread's ID.
+        let weak_self = cx.weak_entity();
+        let tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> = parent_tools
+            .into_iter()
+            .map(|(name, tool)| {
+                let rebound = tool.rebind_thread(weak_self.clone()).unwrap_or(tool);
+                (name, rebound)
+            })
+            .collect();
+
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -847,9 +929,9 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
-            tools: parent_tools,
+            tools,
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             initial_project_snapshot: Task::ready(None).shared(),
@@ -859,6 +941,8 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -998,9 +1082,18 @@ impl Thread {
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = AgentSettings::get_global(cx);
         let profile_id = db_thread
             .profile
-            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+            .unwrap_or_else(|| settings.default_profile.clone());
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1044,7 +1137,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            queued_messages: Vec::new(),
+            has_queued_message: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1056,6 +1149,9 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            // TODO: Should we persist this on the `DbThread`?
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1154,6 +1250,24 @@ impl Thread {
         cx.notify()
     }
 
+    pub fn thinking_enabled(&self) -> bool {
+        self.thinking_enabled
+    }
+
+    pub fn set_thinking_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.thinking_enabled = enabled;
+        cx.notify();
+    }
+
+    pub fn thinking_effort(&self) -> Option<&String> {
+        self.thinking_effort.as_ref()
+    }
+
+    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        self.thinking_effort = effort;
+        cx.notify();
+    }
+
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1178,6 +1292,12 @@ impl Thread {
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            language_registry.clone(),
+            Templates::new(),
+        ));
+        self.add_tool(StreamingEditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
             language_registry,
             Templates::new(),
         ));
@@ -1200,21 +1320,17 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let parent_tools = self.tools.clone();
-            self.add_tool(SubagentTool::new(
-                cx.weak_entity(),
-                self.project.clone(),
-                self.project_context.clone(),
-                self.context_server_registry.clone(),
-                self.templates.clone(),
-                self.depth(),
-                parent_tools,
-            ));
+            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
         }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
-        self.tools.insert(T::name().into(), tool.erase());
+        debug_assert!(
+            !self.tools.contains_key(T::NAME),
+            "Duplicate tool name: {}",
+            T::NAME,
+        );
+        self.tools.insert(T::NAME.into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -1265,35 +1381,12 @@ impl Thread {
         })
     }
 
-    pub fn queue_message(
-        &mut self,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-    ) {
-        self.queued_messages.push(QueuedMessage {
-            content,
-            tracked_buffers,
-        });
+    pub fn set_has_queued_message(&mut self, has_queued: bool) {
+        self.has_queued_message = has_queued;
     }
 
-    pub fn queued_messages(&self) -> &[QueuedMessage] {
-        &self.queued_messages
-    }
-
-    pub fn remove_queued_message(&mut self, index: usize) -> Option<QueuedMessage> {
-        if index < self.queued_messages.len() {
-            Some(self.queued_messages.remove(index))
-        } else {
-            None
-        }
-    }
-
-    pub fn clear_queued_messages(&mut self) {
-        self.queued_messages.clear();
-    }
-
-    fn has_queued_messages(&self) -> bool {
-        !self.queued_messages.is_empty()
+    pub fn has_queued_message(&self) -> bool {
+        self.has_queued_message
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
@@ -1657,6 +1750,13 @@ impl Thread {
                 }
             }
 
+            // Drop the stream to release the rate limit permit before tool execution.
+            // The stream holds a semaphore guard that limits concurrent requests.
+            // Without this, the permit would be held during potentially long-running
+            // tool execution, which could cause deadlocks when tools spawn subagents
+            // that need their own permits.
+            drop(events);
+
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
@@ -1710,7 +1810,7 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let has_queued = this.update(cx, |this, _| this.has_queued_messages())?;
+                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
                 if has_queued {
                     log::debug!("Queued message found, ending turn at message boundary");
                     return Ok(());
@@ -1732,10 +1832,7 @@ impl Thread {
         };
 
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                None => false,
-            }
+            plan.is_some()
         } else {
             true
         };
@@ -2256,7 +2353,8 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
-            thinking_allowed: true,
+            thinking_allowed: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
         };
 
         log::debug!("Completion request built successfully");
@@ -2279,14 +2377,30 @@ impl Thread {
             }
         }
 
+        let use_streaming_edit_tool = false;
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
+                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
+                    EditFileTool::NAME
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_streaming_edit_tool) {
+                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
+                        (StreamingEditFileTool::NAME, true) => {
+                            // Expose streaming tool as "edit_file"
+                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
+                        }
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }
@@ -2619,7 +2733,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name() -> &'static str;
+    const NAME: &'static str;
 
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2673,6 +2787,15 @@ where
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
+
+    /// Create a new instance of this tool bound to a different thread.
+    /// This is used when creating subagents, so that tools like EditFileTool
+    /// that hold a thread reference will use the subagent's thread instead
+    /// of the parent's thread.
+    /// Returns None if the tool doesn't need rebinding (most tools).
+    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        None
+    }
 }
 
 pub struct Erased<T>(T);
@@ -2704,6 +2827,14 @@ pub trait AnyAgentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()>;
+    /// Create a new instance of this tool bound to a different thread.
+    /// This is used when creating subagents, so that tools like EditFileTool
+    /// that hold a thread reference will use the subagent's thread instead
+    /// of the parent's thread.
+    /// Returns None if the tool doesn't need rebinding (most tools).
+    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        None
+    }
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -2711,7 +2842,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        T::name().into()
+        T::NAME.into()
     }
 
     fn description(&self) -> SharedString {
@@ -2766,6 +2897,10 @@ where
         let input = serde_json::from_value(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
+    }
+
+    fn rebind_thread(&self, new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
+        self.0.rebind_thread(new_thread)
     }
 }
 

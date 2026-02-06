@@ -2,7 +2,7 @@ mod create_file_parser;
 mod edit_parser;
 #[cfg(test)]
 mod evals;
-mod streaming_fuzzy_matcher;
+pub mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
 use action_log::ActionLog;
@@ -732,6 +732,7 @@ impl EditAgent {
             stop: Vec::new(),
             temperature: None,
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)

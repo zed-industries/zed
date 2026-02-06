@@ -76,32 +76,30 @@ pub fn watch_config_file(
     executor: &BackgroundExecutor,
     fs: Arc<dyn Fs>,
     path: PathBuf,
-) -> mpsc::UnboundedReceiver<String> {
+) -> (mpsc::UnboundedReceiver<String>, gpui::Task<()>) {
     let (tx, rx) = mpsc::unbounded();
-    executor
-        .spawn(async move {
-            let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
-            futures::pin_mut!(events);
+    let task = executor.spawn(async move {
+        let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
+        futures::pin_mut!(events);
 
-            let contents = fs.load(&path).await.unwrap_or_default();
-            if tx.unbounded_send(contents).is_err() {
-                return;
+        let contents = fs.load(&path).await.unwrap_or_default();
+        if tx.unbounded_send(contents).is_err() {
+            return;
+        }
+
+        loop {
+            if events.next().await.is_none() {
+                break;
             }
 
-            loop {
-                if events.next().await.is_none() {
-                    break;
-                }
-
-                if let Ok(contents) = fs.load(&path).await
-                    && tx.unbounded_send(contents).is_err()
-                {
-                    break;
-                }
+            if let Ok(contents) = fs.load(&path).await
+                && tx.unbounded_send(contents).is_err()
+            {
+                break;
             }
-        })
-        .detach();
-    rx
+        }
+    });
+    (rx, task)
 }
 
 pub fn watch_config_dir(

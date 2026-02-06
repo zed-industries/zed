@@ -285,9 +285,11 @@ impl EditorconfigStore {
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let config_path = dir_path.join(EDITORCONFIG_NAME);
-        let mut config_rx = watch_config_file(cx.background_executor(), fs, config_path);
+        let (mut config_rx, watcher_task) =
+            watch_config_file(cx.background_executor(), fs, config_path);
 
         cx.spawn(async move |this, cx| {
+            let _watcher_task = watcher_task;
             while let Some(content) = config_rx.next().await {
                 let content = Some(content).filter(|c| !c.is_empty());
                 let dir_path = dir_path.clone();
@@ -321,11 +323,12 @@ impl EditorconfigStore {
     ) -> Option<EditorconfigProperties> {
         let mut properties = EditorconfigProperties::new();
         let state = self.worktree_state.get(&for_worktree);
-        let empty_path: Arc<RelPath> = RelPath::empty().into();
         let internal_root_config_is_root = state
-            .and_then(|state| state.internal_configs.get(&empty_path))
+            .and_then(|state| state.internal_configs.get(RelPath::empty()))
             .and_then(|data| data.1.as_ref())
             .is_some_and(|ec| ec.is_root);
+
+        let std_path = for_path.as_std_path();
 
         if !internal_root_config_is_root {
             for (_, _, parsed_editorconfig) in self.external_configs(for_worktree) {
@@ -334,27 +337,32 @@ impl EditorconfigStore {
                         properties = EditorconfigProperties::new();
                     }
                     for section in &parsed_editorconfig.sections {
-                        section
-                            .apply_to(&mut properties, for_path.as_std_path())
-                            .log_err()?;
+                        section.apply_to(&mut properties, std_path).log_err()?;
                     }
                 }
             }
         }
 
-        for (directory_with_config, _, parsed_editorconfig) in self.internal_configs(for_worktree) {
-            if !for_path.starts_with(directory_with_config) {
-                properties.use_fallbacks();
-                return Some(properties);
+        if let Some(state) = state {
+            let mut internal_configs: SmallVec<[&Editorconfig; 8]> = SmallVec::new();
+
+            for ancestor in for_path.ancestors() {
+                if let Some((_, parsed)) = state.internal_configs.get(ancestor) {
+                    let config = parsed.as_ref()?;
+                    internal_configs.push(config);
+                    if config.is_root {
+                        break;
+                    }
+                }
             }
-            let parsed_editorconfig = parsed_editorconfig?;
-            if parsed_editorconfig.is_root {
-                properties = EditorconfigProperties::new();
-            }
-            for section in &parsed_editorconfig.sections {
-                section
-                    .apply_to(&mut properties, for_path.as_std_path())
-                    .log_err()?;
+
+            for config in internal_configs.into_iter().rev() {
+                if config.is_root {
+                    properties = EditorconfigProperties::new();
+                }
+                for section in &config.sections {
+                    section.apply_to(&mut properties, std_path).log_err()?;
+                }
             }
         }
 
