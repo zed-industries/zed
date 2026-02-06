@@ -81,6 +81,9 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
                     }
                     commands.extend(normalized_redirects);
                 }
+                for redirect in &redirect_list.0 {
+                    extract_commands_from_io_redirect(redirect, commands)?;
+                }
             }
         }
         ast::Command::Function(func_def) => {
@@ -487,6 +490,9 @@ fn extract_commands_from_function_body(
                 return None;
             }
             commands.extend(normalized_redirects);
+        }
+        for redirect in &redirect_list.0 {
+            extract_commands_from_io_redirect(redirect, commands)?;
         }
     }
     Some(())
@@ -963,5 +969,26 @@ mod tests {
         let commands = extract_commands("cat <<EOF\n`whoami`\nEOF").expect("parse failed");
         assert!(commands.iter().any(|c| c.contains("cat")));
         assert!(commands.contains(&"whoami".to_string()));
+    }
+
+    #[test]
+    fn test_brace_group_redirect_with_command_substitution() {
+        let commands = extract_commands("{ echo hello; } > $(mktemp)").expect("parse failed");
+        assert!(commands.contains(&"echo hello".to_string()));
+        assert!(commands.contains(&"mktemp".to_string()));
+    }
+
+    #[test]
+    fn test_function_definition_redirect_with_command_substitution() {
+        let commands = extract_commands("f() { echo hi; } > $(mktemp)").expect("parse failed");
+        assert!(commands.contains(&"echo hi".to_string()));
+        assert!(commands.contains(&"mktemp".to_string()));
+    }
+
+    #[test]
+    fn test_brace_group_redirect_with_process_substitution() {
+        let commands = extract_commands("{ cat; } > >(tee /tmp/log)").expect("parse failed");
+        assert!(commands.contains(&"cat".to_string()));
+        assert!(commands.contains(&"tee /tmp/log".to_string()));
     }
 }
