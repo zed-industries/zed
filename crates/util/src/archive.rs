@@ -318,4 +318,65 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn test_archive_path_is_normal_rejects_traversal() {
+        assert!(!archive_path_is_normal("../parent.txt"));
+        assert!(!archive_path_is_normal("foo/../../grandparent.txt"));
+        assert!(!archive_path_is_normal("/tmp/absolute.txt"));
+
+        assert!(archive_path_is_normal("foo/bar.txt"));
+        assert!(archive_path_is_normal("foo/bar/baz.txt"));
+        assert!(archive_path_is_normal("./foo/bar.txt"));
+        assert!(archive_path_is_normal("normal.txt"));
+    }
+
+    async fn build_zip_with_entries(entries: &[(&str, &[u8])]) -> Cursor<Vec<u8>> {
+        let mut buf = Cursor::new(Vec::new());
+        let mut writer = ZipFileWriter::new(&mut buf);
+        for (name, data) in entries {
+            let builder = ZipEntryBuilder::new((*name).into(), async_zip::Compression::Stored);
+            writer.write_entry_whole(builder, data).await.unwrap();
+        }
+        writer.close().await.unwrap();
+        buf.set_position(0);
+        buf
+    }
+
+    #[test]
+    fn test_extract_zip_skips_path_traversal_entries() {
+        smol::block_on(async {
+            let base_dir = tempfile::tempdir().unwrap();
+            let extract_dir = base_dir.path().join("subdir");
+            std::fs::create_dir_all(&extract_dir).unwrap();
+
+            let absolute_target = base_dir.path().join("absolute.txt");
+            let reader = build_zip_with_entries(&[
+                ("normal.txt", b"normal file"),
+                ("subdir/nested.txt", b"nested file"),
+                ("../parent.txt", b"parent file"),
+                ("foo/../../grandparent.txt", b"grandparent file"),
+                (absolute_target.to_str().unwrap(), b"absolute file"),
+            ])
+            .await;
+
+            extract_zip(&extract_dir, reader).await.unwrap();
+
+            assert_file_content(&extract_dir.join("normal.txt"), "normal file");
+            assert_file_content(&extract_dir.join("subdir/nested.txt"), "nested file");
+
+            assert!(
+                !base_dir.path().join("parent.txt").exists(),
+                "parent traversal entry should have been skipped"
+            );
+            assert!(
+                !base_dir.path().join("grandparent.txt").exists(),
+                "nested traversal entry should have been skipped"
+            );
+            assert!(
+                !absolute_target.exists(),
+                "absolute path entry should have been skipped"
+            );
+        });
+    }
 }
