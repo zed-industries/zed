@@ -2532,6 +2532,55 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        // Combined: root + platform + profile should all be migrated simultaneously
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
+            )],
+            &r#"
+            {
+                "features": {
+                    "edit_prediction_provider": "copilot"
+                },
+                "macos": {
+                    "features": {
+                        "edit_prediction_provider": "zed"
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "features": {
+                            "edit_prediction_provider": "supermaven"
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "copilot"
+                    },
+                    "macos": {
+                        "edit_predictions": {
+                            "provider": "zed"
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "edit_predictions": {
+                                "provider": "supermaven"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
     }
 
     #[test]
@@ -2711,6 +2760,61 @@ mod tests {
                         "dev": {
                             "edit_predictions": {
                                 "provider": "mercury"
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Combined: root + platform + profile should all be migrated simultaneously
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
+            )],
+            &r#"
+            {
+                "edit_predictions": {
+                    "provider": {
+                        "experimental": "sweep"
+                    }
+                },
+                "linux": {
+                    "edit_predictions": {
+                        "provider": {
+                            "experimental": "mercury"
+                        }
+                    }
+                },
+                "profiles": {
+                    "dev": {
+                        "edit_predictions": {
+                            "provider": {
+                                "experimental": "sweep"
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "sweep"
+                    },
+                    "linux": {
+                        "edit_predictions": {
+                            "provider": "mercury"
+                        }
+                    },
+                    "profiles": {
+                        "dev": {
+                            "edit_predictions": {
+                                "provider": "sweep"
                             }
                         }
                     }
