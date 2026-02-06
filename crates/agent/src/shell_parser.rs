@@ -90,13 +90,30 @@ fn extract_commands_from_simple_command(
     // returns None — the same as a shell parse failure. The caller then falls
     // back to raw-input matching with always_allow disabled.
     let mut words = Vec::new();
+    if let Some(prefix) = &simple_command.prefix {
+        for item in &prefix.0 {
+            if let ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) = item {
+                if let Some(redirect_str) = normalize_io_redirect(redirect) {
+                    words.push(redirect_str);
+                }
+            }
+        }
+    }
     if let Some(word) = &simple_command.word_or_name {
         words.push(normalize_word(word)?);
     }
     if let Some(suffix) = &simple_command.suffix {
         for item in &suffix.0 {
-            if let ast::CommandPrefixOrSuffixItem::Word(word) = item {
-                words.push(normalize_word(word)?);
+            match item {
+                ast::CommandPrefixOrSuffixItem::Word(word) => {
+                    words.push(normalize_word(word)?);
+                }
+                ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
+                    if let Some(redirect_str) = normalize_io_redirect(redirect) {
+                        words.push(redirect_str);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -177,6 +194,34 @@ fn normalize_word_piece_into(
                 result.push_str(source);
             }
         }
+    }
+}
+
+fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<String> {
+    match redirect {
+        ast::IoRedirect::File(_fd, kind, target) => {
+            let target_word = match target {
+                ast::IoFileRedirectTarget::Filename(word) => word,
+                _ => return None,
+            };
+            let operator = match kind {
+                ast::IoFileRedirectKind::Read => "<",
+                ast::IoFileRedirectKind::Write => ">",
+                ast::IoFileRedirectKind::Append => ">>",
+                ast::IoFileRedirectKind::ReadAndWrite => "<>",
+                ast::IoFileRedirectKind::Clobber => ">|",
+                ast::IoFileRedirectKind::DuplicateInput => "<&",
+                ast::IoFileRedirectKind::DuplicateOutput => ">&",
+            };
+            let normalized = normalize_word(target_word)?;
+            Some(format!("{} {}", operator, normalized))
+        }
+        ast::IoRedirect::OutputAndError(word, append) => {
+            let operator = if *append { "&>>" } else { "&>" };
+            let normalized = normalize_word(word)?;
+            Some(format!("{} {}", operator, normalized))
+        }
+        ast::IoRedirect::HereDocument(_, _) | ast::IoRedirect::HereString(_, _) => None,
     }
 }
 
@@ -578,5 +623,23 @@ mod tests {
     fn test_invalid_syntax_returns_none() {
         let result = extract_commands("ls &&");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_redirect_write_includes_target_path() {
+        let commands = extract_commands("echo hello > /etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello > /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_redirect_append_includes_target_path() {
+        let commands = extract_commands("cat file >> /tmp/log").expect("parse failed");
+        assert_eq!(commands, vec!["cat file >> /tmp/log"]);
+    }
+
+    #[test]
+    fn test_fd_redirect_handled_gracefully() {
+        let commands = extract_commands("cmd 2>&1").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
     }
 }
