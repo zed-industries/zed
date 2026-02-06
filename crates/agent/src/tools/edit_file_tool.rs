@@ -187,18 +187,35 @@ fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
         return Some(SensitiveSettingsKind::Local);
     }
 
-    // Try canonicalizing the file itself first, then fall back to the parent
-    // directory so that new files being created inside the config directory
-    // are still detected.
-    let canonical_result = std::fs::canonicalize(path).or_else(|_| {
-        path.parent()
-            .map(std::fs::canonicalize)
-            .unwrap_or(Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no parent",
-            )))
-    });
-    if let Ok(canonical_path) = canonical_result {
+    // Walk up the path hierarchy until we find an ancestor that exists and can
+    // be canonicalized, then reconstruct the path from there. This handles
+    // cases where multiple levels of subdirectories don't exist yet (e.g.
+    // ~/.config/zed/new_subdir/evil.json).
+    let canonical_path = {
+        let mut current: Option<&Path> = Some(path);
+        let mut suffix_components = Vec::new();
+        loop {
+            match current {
+                Some(ancestor) => match std::fs::canonicalize(ancestor) {
+                    Ok(canonical) => {
+                        let mut result = canonical;
+                        for component in suffix_components.into_iter().rev() {
+                            result.push(component);
+                        }
+                        break Some(result);
+                    }
+                    Err(_) => {
+                        if let Some(file_name) = ancestor.file_name() {
+                            suffix_components.push(file_name.to_os_string());
+                        }
+                        current = ancestor.parent();
+                    }
+                },
+                None => break None,
+            }
+        }
+    };
+    if let Some(canonical_path) = canonical_path {
         let config_dir = std::fs::canonicalize(paths::config_dir())
             .unwrap_or_else(|_| paths::config_dir().to_path_buf());
         if canonical_path.starts_with(&config_dir) {
@@ -2331,6 +2348,44 @@ mod tests {
             error_msg.contains("save or revert the file manually"),
             "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error_msg
+        );
+    }
+
+    #[test]
+    fn test_sensitive_settings_kind_detects_nonexistent_subdirectory() {
+        let config_dir = paths::config_dir();
+        let path = config_dir.join("nonexistent_subdir_xyz").join("evil.json");
+        assert!(
+            matches!(
+                sensitive_settings_kind(&path),
+                Some(SensitiveSettingsKind::Global)
+            ),
+            "Path in non-existent subdirectory of config dir should be detected as sensitive: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn test_sensitive_settings_kind_detects_deeply_nested_nonexistent_subdirectory() {
+        let config_dir = paths::config_dir();
+        let path = config_dir.join("a").join("b").join("c").join("evil.json");
+        assert!(
+            matches!(
+                sensitive_settings_kind(&path),
+                Some(SensitiveSettingsKind::Global)
+            ),
+            "Path in deeply nested non-existent subdirectory of config dir should be detected as sensitive: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn test_sensitive_settings_kind_returns_none_for_non_config_path() {
+        let path = PathBuf::from("/tmp/not_a_config_dir/some_file.json");
+        assert!(
+            sensitive_settings_kind(&path).is_none(),
+            "Path outside config dir should not be detected as sensitive: {:?}",
+            path
         );
     }
 }
