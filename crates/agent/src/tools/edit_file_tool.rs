@@ -193,10 +193,12 @@ pub fn is_sensitive_settings_path(path: &Path) -> bool {
                 "no parent",
             )))
     });
-    if let Ok(canonical_path) = canonical_result
-        && canonical_path.starts_with(paths::config_dir())
-    {
-        return true;
+    if let Ok(canonical_path) = canonical_result {
+        let config_dir = std::fs::canonicalize(paths::config_dir())
+            .unwrap_or_else(|_| paths::config_dir().to_path_buf());
+        if canonical_path.starts_with(&config_dir) {
+            return true;
+        }
     }
 
     false

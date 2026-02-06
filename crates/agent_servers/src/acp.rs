@@ -1436,7 +1436,9 @@ impl acp::Client for ClientDelegate {
         // new files being created inside the config directory.
         let parent = arguments.path.parent().unwrap_or(&arguments.path);
         if let Ok(canonical_parent) = std::fs::canonicalize(parent) {
-            if canonical_parent.starts_with(paths::config_dir()) {
+            let config_dir = std::fs::canonicalize(paths::config_dir())
+                .unwrap_or_else(|_| paths::config_dir().to_path_buf());
+            if canonical_parent.starts_with(&config_dir) {
                 return Err(anyhow!(
                     "File write to '{}' is not allowed because it targets the global config \
                      directory. This path is protected and cannot be written via write_text_file. \
