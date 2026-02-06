@@ -309,6 +309,8 @@ pub struct LanguageModel {
 pub struct SupportedEffortLevel {
     pub name: Arc<str>,
     pub value: Arc<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
