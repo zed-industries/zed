@@ -1,6 +1,4 @@
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
@@ -76,7 +74,7 @@ impl AgentTool for DeletePathTool {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &path, settings);
+        let decision = decide_permission_for_path(Self::NAME, &path, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,

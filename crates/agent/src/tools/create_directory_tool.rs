@@ -10,9 +10,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
@@ -71,7 +69,7 @@ impl AgentTool for CreateDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &input.path, settings);
+        let decision = decide_permission_for_path(Self::NAME, &input.path, settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,

@@ -3,7 +3,7 @@ use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    decide_permission_for_path, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
 };
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
@@ -171,7 +171,7 @@ impl StreamingEditFileTool {
     ) -> Task<Result<()>> {
         let path_str = input.path.to_string_lossy();
         let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &path_str, settings);
+        let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
 
         match decision {
             ToolPermissionDecision::Allow => return Task::ready(Ok(())),

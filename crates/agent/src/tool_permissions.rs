@@ -3,6 +3,7 @@ use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, CompiledRegex, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
+use std::path::{Component, Path};
 use std::sync::LazyLock;
 use util::shell::ShellKind;
 
@@ -301,6 +302,59 @@ pub fn decide_permission_from_settings(
         settings.always_allow_tool_actions,
         ShellKind::system(),
     )
+}
+
+/// Normalizes a path by collapsing `.` and `..` segments without touching the filesystem.
+fn normalize_path(raw: &str) -> String {
+    let mut components: Vec<&str> = Vec::new();
+    for component in Path::new(raw).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                components.pop();
+            }
+            Component::Normal(segment) => {
+                if let Some(s) = segment.to_str() {
+                    components.push(s);
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    components.join("/")
+}
+
+/// Decides permission by checking both the raw input path and a simplified/canonicalized
+/// version. Returns the most restrictive decision (Deny > Confirm > Allow).
+pub fn decide_permission_for_path(
+    tool_name: &str,
+    raw_path: &str,
+    settings: &AgentSettings,
+) -> ToolPermissionDecision {
+    let raw_decision = decide_permission_from_settings(tool_name, raw_path, settings);
+
+    let simplified = normalize_path(raw_path);
+    if simplified == raw_path {
+        return raw_decision;
+    }
+
+    let simplified_decision = decide_permission_from_settings(tool_name, &simplified, settings);
+
+    most_restrictive(raw_decision, simplified_decision)
+}
+
+fn most_restrictive(
+    a: ToolPermissionDecision,
+    b: ToolPermissionDecision,
+) -> ToolPermissionDecision {
+    match (&a, &b) {
+        (ToolPermissionDecision::Deny(_), _) => a,
+        (_, ToolPermissionDecision::Deny(_)) => b,
+        (ToolPermissionDecision::Confirm, _) | (_, ToolPermissionDecision::Confirm) => {
+            ToolPermissionDecision::Confirm
+        }
+        _ => a,
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,4 @@
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -83,14 +81,13 @@ impl AgentTool for CopyPathTool {
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
 
-        let source_decision =
-            decide_permission_from_settings(Self::NAME, &input.source_path, settings);
+        let source_decision = decide_permission_for_path(Self::NAME, &input.source_path, settings);
         if let ToolPermissionDecision::Deny(reason) = source_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         let dest_decision =
-            decide_permission_from_settings(Self::NAME, &input.destination_path, settings);
+            decide_permission_for_path(Self::NAME, &input.destination_path, settings);
         if let ToolPermissionDecision::Deny(reason) = dest_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
