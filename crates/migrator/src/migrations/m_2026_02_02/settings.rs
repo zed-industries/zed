@@ -57,7 +57,7 @@ fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
         .or_insert_with(|| Value::Object(Default::default()));
 
     let Some(edit_predictions_obj) = edit_predictions.as_object_mut() else {
-        return Ok(());
+        anyhow::bail!("Expected edit_predictions to be an object");
     };
 
     if !edit_predictions_obj.contains_key("provider") {
