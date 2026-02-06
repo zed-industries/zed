@@ -291,13 +291,11 @@ pub async fn stream_response(
         _ => false,
     });
 
-    let request_initiator = if is_user_initiated { "user" } else { "agent" };
-
     let request_builder = copilot_request_headers(
         HttpRequest::builder().method(Method::POST).uri(&api_url),
         &api_key,
-    )
-    .header("X-Initiator", request_initiator);
+        Some(is_user_initiated),
+    );
 
     let request_builder = if is_vision_request {
         request_builder.header("Copilot-Vision-Request", "true")

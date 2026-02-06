@@ -704,11 +704,13 @@ async fn get_models(
     Ok(models)
 }
 
-/// Standard headers for Copilot API requests: Authorization, Content-Type, and Editor-Version.
-/// GitHub identifies Zed traffic by the user-agent header, so no integration ID is needed.
+/// Standard headers for Copilot API requests: Authorization, Content-Type, Editor-Version,
+/// and optionally X-Initiator. GitHub identifies Zed traffic by the user-agent header, so
+/// no integration ID is needed.
 pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
     api_token: &str,
+    is_user_initiated: Option<bool>,
 ) -> http_client::Builder {
     builder
         .header("Authorization", format!("Bearer {}", api_token))
@@ -720,6 +722,12 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
+        .when_some(is_user_initiated, |builder, is_user_initiated| {
+            builder.header(
+                "X-Initiator",
+                if is_user_initiated { "user" } else { "agent" },
+            )
+        })
 }
 
 async fn request_models(
@@ -732,6 +740,7 @@ async fn request_models(
             .method(Method::GET)
             .uri(models_url.as_ref()),
         &api_token,
+        None,
     )
     .header("x-github-api-version", "2025-05-01");
 
@@ -819,15 +828,13 @@ async fn stream_completion(
         _ => false,
     });
 
-    let request_initiator = if is_user_initiated { "user" } else { "agent" };
-
     let request_builder = copilot_request_headers(
         HttpRequest::builder()
             .method(Method::POST)
             .uri(completion_url.as_ref()),
         &api_key,
+        Some(is_user_initiated),
     )
-    .header("X-Initiator", request_initiator)
     .when(is_vision_request, |builder| {
         builder.header("Copilot-Vision-Request", is_vision_request.to_string())
     });
