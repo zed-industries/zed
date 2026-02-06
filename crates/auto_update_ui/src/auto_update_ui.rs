@@ -178,8 +178,8 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
         if should_show_notification {
             cx.update(|cx| {
                 let mut version = updater.read(cx).current_version();
-                version.build = semver::BuildMetadata::EMPTY;
                 version.pre = semver::Prerelease::EMPTY;
+                version.build = semver::BuildMetadata::EMPTY;
                 let app_name = ReleaseChannel::global(cx).display_name();
                 show_app_notification(
                     NotificationId::unique::<UpdateNotification>(),
