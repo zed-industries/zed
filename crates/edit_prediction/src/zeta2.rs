@@ -89,7 +89,7 @@ pub fn request_prediction_with_zeta2(
             let (request_id, output_text, usage) = if let Some(config) = &raw_config {
                 let prompt = format_zeta_prompt(&prompt_input, config.format);
                 let request = RawCompletionRequest {
-                    model: config.model_id.clone(),
+                    model: config.model_id.clone().unwrap_or_default(),
                     prompt,
                     temperature: None,
                     stop: vec![],

@@ -4,8 +4,7 @@ use std::borrow::Cow;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawCompletionRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    pub model: String,
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
