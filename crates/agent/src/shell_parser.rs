@@ -765,4 +765,28 @@ mod tests {
             extract_commands("{ echo hello; cat; } > /etc/passwd").expect("parse failed");
         assert_eq!(commands, vec!["echo hello", "cat > /etc/passwd"]);
     }
+
+    #[test]
+    fn test_quoted_redirect_target_is_normalized() {
+        let commands = extract_commands("echo hello > '/etc/passwd'").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello > /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_redirect_without_space() {
+        let commands = extract_commands("echo hello >/etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello > /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_clobber_redirect() {
+        let commands = extract_commands("cmd >| /tmp/file").expect("parse failed");
+        assert_eq!(commands, vec!["cmd >| /tmp/file"]);
+    }
+
+    #[test]
+    fn test_fd_to_fd_redirect_skipped() {
+        let commands = extract_commands("cmd 1>&2").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
 }
