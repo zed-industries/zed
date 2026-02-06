@@ -173,6 +173,8 @@ pub enum EditPredictionRejectReason {
     /// The current prediction was discarded
     #[default]
     Discarded,
+    /// The current prediction was explicitly rejected by the user
+    Rejected,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -295,11 +297,18 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportedEffortLevel {
+    pub name: Arc<str>,
+    pub value: Arc<str>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

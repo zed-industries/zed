@@ -702,7 +702,7 @@ impl SyntaxSnapshot {
                             text.as_rope(),
                             step_start_byte,
                             &included_ranges,
-                            Some(old_tree.clone()),
+                            Some(old_tree),
                             budget,
                         );
                         match result {
@@ -1450,7 +1450,7 @@ fn parse_text(
     text: &Rope,
     start_byte: usize,
     ranges: &[tree_sitter::Range],
-    old_tree: Option<tree_sitter::Tree>,
+    old_tree: Option<&tree_sitter::Tree>,
     parse_budget: &mut Option<Duration>,
 ) -> anyhow::Result<tree_sitter::Tree> {
     with_parser(|parser| {
@@ -1478,7 +1478,7 @@ fn parse_text(
                     chunks.seek(start_byte + offset);
                     chunks.next().unwrap_or("").as_bytes()
                 },
-                old_tree.as_ref(),
+                old_tree,
                 progress_callback
                     .as_mut()
                     .map(|progress_callback| tree_sitter::ParseOptions {

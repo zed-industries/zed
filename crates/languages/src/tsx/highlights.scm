@@ -262,6 +262,7 @@
   ] @operator
 )
 
+; Keywords
 [
   "abstract"
   "as"
@@ -383,24 +384,7 @@
     ":"
   ]) @punctuation.special)
 
-; Keywords
 
-[ "abstract"
-  "declare"
-  "enum"
-  "export"
-  "implements"
-  "interface"
-  "keyof"
-  "module"
-  "namespace"
-  "private"
-  "protected"
-  "public"
-  "type"
-  "readonly"
-  "override"
-] @keyword
 
 (jsx_opening_element
   [

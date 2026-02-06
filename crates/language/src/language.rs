@@ -66,8 +66,9 @@ use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
-    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
-    unified_diff_with_offsets, word_diff_ranges,
+    DiffOptions, apply_diff_patch, apply_reversed_diff_patch, line_diff, text_diff,
+    text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
+    word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -196,6 +197,13 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub container_name: Option<String>,
+}
+
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
 type DownloadableLanguageServerBinary = LocalBoxFuture<'static, Result<LanguageServerBinary>>;
 pub type LanguageServerBinaryLocations = LocalBoxFuture<
@@ -315,7 +323,7 @@ impl CachedLspAdapter {
 
     pub async fn labels_for_symbols(
         &self,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
@@ -343,6 +351,17 @@ impl CachedLspAdapter {
                 self.cached_binary.clone().lock_owned().await,
                 cx,
             )
+            .await
+    }
+
+    pub async fn settings_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .settings_schema(delegate, self.cached_binary.clone().lock_owned().await, cx)
             .await
     }
 
@@ -445,12 +464,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.iter().enumerate() {
-            let label = self.label_for_symbol(name, *kind, language).await;
+        for (ix, symbol) in symbols.iter().enumerate() {
+            let label = self.label_for_symbol(symbol, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
@@ -461,9 +480,8 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _: &str,
-        _: lsp::SymbolKind,
-        _: &Arc<Language>,
+        _symbol: &Symbol,
+        _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -478,6 +496,18 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     /// Returns the JSON schema of the initialization_options for the language server.
     async fn initialization_options_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Returns the JSON schema of the settings for the language server.
+    /// This corresponds to the `settings` field in `LspSettings`, which is used
+    /// to respond to `workspace/configuration` requests from the language server.
+    async fn settings_schema(
         self: Arc<Self>,
         _delegate: &Arc<dyn LspAdapterDelegate>,
         _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,

@@ -21,7 +21,7 @@ use util::rel_path::RelPath;
 use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
-use super::latest;
+use super::{latest, since_v0_6_0};
 
 pub const MIN_VERSION: Version = Version::new(0, 1, 0);
 
@@ -33,7 +33,7 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
          "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
-         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/github": since_v0_6_0::zed::extension::github,
          "zed:extension/nodejs": latest::zed::extension::nodejs,
          "zed:extension/platform": latest::zed::extension::platform,
          "zed:extension/slash-command": latest::zed::extension::slash_command,

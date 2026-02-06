@@ -938,19 +938,34 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Set scroll position to check later
             editor.set_scroll_position(gpui::Point::<f64>::new(5.5, 5.5), window, cx);
-            let original_scroll_position = editor.scroll_manager.anchor();
+            let original_scroll_position = editor
+                .scroll_manager
+                .native_anchor(&editor.display_snapshot(cx), cx);
 
             // Jump to the end of the document and adjust scroll
             editor.move_to_end(&MoveToEnd, window, cx);
             editor.set_scroll_position(gpui::Point::<f64>::new(-2.5, -0.5), window, cx);
-            assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
+            assert_ne!(
+                editor
+                    .scroll_manager
+                    .native_anchor(&editor.display_snapshot(cx), cx),
+                original_scroll_position
+            );
 
             let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), window, cx);
-            assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
+            assert_eq!(
+                editor
+                    .scroll_manager
+                    .native_anchor(&editor.display_snapshot(cx), cx),
+                original_scroll_position
+            );
 
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-            let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
+            let mut invalid_anchor = editor
+                .scroll_manager
+                .native_anchor(&editor.display_snapshot(cx), cx)
+                .anchor;
             invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
@@ -9017,6 +9032,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
             provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
+                cursor_position: None,
                 edit_preview: None,
             }))
         })
@@ -17598,15 +17614,13 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        struct Type1;
-        struct Type2;
-
         let buffer = editor.buffer.read(cx).snapshot(cx);
 
         let anchor_range =
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
-        editor.highlight_background::<Type1>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(0),
             &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -17616,7 +17630,8 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |_, _| Hsla::red(),
             cx,
         );
-        editor.highlight_background::<Type2>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(1),
             &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -17708,12 +17723,14 @@ async fn test_following(cx: &mut TestAppContext) {
                 &leader_entity,
                 window,
                 move |_, leader, event, window, cx| {
-                    leader.read(cx).add_event_to_update_proto(
-                        event,
-                        &mut update.borrow_mut(),
-                        window,
-                        cx,
-                    );
+                    leader.update(cx, |leader, cx| {
+                        leader.add_event_to_update_proto(
+                            event,
+                            &mut update.borrow_mut(),
+                            window,
+                            cx,
+                        );
+                    });
                 },
             )
             .detach();
@@ -17934,12 +17951,9 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
         let update = update_message.clone();
         |_, window, cx| {
             cx.subscribe_in(&leader, window, move |_, leader, event, window, cx| {
-                leader.read(cx).add_event_to_update_proto(
-                    event,
-                    &mut update.borrow_mut(),
-                    window,
-                    cx,
-                );
+                leader.update(cx, |leader, cx| {
+                    leader.add_event_to_update_proto(event, &mut update.borrow_mut(), window, cx);
+                });
             })
             .detach();
         }
@@ -23912,10 +23926,10 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 
     let selection_range = Point::new(1, 0)..Point::new(2, 0);
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        enum TestHighlight {}
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
-        editor.highlight_text::<TestHighlight>(
+        editor.highlight_text(
+            HighlightKey::Editor,
             vec![highlight_range.clone()],
             HighlightStyle::color(Hsla::green()),
             cx,
@@ -24823,6 +24837,108 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_breakpoint_phantom_indicator_collision_on_toggle(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Simulate hovering over row 0 with no existing breakpoint.
+    editor.update(cx, |editor, _cx| {
+        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+            display_row: DisplayRow(0),
+            is_active: true,
+            collides_with_existing_breakpoint: false,
+        });
+    });
+
+    // Toggle breakpoint on the same row (row 0) — collision should flip to true.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            indicator.collides_with_existing_breakpoint,
+            "Adding a breakpoint on the hovered row should set collision to true"
+        );
+    });
+
+    // Toggle again on the same row — breakpoint is removed, collision should flip back to false.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            !indicator.collides_with_existing_breakpoint,
+            "Removing a breakpoint on the hovered row should set collision to false"
+        );
+    });
+
+    // Now move cursor to row 2 while phantom indicator stays on row 0.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_down(&MoveDown, window, cx);
+    });
+
+    // Ensure phantom indicator is still on row 0, not colliding.
+    editor.update(cx, |editor, _cx| {
+        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+            display_row: DisplayRow(0),
+            is_active: true,
+            collides_with_existing_breakpoint: false,
+        });
+    });
+
+    // Toggle breakpoint on row 2 (cursor row) — phantom on row 0 should NOT be affected.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            !indicator.collides_with_existing_breakpoint,
+            "Toggling a breakpoint on a different row should not affect the phantom indicator"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {
@@ -24841,7 +24957,8 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -24919,7 +25036,8 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _window, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -27531,7 +27649,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    let ensure_result_id = |expected: Option<SharedString>, cx: &mut TestAppContext| {
+    let ensure_result_id = |expected_result_id: Option<SharedString>, cx: &mut TestAppContext| {
         project.update(cx, |project, cx| {
             let buffer_id = editor
                 .read(cx)
@@ -27545,7 +27663,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .lsp_store()
                 .read(cx)
                 .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
-            assert_eq!(expected, buffer_result_id);
+            assert_eq!(expected_result_id, buffer_result_id);
         });
     };
 
@@ -28346,7 +28464,8 @@ let result = variable * 2;",
             .map(|range| range.clone().to_anchors(&buffer_snapshot))
             .collect();
 
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &anchor_ranges,
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -29046,8 +29165,10 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
             e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
-            let style = e.style(cx).clone();
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), &style, cx)
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -29274,6 +29395,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                 cx,
             );
         });
+        cx.run_until_parked();
         cx.simulate_click(
             gpui::Point {
                 x: px(0.),
@@ -29281,9 +29403,9 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
             },
             Modifiers::none(),
         );
+        cx.run_until_parked();
         cx.update_editor(|e, _, cx| (e.scroll_position(cx), display_ranges(e, cx)))
     };
-
     assert_eq!(
         scroll_and_click(
             4.5, // impl Bar is halfway off the screen
@@ -30548,7 +30670,7 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
     cx.draw(
         gpui::point(px(0.), px(-10000.)),
         gpui::size(px(500.), px(3000.)),
-        |_, _| editor.clone(),
+        |_, _| editor.clone().into_any_element(),
     );
 
     // If we get here without hanging, the test passes

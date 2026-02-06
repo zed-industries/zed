@@ -306,6 +306,36 @@ impl NativeAgent {
         }))
     }
 
+    fn new_session(
+        &mut self,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Entity<AcpThread> {
+        // Create Thread
+        // Fetch default model from registry settings
+        let registry = LanguageModelRegistry::read_global(cx);
+        // Log available models for debugging
+        let available_count = registry.available_models(cx).count();
+        log::debug!("Total available models: {}", available_count);
+
+        let default_model = registry.default_model().and_then(|default_model| {
+            self.models
+                .model_from_id(&LanguageModels::model_id(&default_model.model))
+        });
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                self.project_context.clone(),
+                self.context_server_registry.clone(),
+                self.templates.clone(),
+                default_model,
+                cx,
+            )
+        });
+
+        self.register_session(thread, cx)
+    }
+
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
@@ -1128,15 +1158,26 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         update_settings_file(
             self.connection.0.read(cx).fs.clone(),
             cx,
-            move |settings, _cx| {
+            move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
+                let enable_thinking = settings
+                    .agent
+                    .as_ref()
+                    .and_then(|agent| {
+                        agent
+                            .default_model
+                            .as_ref()
+                            .map(|default_model| default_model.enable_thinking)
+                    })
+                    .unwrap_or_else(|| thread.read(cx).thinking_enabled());
                 settings
                     .agent
                     .get_or_insert_default()
                     .set_model(LanguageModelSelection {
                         provider: provider.into(),
                         model,
+                        enable_thinking,
                     });
             },
         );
@@ -1187,38 +1228,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        let agent = self.0.clone();
-        log::debug!("Creating new thread for project at: {:?}", cwd);
-
-        cx.spawn(async move |cx| {
-            log::debug!("Starting thread creation in async context");
-
-            // Create Thread
-            let thread = agent.update(cx, |agent, cx| {
-                // Fetch default model from registry settings
-                let registry = LanguageModelRegistry::read_global(cx);
-                // Log available models for debugging
-                let available_count = registry.available_models(cx).count();
-                log::debug!("Total available models: {}", available_count);
-
-                let default_model = registry.default_model().and_then(|default_model| {
-                    agent
-                        .models
-                        .model_from_id(&LanguageModels::model_id(&default_model.model))
-                });
-                cx.new(|cx| {
-                    Thread::new(
-                        project.clone(),
-                        agent.project_context.clone(),
-                        agent.context_server_registry.clone(),
-                        agent.templates.clone(),
-                        default_model,
-                        cx,
-                    )
-                })
-            });
-            Ok(agent.update(cx, |agent, cx| agent.register_session(thread, cx)))
-        })
+        log::debug!("Creating new thread for project at: {cwd:?}");
+        Task::ready(Ok(self
+            .0
+            .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
     fn supports_load_session(&self, _cx: &App) -> bool {

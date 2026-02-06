@@ -1,20 +1,10 @@
 # Vim Mode
 
-Zed includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn Zed's vim mode on or off, what tools and commands Zed provides to help you navigate and edit your code, and generally how to make the most of vim mode in Zed.
-
-You'll learn how to:
-
-- Understand the core differences between Zed's vim mode and traditional Vim
-- Enable or disable vim mode
-- Make the most of Zed-specific features within vim mode
-- Customize vim mode key bindings
-- Configure vim mode settings
-
-Whether you're new to vim mode or an experienced Vim user looking to optimize your Zed experience, this guide will help you harness the full power of modal editing in Zed.
+Zed includes a Vim emulation layer. This page covers enabling and disabling vim mode, key bindings, Zed-specific features, and configuration options.
 
 ## Zed's vim mode design
 
-Vim mode tries to offer a familiar experience to Vim users: it replicates the behavior of motions and commands precisely when it makes sense and uses Zed-specific functionality to provide an editing experience that "just works" without requiring configuration on your part.
+Vim mode replicates the behavior of motions and commands where it makes sense and uses Zed-specific functionality where Zed's approach is better. The goal is a familiar experience that works out of the box without requiring configuration.
 
 This includes support for semantic navigation, multiple cursors, or other features usually provided by plugins like surrounding text.
 
@@ -124,13 +114,15 @@ per language.
 
 These commands help you manage multiple cursors in Zed.
 
-| Command                                                      | Default Shortcut |
-| ------------------------------------------------------------ | ---------------- |
-| Add a cursor selecting the next copy of the current word     | `g l`            |
-| Add a cursor selecting the previous copy of the current word | `g L`            |
-| Skip latest word selection, and add next                     | `g >`            |
-| Skip latest word selection, and add previous                 | `g <`            |
-| Add a visual selection for every copy of the current word    | `g a`            |
+| Command                                                                           | Default Shortcut |
+| --------------------------------------------------------------------------------- | ---------------- |
+| Add a cursor selecting the next copy of the current word                          | `g l`            |
+| Add a cursor selecting the previous copy of the current word                      | `g L`            |
+| Add a cursor at the end of every line in the current visual selection             | `g A`            |
+| Add a cursor at the first character of every line in the current visual selection | `g I`            |
+| Add a visual selection for every copy of the current word                         | `g a`            |
+| Skip latest word selection, and add next                                          | `g >`            |
+| Skip latest word selection, and add previous                                      | `g <`            |
 
 ### Pane management
 
@@ -366,12 +358,6 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 - `:clank` for "cancel language server work"
 
 ## Customizing key bindings
-
-In this section, we'll learn how to customize the key bindings of Zed's vim mode. You'll learn:
-
-- How to select the correct context for your new key bindings.
-- Useful contexts for vim mode key bindings.
-- Common key bindings to customize for extra productivity.
 
 ### Selecting the correct context
 
