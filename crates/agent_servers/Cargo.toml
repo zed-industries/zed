@@ -72,3 +72,4 @@ acp_thread = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

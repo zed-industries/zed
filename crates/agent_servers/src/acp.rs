@@ -1217,7 +1217,7 @@ fn check_acp_tool_permission(
     // - ALLOW: ALL sub-commands must match at least one allow pattern
     //
     // If parsing failed (extracted_commands is None), disable always_allow so we
-    // don't auto-allow potentially dangerous unparseable commands.
+    // don't auto-allow potentially dangerous unparsable commands.
     let allow_enabled = !is_terminal || extracted_commands.is_some();
     let commands: Vec<String> = if is_terminal {
         extracted_commands.unwrap_or_else(|| vec![input.to_string()])

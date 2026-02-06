@@ -171,14 +171,19 @@ impl EditFileTool {
     }
 }
 
-/// Returns `true` if the given path targets a sensitive settings location:
+enum SensitiveSettingsKind {
+    Local,
+    Global,
+}
+
+/// Returns the kind of sensitive settings location this path targets, if any:
 /// either inside a `.zed/` local-settings directory or inside the global config dir.
-pub fn is_sensitive_settings_path(path: &Path) -> bool {
+fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
     if path.components().any(|component| {
         component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
     }) {
-        return true;
+        return Some(SensitiveSettingsKind::Local);
     }
 
     // TODO this is broken when remoting
@@ -197,11 +202,15 @@ pub fn is_sensitive_settings_path(path: &Path) -> bool {
         let config_dir = std::fs::canonicalize(paths::config_dir())
             .unwrap_or_else(|_| paths::config_dir().to_path_buf());
         if canonical_path.starts_with(&config_dir) {
-            return true;
+            return Some(SensitiveSettingsKind::Global);
         }
     }
 
-    false
+    None
+}
+
+pub fn is_sensitive_settings_path(path: &Path) -> bool {
+    sensitive_settings_kind(path).is_some()
 }
 
 pub fn authorize_file_edit(
@@ -221,12 +230,16 @@ pub fn authorize_file_edit(
 
     let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
 
-    if is_sensitive_settings_path(path) {
+    if let Some(kind) = sensitive_settings_kind(path) {
+        let label = match kind {
+            SensitiveSettingsKind::Local => "local settings",
+            SensitiveSettingsKind::Global => "settings",
+        };
         let context = crate::ToolPermissionContext {
             tool_name: EditFileTool::NAME.to_string(),
             input_value: path_str.to_string(),
         };
-        return event_stream.authorize(format!("{} (settings)", display_description), context, cx);
+        return event_stream.authorize(format!("{} ({})", display_description, label), context, cx);
     }
 
     let Ok(project_path) = thread.read_with(cx, |thread, cx| {
