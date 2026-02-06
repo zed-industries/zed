@@ -125,9 +125,7 @@ impl AgentTool for SubagentTool {
     type Input = SubagentToolInput;
     type Output = SubagentToolOutput;
 
-    fn name() -> &'static str {
-        "subagent"
-    }
+    const NAME: &'static str = acp_thread::SUBAGENT_TOOL_NAME;
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -249,15 +247,5 @@ mod tests {
             properties.get("allowed_tools").is_some(),
             "should have allowed_tools field"
         );
-    }
-
-    #[test]
-    fn test_subagent_tool_name() {
-        assert_eq!(SubagentTool::name(), "subagent");
-    }
-
-    #[test]
-    fn test_subagent_tool_kind() {
-        assert_eq!(SubagentTool::kind(), acp::ToolKind::Other);
     }
 }

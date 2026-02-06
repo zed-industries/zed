@@ -72,9 +72,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, BufferOffset, DiffbaselessAnchor, DiffbaselessAnchorRangeExt,
-    ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
-    MultiBufferSnapshot, PathKey, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, BufferOffset, ExcerptId, ExcerptRange, MBTextSummary, MultiBuffer,
+    MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
+    ToPoint,
 };
 pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
@@ -176,8 +176,8 @@ use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrol
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitGutterSetting, RelativeLineNumbers, SemanticTokenRules, Settings, SettingsLocation,
-    SettingsStore, update_settings_file,
+    GitGutterSetting, RelativeLineNumbers, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
@@ -228,6 +228,7 @@ use crate::{
     },
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
+    semantic_tokens::SemanticTokenState,
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
@@ -1336,10 +1337,7 @@ pub struct Editor {
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
-    semantic_token_rules: SemanticTokenRules,
-    semantic_tokens_enabled: bool,
-    update_semantic_tokens_task: Task<()>,
-    semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
+    semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
     refresh_outline_symbols_task: Task<()>,
     outline_symbols: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
@@ -2165,7 +2163,7 @@ impl Editor {
                         }
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
-                        editor.update_semantic_tokens(None, None, cx);
+                        editor.refresh_semantic_token_highlights(cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
@@ -2585,15 +2583,9 @@ impl Editor {
             on_local_selections_changed: None,
             suppress_selection_callback: false,
             applicable_language_settings: HashMap::default(),
-            semantic_token_rules: ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .semantic_token_rules
-                .clone(),
+            semantic_token_state: SemanticTokenState::new(cx, full_mode),
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
-            semantic_tokens_enabled: full_mode,
-            update_semantic_tokens_task: Task::ready(()),
-            semantic_tokens_fetched_for_buffers: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
             refresh_outline_symbols_task: Task::ready(()),
@@ -3141,7 +3133,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
-            semantic_tokens_enabled: self.semantic_tokens_enabled,
+            semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
@@ -6840,7 +6832,7 @@ impl Editor {
                 }))
             }
             CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context;
+                let context = actions_menu.actions.context.into();
 
                 workspace.update(cx, |workspace, cx| {
                     dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
@@ -8984,6 +8976,7 @@ impl Editor {
                     };
 
                     window.focus(&editor.focus_handle(cx), cx);
+                    editor.update_breakpoint_collision_on_toggle(row, &edit_action);
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
@@ -11847,7 +11840,19 @@ impl Editor {
             return;
         }
 
+        let snapshot = self.snapshot(window, cx);
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            if self.gutter_breakpoint_indicator.0.is_some() {
+                let display_row = anchor
+                    .to_point(snapshot.buffer_snapshot())
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row();
+                self.update_breakpoint_collision_on_toggle(
+                    display_row,
+                    &BreakpointEditAction::Toggle,
+                );
+            }
+
             if let Some(breakpoint) = breakpoint {
                 self.edit_breakpoint_at_anchor(
                     anchor,
@@ -11862,6 +11867,21 @@ impl Editor {
                     BreakpointEditAction::Toggle,
                     cx,
                 );
+            }
+        }
+    }
+
+    fn update_breakpoint_collision_on_toggle(
+        &mut self,
+        display_row: DisplayRow,
+        edit_action: &BreakpointEditAction,
+    ) {
+        if let Some(ref mut breakpoint_indicator) = self.gutter_breakpoint_indicator.0 {
+            if breakpoint_indicator.display_row == display_row
+                && matches!(edit_action, BreakpointEditAction::Toggle)
+            {
+                breakpoint_indicator.collides_with_existing_breakpoint =
+                    !breakpoint_indicator.collides_with_existing_breakpoint;
             }
         }
     }
@@ -23883,8 +23903,8 @@ impl Editor {
                     )
                     .detach();
                 }
-                self.semantic_tokens_fetched_for_buffers
-                    .remove(&buffer.read(cx).remote_id());
+                self.semantic_token_state
+                    .invalidate_buffer(&buffer.read(cx).remote_id());
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.colorize_brackets(false, cx);
@@ -23907,7 +23927,7 @@ impl Editor {
                     self.registered_buffers.remove(buffer_id);
                     self.tasks
                         .retain(|(task_buffer_id, _), _| task_buffer_id != buffer_id);
-                    self.semantic_tokens_fetched_for_buffers.remove(buffer_id);
+                    self.semantic_token_state.invalidate_buffer(buffer_id);
                     self.display_map.update(cx, |display_map, _| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
                     });
@@ -23936,8 +23956,8 @@ impl Editor {
                 for id in ids {
                     self.fetched_tree_sitter_chunks.remove(id);
                     if let Some(buffer) = snapshot.buffer_for_excerpt(*id) {
-                        self.semantic_tokens_fetched_for_buffers
-                            .remove(&buffer.remote_id());
+                        self.semantic_token_state
+                            .invalidate_buffer(&buffer.remote_id());
                     }
                 }
                 self.colorize_brackets(false, cx);
@@ -24113,21 +24133,12 @@ impl Editor {
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
-        let (
-            restore_unsaved_buffers,
-            show_inline_diagnostics,
-            inline_blame_enabled,
-            new_semantic_token_rules,
-        ) = {
+        let (restore_unsaved_buffers, show_inline_diagnostics, inline_blame_enabled) = {
             let project_settings = ProjectSettings::get_global(cx);
             (
                 project_settings.session.restore_unsaved_buffers,
                 project_settings.diagnostics.inline.enabled,
                 project_settings.git.inline_blame.enabled,
-                project_settings
-                    .global_lsp_settings
-                    .semantic_token_rules
-                    .clone(),
             )
         };
         self.buffer_serialization = self
@@ -24183,13 +24194,15 @@ impl Editor {
                 cx,
             );
 
-            if new_semantic_token_rules != self.semantic_token_rules {
-                self.semantic_token_rules = new_semantic_token_rules;
-                self.semantic_tokens_fetched_for_buffers.clear();
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.semantic_token_highlights.clear();
-                });
-                self.update_semantic_tokens(None, None, cx);
+            let new_semantic_token_rules = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .semantic_token_rules
+                .clone();
+            if self
+                .semantic_token_state
+                .update_rules(new_semantic_token_rules)
+            {
+                self.refresh_semantic_token_highlights(cx);
             }
         }
 
@@ -24206,6 +24219,8 @@ impl Editor {
             self.accent_data = new_accents;
             self.colorize_brackets(true, cx);
         }
+
+        self.refresh_semantic_token_highlights(cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -26390,6 +26405,8 @@ pub trait SemanticsProvider {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
+
     fn document_highlights(
         &self,
         buffer: &Entity<Buffer>,
@@ -26913,6 +26930,14 @@ impl SemanticsProvider for Entity<Project> {
 
             buffer.update(cx, |buffer, cx| {
                 project.any_language_server_supports_inlay_hints(buffer, cx)
+            })
+        })
+    }
+
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+        self.update(cx, |project, cx| {
+            buffer.update(cx, |buffer, cx| {
+                project.any_language_server_supports_semantic_tokens(buffer, cx)
             })
         })
     }

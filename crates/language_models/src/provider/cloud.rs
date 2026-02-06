@@ -19,11 +19,11 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh, PaymentRequiredError,
-    RateLimiter, RefreshLlmTokenListener,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -34,6 +34,7 @@ pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -577,6 +578,18 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_thinking
     }
 
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|effort_level| LanguageModelEffortLevel {
+                name: effort_level.name.clone().into(),
+                value: effort_level.value.clone().into(),
+                is_default: effort_level.is_default.unwrap_or(false),
+            })
+            .collect()
+    }
+
     fn supports_streaming_tools(&self) -> bool {
         self.model.supports_streaming_tools
     }
@@ -734,10 +747,14 @@ impl LanguageModel for CloudLanguageModel {
         } else {
             thinking_allowed && self.model.id.0.ends_with("-thinking")
         };
+        let effort = request
+            .thinking_effort
+            .as_ref()
+            .and_then(|effort| anthropic::Effort::from_str(effort).ok());
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
-                let request = into_anthropic(
+                let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
@@ -750,6 +767,12 @@ impl LanguageModel for CloudLanguageModel {
                         AnthropicModelMode::Default
                     },
                 );
+
+                if enable_thinking && effort.is_some() {
+                    request.thinking = Some(anthropic::Thinking::Adaptive);
+                    request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {

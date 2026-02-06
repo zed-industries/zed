@@ -64,9 +64,7 @@ impl AgentTool for DiagnosticsTool {
     type Input = DiagnosticsToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "diagnostics"
-    }
+    const NAME: &'static str = "diagnostics";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Read

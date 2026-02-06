@@ -36,18 +36,18 @@ use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{EditPredictionProvider, Settings as _, update_settings_file};
 use std::collections::{VecDeque, hash_map};
+use std::env;
 use text::Edit;
 use workspace::Workspace;
-use zeta_prompt::ZetaPromptInput;
-use zeta_prompt::ZetaVersion;
+use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
+use std::mem;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr as _;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::{env, mem};
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
@@ -105,9 +105,6 @@ const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
-static EDIT_PREDICTIONS_MODEL_ID: LazyLock<Option<String>> =
-    LazyLock::new(|| env::var("ZED_ZETA_MODEL").ok());
-
 pub struct Zeta2FeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
@@ -133,6 +130,15 @@ struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
 
 impl Global for EditPredictionStoreGlobal {}
 
+/// Configuration for using the raw Zeta2 endpoint.
+/// When set, the client uses the raw endpoint and constructs the prompt itself.
+/// The version is also used as the Baseten environment name (lowercased).
+#[derive(Clone)]
+pub struct Zeta2RawConfig {
+    pub model_id: Option<String>,
+    pub format: ZetaFormat,
+}
+
 pub struct EditPredictionStore {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
@@ -141,6 +147,7 @@ pub struct EditPredictionStore {
     projects: HashMap<EntityId, ProjectState>,
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
+    zeta2_raw_config: Option<Zeta2RawConfig>,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     pub ollama: Ollama,
@@ -148,16 +155,13 @@ pub struct EditPredictionStore {
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
-    custom_predict_edits_url: Option<Arc<Url>>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub enum EditPredictionModel {
     #[default]
     Zeta1,
-    Zeta2 {
-        version: ZetaVersion,
-    },
+    Zeta2,
     Sweep,
     Mercury,
     Ollama,
@@ -631,9 +635,8 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            edit_prediction_model: EditPredictionModel::Zeta2 {
-                version: Default::default(),
-            },
+            edit_prediction_model: EditPredictionModel::Zeta2,
+            zeta2_raw_config: Self::zeta2_raw_config_from_env(),
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
             ollama: Ollama::new(),
@@ -642,22 +645,28 @@ impl EditPredictionStore {
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
-            custom_predict_edits_url: match env::var("ZED_PREDICT_EDITS_URL") {
-                Ok(custom_url) => Url::parse(&custom_url).log_err().map(Into::into),
-                Err(_) => None,
-            },
         };
 
         this
     }
 
-    #[cfg(test)]
-    pub fn set_custom_predict_edits_url(&mut self, url: Url) {
-        self.custom_predict_edits_url = Some(url.into());
+    fn zeta2_raw_config_from_env() -> Option<Zeta2RawConfig> {
+        let version_str = env::var("ZED_ZETA_FORMAT").ok()?;
+        let format = ZetaFormat::parse(&version_str).ok()?;
+        let model_id = env::var("ZED_ZETA_MODEL").ok();
+        Some(Zeta2RawConfig { model_id, format })
     }
 
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
         self.edit_prediction_model = model;
+    }
+
+    pub fn set_zeta2_raw_config(&mut self, config: Zeta2RawConfig) {
+        self.zeta2_raw_config = Some(config);
+    }
+
+    pub fn zeta2_raw_config(&self) -> Option<&Zeta2RawConfig> {
+        self.zeta2_raw_config.as_ref()
     }
 
     pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
@@ -673,7 +682,7 @@ impl EditPredictionStore {
             EditPredictionModel::Mercury => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
             }
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict)
                     .with_disabled(IconName::ZedPredictDisabled)
                     .with_up(IconName::ZedPredictUp)
@@ -796,10 +805,7 @@ impl EditPredictionStore {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if matches!(
-            self.edit_prediction_model,
-            EditPredictionModel::Zeta2 { .. }
-        ) {
+        if matches!(self.edit_prediction_model, EditPredictionModel::Zeta2) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1223,7 +1229,7 @@ impl EditPredictionStore {
                 );
             }
             EditPredictionModel::Ollama => {}
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
         }
@@ -1359,16 +1365,14 @@ impl EditPredictionStore {
         cx: &App,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 { .. } => {
-                if self.custom_predict_edits_url.is_none() {
-                    self.reject_predictions_tx
-                        .unbounded_send(EditPredictionRejection {
-                            request_id: prediction_id.to_string(),
-                            reason,
-                            was_shown,
-                        })
-                        .log_err();
-                }
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                self.reject_predictions_tx
+                    .unbounded_send(EditPredictionRejection {
+                        request_id: prediction_id.to_string(),
+                        reason,
+                        was_shown,
+                    })
+                    .log_err();
             }
             EditPredictionModel::Sweep | EditPredictionModel::Ollama => {}
             EditPredictionModel::Mercury => {
@@ -1805,24 +1809,16 @@ impl EditPredictionStore {
                 .detach_and_log_err(cx);
             }
         }
-        let task = match self.edit_prediction_model {
+        let task = match &self.edit_prediction_model {
             EditPredictionModel::Zeta1 => {
                 if should_send_testing_zeta2_request() {
                     let mut zeta2_inputs = inputs.clone();
                     zeta2_inputs.trigger = PredictEditsRequestTrigger::Testing;
-                    zeta2::request_prediction_with_zeta2(
-                        self,
-                        zeta2_inputs,
-                        Default::default(),
-                        cx,
-                    )
-                    .detach();
+                    zeta2::request_prediction_with_zeta2(self, zeta2_inputs, cx).detach();
                 }
                 zeta1::request_prediction_with_zeta1(self, inputs, cx)
             }
-            EditPredictionModel::Zeta2 { version } => {
-                zeta2::request_prediction_with_zeta2(self, inputs, version, cx)
-            }
+            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
             EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
@@ -1976,7 +1972,6 @@ impl EditPredictionStore {
 
     pub(crate) async fn send_v3_request(
         input: ZetaPromptInput,
-        prompt_version: ZetaVersion,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
@@ -1986,12 +1981,7 @@ impl EditPredictionStore {
             .http_client()
             .build_zed_llm_url("/predict_edits/v3", &[])?;
 
-        let request = PredictEditsV3Request {
-            input,
-            model: EDIT_PREDICTIONS_MODEL_ID.clone(),
-            prompt_version,
-            trigger,
-        };
+        let request = PredictEditsV3Request { input, trigger };
 
         Self::send_api_request(
             |builder| {

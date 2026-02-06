@@ -4008,11 +4008,21 @@ impl EditorElement {
                 .id(block_id)
                 .w_full()
                 .h((*height as f32) * line_height)
-                .bg(checkerboard(cx.theme().colors().panel_background, {
-                    let target_size = 16.0;
-                    let scale = window.scale_factor();
-                    Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale)
-                }))
+                // the checkerboard pattern is semi-transparent, so we render a
+                // solid background to prevent indent guides peeking through
+                .bg(cx.theme().colors().editor_background)
+                .child(
+                    div()
+                        .size_full()
+                        .bg(checkerboard(cx.theme().colors().panel_background, {
+                            let target_size = 16.0;
+                            let scale = window.scale_factor();
+                            Self::checkerboard_size(
+                                f32::from(line_height) * scale,
+                                target_size * scale,
+                            )
+                        })),
+                )
                 .into_any(),
         };
 

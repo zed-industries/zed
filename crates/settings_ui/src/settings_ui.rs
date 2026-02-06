@@ -1144,7 +1144,7 @@ fn render_settings_item(
         .child(
             v_flex()
                 .relative()
-                .w_1_2()
+                .w_3_4()
                 .child(
                     h_flex()
                         .w_full()
