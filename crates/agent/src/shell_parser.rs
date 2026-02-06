@@ -328,11 +328,15 @@ fn extract_commands_from_io_redirect(
     commands: &mut Vec<String>,
 ) -> Option<()> {
     match redirect {
-        ast::IoRedirect::File(_fd, _kind, target) => {
-            if let ast::IoFileRedirectTarget::ProcessSubstitution(_kind, subshell) = target {
+        ast::IoRedirect::File(_fd, _kind, target) => match target {
+            ast::IoFileRedirectTarget::ProcessSubstitution(_kind, subshell) => {
                 extract_commands_from_compound_list(&subshell.list, commands)?;
             }
-        }
+            ast::IoFileRedirectTarget::Filename(word) => {
+                extract_commands_from_word(word, commands);
+            }
+            _ => {}
+        },
         ast::IoRedirect::HereDocument(_fd, _here_doc) => {}
         ast::IoRedirect::HereString(_fd, word) => {
             extract_commands_from_word(word, commands);
@@ -817,7 +821,8 @@ mod tests {
     #[test]
     fn test_redirect_target_with_command_substitution() {
         let commands = extract_commands("echo > $(mktemp)").expect("parse failed");
-        assert!(commands.iter().any(|c| c.starts_with("echo >")));
+        assert!(commands.contains(&"echo > $(mktemp)".to_string()));
+        assert!(commands.contains(&"mktemp".to_string()));
     }
 
     #[test]
