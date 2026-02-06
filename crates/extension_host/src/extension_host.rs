@@ -189,7 +189,9 @@ actions!(
     zed,
     [
         /// Reloads all installed extensions.
-        ReloadExtensions
+        ReloadExtensions,
+        /// Copies installed extensions to the clipboard for bug reports.
+        CopyInstalledExtensionsIntoClipboard
     ]
 );
 
@@ -427,6 +429,28 @@ impl ExtensionStore {
 
     pub fn installed_extensions(&self) -> &BTreeMap<Arc<str>, ExtensionIndexEntry> {
         &self.extension_index.extensions
+    }
+
+    fn format_installed_extensions_for_clipboard(&self) -> String {
+        let mut lines = Vec::with_capacity(self.extension_index.extensions.len());
+
+        for (extension_id, entry) in self.extension_index.extensions.iter() {
+            let dev_suffix = if entry.dev { " (dev)" } else { "" };
+            lines.push(format!(
+                "{} ({}) v{}{}",
+                entry.manifest.name, extension_id, entry.manifest.version, dev_suffix
+            ));
+        }
+
+        if lines.is_empty() {
+            return "Installed extensions: none".to_string();
+        }
+
+        format!(
+            "Installed extensions ({}):\n{}",
+            lines.len(),
+            lines.join("\n")
+        )
     }
 
     pub fn dev_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
@@ -1844,6 +1868,12 @@ impl ExtensionStore {
         self.remote_clients.push(client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
+}
+
+pub fn installed_extensions_for_clipboard(cx: &App) -> String {
+    ExtensionStore::try_global(cx)
+        .map(|store| store.read(cx).format_installed_extensions_for_clipboard())
+        .unwrap_or_else(|| "Installed extensions: unavailable".to_string())
 }
 
 fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
