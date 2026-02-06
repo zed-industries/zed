@@ -938,19 +938,34 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Set scroll position to check later
             editor.set_scroll_position(gpui::Point::<f64>::new(5.5, 5.5), window, cx);
-            let original_scroll_position = editor.scroll_manager.anchor();
+            let original_scroll_position = editor
+                .scroll_manager
+                .native_anchor(&editor.display_snapshot(cx), cx);
 
             // Jump to the end of the document and adjust scroll
             editor.move_to_end(&MoveToEnd, window, cx);
             editor.set_scroll_position(gpui::Point::<f64>::new(-2.5, -0.5), window, cx);
-            assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
+            assert_ne!(
+                editor
+                    .scroll_manager
+                    .native_anchor(&editor.display_snapshot(cx), cx),
+                original_scroll_position
+            );
 
             let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), window, cx);
-            assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
+            assert_eq!(
+                editor
+                    .scroll_manager
+                    .native_anchor(&editor.display_snapshot(cx), cx),
+                original_scroll_position
+            );
 
             // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-            let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
+            let mut invalid_anchor = editor
+                .scroll_manager
+                .native_anchor(&editor.display_snapshot(cx), cx)
+                .anchor;
             invalid_anchor.text_anchor.buffer_id = BufferId::new(999).ok();
             let invalid_point = Point::new(9999, 0);
             editor.navigate(
@@ -9017,6 +9032,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
             provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
+                cursor_position: None,
                 edit_preview: None,
             }))
         })
@@ -13979,6 +13995,185 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 }
 
 #[gpui::test]
+async fn test_signature_help_delay_only_for_auto(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let delay_ms = 500;
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
+                settings.editor.show_signature_help_after_edits = Some(false);
+                settings.editor.hover_popover_delay = Some(DelayMs(delay_ms));
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![lsp::ParameterInformation {
+                label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                documentation: None,
+            }]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+
+    cx.set_state(indoc! {"
+        fn main() {
+            sample(ˇ);
+        }
+
+        fn sample(param1: u8) {}
+    "});
+
+    // Manual trigger should show immediately without delay
+    cx.update_editor(|editor, window, cx| {
+        editor.show_signature_help(&ShowSignatureHelp, window, cx);
+    });
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.run_until_parked();
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.signature_help_state.is_shown(),
+            "Manual trigger should show signature help without delay"
+        );
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+    });
+    cx.run_until_parked();
+    cx.editor(|editor, _, _| {
+        assert!(!editor.signature_help_state.is_shown());
+    });
+
+    // Auto trigger (cursor movement into brackets) should respect delay
+    cx.set_state(indoc! {"
+        fn main() {
+            sampleˇ();
+        }
+
+        fn sample(param1: u8) {}
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.move_right(&MoveRight, window, cx);
+    });
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
+    cx.run_until_parked();
+    cx.editor(|editor, _, _| {
+        assert!(
+            !editor.signature_help_state.is_shown(),
+            "Auto trigger should wait for delay before showing signature help"
+        );
+    });
+
+    cx.executor()
+        .advance_clock(Duration::from_millis(delay_ms + 50));
+    cx.run_until_parked();
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.signature_help_state.is_shown(),
+            "Auto trigger should show signature help after delay elapsed"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_signature_help_after_edits_no_delay(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let delay_ms = 500;
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(false);
+                settings.editor.show_signature_help_after_edits = Some(true);
+                settings.editor.hover_popover_delay = Some(DelayMs(delay_ms));
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "(".to_string(),
+                    end: ")".to_string(),
+                    close: true,
+                    surround: true,
+                    newline: true,
+                }],
+                ..BracketPairConfig::default()
+            },
+            autoclose_before: "})".to_string(),
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.language_registry().add(language.clone());
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![lsp::SignatureInformation {
+            label: "fn sample(param1: u8)".to_string(),
+            documentation: None,
+            parameters: Some(vec![lsp::ParameterInformation {
+                label: lsp::ParameterLabel::Simple("param1: u8".to_string()),
+                documentation: None,
+            }]),
+            active_parameter: None,
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+
+    cx.set_state(indoc! {"
+        fn main() {
+            sampleˇ
+        }
+    "});
+
+    // Typing bracket should show signature help immediately without delay
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("(", window, cx);
+    });
+    handle_signature_help_request(&mut cx, mocked_response).await;
+    cx.run_until_parked();
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.signature_help_state.is_shown(),
+            "show_signature_help_after_edits should show signature help without delay"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -17720,15 +17915,13 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        struct Type1;
-        struct Type2;
-
         let buffer = editor.buffer.read(cx).snapshot(cx);
 
         let anchor_range =
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
-        editor.highlight_background::<Type1>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(0),
             &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -17738,7 +17931,8 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |_, _| Hsla::red(),
             cx,
         );
-        editor.highlight_background::<Type2>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(1),
             &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -17830,12 +18024,14 @@ async fn test_following(cx: &mut TestAppContext) {
                 &leader_entity,
                 window,
                 move |_, leader, event, window, cx| {
-                    leader.read(cx).add_event_to_update_proto(
-                        event,
-                        &mut update.borrow_mut(),
-                        window,
-                        cx,
-                    );
+                    leader.update(cx, |leader, cx| {
+                        leader.add_event_to_update_proto(
+                            event,
+                            &mut update.borrow_mut(),
+                            window,
+                            cx,
+                        );
+                    });
                 },
             )
             .detach();
@@ -18056,12 +18252,9 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
         let update = update_message.clone();
         |_, window, cx| {
             cx.subscribe_in(&leader, window, move |_, leader, event, window, cx| {
-                leader.read(cx).add_event_to_update_proto(
-                    event,
-                    &mut update.borrow_mut(),
-                    window,
-                    cx,
-                );
+                leader.update(cx, |leader, cx| {
+                    leader.add_event_to_update_proto(event, &mut update.borrow_mut(), window, cx);
+                });
             })
             .detach();
         }
@@ -24034,10 +24227,10 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 
     let selection_range = Point::new(1, 0)..Point::new(2, 0);
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        enum TestHighlight {}
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
-        editor.highlight_text::<TestHighlight>(
+        editor.highlight_text(
+            HighlightKey::Editor,
             vec![highlight_range.clone()],
             HighlightStyle::color(Hsla::green()),
             cx,
@@ -24945,6 +25138,108 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_breakpoint_phantom_indicator_collision_on_toggle(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Simulate hovering over row 0 with no existing breakpoint.
+    editor.update(cx, |editor, _cx| {
+        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+            display_row: DisplayRow(0),
+            is_active: true,
+            collides_with_existing_breakpoint: false,
+        });
+    });
+
+    // Toggle breakpoint on the same row (row 0) — collision should flip to true.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            indicator.collides_with_existing_breakpoint,
+            "Adding a breakpoint on the hovered row should set collision to true"
+        );
+    });
+
+    // Toggle again on the same row — breakpoint is removed, collision should flip back to false.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            !indicator.collides_with_existing_breakpoint,
+            "Removing a breakpoint on the hovered row should set collision to false"
+        );
+    });
+
+    // Now move cursor to row 2 while phantom indicator stays on row 0.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_down(&MoveDown, window, cx);
+    });
+
+    // Ensure phantom indicator is still on row 0, not colliding.
+    editor.update(cx, |editor, _cx| {
+        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+            display_row: DisplayRow(0),
+            is_active: true,
+            collides_with_existing_breakpoint: false,
+        });
+    });
+
+    // Toggle breakpoint on row 2 (cursor row) — phantom on row 0 should NOT be affected.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            !indicator.collides_with_existing_breakpoint,
+            "Toggling a breakpoint on a different row should not affect the phantom indicator"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {
@@ -24963,7 +25258,8 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -25041,7 +25337,8 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _window, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -27653,7 +27950,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    let ensure_result_id = |expected: Option<SharedString>, cx: &mut TestAppContext| {
+    let ensure_result_id = |expected_result_id: Option<SharedString>, cx: &mut TestAppContext| {
         project.update(cx, |project, cx| {
             let buffer_id = editor
                 .read(cx)
@@ -27667,7 +27964,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .lsp_store()
                 .read(cx)
                 .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
-            assert_eq!(expected, buffer_result_id);
+            assert_eq!(expected_result_id, buffer_result_id);
         });
     };
 
@@ -27683,7 +27980,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         .next()
         .await
         .expect("should have sent the first diagnostics pull request");
-    ensure_result_id(Some(SharedString::new("1")), cx);
+    ensure_result_id(Some(SharedString::new_static("1")), cx);
 
     // Editing should trigger diagnostics
     editor.update_in(cx, |editor, window, cx| {
@@ -27696,7 +27993,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Editing should trigger diagnostic request"
     );
-    ensure_result_id(Some(SharedString::new("2")), cx);
+    ensure_result_id(Some(SharedString::new_static("2")), cx);
 
     // Moving cursor should not trigger diagnostic request
     editor.update_in(cx, |editor, window, cx| {
@@ -27711,7 +28008,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Cursor movement should not trigger diagnostic request"
     );
-    ensure_result_id(Some(SharedString::new("2")), cx);
+    ensure_result_id(Some(SharedString::new_static("2")), cx);
     // Multiple rapid edits should be debounced
     for _ in 0..5 {
         editor.update_in(cx, |editor, window, cx| {
@@ -28468,7 +28765,8 @@ let result = variable * 2;",
             .map(|range| range.clone().to_anchors(&buffer_snapshot))
             .collect();
 
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &anchor_ranges,
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -29168,8 +29466,10 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
             e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
-            let style = e.style(cx).clone();
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), &style, cx)
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -29396,6 +29696,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                 cx,
             );
         });
+        cx.run_until_parked();
         cx.simulate_click(
             gpui::Point {
                 x: px(0.),
@@ -29403,9 +29704,9 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
             },
             Modifiers::none(),
         );
+        cx.run_until_parked();
         cx.update_editor(|e, _, cx| (e.scroll_position(cx), display_ranges(e, cx)))
     };
-
     assert_eq!(
         scroll_and_click(
             4.5, // impl Bar is halfway off the screen
@@ -30670,7 +30971,7 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
     cx.draw(
         gpui::point(px(0.), px(-10000.)),
         gpui::size(px(500.), px(3000.)),
-        |_, _| editor.clone(),
+        |_, _| editor.clone().into_any_element(),
     );
 
     // If we get here without hanging, the test passes
@@ -32158,5 +32459,448 @@ async fn test_move_to_start_end_of_larger_syntax_node_with_selections_and_string
             "#},
             cx,
         );
+    });
+}
+
+#[gpui::test]
+async fn test_select_to_start_end_of_larger_syntax_node(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    // Test Group 1.1: Cursor in String - First Jump (Select to End)
+    let text = r#"let msg = "foo bar baz";"#.unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 14)..DisplayPoint::new(DisplayRow(0), 14)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = "fooˇ bar baz";"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = "foo« bar bazˇ»";"#}, cx);
+    });
+
+    // Test Group 1.2: Cursor in String - Second Jump (Select to End)
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = "foo« bar baz"ˇ»;"#}, cx);
+    });
+
+    // Test Group 1.3: Cursor in String - Third Jump (Select to End)
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = "foo« bar baz";ˇ»"#}, cx);
+    });
+
+    // Test Group 1.4: Cursor in String - First Jump (Select to Start)
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 18)..DisplayPoint::new(DisplayRow(0), 18)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = "foo barˇ baz";"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_start_of_larger_syntax_node(&SelectToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = "«ˇfoo bar» baz";"#}, cx);
+    });
+
+    // Test Group 1.5: Cursor in String - Second Jump (Select to Start)
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_start_of_larger_syntax_node(&SelectToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let msg = «ˇ"foo bar» baz";"#}, cx);
+    });
+
+    // Test Group 1.6: Cursor in String - Third Jump (Select to Start)
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_start_of_larger_syntax_node(&SelectToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"«ˇlet msg = "foo bar» baz";"#}, cx);
+    });
+
+    // Test Group 2.1: Let Statement Progression (Select to End)
+    let text = r#"
+fn main() {
+    let x = "hello";
+}
+"#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 9)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let xˇ = "hello";
+                }
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r##"
+                fn main() {
+                    let x« = "hello";ˇ»
+                }
+            "##},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn main() {
+                    let x« = "hello";
+                }ˇ»
+            "#},
+            cx,
+        );
+    });
+
+    // Test Group 2.2a: From Inside String Content Node To String Content Boundary
+    let text = r#"let x = "hello";"#.unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 12)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "helˇlo";"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_start_of_larger_syntax_node(&SelectToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "«ˇhel»lo";"#}, cx);
+    });
+
+    // Test Group 2.2b: From Edge of String Content Node To String Literal Boundary
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 9)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "ˇhello";"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_start_of_larger_syntax_node(&SelectToStartOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = «ˇ"»hello";"#}, cx);
+    });
+
+    // Test Group 3.1: Create Selection from Cursor (Select to End)
+    let text = r#"let x = "hello world";"#.unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 14)..DisplayPoint::new(DisplayRow(0), 14)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "helloˇ world";"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "hello« worldˇ»";"#}, cx);
+    });
+
+    // Test Group 3.2: Extend Existing Selection (Select to End)
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 11)..DisplayPoint::new(DisplayRow(0), 17)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "he«llo woˇ»rld";"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "he«llo worldˇ»";"#}, cx);
+    });
+
+    // Test Group 4.1: Multiple Cursors - All Expand to Different Syntax Nodes
+    let text = r#"let x = "hello"; let y = 42;"#.unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                // Cursor inside string content
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 12),
+                // Cursor at let statement semicolon
+                DisplayPoint::new(DisplayRow(0), 18)..DisplayPoint::new(DisplayRow(0), 18),
+                // Cursor inside integer literal
+                DisplayPoint::new(DisplayRow(0), 26)..DisplayPoint::new(DisplayRow(0), 26),
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "helˇlo"; lˇet y = 4ˇ2;"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let x = "hel«loˇ»"; l«et y = 42;ˇ»"#}, cx);
+    });
+
+    // Test Group 4.2: Multiple Cursors on Separate Lines
+    let text = r#"
+let x = "hello";
+let y = 42;
+"#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 12),
+                DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 9),
+            ]);
+        });
+    });
+
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let x = "helˇlo";
+                let y = 4ˇ2;
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let x = "hel«loˇ»";
+                let y = 4«2ˇ»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test Group 5.1: Nested Function Calls
+    let text = r#"let result = foo(bar("arg"));"#.unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 22)..DisplayPoint::new(DisplayRow(0), 22)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let result = foo(bar("ˇarg"));"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let result = foo(bar("«argˇ»"));"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let result = foo(bar("«arg"ˇ»));"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let result = foo(bar("«arg")ˇ»);"#}, cx);
+    });
+
+    // Test Group 6.1: Block Comments
+    let text = r#"let x = /* multi
+                             line
+                             comment */;"#
+        .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 16)..DisplayPoint::new(DisplayRow(0), 16)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+let x = /* multiˇ
+line
+comment */;"#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+let x = /* multi«
+line
+comment */ˇ»;"#},
+            cx,
+        );
+    });
+
+    // Test Group 6.2: Array/Vector Literals
+    let text = r#"let arr = [1, 2, 3];"#.unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language.clone(), cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 11)..DisplayPoint::new(DisplayRow(0), 11)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let arr = [ˇ1, 2, 3];"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let arr = [«1ˇ», 2, 3];"#}, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_to_end_of_larger_syntax_node(&SelectToEndOfLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, indoc! {r#"let arr = [«1, 2, 3]ˇ»;"#}, cx);
     });
 }

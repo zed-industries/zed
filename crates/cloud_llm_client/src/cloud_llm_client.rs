@@ -74,39 +74,6 @@ impl FromStr for UsageLimit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Plan {
-    V2(PlanV2),
-}
-
-impl Plan {
-    pub fn is_v2(&self) -> bool {
-        matches!(self, Self::V2(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanV2 {
-    #[default]
-    ZedFree,
-    ZedPro,
-    ZedProTrial,
-}
-
-impl FromStr for PlanV2 {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "zed_free" => Ok(Self::ZedFree),
-            "zed_pro" => Ok(Self::ZedPro),
-            "zed_pro_trial" => Ok(Self::ZedProTrial),
-            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
-        }
-    }
-}
-
 #[derive(
     Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize, EnumString, EnumIter, Display,
 )]
@@ -142,6 +109,7 @@ pub struct PredictEditsBody {
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PredictEditsRequestTrigger {
+    Testing,
     Diagnostics,
     Cli,
     #[default]
@@ -205,6 +173,8 @@ pub enum EditPredictionRejectReason {
     /// The current prediction was discarded
     #[default]
     Discarded,
+    /// The current prediction was explicitly rejected by the user
+    Rejected,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -327,11 +297,20 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportedEffortLevel {
+    pub name: Arc<str>,
+    pub value: Arc<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -355,22 +334,7 @@ pub struct UsageData {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
     use super::*;
-
-    #[test]
-    fn test_plan_v2_deserialize_snake_case() {
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_free")).unwrap();
-        assert_eq!(plan, PlanV2::ZedFree);
-
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, PlanV2::ZedPro);
-
-        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, PlanV2::ZedProTrial);
-    }
 
     #[test]
     fn test_usage_limit_from_str() {

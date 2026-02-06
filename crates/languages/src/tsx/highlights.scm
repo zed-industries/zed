@@ -262,37 +262,59 @@
   ] @operator
 )
 
+; Keywords
 [
+  "abstract"
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
+  "declare"
   "default"
   "delete"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
-  "import"
+  "implements"
   "in"
+  "infer"
   "instanceof"
   "is"
-  "let"
+  "keyof"
+  "module"
+  "namespace"
   "new"
   "of"
+  "override"
+  "private"
+  "protected"
+  "public"
+  "readonly"
   "satisfies"
   "set"
   "static"
   "target"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+  "enum"
+  "interface"
+  "type"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"
@@ -362,24 +384,7 @@
     ":"
   ]) @punctuation.special)
 
-; Keywords
 
-[ "abstract"
-  "declare"
-  "enum"
-  "export"
-  "implements"
-  "interface"
-  "keyof"
-  "module"
-  "namespace"
-  "private"
-  "protected"
-  "public"
-  "type"
-  "readonly"
-  "override"
-] @keyword
 
 (jsx_opening_element
   [

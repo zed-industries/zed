@@ -2,20 +2,24 @@ use gh_workflow::*;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
-    run_tests::{orchestrate, tests_pass},
+    run_tests::{orchestrate_without_package_filter, tests_pass},
     runners,
     steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
+
+// This should follow the set target in crates/extension/src/extension_builder.rs
+const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
 
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
 
-    let orchestrate = orchestrate(&[&should_check_rust, &should_check_extension]);
+    let orchestrate =
+        orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);
 
     let jobs = [
         orchestrate,
@@ -32,6 +36,8 @@ pub(crate) fn extension_tests() -> Workflow {
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("ZED_EXTENSION_CLI_SHA", ZED_EXTENSION_CLI_SHA))
+        .add_env(("RUSTUP_TOOLCHAIN", "stable"))
+        .add_env(("CARGO_BUILD_TARGET", EXTENSION_RUST_TARGET))
         .map(|workflow| {
             jobs.into_iter()
                 .chain([tests_pass])
@@ -41,6 +47,10 @@ pub(crate) fn extension_tests() -> Workflow {
         })
 }
 
+fn install_rust_target() -> Step<Run> {
+    named::bash(format!("rustup target add {EXTENSION_RUST_TARGET}",))
+}
+
 fn run_clippy() -> Step<Run> {
     named::bash("cargo clippy --release --all-targets --all-features -- --deny warnings")
 }
@@ -48,15 +58,19 @@ fn run_clippy() -> Step<Run> {
 fn check_rust() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_MEDIUM)
-        .timeout_minutes(3u32)
+        .runs_on(runners::LINUX_LARGE)
+        .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
+        .add_step(install_rust_target())
         .add_step(steps::cargo_fmt())
         .add_step(run_clippy())
         .add_step(steps::cargo_install_nextest())
         .add_step(
-            steps::cargo_nextest(runners::Platform::Linux).add_env(("NEXTEST_NO_TESTS", "warn")),
+            steps::cargo_nextest(runners::Platform::Linux)
+                // Set the target to the current platform again
+                .with_target("$(rustc -vV | sed -n 's|host: ||p')")
+                .add_env(("NEXTEST_NO_TESTS", "warn")),
         );
 
     named::job(job)
@@ -67,7 +81,7 @@ pub(crate) fn check_extension() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
-        .timeout_minutes(2u32)
+        .timeout_minutes(4u32)
         .add_step(steps::checkout_repo())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))

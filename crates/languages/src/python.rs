@@ -8,7 +8,7 @@ use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
+use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -550,11 +550,11 @@ impl LspAdapter for PyrightLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -1708,11 +1708,11 @@ impl LspAdapter for PyLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -2000,11 +2000,11 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();

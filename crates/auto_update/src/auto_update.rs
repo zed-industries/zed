@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use client::Client;
 use db::kvp::KEY_VALUE_STORE;
+use futures_lite::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
     actions,
@@ -19,16 +20,18 @@ use std::{
         self,
         consts::{ARCH, OS},
     },
+    ffi::OsStr,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use util::command::new_smol_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
 actions!(
     auto_update,
@@ -467,6 +470,16 @@ impl AutoUpdater {
             download_remote_server_binary(&version_path, release, client).await?;
         }
 
+        if let Err(error) =
+            cleanup_remote_server_cache(&platform_dir, &version_path, REMOTE_SERVER_CACHE_LIMIT)
+                .await
+        {
+            log::warn!(
+                "Failed to clean up remote server cache in {:?}: {error:#}",
+                platform_dir
+            );
+        }
+
         Ok(version_path)
     }
 
@@ -781,6 +794,63 @@ async fn download_remote_server_binary(
     );
     smol::io::copy(response.body_mut(), &mut temp_file).await?;
     smol::fs::rename(&temp, &target_path).await?;
+
+    Ok(())
+}
+
+async fn cleanup_remote_server_cache(
+    platform_dir: &Path,
+    keep_path: &Path,
+    limit: usize,
+) -> Result<()> {
+    if limit == 0 {
+        return Ok(());
+    }
+
+    let mut entries = smol::fs::read_dir(platform_dir).await?;
+    let now = SystemTime::now();
+    let mut candidates = Vec::new();
+
+    while let Some(entry) = entries.next().await {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension() != Some(OsStr::new("gz")) {
+            continue;
+        }
+
+        let mtime = if path == keep_path {
+            now
+        } else {
+            smol::fs::metadata(&path)
+                .await
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        };
+
+        candidates.push((path, mtime));
+    }
+
+    if candidates.len() <= limit {
+        return Ok(());
+    }
+
+    candidates.sort_by(|(path_a, time_a), (path_b, time_b)| {
+        time_b.cmp(time_a).then_with(|| path_a.cmp(path_b))
+    });
+
+    for (index, (path, _)) in candidates.into_iter().enumerate() {
+        if index < limit || path == keep_path {
+            continue;
+        }
+
+        if let Err(error) = smol::fs::remove_file(&path).await {
+            log::warn!(
+                "Failed to remove old remote server archive {:?}: {}",
+                path,
+                error
+            );
+        }
+    }
 
     Ok(())
 }

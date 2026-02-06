@@ -3,9 +3,10 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
+use cloud_api_types::Plan;
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
-    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse, Plan, PlanV2,
+    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 use feature_flags::{CloudThinkingToggleFeatureFlag, FeatureFlagAppExt as _};
@@ -18,11 +19,11 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh, PaymentRequiredError,
-    RateLimiter, RefreshLlmTokenListener,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -33,6 +34,7 @@ pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -576,6 +578,18 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_thinking
     }
 
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|effort_level| LanguageModelEffortLevel {
+                name: effort_level.name.clone().into(),
+                value: effort_level.value.clone().into(),
+                is_default: effort_level.is_default.unwrap_or(false),
+            })
+            .collect()
+    }
+
     fn supports_streaming_tools(&self) -> bool {
         self.model.supports_streaming_tools
     }
@@ -733,10 +747,14 @@ impl LanguageModel for CloudLanguageModel {
         } else {
             thinking_allowed && self.model.id.0.ends_with("-thinking")
         };
+        let effort = request
+            .thinking_effort
+            .as_ref()
+            .and_then(|effort| anthropic::Effort::from_str(effort).ok());
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
-                let request = into_anthropic(
+                let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
@@ -749,6 +767,12 @@ impl LanguageModel for CloudLanguageModel {
                         AnthropicModelMode::Default
                     },
                 );
+
+                if enable_thinking && effort.is_some() {
+                    request.thinking = Some(anthropic::Thinking::Adaptive);
+                    request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -983,17 +1007,15 @@ struct ZedAiConfiguration {
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let is_pro = self
-            .plan
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro));
+        let is_pro = self.plan.is_some_and(|plan| plan == Plan::ZedPro);
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::V2(PlanV2::ZedPro)), Some(_)) => {
+            (Some(Plan::ZedPro), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
+            (Some(Plan::ZedProTrial), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(Plan::V2(PlanV2::ZedFree)), Some(_)) => {
+            (Some(Plan::ZedFree), Some(_)) => {
                 if self.eligible_for_trial {
                     "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
                 } else {
@@ -1156,15 +1178,15 @@ impl Component for ZedAiConfiguration {
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(Plan::V2(PlanV2::ZedFree)), true, false),
+                        configuration(true, Some(Plan::ZedFree), true, false),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::V2(PlanV2::ZedProTrial)), true, false),
+                        configuration(true, Some(Plan::ZedProTrial), true, false),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(Plan::V2(PlanV2::ZedPro)), true, false),
+                        configuration(true, Some(Plan::ZedPro), true, false),
                     ),
                 ])
                 .into_any_element(),

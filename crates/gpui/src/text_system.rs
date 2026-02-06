@@ -435,7 +435,7 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
 
-            let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+            let mut decoration_runs = <Vec<DecorationRun>>::with_capacity(32);
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
@@ -940,6 +940,22 @@ pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'
         ".SystemUIFont" => system,
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
+        _ => name,
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks_shared<'a>(
+    name: &'a SharedString,
+    system: &'a SharedString,
+) -> &'a SharedString {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name.as_str() {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
+        ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
     }
 }
