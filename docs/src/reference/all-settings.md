@@ -3365,6 +3365,37 @@ To enable LSP folding ranges for a specific language:
 }
 ```
 
+## LSP Document Symbols
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter queries to compute document symbols.
+2. `on`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+
+To enable LSP document symbols globally:
+
+```json [settings]
+{
+  "document_symbols": "on"
+}
+```
+
+To enable LSP document symbols for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_symbols": "on"
+    }
+  }
+}
+```
+
 ## Use Smartcase Search
 
 - Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \

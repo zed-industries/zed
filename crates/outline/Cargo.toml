@@ -21,6 +21,7 @@ ordered-float.workspace = true
 picker.workspace = true
 settings.workspace = true
 smol.workspace = true
+text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -29,13 +30,16 @@ zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
 menu.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rope.workspace = true
 serde_json.workspace = true
+settings = { workspace = true, features = ["test-support"] }
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

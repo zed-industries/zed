@@ -539,6 +539,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         // please semicolon stay on next line
         ;
 }

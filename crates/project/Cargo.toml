@@ -32,6 +32,7 @@ test-support = [
     "gpui/test-support",
     "dap/test-support",
     "dap_adapters/test-support",
+    "theme/test-support",
 ]
 
 [dependencies]
@@ -90,6 +91,7 @@ task.workspace = true
 tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
+theme.workspace = true
 toml.workspace = true
 url.workspace = true
 util.workspace = true

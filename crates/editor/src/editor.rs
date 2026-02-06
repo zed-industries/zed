@@ -18,6 +18,7 @@ mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
 mod document_colors;
+mod document_symbols;
 mod editor_settings;
 mod element;
 mod folding_ranges;
@@ -7602,10 +7603,26 @@ impl Editor {
             return;
         }
         let cursor = self.selections.newest_anchor().head();
-        let multibuffer = self.buffer().read(cx).snapshot(cx);
+        let multibuffer_snapshot = self.buffer().read(cx).snapshot(cx);
+
+        if let Some(lsp_task) =
+            self.lsp_document_symbols_for_cursor(cursor, &multibuffer_snapshot, cx)
+        {
+            self.refresh_outline_symbols_task = cx.spawn(async move |this, cx| {
+                let symbols = lsp_task.await;
+                this.update(cx, |this, cx| {
+                    this.outline_symbols = symbols;
+                    cx.notify();
+                })
+                .ok();
+            });
+            return;
+        }
+
         let syntax = cx.theme().syntax().clone();
-        let background_task = cx
-            .background_spawn(async move { multibuffer.symbols_containing(cursor, Some(&syntax)) });
+        let background_task = cx.background_spawn(async move {
+            multibuffer_snapshot.symbols_containing(cursor, Some(&syntax))
+        });
         self.refresh_outline_symbols_task = cx.spawn(async move |this, cx| {
             let symbols = background_task.await;
             this.update(cx, |this, cx| {
@@ -26493,6 +26510,16 @@ pub trait SemanticsProvider {
         new_name: String,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
+
+    /// Returns document symbol outline items for the given buffer.
+    ///
+    /// Returns `Some(task)` when LSP document symbols are configured and available,
+    /// `None` when the caller should fall back to tree-sitter.
+    fn document_symbols(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<Vec<OutlineItem<text::Anchor>>>>;
 }
 
 pub trait CompletionProvider {
@@ -27094,6 +27121,29 @@ impl SemanticsProvider for Entity<Project> {
     ) -> Option<Task<Result<ProjectTransaction>>> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
+        }))
+    }
+
+    fn document_symbols(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<Vec<OutlineItem<text::Anchor>>>> {
+        let lsp_enabled = {
+            let buffer = buffer.read(cx);
+            language::language_settings::language_settings(
+                buffer.language().map(|l| l.name()),
+                buffer.file(),
+                cx,
+            )
+            .document_symbols
+            .lsp_enabled()
+        };
+        if !lsp_enabled {
+            return None;
+        }
+        Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.fetch_document_symbols(buffer, cx)
         }))
     }
 }

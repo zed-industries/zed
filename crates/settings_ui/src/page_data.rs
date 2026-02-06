@@ -8498,7 +8498,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 7] {
+    fn lsp_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8628,6 +8628,25 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.document_folding_ranges = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "LSP Document Symbols",
+                description: "When enabled, use the language server's document symbols for outlines and breadcrumbs instead of tree-sitter.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).document_symbols"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.document_symbols.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.document_symbols = value;
                         })
                     },
                 }),

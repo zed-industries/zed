@@ -382,6 +382,9 @@ impl AnyProtoClient {
                             Response::GetFoldingRangesResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetDocumentSymbolsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,
