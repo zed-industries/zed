@@ -704,6 +704,22 @@ async fn get_models(
     Ok(models)
 }
 
+pub(crate) fn copilot_request_headers(
+    builder: http_client::Builder,
+    api_token: &str,
+) -> http_client::Builder {
+    builder
+        .header("Authorization", format!("Bearer {}", api_token))
+        .header("Content-Type", "application/json")
+        .header(
+            "Editor-Version",
+            format!(
+                "Zed/{}",
+                option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
+            ),
+        )
+}
+
 async fn request_models(
     models_url: Arc<str>,
     api_token: String,
@@ -714,7 +730,6 @@ async fn request_models(
         .uri(models_url.as_ref())
         .header("Authorization", format!("Bearer {}", api_token))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat")
         .header("Editor-Version", "vscode/1.103.2")
         .header("x-github-api-version", "2025-05-01");
 
@@ -804,23 +819,16 @@ async fn stream_completion(
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(completion_url.as_ref())
-        .header(
-            "Editor-Version",
-            format!(
-                "Zed/{}",
-                option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
-            ),
-        )
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat")
-        .header("X-Initiator", request_initiator)
-        .when(is_vision_request, |builder| {
-            builder.header("Copilot-Vision-Request", is_vision_request.to_string())
-        });
+    let request_builder = copilot_request_headers(
+        HttpRequest::builder()
+            .method(Method::POST)
+            .uri(completion_url.as_ref()),
+        &api_key,
+    )
+    .header("X-Initiator", request_initiator)
+    .when(is_vision_request, |builder| {
+        builder.header("Copilot-Vision-Request", is_vision_request.to_string())
+    });
 
     let is_streaming = request.stream;
 
