@@ -12,7 +12,6 @@ use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
 use release_channel::AppVersion;
 
 use std::env;
-use std::sync::LazyLock;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{CURSOR_MARKER, ZetaVersion, clean_zeta2_model_output, format_zeta_prompt};
 
@@ -26,22 +25,6 @@ pub fn max_editable_tokens(version: ZetaVersion) -> usize {
         ZetaVersion::V0131GitMergeMarkersPrefix => 180,
     }
 }
-
-/// Configuration for using the raw endpoint, read from env vars at startup.
-/// When ZED_ZETA_MODEL_ID and ZED_ZETA_VERSION are both set, the client will
-/// use the raw endpoint and construct the prompt itself.
-/// The version is also used as the Baseten environment name (lowercased).
-struct RawEndpointConfig {
-    model_id: String,
-    version: ZetaVersion,
-}
-
-static RAW_ENDPOINT_CONFIG: LazyLock<Option<RawEndpointConfig>> = LazyLock::new(|| {
-    let model_id = env::var("ZED_ZETA_MODEL_ID").ok()?;
-    let version_str = env::var("ZED_ZETA_VERSION").ok()?;
-    let version = ZetaVersion::parse(&version_str).ok()?;
-    Some(RawEndpointConfig { model_id, version })
-});
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -58,7 +41,7 @@ pub fn request_prediction_with_zeta2(
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer_snapshotted_at = Instant::now();
-    let raw_config = RAW_ENDPOINT_CONFIG.as_ref();
+    let raw_config = store.zeta2_raw_config().cloned();
 
     let Some(excerpt_path) = snapshot
         .file()
@@ -74,6 +57,7 @@ pub fn request_prediction_with_zeta2(
     let request_task = cx.background_spawn({
         async move {
             let zeta_version = raw_config
+                .as_ref()
                 .map(|config| config.version)
                 .unwrap_or(ZetaVersion::default());
 
@@ -102,7 +86,7 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Sending edit prediction request");
 
-            let (request_id, mut output_text, usage) = if let Some(config) = raw_config {
+            let (request_id, output_text, usage) = if let Some(config) = &raw_config {
                 let prompt = format_zeta_prompt(&prompt_input, config.version);
                 let request = RawCompletionRequest {
                     model: config.model_id.clone(),
@@ -152,7 +136,7 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Got edit prediction response");
 
-            let Some(ref mut output_text) = output_text else {
+            let Some(mut output_text) = output_text else {
                 return Ok((Some((request_id, None)), usage));
             };
 
@@ -162,8 +146,6 @@ pub fn request_prediction_with_zeta2(
                 log::trace!("Stripping out {CURSOR_MARKER} from response at offset {offset}");
                 output_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
             }
-
-            let mut output_text = std::mem::take(output_text);
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
@@ -304,7 +286,7 @@ pub(crate) fn edit_prediction_accepted(
     cx: &App,
 ) {
     let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
-    if RAW_ENDPOINT_CONFIG.is_some() && custom_accept_url.is_none() {
+    if store.zeta2_raw_config().is_some() && custom_accept_url.is_none() {
         return;
     }
 

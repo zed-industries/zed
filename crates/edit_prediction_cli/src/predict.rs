@@ -11,7 +11,7 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
-use edit_prediction::{DebugEvent, EditPredictionStore};
+use edit_prediction::{DebugEvent, EditPredictionStore, Zeta2RawConfig};
 use futures::{FutureExt as _, StreamExt as _, future::Shared};
 use gpui::{AppContext as _, AsyncApp, Task};
 use std::{
@@ -21,6 +21,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
+use zeta_prompt::ZetaVersion;
 
 static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
 static OPENAI_CLIENT: OnceLock<OpenAiClient> = OnceLock::new();
@@ -113,6 +114,16 @@ pub async fn run_prediction(
             }
         };
         store.set_edit_prediction_model(model);
+
+        // If user specified a non-default Zeta2 version, configure raw endpoint.
+        // This requires ZED_ZETA_MODEL_ID env var to be set.
+        if let PredictionProvider::Zeta2(version) = provider {
+            if version != ZetaVersion::default() {
+                if let Ok(model_id) = std::env::var("ZED_ZETA_MODEL_ID") {
+                    store.set_zeta2_raw_config(Zeta2RawConfig { model_id, version });
+                }
+            }
+        }
     });
     step_progress.set_substatus("configuring model");
     let state = example.state.as_ref().context("state must be set")?;

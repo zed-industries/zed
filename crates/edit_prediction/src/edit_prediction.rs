@@ -36,9 +36,10 @@ use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{EditPredictionProvider, Settings as _, update_settings_file};
 use std::collections::{VecDeque, hash_map};
+use std::env;
 use text::Edit;
 use workspace::Workspace;
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::{ZetaPromptInput, ZetaVersion};
 
 use std::mem;
 use std::ops::Range;
@@ -129,6 +130,12 @@ struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
 
 impl Global for EditPredictionStoreGlobal {}
 
+#[derive(Clone)]
+pub struct Zeta2RawConfig {
+    pub model_id: String,
+    pub version: ZetaVersion,
+}
+
 pub struct EditPredictionStore {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
@@ -137,6 +144,7 @@ pub struct EditPredictionStore {
     projects: HashMap<EntityId, ProjectState>,
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
+    zeta2_raw_config: Option<Zeta2RawConfig>,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     pub ollama: Ollama,
@@ -625,6 +633,7 @@ impl EditPredictionStore {
             ),
             update_required: false,
             edit_prediction_model: EditPredictionModel::Zeta2,
+            zeta2_raw_config: Self::zeta2_raw_config_from_env(),
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
             ollama: Ollama::new(),
@@ -638,8 +647,23 @@ impl EditPredictionStore {
         this
     }
 
+    fn zeta2_raw_config_from_env() -> Option<Zeta2RawConfig> {
+        let model_id = env::var("ZED_ZETA_MODEL_ID").ok()?;
+        let version_str = env::var("ZED_ZETA_VERSION").ok()?;
+        let version = ZetaVersion::parse(&version_str).ok()?;
+        Some(Zeta2RawConfig { model_id, version })
+    }
+
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
         self.edit_prediction_model = model;
+    }
+
+    pub fn set_zeta2_raw_config(&mut self, config: Zeta2RawConfig) {
+        self.zeta2_raw_config = Some(config);
+    }
+
+    pub fn zeta2_raw_config(&self) -> Option<&Zeta2RawConfig> {
+        self.zeta2_raw_config.as_ref()
     }
 
     pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
