@@ -98,7 +98,8 @@ fn check_hardcoded_security_rules(
 }
 
 /// Checks a single command against hardcoded patterns, both as-is and with
-/// path arguments normalized (to catch traversal bypasses like `rm -rf /tmp/../../`).
+/// path arguments normalized (to catch traversal bypasses like `rm -rf /tmp/../../`
+/// and multi-path bypasses like `rm -rf /tmp /`).
 fn matches_hardcoded_patterns(command: &str, patterns: &[CompiledRegex]) -> bool {
     for pattern in patterns {
         if pattern.is_match(command) {
@@ -106,9 +107,9 @@ fn matches_hardcoded_patterns(command: &str, patterns: &[CompiledRegex]) -> bool
         }
     }
 
-    if let Some(normalized) = normalize_rm_command(command) {
+    for expanded in expand_rm_to_single_path_commands(command) {
         for pattern in patterns {
-            if pattern.is_match(&normalized) {
+            if pattern.is_match(&expanded) {
                 return true;
             }
         }
@@ -117,39 +118,56 @@ fn matches_hardcoded_patterns(command: &str, patterns: &[CompiledRegex]) -> bool
     false
 }
 
-/// For rm commands, normalizes the trailing path argument to catch traversal bypasses
-/// like `rm -rf /tmp/../../` (which resolves to `rm -rf /`).
-/// Returns None if the command is not an rm command or normalization doesn't change it.
-fn normalize_rm_command(command: &str) -> Option<String> {
+/// For rm commands, expands multi-path arguments into individual single-path
+/// commands with normalized paths. This catches both traversal bypasses like
+/// `rm -rf /tmp/../../` and multi-path bypasses like `rm -rf /tmp /`.
+fn expand_rm_to_single_path_commands(command: &str) -> Vec<String> {
     let trimmed = command.trim();
 
     if !trimmed.to_ascii_lowercase().starts_with("rm ") {
-        return None;
+        return vec![];
     }
 
-    let trimmed_end = trimmed.trim_end();
-    let last_space = trimmed_end.rfind(char::is_whitespace)?;
-    let prefix = &trimmed_end[..=last_space];
-    let last_arg = &trimmed_end[last_space + 1..];
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    let mut flags = Vec::new();
+    let mut paths = Vec::new();
+    let mut past_double_dash = false;
 
-    // Shell variables like $HOME/${HOME} are not filesystem paths; skip them
-    if last_arg.starts_with('$') {
-        return None;
+    for part in parts.iter().skip(1) {
+        if !past_double_dash && *part == "--" {
+            past_double_dash = true;
+            flags.push(*part);
+            continue;
+        }
+        if !past_double_dash && part.starts_with('-') {
+            flags.push(*part);
+        } else {
+            paths.push(*part);
+        }
     }
 
-    let mut normalized = normalize_path(last_arg);
+    let flags_str = if flags.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", flags.join(" "))
+    };
 
-    // normalize_path returns "" for relative paths like ".", "..", "./foo/.."
-    // Treat these as "." for security matching since they all resolve to cwd or above
-    if normalized.is_empty() && !Path::new(last_arg).has_root() {
-        normalized = ".".to_string();
+    let mut results = Vec::new();
+    for path in &paths {
+        if path.starts_with('$') {
+            results.push(format!("rm {flags_str}{path}"));
+            continue;
+        }
+
+        let mut normalized = normalize_path(path);
+        if normalized.is_empty() && !Path::new(path).has_root() {
+            normalized = ".".to_string();
+        }
+
+        results.push(format!("rm {flags_str}{normalized}"));
     }
 
-    if normalized == last_arg {
-        return None;
-    }
-
-    Some(format!("{prefix}{normalized}"))
+    results
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1523,6 +1541,42 @@ mod tests {
         t("rm -rf ~/Documents/./subdir")
             .mode(ToolPermissionMode::Allow)
             .is_allow();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_multi_path_with_dangerous_last() {
+        t("rm -rf /tmp /").is_deny();
+        t("rm -rf /tmp/foo /").is_deny();
+        t("rm -rf /var/log ~").is_deny();
+        t("rm -rf /safe $HOME").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_multi_path_with_dangerous_first() {
+        t("rm -rf / /tmp").is_deny();
+        t("rm -rf ~ /var/log").is_deny();
+        t("rm -rf . /tmp/foo").is_deny();
+        t("rm -rf .. /safe").is_deny();
+    }
+
+    #[test]
+    fn hardcoded_allows_rm_multi_path_all_safe() {
+        t("rm -rf /tmp /home/user")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf ./build ./dist")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+        t("rm -rf /var/log/app /tmp/cache")
+            .mode(ToolPermissionMode::Allow)
+            .is_allow();
+    }
+
+    #[test]
+    fn hardcoded_blocks_rm_multi_path_with_traversal() {
+        t("rm -rf /safe /tmp/../../").is_deny();
+        t("rm -rf /tmp/../../ /safe").is_deny();
+        t("rm -rf /safe /var/log/../../").is_deny();
     }
 
     #[test]
