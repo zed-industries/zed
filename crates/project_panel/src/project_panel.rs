@@ -19,14 +19,14 @@ use git::status::GitSummary;
 use git_ui;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
-    deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    Action, AnchoredForceSnap, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
+    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
+    point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -58,10 +58,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
-    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
-    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
-    WithScrollbar, prelude::*, v_flex,
+    Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, Divider, Icon,
+    IconDecoration, IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
+    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -128,7 +128,12 @@ pub struct ProjectPanel {
     folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
     drag_target_entry: Option<DragTarget>,
     marked_entries: Vec<SelectedEntry>,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<(
+        Entity<ContextMenu>,
+        Point<Pixels>,
+        Subscription,
+        Option<AnchoredForceSnap>,
+    )>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
@@ -350,6 +355,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Opens the project panel context menu at the current mouse position.
+        OpenContextMenu
     ]
 );
 
@@ -1062,7 +1069,7 @@ impl ProjectPanel {
 
     fn deploy_context_menu(
         &mut self,
-        position: Point<Pixels>,
+        event_position: Point<Pixels>,
         entry_id: ProjectEntryId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1221,15 +1228,144 @@ impl ProjectPanel {
                 })
             });
 
+            let items = context_menu.read(cx).get_items();
+            let (position, force_snap) =
+                self.get_context_menu_position(event_position, items, window, cx);
+
             window.focus(&context_menu.focus_handle(cx), cx);
             let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
                 this.context_menu.take();
                 cx.notify();
             });
-            self.context_menu = Some((context_menu, position, subscription));
+            self.context_menu = Some((context_menu, position, subscription, force_snap));
         }
 
         cx.notify();
+    }
+
+    fn open_context_menu(
+        &mut self,
+        _: &OpenContextMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry_id = if let Some(selection) = &self.state.selection {
+            selection.entry_id
+        } else if let Some(entry_id) = self.state.last_worktree_root_id {
+            entry_id
+        } else {
+            return;
+        };
+
+        self.deploy_context_menu(window.mouse_position(), entry_id, window, cx);
+    }
+
+    fn get_context_menu_position(
+        &self,
+        event_position: Point<Pixels>,
+        context_menu_items: &Vec<ContextMenuItem>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> (Point<Pixels>, Option<AnchoredForceSnap>) {
+        let entry_id = match self.state.selection.as_ref().map(|s| s.entry_id) {
+            Some(id) if id != ProjectEntryId::from_usize(0) => id,
+            _ => return (event_position, None),
+        };
+
+        if let Some(selection) = &self.state.selection {
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
+
+            let mut separators = 0;
+            let mut actions = 0;
+
+            for item in context_menu_items {
+                match item {
+                    ContextMenuItem::Separator => {
+                        separators += 1;
+                    }
+                    ContextMenuItem::Entry(_) => {
+                        actions += 1;
+                    }
+                    _ => continue,
+                }
+            }
+
+            let dynamic_spacing = DynamicSpacing::Base04.px(cx).to_f64() * 2.0;
+            let total_actions_height = (ui_font_size + dynamic_spacing) * (actions as f64);
+            let total_separators_height = (dynamic_spacing + 1.0) * (separators as f64);
+            let total_menu_height =
+                total_actions_height + total_separators_height + dynamic_spacing;
+
+            let (_, entry_ix, _) = self.index_for_selection(*selection).unwrap_or_default();
+
+            let mut offset_y = self.scroll_handle.offset().y.to_f64();
+            let viewport = self.scroll_handle.viewport();
+            let viewport_height = window.viewport_size().height;
+            let entry_height = ui_font_size + 10.0;
+
+            let min_offset_y = self.calculate_min_entry_offset_y(
+                entry_ix,
+                entry_height,
+                entry_id,
+                selection.worktree_id,
+                cx,
+            );
+
+            if let Some(min_offset_y) = min_offset_y {
+                if offset_y < min_offset_y {
+                    offset_y = min_offset_y;
+                }
+            }
+
+            let mut entry_y =
+                (((entry_ix + 1) as f64) * entry_height + viewport.top().to_f64()) + offset_y;
+
+            let space_below = viewport_height.to_f64() - entry_y;
+            let should_be_snapped = total_menu_height > space_below;
+            let mut force_snap: Option<AnchoredForceSnap> = None;
+
+            if should_be_snapped {
+                entry_y -= entry_height;
+                force_snap = Some(AnchoredForceSnap::Vertical);
+            }
+
+            (
+                Point::new(event_position.x, Pixels::from(entry_y)),
+                force_snap,
+            )
+        } else {
+            (event_position, None)
+        }
+    }
+
+    fn calculate_min_entry_offset_y(
+        &self,
+        entry_ix: usize,
+        entry_height: f64,
+        entry_id: ProjectEntryId,
+        worktree_id: WorktreeId,
+        cx: &App,
+    ) -> Option<f64> {
+        let project = self.project.read(cx);
+        let worktree = project.worktree_for_id(worktree_id, cx)?;
+        let dir_entry = worktree.read(cx).entry_for_id(entry_id)?;
+
+        if dir_entry.kind != EntryKind::Dir {
+            return None;
+        }
+
+        let path = dir_entry.path.as_ref();
+
+        let num_parents = if path.is_empty() {
+            0
+        } else {
+            path.len().saturating_sub(1)
+        };
+
+        let scrolled_entries = (entry_ix - num_parents) as f64;
+        let total_offset_y = scrolled_entries * entry_height;
+
+        Some(-total_offset_y)
     }
 
     fn has_git_changes(&self, entry_id: ProjectEntryId) -> bool {
@@ -6296,6 +6432,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::open_context_menu))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -6686,15 +6823,20 @@ impl Render for ProjectPanel {
                     window,
                     cx,
                 )
-                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    deferred(
-                        anchored()
-                            .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
-                            .child(menu.clone()),
-                    )
-                    .with_priority(3)
-                }))
+                .children(
+                    self.context_menu
+                        .as_ref()
+                        .map(|(menu, position, _, force_snap)| {
+                            deferred(
+                                anchored()
+                                    .position(*position)
+                                    .anchor(gpui::Corner::TopLeft)
+                                    .force_snap(*force_snap)
+                                    .child(menu.clone()),
+                            )
+                            .with_priority(3)
+                        }),
+                )
         } else {
             let focus_handle = self.focus_handle(cx);
 

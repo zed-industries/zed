@@ -20,6 +20,7 @@ pub struct Anchored {
     anchor_position: Option<Point<Pixels>>,
     position_mode: AnchoredPositionMode,
     offset: Option<Point<Pixels>>,
+    force_snap: Option<AnchoredForceSnap>,
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -32,6 +33,7 @@ pub fn anchored() -> Anchored {
         anchor_position: None,
         position_mode: AnchoredPositionMode::Window,
         offset: None,
+        force_snap: None,
     }
 }
 
@@ -73,6 +75,12 @@ impl Anchored {
     /// Snap to window edge and leave some margins.
     pub fn snap_to_window_with_margin(mut self, edges: impl Into<Edges<Pixels>>) -> Self {
         self.fit_mode = AnchoredFitMode::SnapToWindowWithMargin(edges.into());
+        self
+    }
+
+    /// Force snap the anchored element to preferred side.
+    pub fn force_snap(mut self, snap: Option<AnchoredForceSnap>) -> Self {
+        self.force_snap = snap;
         self
     }
 }
@@ -155,28 +163,39 @@ impl Element for Anchored {
         };
 
         if self.fit_mode == AnchoredFitMode::SwitchAnchor {
-            let mut anchor_corner = self.anchor_corner;
+            let anchor_corner = self.anchor_corner;
 
-            if desired.left() < limits.left() || desired.right() > limits.right() {
-                let switched = Bounds::from_corner_and_size(
-                    anchor_corner.other_side_corner_along(Axis::Horizontal),
-                    origin,
-                    size,
-                );
-                if !(switched.left() < limits.left() || switched.right() > limits.right()) {
-                    anchor_corner = anchor_corner.other_side_corner_along(Axis::Horizontal);
-                    desired = switched
-                }
-            }
+            let horizontal_switched = Bounds::from_corner_and_size(
+                anchor_corner.other_side_corner_along(Axis::Horizontal),
+                origin,
+                size,
+            );
 
-            if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
-                let switched = Bounds::from_corner_and_size(
-                    anchor_corner.other_side_corner_along(Axis::Vertical),
-                    origin,
-                    size,
-                );
-                if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
-                    desired = switched;
+            let vertical_switched = Bounds::from_corner_and_size(
+                anchor_corner.other_side_corner_along(Axis::Vertical),
+                origin,
+                size,
+            );
+
+            match self.force_snap {
+                Some(AnchoredForceSnap::Horizontal) => desired = horizontal_switched,
+                Some(AnchoredForceSnap::Vertical) => desired = vertical_switched,
+                None => {
+                    if desired.left() < limits.left() || desired.right() > limits.right() {
+                        if !(horizontal_switched.left() < limits.left()
+                            || horizontal_switched.right() > limits.right())
+                        {
+                            desired = horizontal_switched
+                        }
+                    }
+
+                    if desired.top() < limits.top() || desired.bottom() > limits.bottom() {
+                        if !(vertical_switched.top() < limits.top()
+                            || vertical_switched.bottom() > limits.bottom())
+                        {
+                            desired = vertical_switched;
+                        }
+                    }
                 }
             }
         }
@@ -238,6 +257,15 @@ impl IntoElement for Anchored {
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+/// Enum for force snapping the anchored element.
+#[derive(Copy, Clone, PartialEq)]
+pub enum AnchoredForceSnap {
+    /// Force snap the anchored element horizontally.
+    Horizontal,
+    /// Force snap the anchored element vertically.
+    Vertical,
 }
 
 /// Which algorithm to use when fitting the anchored element to be inside the window.
