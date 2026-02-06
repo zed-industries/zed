@@ -2278,11 +2278,12 @@ impl Buffer {
         })
     }
 
-    /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace. Skips if the buffer is empty.
+    /// Ensures that the buffer ends with a newline character. Skips if the
+    /// buffer is empty.
     ///
-    /// If `remove_whitespace_on_empty_lines` is false, and the last line contains
-    /// only whitespace, that whitespace is preserved.
+    /// When `remove_whitespace_on_empty_lines` is true, all trailing whitespace
+    /// is stripped before the newline. When false, only a newline is appended
+    /// if one is not already present, preserving any existing trailing whitespace.
     pub fn ensure_final_newline(
         &mut self,
         remove_whitespace_on_empty_lines: bool,

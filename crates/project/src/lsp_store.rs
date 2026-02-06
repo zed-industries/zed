@@ -1634,7 +1634,8 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
-            let remove_whitespace_on_empty_lines = settings.remove_whitespace_on_empty_lines;
+            let remove_whitespace_on_empty_lines = settings.remove_trailing_whitespace_on_save
+                && settings.remove_whitespace_on_empty_lines;
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(remove_whitespace_on_empty_lines, cx);
             })?;
