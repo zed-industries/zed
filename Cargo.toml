@@ -191,7 +191,6 @@ members = [
     "crates/platform_title_bar",
     "crates/title_bar",
     "crates/toolchain_selector",
-    "crates/trash",
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
@@ -569,7 +568,6 @@ nbformat = "0.15.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
-objc2 = "0.6"
 objc2-foundation = { version = "=0.3.1", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
@@ -591,7 +589,6 @@ objc2-foundation = { version = "=0.3.1", default-features = false, features = [
     "NSString",
     "NSURL",
     "NSUndoManager",
-    "NSFileManager",
     "NSValue",
     "objc2-core-foundation",
     "std"
