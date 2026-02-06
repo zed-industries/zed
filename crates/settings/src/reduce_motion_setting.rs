@@ -2,9 +2,13 @@ use crate::{self as settings, settings_content::ReduceMotion};
 use settings::{RegisterSetting, Settings};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, RegisterSetting)]
-pub struct ReduceMotionSetting(pub ReduceMotion);
+pub struct ReduceMotionSetting(ReduceMotion);
 
 impl ReduceMotionSetting {
+    pub fn value(&self) -> ReduceMotion {
+        self.0
+    }
+
     pub fn should_reduce_motion(&self, cx: &gpui::App) -> bool {
         match self.0 {
             ReduceMotion::System => cx.should_reduce_motion(),
@@ -109,7 +113,7 @@ mod tests {
         for variant in [ReduceMotion::On, ReduceMotion::Off, ReduceMotion::System] {
             set_reduce_motion(cx, variant);
             cx.update(|cx| {
-                assert_eq!(ReduceMotionSetting::get_global(cx).0, variant);
+                assert_eq!(ReduceMotionSetting::get_global(cx).value(), variant);
             });
         }
     }
@@ -146,7 +150,7 @@ mod tests {
 
         for (json, expected) in cases {
             store.set_user_settings(json, cx).unwrap();
-            assert_eq!(store.get::<ReduceMotionSetting>(None).0, *expected, "for JSON: {json}");
+            assert_eq!(store.get::<ReduceMotionSetting>(None).value(), *expected, "for JSON: {json}");
         }
     }
 
@@ -160,7 +164,7 @@ mod tests {
         store.register_setting::<ReduceMotionSetting>();
 
         assert_eq!(
-            store.get::<ReduceMotionSetting>(None).0,
+            store.get::<ReduceMotionSetting>(None).value(),
             ReduceMotion::On,
         );
     }
