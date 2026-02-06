@@ -1785,10 +1785,11 @@ impl EditPredictionStore {
         let task = match &self.edit_prediction_model {
             EditPredictionModel::Zeta1 => {
                 if should_send_testing_zeta2_request() {
-                    zeta2::request_prediction_with_zeta2(self, inputs, cx)
-                } else {
-                    zeta1::request_prediction_with_zeta1(self, inputs, cx)
+                    let mut zeta2_inputs = inputs.clone();
+                    zeta2_inputs.trigger = PredictEditsRequestTrigger::Testing;
+                    zeta2::request_prediction_with_zeta2(self, zeta2_inputs, cx).detach();
                 }
+                zeta1::request_prediction_with_zeta1(self, inputs, cx)
             }
             EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),

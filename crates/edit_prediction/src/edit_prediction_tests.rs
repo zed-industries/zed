@@ -2073,6 +2073,20 @@ async fn make_test_ep_store(
                             )
                             .unwrap())
                     }
+                    (&Method::POST, "/predict_edits/v3") => {
+                        next_request_id += 1;
+                        Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(
+                                serde_json::to_string(&PredictEditsV3Response {
+                                    request_id: format!("request-{next_request_id}"),
+                                    output: "hello world".to_string(),
+                                })
+                                .unwrap()
+                                .into(),
+                            )
+                            .unwrap())
+                    }
                     _ => Ok(http_client::Response::builder()
                         .status(404)
                         .body("Not Found".into())
