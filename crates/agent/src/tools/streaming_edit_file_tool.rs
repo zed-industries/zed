@@ -962,6 +962,74 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_streaming_edit_overlapping_edits_out_of_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        // Multi-line file so the line-based fuzzy matcher can resolve each edit.
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        // Edit A spans lines 2-3, edit B spans lines 3-4. They overlap on
+        // "line 3" and are given in ascending file order so the descending
+        // sort must run before the overlap check can pair them correctly.
+        let result = cx
+            .update(|cx| {
+                let input = StreamingEditFileToolInput {
+                    display_description: "Overlapping edits".into(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![
+                        EditOperation {
+                            old_text: "line 2\nline 3".into(),
+                            new_text: "FIRST".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 3\nline 4".into(),
+                            new_text: "SECOND".into(),
+                        },
+                    ]),
+                };
+                Arc::new(StreamingEditFileTool::new(
+                    project,
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await;
+
+        let error = result.unwrap_err();
+        let error_message = error.to_string();
+        assert!(
+            error_message.contains("Overlapping edit ranges detected"),
+            "Expected 'Overlapping edit ranges detected' but got: {error_message}"
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
