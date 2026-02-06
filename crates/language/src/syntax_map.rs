@@ -34,8 +34,8 @@ pub struct SyntaxMap {
 #[derive(Clone)]
 pub struct SyntaxSnapshot {
     layers: SumTree<SyntaxLayerEntry>,
-    parsed_version: clock::Global,
-    interpolated_version: clock::Global,
+    parsed_version: Arc<clock::Global>,
+    interpolated_version: Arc<clock::Global>,
     language_registry_version: usize,
     update_count: usize,
 }
@@ -274,8 +274,8 @@ impl SyntaxSnapshot {
     fn new(text: &BufferSnapshot) -> Self {
         Self {
             layers: SumTree::new(text),
-            parsed_version: clock::Global::default(),
-            interpolated_version: clock::Global::default(),
+            parsed_version: Default::default(),
+            interpolated_version: Default::default(),
             language_registry_version: 0,
             update_count: 0,
         }
@@ -301,7 +301,8 @@ impl SyntaxSnapshot {
         let edits = text
             .anchored_edits_since::<Dimensions<usize, Point>>(&self.interpolated_version)
             .collect::<Vec<_>>();
-        self.interpolated_version = text.version().clone();
+
+        *Arc::make_mut(&mut self.interpolated_version) = text.version().clone();
 
         if edits.is_empty() {
             return;
@@ -861,8 +862,8 @@ impl SyntaxSnapshot {
 
         drop(cursor);
         self.layers = layers;
-        self.interpolated_version = text.version.clone();
-        self.parsed_version = text.version.clone();
+        *Arc::make_mut(&mut self.interpolated_version) = text.version.clone();
+        *Arc::make_mut(&mut self.parsed_version) = text.version.clone();
         #[cfg(debug_assertions)]
         self.check_invariants(text);
         Ok(())

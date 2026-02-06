@@ -1256,7 +1256,7 @@ impl Buffer {
             syntax_map.snapshot()
         };
 
-        let tree_sitter_data = if self.text.version() != *self.tree_sitter_data.version() {
+        let tree_sitter_data = if self.text.version != *self.tree_sitter_data.version() {
             Arc::new(TreeSitterData::new(text))
         } else {
             self.tree_sitter_data.clone()
