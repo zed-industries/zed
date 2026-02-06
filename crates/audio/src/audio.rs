@@ -1,5 +1,9 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use cpal::{
+    DeviceId, default_host,
+    traits::{DeviceTrait, HostTrait},
+};
 use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
 use log::info;
 
@@ -17,10 +21,15 @@ mod non_windows_and_freebsd_deps {
 use non_windows_and_freebsd_deps::*;
 
 use rodio::{
-    Decoder, OutputStream, OutputStreamBuilder, Source, mixer::Mixer, nz, source::Buffered,
+    Decoder, DeviceSinkBuilder, MixerDeviceSink, Source,
+    mixer::Mixer,
+    nz,
+    source::{AutomaticGainControlSettings, Buffered},
 };
 use settings::Settings;
-use std::{io::Cursor, num::NonZero, path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::{
+    io::Cursor, num::NonZero, path::PathBuf, str::FromStr, sync::atomic::Ordering, time::Duration,
+};
 use util::ResultExt;
 
 mod audio_settings;
@@ -79,8 +88,7 @@ impl Sound {
 }
 
 pub struct Audio {
-    output_handle: Option<OutputStream>,
-    output_mixer: Option<Mixer>,
+    output_handle: Option<MixerDeviceSink>,
     #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
     pub echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
@@ -91,7 +99,6 @@ impl Default for Audio {
     fn default() -> Self {
         Self {
             output_handle: Default::default(),
-            output_mixer: Default::default(),
             #[cfg(not(any(
                 all(target_os = "windows", target_env = "gnu"),
                 target_os = "freebsd"
@@ -108,51 +115,69 @@ impl Default for Audio {
 impl Global for Audio {}
 
 impl Audio {
-    fn ensure_output_exists(&mut self) -> Result<&Mixer> {
+    fn ensure_output_exists(&mut self, output_audio_device: Option<DeviceId>) -> Result<&Mixer> {
         #[cfg(debug_assertions)]
         log::warn!(
             "Audio does not sound correct without optimizations. Use a release build to debug audio issues"
         );
 
         if self.output_handle.is_none() {
-            let output_handle = OutputStreamBuilder::open_default_stream()
-                .context("Could not open default output stream")?;
+            let output_handle = if let Some(id) = output_audio_device {
+                if let Some(device) = default_host().device_by_id(&id) {
+                    DeviceSinkBuilder::from_device(device)?.open_stream()
+                } else {
+                    DeviceSinkBuilder::open_default_sink()
+                }
+            } else {
+                DeviceSinkBuilder::open_default_sink()
+            };
+            let mut output_handle = output_handle.context("Could not open output stream")?;
+            output_handle.log_on_drop(false);
             info!("Output stream: {:?}", output_handle);
-            self.output_handle = Some(output_handle);
-            if let Some(output_handle) = &self.output_handle {
-                let (mixer, source) = rodio::mixer::mixer(CHANNEL_COUNT, SAMPLE_RATE);
-                // or the mixer will end immediately as its empty.
-                mixer.add(rodio::source::Zero::new(CHANNEL_COUNT, SAMPLE_RATE));
-                self.output_mixer = Some(mixer);
 
-                // The webrtc apm is not yet compiling for windows & freebsd
-                #[cfg(not(any(
-                    any(all(target_os = "windows", target_env = "gnu")),
-                    target_os = "freebsd"
-                )))]
-                let echo_canceller = Arc::clone(&self.echo_canceller);
-                #[cfg(not(any(
-                    any(all(target_os = "windows", target_env = "gnu")),
-                    target_os = "freebsd"
-                )))]
-                let source = source.inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
-                    let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
-                    echo_canceller
-                        .lock()
-                        .process_reverse_stream(
-                            &mut buf,
-                            SAMPLE_RATE.get() as i32,
-                            CHANNEL_COUNT.get().into(),
-                        )
-                        .expect("Audio input and output threads should not panic");
-                });
+            // The webrtc apm is not yet compiling for windows & freebsd
+            #[cfg(not(any(
+                any(all(target_os = "windows", target_env = "gnu")),
+                target_os = "freebsd"
+            )))]
+            let echo_canceller = Arc::clone(&self.echo_canceller);
+
+            #[cfg(not(any(
+                any(all(target_os = "windows", target_env = "gnu")),
+                target_os = "freebsd"
+            )))]
+            {
+                let source = rodio::source::Zero::new(CHANNEL_COUNT, SAMPLE_RATE)
+                    .inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
+                        let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
+                        echo_canceller
+                            .lock()
+                            .process_reverse_stream(
+                                &mut buf,
+                                SAMPLE_RATE.get() as i32,
+                                CHANNEL_COUNT.get().into(),
+                            )
+                            .expect("Audio input and output threads should not panic");
+                    });
                 output_handle.mixer().add(source);
             }
+
+            #[cfg(any(
+                any(all(target_os = "windows", target_env = "gnu")),
+                target_os = "freebsd"
+            ))]
+            {
+                let source = rodio::source::Zero::<f32>::new(CHANNEL_COUNT, SAMPLE_RATE);
+                output_handle.mixer().add(source);
+            }
+
+            self.output_handle = Some(output_handle);
         }
 
         Ok(self
-            .output_mixer
+            .output_handle
             .as_ref()
+            .map(|h| h.mixer())
             .expect("we only get here if opening the outputstream succeeded"))
     }
 
@@ -165,8 +190,24 @@ impl Audio {
 
     #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
     pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
-        let stream = rodio::microphone::MicrophoneBuilder::new()
-            .default_device()?
+        let builder = rodio::microphone::MicrophoneBuilder::new();
+        let builder = if let Some(id) = voip_parts.input_audio_device {
+            // TODO(jk): upstream patch
+            // if let Some(input_device) = default_host().device_by_id(id) {
+            //     builder.device(input_device);
+            // }
+            let mut found = None;
+            for input in rodio::microphone::available_inputs()? {
+                if input.clone().into_inner().id()? == id {
+                    found = Some(builder.device(input));
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| builder.default_device())?
+        } else {
+            builder.default_device()?
+        };
+        let stream = builder
             .default_config()?
             .prefer_sample_rates([
                 SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
@@ -204,7 +245,12 @@ impl Audio {
             })
             .denoise()
             .context("Could not set up denoiser")?
-            .automatic_gain_control(0.90, 1.0, 0.0, 5.0)
+            .automatic_gain_control(AutomaticGainControlSettings {
+                target_level: 0.90,
+                attack_time: Duration::from_secs(1),
+                release_time: Duration::from_secs(0),
+                absolute_max_gain: 5.0,
+            })
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
@@ -234,16 +280,25 @@ impl Audio {
     ) -> anyhow::Result<()> {
         let (replay_source, source) = source
             .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
-            .automatic_gain_control(0.90, 1.0, 0.0, 5.0)
+            .automatic_gain_control(AutomaticGainControlSettings {
+                target_level: 0.90,
+                attack_time: Duration::from_secs(1),
+                release_time: Duration::from_secs(0),
+                absolute_max_gain: 5.0,
+            })
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)
             .expect("REPLAY_DURATION is longer than 100ms");
+        let output_audio_device = AudioSettings::get_global(cx)
+            .output_audio_device
+            .as_ref()
+            .and_then(|id| DeviceId::from_str(id).ok());
 
         cx.update_default_global(|this: &mut Self, _cx| {
             let output_mixer = this
-                .ensure_output_exists()
+                .ensure_output_exists(output_audio_device)
                 .context("Could not get output mixer")?;
             output_mixer.add(source);
             if is_staff {
@@ -254,10 +309,14 @@ impl Audio {
     }
 
     pub fn play_sound(sound: Sound, cx: &mut App) {
+        let output_audio_device = AudioSettings::get_global(cx)
+            .output_audio_device
+            .as_ref()
+            .and_then(|id| DeviceId::from_str(id).ok());
         cx.update_default_global(|this: &mut Self, cx| {
             let source = this.sound_source(sound, cx).log_err()?;
             let output_mixer = this
-                .ensure_output_exists()
+                .ensure_output_exists(output_audio_device)
                 .context("Could not get output mixer")
                 .log_err()?;
 
@@ -298,6 +357,7 @@ pub struct VoipParts {
     echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     replays: replays::Replays,
     legacy_audio_compatible: bool,
+    input_audio_device: Option<DeviceId>,
 }
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
@@ -309,11 +369,17 @@ impl VoipParts {
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |settings| settings.legacy_audio_compatible)
                 .unwrap_or(true);
+        let input_audio_device =
+            AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
+                .flatten()
+                .map(|id| DeviceId::from_str(&id).ok())
+                .flatten();
 
         Ok(Self {
             legacy_audio_compatible,
             echo_canceller: apm,
             replays,
+            input_audio_device,
         })
     }
 }

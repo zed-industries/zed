@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 async-tar.workspace = true
 collections.workspace = true
+cpal.workspace = true
 crossbeam.workspace = true
 gpui.workspace = true
 denoise = { path = "../denoise" }
