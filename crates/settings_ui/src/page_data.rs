@@ -1052,7 +1052,7 @@ fn appearance_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Motion"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Reduce Motion",
-                description: "Reduce or disable animations. System uses your OS preference.",
+                description: "Reduce UI animations. System follows your macOS preference.",
                 field: Box::new(SettingField {
                     json_path: Some("reduce_motion"),
                     pick: |settings_content| {
