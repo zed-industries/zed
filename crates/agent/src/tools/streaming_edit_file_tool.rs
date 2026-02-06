@@ -572,13 +572,13 @@ fn apply_edits(
         }
     }
 
-    // Sort edits in reverse order so offsets remain valid when applied sequentially
+    // Sort edits by position so buffer.edit() can handle offset translation
     let mut edits_sorted: Vec<_> = resolved_edits.into_iter().collect();
-    edits_sorted.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+    edits_sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start));
 
-    // Validate no overlaps (sorted descending by start)
+    // Validate no overlaps (sorted ascending by start)
     for window in edits_sorted.windows(2) {
-        let [(later_range, _), (earlier_range, _)] = window else {
+        let [(earlier_range, _), (later_range, _)] = window else {
             continue;
         };
         if earlier_range.end > later_range.start {
@@ -593,14 +593,19 @@ fn apply_edits(
         }
     }
 
-    // Second pass: apply all edits and report to action_log in the same effect cycle.
-    // This prevents the buffer subscription from treating these as user edits.
+    // Apply all edits in a single batch and report to action_log in the same
+    // effect cycle. This prevents the buffer subscription from treating these
+    // as user edits.
     if !edits_sorted.is_empty() {
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| {
-                for (range, new_text) in edits_sorted {
-                    buffer.edit([(range, new_text.as_str())], None, cx);
-                }
+                buffer.edit(
+                    edits_sorted
+                        .iter()
+                        .map(|(range, new_text)| (range.clone(), new_text.as_str())),
+                    None,
+                    cx,
+                );
             });
             action_log.update(cx, |log, cx| {
                 log.buffer_edited(buffer.clone(), cx);
