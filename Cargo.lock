@@ -6248,6 +6248,7 @@ name = "feedback"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "extension_host",
  "gpui",
  "system_specs",
  "urlencoding",
