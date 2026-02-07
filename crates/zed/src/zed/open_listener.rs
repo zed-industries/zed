@@ -504,7 +504,7 @@ async fn open_workspaces(
                     .await
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|(_workspace_id, location, paths)| (location, paths))
+                    .map(|session_workspace| (session_workspace.location, session_workspace.paths))
                     .collect()
             }
         } else {

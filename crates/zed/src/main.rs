@@ -54,7 +54,7 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, MultiWorkspace, PathList, SerializedWorkspaceLocation, Toast, WorkspaceId,
+    AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
     WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
 };
 use zed::{
@@ -1275,7 +1275,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (index, (workspace_id, location, paths)) in locations.into_iter().enumerate() {
+        for (index, session_workspace) in locations.into_iter().enumerate() {
+            let SessionWorkspace {
+                workspace_id,
+                location,
+                paths,
+                window_id: _,
+            } = session_workspace;
             match location {
                 SerializedWorkspaceLocation::Local if paths.is_empty() => {
                     // Restore empty workspace by ID (has items like drafts but no folders)
@@ -1417,7 +1423,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
-) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<SessionWorkspace>> {
     let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();
@@ -1441,9 +1447,16 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location()
-                .await
-                .map(|location| vec![location])
+            workspace::last_opened_workspace_location().await.map(
+                |(workspace_id, location, paths)| {
+                    vec![SessionWorkspace {
+                        workspace_id,
+                        location,
+                        paths,
+                        window_id: None,
+                    }]
+                },
+            )
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {

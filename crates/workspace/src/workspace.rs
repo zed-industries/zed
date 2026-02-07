@@ -76,7 +76,7 @@ pub use pane_group::{
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, SerializedWorkspaceLocation},
+    model::{ItemId, SerializedWorkspaceLocation, SessionWorkspace},
 };
 use postage::stream::Stream;
 use project::{
@@ -7924,7 +7924,7 @@ pub async fn last_opened_workspace_location()
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<SessionWorkspace>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
