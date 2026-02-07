@@ -48,7 +48,7 @@ pub struct BlockMap {
 }
 
 pub struct BlockMapReader<'a> {
-    blocks: &'a Vec<Arc<CustomBlock>>,
+    pub blocks: &'a Vec<Arc<CustomBlock>>,
     pub snapshot: BlockSnapshot,
 }
 
@@ -57,13 +57,19 @@ pub struct BlockMapWriter<'a> {
     companion: Option<BlockMapWriterCompanion<'a>>,
 }
 
-struct BlockMapWriterCompanion<'a>(CompanionView<'a>);
+struct BlockMapWriterCompanion<'a>(CompanionViewMut<'a>);
 
 impl<'a> Deref for BlockMapWriterCompanion<'a> {
-    type Target = CompanionView<'a>;
+    type Target = CompanionViewMut<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl<'a> DerefMut for BlockMapWriterCompanion<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -282,6 +288,7 @@ pub struct BlockContext<'a, 'b> {
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: BlockId,
+    pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
 }
@@ -542,6 +549,54 @@ impl<'a> CompanionView<'a> {
     }
 }
 
+impl<'a> From<CompanionViewMut<'a>> for CompanionView<'a> {
+    fn from(view_mut: CompanionViewMut<'a>) -> Self {
+        Self {
+            entity_id: view_mut.entity_id,
+            wrap_snapshot: view_mut.wrap_snapshot,
+            wrap_edits: view_mut.wrap_edits,
+            companion: view_mut.companion,
+        }
+    }
+}
+
+impl<'a> From<&'a CompanionViewMut<'a>> for CompanionView<'a> {
+    fn from(view_mut: &'a CompanionViewMut<'a>) -> Self {
+        Self {
+            entity_id: view_mut.entity_id,
+            wrap_snapshot: view_mut.wrap_snapshot,
+            wrap_edits: view_mut.wrap_edits,
+            companion: view_mut.companion,
+        }
+    }
+}
+
+pub struct CompanionViewMut<'a> {
+    entity_id: EntityId,
+    wrap_snapshot: &'a WrapSnapshot,
+    wrap_edits: &'a WrapPatch,
+    companion: &'a mut Companion,
+    block_map: &'a mut BlockMap,
+}
+
+impl<'a> CompanionViewMut<'a> {
+    pub(crate) fn new(
+        entity_id: EntityId,
+        wrap_snapshot: &'a WrapSnapshot,
+        wrap_edits: &'a WrapPatch,
+        companion: &'a mut Companion,
+        block_map: &'a mut BlockMap,
+    ) -> Self {
+        Self {
+            entity_id,
+            wrap_snapshot,
+            wrap_edits,
+            companion,
+            block_map,
+        }
+    }
+}
+
 impl BlockMap {
     #[ztracing::instrument(skip_all)]
     pub fn new(
@@ -600,9 +655,13 @@ impl BlockMap {
         &'a mut self,
         wrap_snapshot: WrapSnapshot,
         edits: WrapPatch,
-        companion_view: Option<CompanionView<'a>>,
+        companion_view: Option<CompanionViewMut<'a>>,
     ) -> BlockMapWriter<'a> {
-        self.sync(&wrap_snapshot, edits, companion_view);
+        self.sync(
+            &wrap_snapshot,
+            edits,
+            companion_view.as_ref().map(CompanionView::from),
+        );
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter {
             block_map: self,
@@ -656,36 +715,25 @@ impl BlockMap {
                         .to_point(WrapPoint::new(edit.new.end, 0), Bias::Left);
 
                     let my_start = companion
-                        .convert_rows_from_companion(
+                        .convert_point_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            (
-                                Bound::Included(companion_start),
-                                Bound::Included(companion_start),
-                            ),
+                            companion_start,
                         )
-                        .first()
-                        .and_then(|t| t.boundaries.first())
-                        .map(|(_, range)| range.start)
-                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                        .start;
                     let my_end = companion
-                        .convert_rows_from_companion(
+                        .convert_point_from_companion(
                             display_map_id,
                             wrap_snapshot.buffer_snapshot(),
                             companion_new_snapshot.buffer_snapshot(),
-                            (
-                                Bound::Included(companion_end),
-                                Bound::Included(companion_end),
-                            ),
+                            companion_end,
                         )
-                        .first()
-                        .and_then(|t| t.boundaries.last())
-                        .map(|(_, range)| range.end)
-                        .unwrap_or(wrap_snapshot.buffer_snapshot().max_point());
+                        .end;
 
                     let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
+                    // TODO(split-diff) should use trailing_excerpt_update_count for the second case
                     if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
                         *my_end.row_mut() += 1;
                         *my_end.column_mut() = 0;
@@ -1104,18 +1152,49 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        let row_mappings = companion.convert_rows_to_companion(
+        let patches = companion.convert_rows_to_companion(
             display_map_id,
             companion_buffer,
             our_buffer,
             bounds,
         );
 
-        let determine_spacer = |our_point: Point, their_point: Point, delta: i32| {
-            let our_wrap = wrap_snapshot.make_wrap_point(our_point, Bias::Left).row();
-            let companion_wrap = companion_snapshot
-                .make_wrap_point(their_point, Bias::Left)
-                .row();
+        let mut our_inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut our_fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
+        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
+        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
+        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
+        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
+
+        let mut our_wrapper = |our_point: Point| {
+            our_wrap_point_cursor
+                .map(our_tab_point_cursor.map(
+                    our_fold_point_cursor.map(our_inlay_point_cursor.map(our_point), Bias::Left),
+                ))
+                .row()
+        };
+        let mut companion_wrapper = |their_point: Point| {
+            companion_wrap_point_cursor
+                .map(
+                    companion_tab_point_cursor.map(
+                        companion_fold_point_cursor
+                            .map(companion_inlay_point_cursor.map(their_point), Bias::Left),
+                    ),
+                )
+                .row()
+        };
+        fn determine_spacer(
+            our_wrapper: &mut impl FnMut(Point) -> WrapRow,
+            companion_wrapper: &mut impl FnMut(Point) -> WrapRow,
+            our_point: Point,
+            their_point: Point,
+            delta: i32,
+        ) -> (i32, Option<(WrapRow, u32)>) {
+            let our_wrap = our_wrapper(our_point);
+            let companion_wrap = companion_wrapper(their_point);
             let new_delta = companion_wrap.0 as i32 - our_wrap.0 as i32;
 
             let spacer = if new_delta > delta {
@@ -1125,18 +1204,29 @@ impl BlockMap {
                 None
             };
             (new_delta, spacer)
-        };
+        }
 
         let mut result = Vec::new();
 
-        for row_mapping in row_mappings {
-            let mut iter = row_mapping.boundaries.iter().cloned().peekable();
+        for excerpt in patches {
+            let mut source_points = (excerpt.edited_range.start.row..=excerpt.edited_range.end.row)
+                .map(|row| MultiBufferPoint::new(row, 0))
+                .chain(if excerpt.edited_range.end.column > 0 {
+                    Some(excerpt.edited_range.end)
+                } else {
+                    None
+                })
+                .peekable();
+            let last_source_point = if excerpt.edited_range.end.column > 0 {
+                excerpt.edited_range.end
+            } else {
+                MultiBufferPoint::new(excerpt.edited_range.end.row, 0)
+            };
 
-            let Some(((first_boundary, first_range), first_group)) =
-                iter.peek().cloned().zip(row_mapping.first_group.clone())
-            else {
+            let Some(first_point) = source_points.peek().copied() else {
                 continue;
             };
+            let edit_for_first_point = excerpt.patch.edit_for_old_position(first_point);
 
             // Because we calculate spacers based on differences in wrap row
             // counts between the RHS and LHS for corresponding buffer points,
@@ -1145,34 +1235,46 @@ impl BlockMap {
             // counts should have been balanced already by spacers above this
             // edit, so we only need to insert spacers for when the difference
             // in counts diverges from that baseline value.
-            let (our_baseline, their_baseline) = if first_group.start < first_boundary {
-                (first_group.start, first_range.start)
-            } else if let Some((prev_boundary, prev_range)) = row_mapping.prev_boundary {
-                (prev_boundary, prev_range.end)
+            let (our_baseline, their_baseline) = if edit_for_first_point.old.start < first_point {
+                // Case 1: We are inside a hunk/group--take the start of the hunk/group on both sides as the baseline.
+                (
+                    edit_for_first_point.old.start,
+                    edit_for_first_point.new.start,
+                )
+            } else if first_point.row > excerpt.source_excerpt_range.start.row {
+                // Case 2: We are not inside a hunk/group--go back by one row to find the baseline.
+                let prev_point = Point::new(first_point.row - 1, 0);
+                let edit_for_prev_point = excerpt.patch.edit_for_old_position(prev_point);
+                (prev_point, edit_for_prev_point.new.end)
             } else {
-                (first_boundary, first_range.start)
+                // Case 3: We are at the start of the excerpt--no previous row to use as the baseline.
+                (first_point, edit_for_first_point.new.start)
             };
-            let our_baseline = wrap_snapshot
-                .make_wrap_point(our_baseline, Bias::Left)
-                .row();
-            let their_baseline = companion_snapshot
-                .make_wrap_point(their_baseline, Bias::Left)
-                .row();
+            let our_baseline = our_wrapper(our_baseline);
+            let their_baseline = companion_wrapper(their_baseline);
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
-            if first_group.start < first_boundary {
-                let mut current_boundary = first_boundary;
-                let current_range = first_range;
-                while let Some((next_boundary, next_range)) = iter.peek().cloned()
-                    && next_range.end <= current_range.end
-                {
-                    iter.next();
-                    current_boundary = next_boundary;
+            // If we started out in the middle of a hunk/group, work up to the end of that group to set up the main loop below.
+            if edit_for_first_point.old.start < first_point {
+                let mut current_boundary = first_point;
+                let current_range = edit_for_first_point.new;
+                while let Some(next_point) = source_points.peek().cloned() {
+                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                    if edit_for_next_point.new.end > current_range.end {
+                        break;
+                    }
+                    source_points.next();
+                    current_boundary = next_point;
                 }
 
-                let (new_delta, spacer) =
-                    determine_spacer(current_boundary, current_range.end, delta);
+                let (new_delta, spacer) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.end,
+                    delta,
+                );
 
                 delta = new_delta;
                 if let Some((wrap_row, height)) = spacer {
@@ -1187,24 +1289,33 @@ impl BlockMap {
                 }
             }
 
-            while let Some((boundary, range)) = iter.next() {
-                let mut current_boundary = boundary;
-                let current_range = range;
+            // Main loop: process one hunk/group at a time, possibly inserting spacers before and after.
+            while let Some(source_point) = source_points.next() {
+                let mut current_boundary = source_point;
+                let current_range = excerpt.patch.edit_for_old_position(current_boundary).new;
 
                 // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
-                    debug_assert_eq!(current_boundary, row_mapping.source_excerpt_end);
+                    debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
                 }
 
                 // Align the two sides at the start of this group.
-                let (delta_at_start, mut spacer_at_start) =
-                    determine_spacer(current_boundary, current_range.start, delta);
+                let (delta_at_start, mut spacer_at_start) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.start,
+                    delta,
+                );
                 delta = delta_at_start;
 
-                while let Some((next_boundary, next_range)) = iter.peek()
-                    && next_range.end <= current_range.end
-                {
+                while let Some(next_point) = source_points.peek().copied() {
+                    let edit_for_next_point = excerpt.patch.edit_for_old_position(next_point);
+                    if edit_for_next_point.new.end > current_range.end {
+                        break;
+                    }
+
                     if let Some((wrap_row, height)) = spacer_at_start.take() {
                         result.push((
                             BlockPlacement::Above(wrap_row),
@@ -1216,18 +1327,23 @@ impl BlockMap {
                         ));
                     }
 
-                    current_boundary = *next_boundary;
-                    iter.next();
+                    current_boundary = next_point;
+                    source_points.next();
                 }
 
                 // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
-                    debug_assert_eq!(current_boundary, row_mapping.source_excerpt_end);
+                    debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
                 }
 
-                let (delta_at_end, spacer_at_end) =
-                    determine_spacer(current_boundary, current_range.end, delta);
+                let (delta_at_end, spacer_at_end) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    current_boundary,
+                    current_range.end,
+                    delta,
+                );
                 delta = delta_at_end;
 
                 if let Some((wrap_row, mut height)) = spacer_at_start {
@@ -1254,10 +1370,14 @@ impl BlockMap {
                 }
             }
 
-            let (last_boundary, _last_range) = row_mapping.boundaries.last().cloned().unwrap();
-            if last_boundary == row_mapping.source_excerpt_end {
-                let (_new_delta, spacer) =
-                    determine_spacer(last_boundary, row_mapping.target_excerpt_end, delta);
+            if last_source_point == excerpt.source_excerpt_range.end {
+                let (_new_delta, spacer) = determine_spacer(
+                    &mut our_wrapper,
+                    &mut companion_wrapper,
+                    last_source_point,
+                    excerpt.target_excerpt_range.end,
+                    delta,
+                );
                 if let Some((wrap_row, height)) = spacer {
                     result.push((
                         BlockPlacement::Below(wrap_row),
@@ -1340,6 +1460,55 @@ impl BlockMap {
             }
             _ => false,
         });
+    }
+
+    pub(crate) fn insert_custom_block_into_companion(
+        &mut self,
+        entity_id: EntityId,
+        snapshot: &WrapSnapshot,
+        block: &CustomBlock,
+        companion_snapshot: &MultiBufferSnapshot,
+        companion: &mut Companion,
+    ) {
+        let their_anchor = block.placement.start();
+        let their_point = their_anchor.to_point(companion_snapshot);
+        let my_patches = companion.convert_rows_to_companion(
+            entity_id,
+            snapshot.buffer_snapshot(),
+            companion_snapshot,
+            (Bound::Included(their_point), Bound::Included(their_point)),
+        );
+        let my_excerpt = my_patches
+            .first()
+            .expect("at least one companion excerpt exists");
+        let my_range = my_excerpt.patch.edit_for_old_position(their_point).new;
+        let my_point = my_range.start;
+        let anchor = snapshot.buffer_snapshot().anchor_before(my_point);
+        let height = block.height.unwrap_or(1);
+        let new_block = BlockProperties {
+            placement: BlockPlacement::Above(anchor),
+            height: Some(height),
+            style: BlockStyle::Sticky,
+            render: Arc::new(move |cx| {
+                crate::EditorElement::render_spacer_block(
+                    cx.block_id,
+                    cx.height,
+                    cx.line_height,
+                    cx.window,
+                    cx.app,
+                )
+            }),
+            priority: 0,
+        };
+        log::debug!("Inserting matching companion custom block: {block:#?} => {new_block:#?}");
+        let new_block_id = self
+            .write(snapshot.clone(), Patch::default(), None)
+            .insert([new_block])[0];
+        if companion.is_rhs(entity_id) {
+            companion.add_custom_block_mapping(block.id, new_block_id);
+        } else {
+            companion.add_custom_block_mapping(new_block_id, block.id);
+        }
     }
 }
 
@@ -1501,7 +1670,7 @@ impl BlockMapWriter<'_> {
             };
             let new_block = Arc::new(CustomBlock {
                 id,
-                placement: block.placement,
+                placement: block.placement.clone(),
                 height: block.height,
                 render: Arc::new(Mutex::new(block.render)),
                 style: block.style,
@@ -1510,7 +1679,27 @@ impl BlockMapWriter<'_> {
             self.block_map
                 .custom_blocks
                 .insert(block_ix, new_block.clone());
-            self.block_map.custom_blocks_by_id.insert(id, new_block);
+            self.block_map
+                .custom_blocks_by_id
+                .insert(id, new_block.clone());
+
+            // Insert a matching custom block in the companion (if any)
+            if let Some(CompanionViewMut {
+                entity_id: their_entity_id,
+                wrap_snapshot: their_snapshot,
+                block_map: their_block_map,
+                companion,
+                ..
+            }) = self.companion.as_deref_mut()
+            {
+                their_block_map.insert_custom_block_into_companion(
+                    *their_entity_id,
+                    their_snapshot,
+                    &new_block,
+                    buffer,
+                    companion,
+                );
+            }
 
             edits = edits.compose([Edit {
                 old: start_row..end_row,
@@ -1523,13 +1712,13 @@ impl BlockMapWriter<'_> {
             wrap_snapshot,
             edits,
             self.companion.as_deref().map(
-                |&CompanionView {
+                |CompanionViewMut {
                      entity_id,
                      wrap_snapshot,
                      companion,
                      ..
                  }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
                 },
             ),
         );
@@ -1593,13 +1782,13 @@ impl BlockMapWriter<'_> {
             wrap_snapshot,
             edits,
             self.companion.as_deref().map(
-                |&CompanionView {
+                |CompanionViewMut {
                      entity_id,
                      wrap_snapshot,
                      companion,
                      ..
                  }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
                 },
             ),
         );
@@ -1648,18 +1837,49 @@ impl BlockMapWriter<'_> {
         self.block_map
             .custom_blocks_by_id
             .retain(|id, _| !block_ids.contains(id));
+
+        if let Some(CompanionViewMut {
+            entity_id: their_entity_id,
+            wrap_snapshot: their_snapshot,
+            companion,
+            block_map: their_block_map,
+            ..
+        }) = self.companion.as_deref_mut()
+        {
+            let their_block_ids: HashSet<_> = block_ids
+                .iter()
+                .filter_map(|my_block_id| {
+                    let mapping = companion.companion_custom_block_to_custom_block(*their_entity_id);
+                    let their_block_id =
+                        mapping.get(my_block_id)?;
+                    log::debug!("Removing custom block in the companion with id {their_block_id:?} for mine {my_block_id:?}");
+                    Some(*their_block_id)
+                })
+                .collect();
+            for (lhs_id, rhs_id) in block_ids.iter().zip(their_block_ids.iter()) {
+                if !companion.is_rhs(*their_entity_id) {
+                    companion.remove_custom_block_mapping(lhs_id, rhs_id);
+                } else {
+                    companion.remove_custom_block_mapping(rhs_id, lhs_id);
+                }
+            }
+            their_block_map
+                .write(their_snapshot.clone(), Patch::default(), None)
+                .remove(their_block_ids);
+        }
+
         let default_patch = Patch::default();
         self.block_map.sync(
             wrap_snapshot,
             edits,
             self.companion.as_deref().map(
-                |&CompanionView {
+                |CompanionViewMut {
                      entity_id,
                      wrap_snapshot,
                      companion,
                      ..
                  }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
                 },
             ),
         );
@@ -1748,13 +1968,13 @@ impl BlockMapWriter<'_> {
             &wrap_snapshot,
             edits,
             self.companion.as_deref().map(
-                |&CompanionView {
+                |CompanionViewMut {
                      entity_id,
                      wrap_snapshot,
                      companion,
                      ..
                  }| {
-                    CompanionView::new(entity_id, wrap_snapshot, &default_patch, companion)
+                    CompanionView::new(*entity_id, wrap_snapshot, &default_patch, companion)
                 },
             ),
         );

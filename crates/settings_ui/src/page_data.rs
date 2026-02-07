@@ -1,13 +1,14 @@
 use gpui::{Action as _, App};
-use settings::{LanguageSettingsContent, SettingsContent};
-use std::sync::Arc;
-use strum::IntoDiscriminant as _;
+use itertools::Itertools as _;
+use settings::{LanguageSettingsContent, SemanticTokens, SettingsContent};
+use std::sync::{Arc, OnceLock};
+use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
 use ui::IntoElement;
 
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::render_edit_prediction_setup_page,
+    pages::{render_edit_prediction_setup_page, render_tool_permissions_setup_page},
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -6869,7 +6870,7 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
+    fn agent_configuration_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6893,6 +6894,15 @@ fn ai_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Configure Tool Rules".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.tool_permissions"),
+                description: Some("Set up regex patterns to auto-allow, auto-deny, or always prompt for specific tool inputs.".into()),
+                in_json: true,
+                files: USER,
+                render: render_tool_permissions_setup_page,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
@@ -8488,7 +8498,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 5] {
+    fn lsp_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8569,6 +8579,60 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Semantic Tokens",
+                description: {
+                    static DESCRIPTION: OnceLock<&'static str> = OnceLock::new();
+                    DESCRIPTION.get_or_init(|| {
+                        SemanticTokens::VARIANTS
+                            .iter()
+                            .filter_map(|v| {
+                                v.get_documentation().map(|doc| format!("{v:?}: {doc}"))
+                            })
+                            .join("\n")
+                            .leak()
+                    })
+                },
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).semantic_tokens"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .semantic_tokens
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project
+                            .all_languages
+                            .defaults
+                            .semantic_tokens = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "LSP Folding Ranges",
+                description: "When enabled, use folding ranges from the language server instead of indent-based folding.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).document_folding_ranges"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.document_folding_ranges.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.document_folding_ranges = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
         ]
     }

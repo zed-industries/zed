@@ -1,15 +1,17 @@
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
 };
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -55,9 +57,7 @@ impl AgentTool for CopyPathTool {
     type Input = CopyPathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "copy_path"
-    }
+    const NAME: &'static str = "copy_path";
 
     fn kind() -> ToolKind {
         ToolKind::Move
@@ -85,56 +85,70 @@ impl AgentTool for CopyPathTool {
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
 
-        let source_decision =
-            decide_permission_from_settings(Self::name(), &input.source_path, settings);
+        let source_decision = decide_permission_for_path(Self::NAME, &input.source_path, settings);
         if let ToolPermissionDecision::Deny(reason) = source_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         let dest_decision =
-            decide_permission_from_settings(Self::name(), &input.destination_path, settings);
+            decide_permission_for_path(Self::NAME, &input.destination_path, settings);
         if let ToolPermissionDecision::Deny(reason) = dest_decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
         let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
-            || matches!(dest_decision, ToolPermissionDecision::Confirm);
+            || matches!(dest_decision, ToolPermissionDecision::Confirm)
+            || (!settings.always_allow_tool_actions
+                && matches!(source_decision, ToolPermissionDecision::Allow)
+                && is_sensitive_settings_path(Path::new(&input.source_path)))
+            || (!settings.always_allow_tool_actions
+                && matches!(dest_decision, ToolPermissionDecision::Allow)
+                && is_sensitive_settings_path(Path::new(&input.destination_path)));
 
         let authorize = if needs_confirmation {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
             let context = crate::ToolPermissionContext {
-                tool_name: "copy_path".to_string(),
-                input_value: input.source_path.clone(),
+                tool_name: Self::NAME.to_string(),
+                input_value: format!("{}\n{}", input.source_path, input.destination_path),
             };
-            Some(event_stream.authorize(format!("Copy {src} to {dest}"), context, cx))
+            let title = format!("Copy {src} to {dest}");
+            let sensitive_kind = sensitive_settings_kind(Path::new(&input.source_path))
+                .or_else(|| sensitive_settings_kind(Path::new(&input.destination_path)));
+            let title = match sensitive_kind {
+                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                None => title,
+            };
+            Some(event_stream.authorize(title, context, cx))
         } else {
             None
         };
 
-        let copy_task = self.project.update(cx, |project, cx| {
-            match project
-                .find_project_path(&input.source_path, cx)
-                .and_then(|project_path| project.entry_for_path(&project_path, cx))
-            {
-                Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => project.copy_entry(entity.id, project_path, cx),
-                    None => Task::ready(Err(anyhow!(
-                        "Destination path {} was outside the project.",
-                        input.destination_path
-                    ))),
-                },
-                None => Task::ready(Err(anyhow!(
-                    "Source path {} was not found in the project.",
-                    input.source_path
-                ))),
-            }
-        });
-
-        cx.background_spawn(async move {
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
             if let Some(authorize) = authorize {
                 authorize.await?;
             }
+
+            let copy_task = project.update(cx, |project, cx| {
+                match project
+                    .find_project_path(&input.source_path, cx)
+                    .and_then(|project_path| project.entry_for_path(&project_path, cx))
+                {
+                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
+                        Some(project_path) => Ok(project.copy_entry(entity.id, project_path, cx)),
+                        None => Err(anyhow!(
+                            "Destination path {} was outside the project.",
+                            input.destination_path
+                        )),
+                    },
+                    None => Err(anyhow!(
+                        "Source path {} was not found in the project.",
+                        input.source_path
+                    )),
+                }
+            })?;
 
             let result = futures::select! {
                 result = copy_task.fuse() => result,
