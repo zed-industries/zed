@@ -560,28 +560,17 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
-        let mut last_run = None::<&TextRun>;
+        // FontRuns define font-based shaping boundaries only (ligatures, kerning).
+        // Visual decorations (color, underline, strikethrough) are handled separately
+        // via DecorationRuns in shape_line() and must not influence FontRun merging.
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
         for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
-            };
-
             let font_id = self.resolve_font(&run.font);
+
             if let Some(font_run) = font_runs.last_mut()
                 && font_id == font_run.font_id
-                && !decoration_changed
             {
                 font_run.len += run.len;
             } else {
@@ -958,4 +947,695 @@ pub(crate) fn font_name_with_fallbacks_shared<'a>(
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        black, blue, font, px, red, white, Hsla, TestAppContext, TestDispatcher, TextRun,
+        WindowTextSystem,
+    };
+    use std::sync::Arc;
+
+    fn build_text_system() -> WindowTextSystem {
+        let dispatcher = TestDispatcher::new(0);
+        let cx = TestAppContext::build(dispatcher, None);
+        WindowTextSystem::new(cx.text_system().clone())
+    }
+
+    /// Builds a WindowTextSystem backed by the real macOS CoreText engine.
+    /// Required for tests that need distinct font_ids for different font families,
+    /// because the default TestPlatform uses NoopTextSystem which returns the
+    /// same FontId for all fonts.
+    #[cfg(target_os = "macos")]
+    fn build_mac_text_system() -> WindowTextSystem {
+        use crate::{MacTextSystem, TextSystem};
+        let platform_text_system = Arc::new(MacTextSystem::new());
+        let text_system = Arc::new(TextSystem::new(platform_text_system));
+        WindowTextSystem::new(text_system)
+    }
+
+    /// Creates a TextRun with specified length, font family, and color.
+    /// Uses the crate-level `font()` function for proper SharedString handling.
+    fn text_run(len: usize, family: &'static str, color: Hsla) -> TextRun {
+        TextRun {
+            len,
+            font: font(family),
+            color,
+            ..Default::default()
+        }
+    }
+
+    // ==================== POST-LLM-01: Font-Only Merging ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_01_same_font_different_colors_merge() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-01: Adjacent TextRuns with same font_id → single FontRun (decoration-independent)
+        // - Category: positive
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "HelloWorld";
+
+        // Two runs: same font (Helvetica), different colors
+        let runs = vec![
+            text_run(5, "Helvetica", red()),
+            text_run(5, "Helvetica", blue()),
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        // ASSERT: POST-LLM-01 - Should produce exactly 1 FontRun (merged)
+        assert_eq!(
+            layout.runs.len(),
+            1,
+            "POST-LLM-01 violation: Adjacent TextRuns with same font_id MUST merge into single FontRun\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-01\n\
+             EXPECTED: 1 FontRun (same font Helvetica, decoration differences ignored)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: Font run boundaries determined by font_id ONLY. Color/decoration changes MUST NOT create new FontRuns. \
+             Implementation should check font_id equality without considering decoration properties.",
+            layout.runs.len()
+        );
+
+        // Verify the single run contains all glyphs
+        let total_glyphs: usize = layout.runs.iter().map(|r| r.glyphs.len()).sum();
+        assert!(
+            total_glyphs == text.chars().count(),
+            "POST-LLM-01 violation: Merged FontRun MUST contain all glyphs from both TextRuns\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-01\n\
+             EXPECTED: {} glyphs (full text)\n\
+             ACTUAL: {} glyphs\n\
+             GUIDANCE: When merging adjacent same-font runs, all characters must be shaped together.",
+            text.chars().count(),
+            total_glyphs
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_01_same_font_different_underline_merge() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-01: Adjacent TextRuns with same font_id → single FontRun (underline irrelevant)
+        // - Category: positive
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "ABC";
+
+        let runs = vec![
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: black(),
+                underline: None,
+                ..Default::default()
+            },
+            TextRun {
+                len: 2,
+                font: font("Helvetica"),
+                color: black(),
+                underline: Some(Default::default()),
+                ..Default::default()
+            },
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        assert_eq!(
+            layout.runs.len(),
+            1,
+            "POST-LLM-01 violation: Underline decoration MUST NOT affect FontRun merging\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-01\n\
+             EXPECTED: 1 FontRun (same font, underline difference ignored)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: POST-LLM-01 specifies 'regardless of any decoration differences (color, underline, strikethrough)'. \
+             Only font_id determines run boundaries.",
+            layout.runs.len()
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_01_same_font_different_strikethrough_merge() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-01: Adjacent TextRuns with same font_id → single FontRun (strikethrough irrelevant)
+        // - Category: positive
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "XY";
+
+        let runs = vec![
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: black(),
+                strikethrough: None,
+                ..Default::default()
+            },
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: black(),
+                strikethrough: Some(Default::default()),
+                ..Default::default()
+            },
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        assert_eq!(
+            layout.runs.len(),
+            1,
+            "POST-LLM-01 violation: Strikethrough decoration MUST NOT affect FontRun merging\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-01\n\
+             EXPECTED: 1 FontRun (same font, strikethrough difference ignored)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: Strikethrough is a decoration applied after shaping. FontRun boundaries determined by font_id only.",
+            layout.runs.len()
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_01_same_font_different_background_merge() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-01: Adjacent TextRuns with same font_id → single FontRun (background_color irrelevant)
+        // - Category: positive
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "AB";
+
+        let runs = vec![
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: black(),
+                background_color: Some(white()),
+                ..Default::default()
+            },
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: black(),
+                background_color: Some(red()),
+                ..Default::default()
+            },
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        assert_eq!(
+            layout.runs.len(),
+            1,
+            "POST-LLM-01 violation: Background color MUST NOT affect FontRun merging\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-01\n\
+             EXPECTED: 1 FontRun (same font, background_color difference ignored)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: Background color is a decoration property that does not affect glyph shaping.",
+            layout.runs.len()
+        );
+    }
+
+    // ==================== POST-LLM-02: FontRun Boundaries At Font Changes Only ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_02_different_fonts_do_not_merge() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-02: FontRun boundaries IFF different font_id
+        // - Category: negative
+        // - Adversarial: Implementation-blind
+
+        // Uses real macOS CoreText to get distinct font_ids for different families.
+        // The default TestPlatform/NoopTextSystem returns the same FontId for all
+        // fonts, making it impossible to test font-boundary behavior.
+        let text_system = build_mac_text_system();
+        let text = "HelloWorld";
+
+        // Two runs: different font families (guaranteed different font_ids)
+        let runs = vec![
+            text_run(5, "Helvetica", black()),
+            text_run(5, "Menlo", black()),
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        // ASSERT: POST-LLM-02 - Should produce exactly 2 ShapedRuns (NOT merged)
+        assert_eq!(
+            layout.runs.len(),
+            2,
+            "POST-LLM-02 violation: Different font_id MUST create separate FontRuns\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-02\n\
+             EXPECTED: 2 FontRuns (Helvetica vs Menlo — distinct font families)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: FontRun boundaries occur if and only if font_id differs between consecutive TextRuns.",
+            layout.runs.len()
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_02_same_color_different_font_creates_boundary() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-02: Color sameness MUST NOT prevent font-based boundary
+        // - Category: boundary
+        // - Adversarial: Implementation-blind
+
+        // Uses real macOS CoreText to get distinct font_ids for different families.
+        // The default TestPlatform/NoopTextSystem returns the same FontId for all
+        // fonts, making it impossible to test font-boundary behavior.
+        let text_system = build_mac_text_system();
+        let text = "AB";
+
+        // Same color, different font families (guaranteed different font_ids)
+        let runs = vec![
+            text_run(1, "Helvetica", red()),
+            text_run(1, "Menlo", red()),
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        assert_eq!(
+            layout.runs.len(),
+            2,
+            "POST-LLM-02 violation: Font change MUST create boundary even with identical decorations\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-02\n\
+             EXPECTED: 2 FontRuns (Helvetica vs Menlo — font_id is the ONLY boundary criterion)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: font_id difference is necessary AND sufficient for a FontRun boundary.",
+            layout.runs.len()
+        );
+    }
+
+    // ==================== POST-LLM-03: Merged FontRun Length Correctness ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_03_merged_run_length_equals_sum() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-03: Merged FontRun len == sum of merged TextRun lens
+        // - Category: positive
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "HelloWorld";
+
+        let runs = vec![
+            text_run(3, "Helvetica", red()),
+            text_run(4, "Helvetica", blue()),
+            text_run(3, "Helvetica", black()),
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        // Should be merged into 1 FontRun
+        assert_eq!(layout.runs.len(), 1, "Precondition: runs should merge");
+
+        let total_glyphs: usize = layout.runs.iter().map(|r| r.glyphs.len()).sum();
+        let expected_len = 3 + 4 + 3;
+
+        assert_eq!(
+            total_glyphs,
+            expected_len,
+            "POST-LLM-03 violation: Merged FontRun length MUST equal sum of merged TextRun lengths\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-03\n\
+             EXPECTED: {} glyphs (3+4+3)\n\
+             ACTUAL: {} glyphs\n\
+             GUIDANCE: When merging runs, implementation MUST accumulate lengths. No characters lost or duplicated.",
+            expected_len,
+            total_glyphs
+        );
+    }
+
+    // ==================== POST-LLM-04: Total Length Preservation ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_04_total_length_preserved_mixed_fonts() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-04: sum(FontRun.len) == sum(TextRun.len)
+        // - Category: invariant
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "HelloWorld!";
+
+        let runs = vec![
+            text_run(5, "Helvetica", red()),
+            text_run(3, "Courier", blue()),
+            text_run(3, "Helvetica", black()),
+        ];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        let input_total_len: usize = runs.iter().map(|r| r.len).sum();
+        let output_total_glyphs: usize = layout.runs.iter().map(|r| r.glyphs.len()).sum();
+
+        assert_eq!(
+            output_total_glyphs,
+            input_total_len,
+            "POST-LLM-04 violation: Total length MUST be preserved across TextRun→FontRun conversion\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-04\n\
+             EXPECTED: {} characters (sum of input TextRun.len)\n\
+             ACTUAL: {} glyphs (sum of output FontRun glyph counts)\n\
+             GUIDANCE: Character count invariant. Every input character must appear exactly once in output.",
+            input_total_len,
+            output_total_glyphs
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_post_llm_04_total_length_preserved_single_run() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: POST-LLM-04: Edge case - single TextRun
+        // - Category: boundary
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "Hello";
+
+        let runs = vec![text_run(5, "Helvetica", black())];
+
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        let input_total_len: usize = runs.iter().map(|r| r.len).sum();
+        let output_total_glyphs: usize = layout.runs.iter().map(|r| r.glyphs.len()).sum();
+
+        assert_eq!(
+            output_total_glyphs,
+            input_total_len,
+            "POST-LLM-04 violation: Single TextRun case must also preserve length\n\
+             Contract: WindowTextSystem.layout_line() POST-LLM-04\n\
+             EXPECTED: {} characters\n\
+             ACTUAL: {} glyphs\n\
+             GUIDANCE: Length preservation applies to all cases, including single run.",
+            input_total_len,
+            output_total_glyphs
+        );
+    }
+
+    // ==================== INV-LLM-01: Decoration Independence ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_inv_llm_01_decoration_independence_color() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: INV-LLM-01: Same text/font_size/font_id sequence → identical FontRuns
+        // - Category: invariant
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "TestText";
+
+        // Scenario A: All red
+        let runs_a = vec![text_run(8, "Helvetica", red())];
+
+        // Scenario B: Mixed colors (same font)
+        let runs_b = vec![
+            text_run(4, "Helvetica", red()),
+            text_run(4, "Helvetica", blue()),
+        ];
+
+        let layout_a = text_system.layout_line(text, px(14.0), &runs_a, None);
+        let layout_b = text_system.layout_line(text, px(14.0), &runs_b, None);
+
+        // INV-LLM-01: FontRuns must be identical
+        assert_eq!(
+            layout_a.runs.len(),
+            layout_b.runs.len(),
+            "INV-LLM-01 violation: Decoration differences MUST NOT change FontRun count\n\
+             Contract: WindowTextSystem.layout_line() INV-LLM-01\n\
+             EXPECTED: Same FontRun count for both scenarios (same font sequence)\n\
+             ACTUAL: Scenario A={} runs, Scenario B={} runs\n\
+             GUIDANCE: Decoration independence core invariant. Same fonts → same shaping boundaries.",
+            layout_a.runs.len(),
+            layout_b.runs.len()
+        );
+
+        // Both should have 1 FontRun
+        assert_eq!(
+            layout_a.runs.len(),
+            1,
+            "INV-LLM-01 violation: Scenario A should produce 1 FontRun"
+        );
+        assert_eq!(
+            layout_b.runs.len(),
+            1,
+            "INV-LLM-01 violation: Scenario B should produce 1 FontRun (merged)"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_inv_llm_01_decoration_independence_all_decorations() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: INV-LLM-01: All decoration types independent
+        // - Category: invariant
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "AB";
+
+        // Scenario A: No decorations
+        let runs_a = vec![text_run(2, "Helvetica", black())];
+
+        // Scenario B: All decorations different
+        let runs_b = vec![
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: red(),
+                underline: Some(Default::default()),
+                strikethrough: Some(Default::default()),
+                background_color: Some(blue()),
+            },
+            TextRun {
+                len: 1,
+                font: font("Helvetica"),
+                color: black(),
+                underline: None,
+                strikethrough: None,
+                background_color: Some(white()),
+            },
+        ];
+
+        let layout_a = text_system.layout_line(text, px(14.0), &runs_a, None);
+        let layout_b = text_system.layout_line(text, px(14.0), &runs_b, None);
+
+        assert_eq!(
+            layout_a.runs.len(),
+            layout_b.runs.len(),
+            "INV-LLM-01 violation: Combined decoration differences MUST NOT affect FontRun structure\n\
+             Contract: WindowTextSystem.layout_line() INV-LLM-01\n\
+             EXPECTED: Same FontRun count (1) for both scenarios\n\
+             ACTUAL: Scenario A={} runs, Scenario B={} runs\n\
+             GUIDANCE: Contract explicitly lists 'color, underline, strikethrough, background_color' as decoration-independent.",
+            layout_a.runs.len(),
+            layout_b.runs.len()
+        );
+
+        assert_eq!(layout_a.runs.len(), 1);
+        assert_eq!(layout_b.runs.len(), 1);
+    }
+
+    // ==================== INV-LLM-01b: Cache-Based Decoration Independence ====================
+    // This test detects the bug via cache behavior: same text + same fonts + different
+    // decorations should produce identical FontRuns → same cache key → pointer-equal Arc.
+    // With the bug, different decorations create different FontRuns → different cache entries.
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_inv_llm_01_cache_proves_same_font_runs() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: INV-LLM-01: Identical FontRuns for same font sequence regardless of decoration
+        // - Category: invariant (cache-observable)
+        // - Adversarial: Implementation-blind (tests observable cache behavior)
+
+        let text_system = build_text_system();
+        let text = "Hello";
+
+        // Scenario A: Single run, uniform color
+        let runs_a = vec![text_run(5, "Helvetica", black())];
+
+        // Scenario B: Two runs, same font, different colors (simulates selection)
+        let runs_b = vec![
+            text_run(2, "Helvetica", red()),
+            text_run(3, "Helvetica", blue()),
+        ];
+
+        let layout_a = text_system.layout_line(text, px(14.0), &runs_a, None);
+        let layout_b = text_system.layout_line(text, px(14.0), &runs_b, None);
+
+        // INV-LLM-01 via cache: If FontRuns are identical (both produce 1 FontRun with
+        // same font_id and len=5), the cache returns the same Arc<LineLayout>.
+        // If FontRuns differ (bug: A produces 1, B produces 2), cache returns different Arcs.
+        assert!(
+            std::sync::Arc::ptr_eq(&layout_a, &layout_b),
+            "INV-LLM-01 violation (cache evidence): Same text + same font + different decorations \
+             MUST produce identical FontRuns and thus the same cached LineLayout.\n\
+             Contract: WindowTextSystem.layout_line() INV-LLM-01\n\
+             EXPECTED: Arc::ptr_eq == true (same cache entry, proving identical FontRuns)\n\
+             ACTUAL: Arc::ptr_eq == false (different cache entries, proving different FontRuns)\n\
+             GUIDANCE: Decoration changes (color, underline, strikethrough) MUST NOT affect FontRun \
+             boundaries. The layout cache is keyed on FontRuns — different cache entries prove \
+             different FontRuns were generated, which is a contract violation."
+        );
+    }
+
+    // ==================== INV-LLM-02: Layout Stability Under Selection ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_inv_llm_02_glyph_positions_identical_with_without_selection() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: INV-LLM-02: Layout (glyph positions) identical with/without selection
+        // - Category: invariant
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "example/path";
+
+        // Unselected: uniform color
+        let runs_unselected = vec![text_run(12, "Helvetica", black())];
+
+        // Selected: middle portion different color (simulates selection)
+        let runs_selected = vec![
+            text_run(7, "Helvetica", black()), // "example"
+            text_run(1, "Helvetica", white()), // "/" - selected
+            text_run(4, "Helvetica", black()), // "path"
+        ];
+
+        let layout_unselected = text_system.layout_line(text, px(14.0), &runs_unselected, None);
+        let layout_selected = text_system.layout_line(text, px(14.0), &runs_selected, None);
+
+        // INV-LLM-02: Glyph positions must be identical
+        let positions_unselected: Vec<_> = layout_unselected
+            .runs
+            .iter()
+            .flat_map(|r| r.glyphs.iter().map(|g| (g.index, g.position)))
+            .collect();
+
+        let positions_selected: Vec<_> = layout_selected
+            .runs
+            .iter()
+            .flat_map(|r| r.glyphs.iter().map(|g| (g.index, g.position)))
+            .collect();
+
+        assert_eq!(
+            positions_unselected,
+            positions_selected,
+            "INV-LLM-02 violation: Glyph positions MUST be identical regardless of selection/highlighting\n\
+             Contract: WindowTextSystem.layout_line() INV-LLM-02\n\
+             EXPECTED: Identical glyph positions for both scenarios\n\
+             ACTUAL: Positions differ\n\
+             GUIDANCE: This is the root cause of Issue #48670. Selection changes decoration (color) but MUST NOT affect \
+             shaping/positioning. Verify FontRun boundaries are font-only."
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_inv_llm_02_line_width_identical_with_without_selection() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: INV-LLM-02: LineLayout width identical with/without selection
+        // - Category: invariant
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "test";
+
+        let runs_unselected = vec![text_run(4, "Helvetica", black())];
+        let runs_selected = vec![
+            text_run(2, "Helvetica", black()),
+            text_run(2, "Helvetica", blue()), // simulates selection
+        ];
+
+        let layout_unselected = text_system.layout_line(text, px(14.0), &runs_unselected, None);
+        let layout_selected = text_system.layout_line(text, px(14.0), &runs_selected, None);
+
+        assert_eq!(
+            layout_unselected.width,
+            layout_selected.width,
+            "INV-LLM-02 violation: LineLayout width MUST be identical regardless of selection\n\
+             Contract: WindowTextSystem.layout_line() INV-LLM-02\n\
+             EXPECTED: Same width ({:?})\n\
+             ACTUAL: Unselected={:?}, Selected={:?}\n\
+             GUIDANCE: Width changes indicate glyph repositioning or ligature breaks. Selection must not affect shaping.",
+            layout_unselected.width,
+            layout_unselected.width,
+            layout_selected.width
+        );
+    }
+
+    // ==================== ERRORS-LLM-01: Empty Runs ====================
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_errors_llm_01_empty_runs_no_panic() {
+        // CONTRACT TRACEABILITY:
+        // - Contract: WindowTextSystem.layout_line()
+        // - Enforces: ERRORS-LLM-01: Empty runs → zero FontRuns, no panic
+        // - Category: error
+        // - Adversarial: Implementation-blind
+
+        let text_system = build_text_system();
+        let text = "";
+        let runs: Vec<TextRun> = vec![];
+
+        // Should not panic
+        let layout = text_system.layout_line(text, px(14.0), &runs, None);
+
+        assert_eq!(
+            layout.runs.len(),
+            0,
+            "ERRORS-LLM-01 violation: Empty runs MUST produce zero FontRuns\n\
+             Contract: WindowTextSystem.layout_line() ERRORS-LLM-01\n\
+             EXPECTED: 0 FontRuns (empty text)\n\
+             ACTUAL: {} FontRuns\n\
+             GUIDANCE: Empty input is valid. Implementation must handle gracefully without panic.",
+            layout.runs.len()
+        );
+
+        assert_eq!(
+            layout.len,
+            0,
+            "ERRORS-LLM-01: Empty layout should have len=0"
+        );
+    }
+
+    // ==================== THEATER TEST SELF-CHECK ====================
+    //
+    // For each test above, applying theater detection:
+    //
+    // Q: "Can implementation violate POST-LLM-01 and test still pass?"
+    // A: NO - Tests assert exact FontRun counts (1 vs 2+), different from expected = FAIL
+    //
+    // Q: "Can implementation violate INV-LLM-01 and test still pass?"
+    // A: NO - Tests compare glyph positions between scenarios, position differences = FAIL
+    //
+    // Q: "Can implementation violate POST-LLM-03 and test still pass?"
+    // A: NO - Tests assert exact glyph counts equal expected sum, mismatch = FAIL
+    //
+    // All tests use deterministic exact value assertions, not ranges/approximations.
 }
