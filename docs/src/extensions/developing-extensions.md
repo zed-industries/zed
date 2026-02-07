@@ -40,6 +40,8 @@ description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
 
+> Note, for theme extensions, it is recommended that you suffix your theme's ID with `-theme`.
+
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
 ```
