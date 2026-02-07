@@ -161,7 +161,6 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
- "brush-parser",
  "chrono",
  "client",
  "clock",
@@ -205,6 +204,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shell_command_parser",
  "smallvec",
  "smol",
  "sqlez",
@@ -296,6 +296,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shell_command_parser",
  "smol",
  "task",
  "tempfile",
@@ -15307,6 +15308,13 @@ name = "shell-words"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
+
+[[package]]
+name = "shell_command_parser"
+version = "0.1.0"
+dependencies = [
+ "brush-parser",
+]
 
 [[package]]
 name = "shellexpand"
