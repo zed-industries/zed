@@ -3315,6 +3315,8 @@ impl File {
         } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
+            // Size is not sent over the wire. Remote buffers don't make
+            // local reload decisions so this is unused in practice.
             DiskState::Present { mtime, size: 0 }
         } else {
             DiskState::New
