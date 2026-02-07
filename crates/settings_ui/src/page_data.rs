@@ -8595,7 +8595,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     })
                 },
                 field: Box::new(SettingField {
-                    json_path: Some("languages.$(language).enable_language_server"),
+                    json_path: Some("languages.$(language).semantic_tokens"),
                     pick: |settings_content| {
                         settings_content
                             .project
