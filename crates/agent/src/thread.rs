@@ -63,7 +63,7 @@ pub const MAX_SUBAGENT_DEPTH: u8 = 4;
 pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
 
 /// Context passed to a subagent thread for lifecycle management
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
     /// ID of the parent thread
     pub parent_thread_id: acp::SessionId,
@@ -1171,7 +1171,7 @@ impl Thread {
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
             imported: db_thread.imported,
-            subagent_context: None,
+            subagent_context: db_thread.subagent_context,
             running_subagents: Vec::new(),
         }
     }
@@ -1192,6 +1192,7 @@ impl Thread {
             }),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
+            subagent_context: self.subagent_context.clone(),
         };
 
         cx.background_spawn(async move {

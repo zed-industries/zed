@@ -77,14 +77,13 @@ impl ThreadStore {
     pub fn save_thread(
         &mut self,
         id: acp::SessionId,
-        parent_id: Option<acp::SessionId>,
         thread: crate::DbThread,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(id, parent_id, thread).await?;
+            database.save_thread(id, thread).await?;
             this.update(cx, |this, cx| this.reload(cx))
         })
     }
@@ -162,6 +161,7 @@ mod tests {
             model: None,
             profile: None,
             imported: false,
+            subagent_context: None,
         }
     }
 
@@ -183,12 +183,12 @@ mod tests {
         );
 
         let save_older = thread_store.update(cx, |store, cx| {
-            store.save_thread(older_id.clone(), None, older_thread, cx)
+            store.save_thread(older_id.clone(), older_thread, cx)
         });
         save_older.await.unwrap();
 
         let save_newer = thread_store.update(cx, |store, cx| {
-            store.save_thread(newer_id.clone(), None, newer_thread, cx)
+            store.save_thread(newer_id.clone(), newer_thread, cx)
         });
         save_newer.await.unwrap();
 
@@ -211,9 +211,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_id, None, thread, cx)
-        });
+        let save_task =
+            thread_store.update(cx, |store, cx| store.save_thread(thread_id, thread, cx));
         save_task.await.unwrap();
 
         cx.run_until_parked();
@@ -244,11 +243,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), None, first_thread, cx)
+            store.save_thread(first_id.clone(), first_thread, cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), None, second_thread, cx)
+            store.save_thread(second_id.clone(), second_thread, cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -281,11 +280,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), None, first_thread, cx)
+            store.save_thread(first_id.clone(), first_thread, cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), None, second_thread, cx)
+            store.save_thread(second_id.clone(), second_thread, cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -295,7 +294,7 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         );
         let update_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), None, updated_first, cx)
+            store.save_thread(first_id.clone(), updated_first, cx)
         });
         update_task.await.unwrap();
         cx.run_until_parked();

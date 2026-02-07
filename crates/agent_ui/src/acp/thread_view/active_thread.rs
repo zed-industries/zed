@@ -1464,7 +1464,6 @@ impl AcpThreadView {
 
         let client = project.read(cx).client();
         let session_id = self.thread.read(cx).session_id().clone();
-
         cx.spawn_in(window, async move |this, cx| {
             let response = client
                 .request(proto::GetSharedAgentThread {
@@ -1478,7 +1477,7 @@ impl AcpThreadView {
 
             thread_store
                 .update(&mut cx.clone(), |store, cx| {
-                    store.save_thread(session_id.clone(), None, db_thread, cx)
+                    store.save_thread(session_id.clone(), db_thread, cx)
                 })
                 .await?;
 

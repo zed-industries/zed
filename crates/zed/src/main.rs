@@ -900,7 +900,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(save_session_id.clone(), None, db_thread, cx)
+                            store.save_thread(save_session_id.clone(), db_thread, cx)
                         })
                         .await?;
 

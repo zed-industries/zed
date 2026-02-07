@@ -1340,7 +1340,7 @@ impl AgentPanel {
         cx.spawn_in(window, async move |this, cx| {
             thread_store
                 .update(&mut cx.clone(), |store, cx| {
-                    store.save_thread(session_id.clone(), None, db_thread, cx)
+                    store.save_thread(session_id.clone(), db_thread, cx)
                 })
                 .await?;
 
