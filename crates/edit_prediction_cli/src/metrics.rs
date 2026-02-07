@@ -1,6 +1,9 @@
 use collections::HashMap;
 
-use crate::reorder_patch::{Patch, PatchLine};
+use crate::{
+    example::ActualCursor,
+    reorder_patch::{Patch, PatchLine},
+};
 
 pub type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
@@ -389,14 +392,30 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
 /// A whitespace-only change is an added or deleted line whose content is empty or
 /// contains only whitespace. It is "isolated" when it is not adjacent to any
 /// substantive (non-whitespace) change within the same contiguous change group.
-pub fn has_isolated_whitespace_changes(patch_str: &str) -> bool {
+pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: Option<&ActualCursor>) -> bool {
     let patch = Patch::parse_unified_diff(patch_str);
+
+    let cursor_new_file_line = cursor.as_ref().map(|c| (c.row + 1) as usize);
 
     for hunk in &patch.hunks {
         let lines = &hunk.lines;
+        let mut new_text_line = hunk.new_start as usize;
+
         for (i, line) in lines.iter().enumerate() {
             let content = match line {
-                PatchLine::Addition(s) | PatchLine::Deletion(s) => s.as_str(),
+                PatchLine::Addition(s) => {
+                    let addition_line = new_text_line;
+                    new_text_line += 1;
+                    if s.trim().is_empty() && cursor_new_file_line == Some(addition_line) {
+                        continue;
+                    }
+                    s.as_str()
+                }
+                PatchLine::Deletion(s) => s.as_str(),
+                PatchLine::Context(_) => {
+                    new_text_line += 1;
+                    continue;
+                }
                 _ => continue,
             };
 
@@ -615,7 +634,18 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::example::ActualCursor;
     use indoc::indoc;
+
+    fn cursor_on_line(one_based_line: u32) -> ActualCursor {
+        ActualCursor {
+            path: String::new(),
+            row: one_based_line - 1,
+            column: 0,
+            offset: 0,
+            editable_region_offset: None,
+        }
+    }
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -841,7 +871,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch));
+        assert!(has_isolated_whitespace_changes(patch, None));
     }
 
     #[test]
@@ -854,7 +884,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(!has_isolated_whitespace_changes(patch));
+        assert!(!has_isolated_whitespace_changes(patch, None));
     }
 
     #[test]
@@ -866,7 +896,7 @@ index abc123..def456 100644
             +    println!(\"world\");
              }
         "};
-        assert!(!has_isolated_whitespace_changes(patch));
+        assert!(!has_isolated_whitespace_changes(patch, None));
     }
 
     #[test]
@@ -878,7 +908,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch));
+        assert!(has_isolated_whitespace_changes(patch, None));
     }
 
     #[test]
@@ -895,12 +925,56 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch));
+        assert!(has_isolated_whitespace_changes(patch, None));
     }
 
     #[test]
     fn test_isolated_whitespace_empty_patch() {
         let patch = "";
-        assert!(!has_isolated_whitespace_changes(patch));
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_skipped_on_cursor_line() {
+        // The addition of a blank line at new-file line 2 should be skipped
+        // because the cursor is on that line.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        // New-file line 2 is the added blank line
+        let cursor = cursor_on_line(2);
+        assert!(!has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_not_skipped_when_cursor_on_different_line() {
+        // The blank line is at new-file line 2, but the cursor is on line 1.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        let cursor = cursor_on_line(1);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion_not_skipped_by_cursor() {
+        // Deletions don't have a new-file line, so cursor can't suppress them.
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        let cursor = cursor_on_line(2);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
     }
 }

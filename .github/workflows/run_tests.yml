@@ -55,10 +55,27 @@ jobs:
           echo "Toolchain, cargo config, or root Cargo files changed, will run all tests"
           echo "changed_packages=" >> "$GITHUB_OUTPUT"
         else
-          # Extract changed packages from file paths
-          FILE_CHANGED_PKGS=$(echo "$CHANGED_FILES" | \
+          # Extract changed directories from file paths
+          CHANGED_DIRS=$(echo "$CHANGED_FILES" | \
             grep -oP '^(crates|tooling)/\K[^/]+' | \
             sort -u || true)
+
+          # Build directory-to-package mapping using cargo metadata
+          DIR_TO_PKG=$(cargo metadata --format-version=1 --no-deps 2>/dev/null | \
+            jq -r '.packages[] | select(.manifest_path | test("crates/|tooling/")) | "\(.manifest_path | capture("(crates|tooling)/(?<dir>[^/]+)") | .dir)=\(.name)"')
+
+          # Map directory names to package names
+          FILE_CHANGED_PKGS=""
+          for dir in $CHANGED_DIRS; do
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            if [ -n "$pkg" ]; then
+              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
+            else
+              # Fall back to directory name if no mapping found
+              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
+            fi
+          done
+          FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then

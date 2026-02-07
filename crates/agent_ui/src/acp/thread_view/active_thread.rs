@@ -1,4 +1,7 @@
-use gpui::List;
+use gpui::{Corner, List};
+use language_model::LanguageModelEffortLevel;
+use settings::update_settings_file;
+use ui::SplitButton;
 
 use super::*;
 
@@ -180,6 +183,7 @@ pub struct AcpThreadView {
     pub(super) thread_error: Option<ThreadError>,
     pub thread_error_markdown: Option<Entity<Markdown>>,
     pub token_limit_callout_dismissed: bool,
+    pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
     pub prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
@@ -356,6 +360,7 @@ impl AcpThreadView {
             thread_error: None,
             thread_error_markdown: None,
             token_limit_callout_dismissed: false,
+            last_token_limit_telemetry: None,
             thread_feedback: Default::default(),
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
@@ -2346,7 +2351,7 @@ impl AcpThreadView {
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
                             .child(self.render_follow_toggle(cx))
-                            .children(self.render_thinking_toggle(cx)),
+                            .children(self.render_thinking_control(cx)),
                     )
                     .child(
                         h_flex()
@@ -2690,14 +2695,15 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thinking_toggle(&self, cx: &mut Context<Self>) -> Option<IconButton> {
-        if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
+    fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
             return None;
         }
 
         let thread = self.as_native_thread(cx)?.read(cx);
+        let model = thread.model()?;
 
-        let supports_thinking = thread.model()?.supports_thinking();
+        let supports_thinking = model.supports_thinking();
         if !supports_thinking {
             return None;
         }
@@ -2712,22 +2718,135 @@ impl AcpThreadView {
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
-        Some(
-            IconButton::new("thinking-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .toggle_state(thinking)
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
-                })
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    if let Some(thread) = this.as_native_thread(cx) {
-                        thread.update(cx, |thread, cx| {
-                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+        let thinking_toggle = IconButton::new("thinking-mode", icon)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(thinking)
+            .tooltip(move |_, cx| {
+                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
+            })
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if let Some(thread) = this.as_native_thread(cx) {
+                    thread.update(cx, |thread, cx| {
+                        let enable_thinking = !thread.thinking_enabled();
+                        thread.set_thinking_enabled(enable_thinking, cx);
+
+                        let fs = thread.project().read(cx).fs().clone();
+                        update_settings_file(fs, cx, move |settings, _| {
+                            if let Some(agent) = settings.agent.as_mut()
+                                && let Some(default_model) = agent.default_model.as_mut()
+                            {
+                                default_model.enable_thinking = enable_thinking;
+                            }
                         });
-                    }
-                })),
+                    });
+                }
+            }));
+
+        if model.supported_effort_levels().is_empty() {
+            return Some(thinking_toggle.into_any_element());
+        }
+
+        Some(
+            SplitButton::new(
+                thinking_toggle,
+                self.render_effort_selector(
+                    model.supported_effort_levels(),
+                    thread.thinking_effort().cloned(),
+                    cx,
+                )
+                .into_any_element(),
+            )
+            .style(ui::SplitButtonStyle::Outlined)
+            .into_any_element(),
         )
+    }
+
+    fn render_effort_selector(
+        &self,
+        supported_effort_levels: Vec<LanguageModelEffortLevel>,
+        selected_effort: Option<String>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let weak_self = cx.weak_entity();
+
+        let default_effort_level = supported_effort_levels
+            .iter()
+            .find(|effort_level| effort_level.is_default)
+            .cloned();
+
+        let selected = selected_effort.and_then(|effort| {
+            supported_effort_levels
+                .iter()
+                .find(|level| level.value == effort)
+                .cloned()
+        });
+
+        PopoverMenu::new("effort-selector")
+            .trigger(
+                ui::ButtonLike::new_rounded_right("effort-selector-trigger")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ui::ButtonSize::None)
+                    .child(
+                        Label::new(
+                            selected
+                                .clone()
+                                .or(default_effort_level)
+                                .map_or("Select Effort".into(), |effort| effort.name),
+                        )
+                        .size(LabelSize::Small),
+                    )
+                    .child(
+                        div()
+                            .px_1()
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                    ),
+            )
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                    for effort_level in supported_effort_levels.clone() {
+                        let is_selected = selected
+                            .as_ref()
+                            .is_some_and(|selected| selected.value == effort_level.value);
+                        let entry = ContextMenuEntry::new(effort_level.name)
+                            .toggleable(IconPosition::End, is_selected);
+
+                        menu.push_item(entry.handler({
+                            let effort = effort_level.value.clone();
+                            let weak_self = weak_self.clone();
+                            move |_window, cx| {
+                                let effort = effort.clone();
+                                weak_self
+                                    .update(cx, |this, cx| {
+                                        if let Some(thread) = this.as_native_thread(cx) {
+                                            thread.update(cx, |thread, cx| {
+                                                thread.set_thinking_effort(
+                                                    Some(effort.to_string()),
+                                                    cx,
+                                                );
+
+                                                let fs = thread.project().read(cx).fs().clone();
+                                                update_settings_file(fs, cx, move |settings, _| {
+                                                    if let Some(agent) = settings.agent.as_mut()
+                                                        && let Some(default_model) =
+                                                            agent.default_model.as_mut()
+                                                    {
+                                                        default_model.effort =
+                                                            Some(effort.to_string());
+                                                    }
+                                                });
+                                            });
+                                        }
+                                    })
+                                    .ok();
+                            }
+                        }));
+                    }
+
+                    menu
+                }))
+            })
+            .anchor(Corner::BottomRight)
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {

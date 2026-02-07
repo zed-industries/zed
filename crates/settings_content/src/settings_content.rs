@@ -32,6 +32,37 @@ use collections::{HashMap, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
+
+/// Defines a settings override struct where each field is
+/// `Option<Box<SettingsContent>>`, along with:
+/// - `OVERRIDE_KEYS`: a `&[&str]` of the field names (the JSON keys)
+/// - `get_by_key(&self, key) -> Option<&SettingsContent>`: accessor by key
+///
+/// The field list is the single source of truth for the override key strings.
+macro_rules! settings_overrides {
+    (
+        $(#[$attr:meta])*
+        pub struct $name:ident { $($field:ident),* $(,)? }
+    ) => {
+        $(#[$attr])*
+        pub struct $name {
+            $(pub $field: Option<Box<SettingsContent>>,)*
+        }
+
+        impl $name {
+            /// The JSON override keys, derived from the field names on this struct.
+            pub const OVERRIDE_KEYS: &[&str] = &[$(stringify!($field)),*];
+
+            /// Look up an override by its JSON key name.
+            pub fn get_by_key(&self, key: &str) -> Option<&SettingsContent> {
+                match key {
+                    $(stringify!($field) => self.$field.as_deref(),)*
+                    _ => None,
+                }
+            }
+        }
+    }
+}
 use std::collections::BTreeSet;
 use std::sync::Arc;
 pub use util::serde::default_true;
@@ -217,20 +248,29 @@ impl RootUserSettings for UserSettingsContent {
     }
 }
 
+settings_overrides! {
+    #[with_fallible_options]
+    #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+    pub struct ReleaseChannelOverrides { dev, nightly, preview, stable }
+}
+
+settings_overrides! {
+    #[with_fallible_options]
+    #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+    pub struct PlatformOverrides { macos, linux, windows }
+}
+
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
 
-    pub dev: Option<Box<SettingsContent>>,
-    pub nightly: Option<Box<SettingsContent>>,
-    pub preview: Option<Box<SettingsContent>>,
-    pub stable: Option<Box<SettingsContent>>,
+    #[serde(flatten)]
+    pub release_channel_overrides: ReleaseChannelOverrides,
 
-    pub macos: Option<Box<SettingsContent>>,
-    pub windows: Option<Box<SettingsContent>>,
-    pub linux: Option<Box<SettingsContent>>,
+    #[serde(flatten)]
+    pub platform_overrides: PlatformOverrides,
 
     #[serde(default)]
     pub profiles: IndexMap<String, SettingsContent>,

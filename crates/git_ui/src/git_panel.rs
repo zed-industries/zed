@@ -2695,13 +2695,14 @@ impl GitPanel {
                         role: Role::User,
                         content: vec![content.into()],
                         cache: false,
-            reasoning_details: None,
+                        reasoning_details: None,
                     }],
                     tools: Vec::new(),
                     tool_choice: None,
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed: false,
+                    thinking_effort: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);
