@@ -1,5 +1,5 @@
 use cpal::{
-    DeviceDescription, default_host,
+    default_host,
     traits::{DeviceTrait, HostTrait},
 };
 use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
@@ -43,62 +43,12 @@ pub(crate) enum AudioDeviceKind {
 
 pub(crate) struct AudioDeviceInfo {
     pub id: String,
-    pub label: String,
+    pub name: String,
 }
 
-pub(crate) fn should_show_device(
-    device_id: &str,
-    description: &DeviceDescription,
-    kind: AudioDeviceKind,
-) -> bool {
-    let is_valid_kind = match kind {
-        AudioDeviceKind::Input => description.supports_input(),
-        AudioDeviceKind::Output => description.supports_output(),
-    };
-
-    if !is_valid_kind {
-        return false;
-    }
-
-    // On non-Linux platforms, show all devices as they're typically already user-friendly
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = device_id;
-        let _ = description;
-        let _ = kind;
-        return true;
-    }
-
-    // On Linux/ALSA, filter to show only user-friendly devices
-    #[cfg(target_os = "linux")]
-    {
-        // Always show pipewire and default
-        if device_id == "alsa:default" || device_id == "alsa:pipewire" {
-            return true;
-        }
-
-        match kind {
-            // For input devices, sysdefault works well
-            AudioDeviceKind::Input => {
-                if device_id.starts_with("alsa:sysdefault:") {
-                    return true;
-                }
-            }
-            // For output devices, plughw handles format conversion reliably
-            AudioDeviceKind::Output => {
-                if device_id.starts_with("alsa:plughw:") {
-                    return true;
-                }
-            }
-        }
-
-        // Filter out everything else:
-        // - null (discard samples)
-        // - hw: (raw hardware access without format conversion)
-        // - front:, surround*: (speaker configuration variants)
-        // - hdmi: (usually duplicated)
-        // - iec958: (S/PDIF digital)
-        false
+impl std::fmt::Display for AudioDeviceInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.name, self.id)
     }
 }
 
@@ -113,18 +63,23 @@ pub(crate) fn get_audio_devices(kind: AudioDeviceKind) -> Vec<AudioDeviceInfo> {
             let id_string = id.to_string();
             let desc = device.description().ok()?;
 
-            if !should_show_device(&id_string, &desc, kind) {
+            let is_valid_kind = match kind {
+                AudioDeviceKind::Input => desc.supports_input(),
+                AudioDeviceKind::Output => desc.supports_output(),
+            };
+
+            if !is_valid_kind {
                 return None;
             }
 
-            let label = device
+            let name = device
                 .description()
                 .map(|desc| desc.name().to_string())
                 .unwrap_or_else(|_| "Unknown Device".to_string());
 
             Some(AudioDeviceInfo {
                 id: id_string,
-                label,
+                name,
             })
         })
         .collect()
@@ -138,8 +93,7 @@ pub(crate) fn get_current_device_label(current_id: &str, devices: &[AudioDeviceI
     devices
         .iter()
         .find(|d| d.id == current_id)
-        .map(|d| format!("{} ({})", d.label, d.id))
-        // .map(|d| d.label.clone())
+        .map(|d| d.to_string())
         .unwrap_or_else(|| SYSTEM_DEFAULT.to_string())
 }
 
@@ -182,7 +136,7 @@ where
                 let device_id = device.id.clone();
 
                 menu = menu.toggleable_entry(
-                    format!("{} ({})", device.label, device.id),
+                    device.to_string(),
                     is_current,
                     IconPosition::Start,
                     None,
