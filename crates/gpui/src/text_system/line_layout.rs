@@ -103,13 +103,56 @@ impl LineLayout {
 
     /// The x position of the character at the given index
     pub fn x_for_index(&self, index: usize) -> Pixels {
+        // When ligatures are enabled, the index of the glyphs can
+        // change and become repeating values.
+        // e.g. 5, 5, 7, for `==` in a line.
+        // We want to be able to track the offset and the potential match
+        // if the passed index is inside a ligature.
+        // Only happens for keywords/end of lines and not inside text.
+        let mut potential_glyph: Option<&ShapedGlyph> = None;
+        let mut potential_index: usize = 0;
+        let mut same_index_count: usize = 0;
+
         for run in &self.runs {
             for glyph in &run.glyphs {
-                if glyph.index >= index {
+                if glyph.index == index {
                     return glyph.position.x;
+                }
+                if glyph.index > index {
+                    if potential_index + same_index_count == index {
+                        if let Some(potential) = potential_glyph {
+                            return potential.position.x;
+                        }
+                    }
+                    return glyph.position.x;
+                }
+
+                if let Some(_) = potential_glyph {
+                    if glyph.index == potential_index {
+                        same_index_count += 1;
+                        if potential_index + same_index_count == index {
+                            return glyph.position.x;
+                        }
+                        potential_glyph = Some(glyph);
+                    } else {
+                        potential_glyph = Some(glyph);
+                        potential_index = glyph.index;
+                        same_index_count = 0;
+                    }
+                } else {
+                    potential_glyph = Some(glyph);
+                    potential_index = glyph.index;
+                    same_index_count = 0;
+                }
+            }
+
+            if potential_index + same_index_count == index {
+                if let Some(potential) = potential_glyph {
+                    return potential.position.x;
                 }
             }
         }
+
         self.width
     }
 
@@ -668,5 +711,217 @@ impl<'a> Borrow<dyn AsCacheKeyRef + 'a> for Arc<CacheKey> {
 impl AsCacheKeyRef for CacheKeyRef<'_> {
     fn as_cache_key_ref(&self) -> CacheKeyRef<'_> {
         *self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_glyph(index: usize, x: f32) -> ShapedGlyph {
+        ShapedGlyph {
+            id: GlyphId(0),
+            position: point(px(x), px(0.0)),
+            index,
+            is_emoji: false,
+        }
+    }
+
+    fn create_test_layout(glyphs: Vec<ShapedGlyph>) -> LineLayout {
+        LineLayout {
+            font_size: px(14.0),
+            width: px(100.0),
+            ascent: px(10.0),
+            descent: px(4.0),
+            runs: vec![ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            }],
+            len: 10,
+        }
+    }
+
+    #[test]
+    fn test_x_for_index_exact_match() {
+        let layout = create_test_layout(vec![
+            create_test_glyph(0, 0.0),
+            create_test_glyph(1, 10.0),
+            create_test_glyph(2, 20.0),
+            create_test_glyph(3, 30.0),
+        ]);
+
+        assert_eq!(layout.x_for_index(0), px(0.0));
+        assert_eq!(layout.x_for_index(1), px(10.0));
+        assert_eq!(layout.x_for_index(2), px(20.0));
+        assert_eq!(layout.x_for_index(3), px(30.0));
+    }
+
+    #[test]
+    fn test_x_for_index_beyond_last_glyph() {
+        let layout = create_test_layout(vec![
+            create_test_glyph(0, 0.0),
+            create_test_glyph(1, 10.0),
+            create_test_glyph(2, 20.0),
+        ]);
+
+        assert_eq!(layout.x_for_index(5), layout.width);
+    }
+
+    #[test]
+    fn test_x_for_index_ligature_same_index() {
+        // Simulates a ligature: glyphs with indices [5, 5, 5, 8]
+        // Looking for index 7 should return the position of the third glyph
+        // because 5 + 2 = 7
+        let layout = create_test_layout(vec![
+            create_test_glyph(5, 50.0),
+            create_test_glyph(5, 55.0),
+            create_test_glyph(5, 60.0),
+            create_test_glyph(8, 80.0),
+        ]);
+
+        assert_eq!(layout.x_for_index(7), px(60.0));
+    }
+
+    #[test]
+    fn test_x_for_index_ligature_first_match() {
+        // Ligature with indices [5, 5, 5, 8]
+        // Looking for index 5 should return exact match
+        let layout = create_test_layout(vec![
+            create_test_glyph(5, 50.0),
+            create_test_glyph(5, 55.0),
+            create_test_glyph(5, 60.0),
+            create_test_glyph(8, 80.0),
+        ]);
+
+        assert_eq!(layout.x_for_index(5), px(50.0));
+    }
+
+    #[test]
+    fn test_x_for_index_ligature_second_match() {
+        // Ligature with indices [5, 5, 5, 8]
+        // Looking for index 6 should return the second glyph
+        // because 5 + 1 = 6
+        let layout = create_test_layout(vec![
+            create_test_glyph(5, 50.0),
+            create_test_glyph(5, 55.0),
+            create_test_glyph(5, 60.0),
+            create_test_glyph(8, 80.0),
+        ]);
+
+        assert_eq!(layout.x_for_index(6), px(55.0));
+    }
+
+    #[test]
+    fn test_x_for_index_ligature_beyond_sequence() {
+        // Ligature with indices [5, 5, 5, 8]
+        // Looking for index 9 should return width since it's beyond the last glyph
+        let layout = create_test_layout(vec![
+            create_test_glyph(5, 50.0),
+            create_test_glyph(5, 55.0),
+            create_test_glyph(5, 60.0),
+            create_test_glyph(8, 80.0),
+        ]);
+
+        assert_eq!(layout.x_for_index(9), layout.width);
+    }
+
+    #[test]
+    fn test_x_for_index_no_ligature_match() {
+        // Ligature with indices [5, 5, 5, 10]
+        // Looking for index 8 should return the position of glyph at index 10
+        // since 5+2=7 doesn't match 8 and glyph.index (10) > index (8)
+        let mut layout = create_test_layout(vec![
+            create_test_glyph(5, 50.0),
+            create_test_glyph(5, 55.0),
+            create_test_glyph(5, 60.0),
+            create_test_glyph(10, 100.0),
+        ]);
+        layout.width = px(150.0);
+
+        assert_eq!(layout.x_for_index(8), px(100.0));
+    }
+
+    #[test]
+    fn test_x_for_index_multiple_runs() {
+        let layout = LineLayout {
+            font_size: px(14.0),
+            width: px(100.0),
+            ascent: px(10.0),
+            descent: px(4.0),
+            runs: vec![
+                ShapedRun {
+                    font_id: FontId(0),
+                    glyphs: vec![create_test_glyph(0, 0.0), create_test_glyph(1, 10.0)],
+                },
+                ShapedRun {
+                    font_id: FontId(1),
+                    glyphs: vec![create_test_glyph(2, 20.0), create_test_glyph(3, 30.0)],
+                },
+            ],
+            len: 4,
+        };
+
+        assert_eq!(layout.x_for_index(0), px(0.0));
+        assert_eq!(layout.x_for_index(2), px(20.0));
+        assert_eq!(layout.x_for_index(3), px(30.0));
+    }
+
+    #[test]
+    fn test_x_for_index_empty_layout() {
+        let layout = create_test_layout(vec![]);
+
+        assert_eq!(layout.x_for_index(0), layout.width);
+        assert_eq!(layout.x_for_index(5), layout.width);
+    }
+
+    #[test]
+    fn test_x_for_index_ligature_at_start() {
+        // Ligature at the start of the run with indices [0, 0, 0, 3]
+        // This tests the edge case where potential_index is 0
+        let layout = create_test_layout(vec![
+            create_test_glyph(0, 0.0),
+            create_test_glyph(0, 5.0),
+            create_test_glyph(0, 10.0),
+            create_test_glyph(3, 30.0),
+        ]);
+
+        // Exact match for index 0 should return first glyph
+        assert_eq!(layout.x_for_index(0), px(0.0));
+
+        // Index 1 should match: potential_index (0) + same_index_count (1) = 1
+        assert_eq!(layout.x_for_index(1), px(5.0));
+
+        // Index 2 should match: potential_index (0) + same_index_count (2) = 2
+        assert_eq!(layout.x_for_index(2), px(10.0));
+
+        // Index 3 should return exact match
+        assert_eq!(layout.x_for_index(3), px(30.0));
+    }
+
+    #[test]
+    fn test_x_for_index_ligature_at_start_with_gap() {
+        // Ligature at the start with indices [0, 0, 0, 4]
+        // Looking for index 3, which doesn't exist (gap between ligature end and next glyph)
+        // Should return position of glyph at index 4 because:
+        // - potential_index (0) + same_index_count (2) = 2, not 3
+        // - glyph.index (4) > index (3)
+        let layout = create_test_layout(vec![
+            create_test_glyph(0, 0.0),
+            create_test_glyph(0, 5.0),
+            create_test_glyph(0, 10.0),
+            create_test_glyph(4, 40.0),
+        ]);
+
+        // Index 0-2 should work within the ligature
+        assert_eq!(layout.x_for_index(0), px(0.0));
+        assert_eq!(layout.x_for_index(1), px(5.0));
+        assert_eq!(layout.x_for_index(2), px(10.0));
+
+        // Index 3 is in the gap - should return position of next glyph (index 4)
+        // This tests the check at line 121-122 when the condition fails
+        assert_eq!(layout.x_for_index(3), px(40.0));
+
+        // Index 4 should return exact match
+        assert_eq!(layout.x_for_index(4), px(40.0));
     }
 }
