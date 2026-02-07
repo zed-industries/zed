@@ -562,7 +562,7 @@ fn runnable_ranges(
     cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language()
-        && language.name() == "Markdown".into()
+        && language.name() == "Markdown"
     {
         return (markdown_code_blocks(buffer, range, cx), None);
     }

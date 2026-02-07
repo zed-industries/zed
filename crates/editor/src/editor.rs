@@ -13821,7 +13821,7 @@ impl Editor {
                                 let language = snapshot.language_at(selection.head());
                                 let range = selection.range();
                                 if let Some(language) = language
-                                    && language.name() == "Markdown".into()
+                                    && language.name() == "Markdown"
                                 {
                                     edit_for_markdown_paste(
                                         &snapshot,
@@ -13880,16 +13880,30 @@ impl Editor {
 
                     let mut edits = Vec::new();
 
-                    for selection in old_selections.iter() {
+                    // When pasting text without metadata (e.g. copied from an
+                    // external editor using multiple cursors) and the number of
+                    // lines matches the number of selections, distribute one
+                    // line per cursor instead of pasting the whole text at each.
+                    let lines: Vec<&str> = clipboard_text.split('\n').collect();
+                    let distribute_lines =
+                        old_selections.len() > 1 && lines.len() == old_selections.len();
+
+                    for (ix, selection) in old_selections.iter().enumerate() {
                         let language = snapshot.language_at(selection.head());
                         let range = selection.range();
 
-                        let (edit_range, edit_text) = if let Some(language) = language
-                            && language.name() == "Markdown".into()
-                        {
-                            edit_for_markdown_paste(&snapshot, range, &clipboard_text, url.clone())
+                        let text_for_cursor: &str = if distribute_lines {
+                            lines[ix]
                         } else {
-                            (range, clipboard_text.clone())
+                            &clipboard_text
+                        };
+
+                        let (edit_range, edit_text) = if let Some(language) = language
+                            && language.name() == "Markdown"
+                        {
+                            edit_for_markdown_paste(&snapshot, range, text_for_cursor, url.clone())
+                        } else {
+                            (range, Cow::Borrowed(text_for_cursor))
                         };
 
                         edits.push((edit_range, edit_text));
