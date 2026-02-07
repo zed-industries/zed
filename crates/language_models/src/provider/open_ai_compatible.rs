@@ -311,6 +311,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         self.model.capabilities.images
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto => self.model.capabilities.tools,

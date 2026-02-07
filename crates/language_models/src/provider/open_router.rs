@@ -342,6 +342,11 @@ impl LanguageModel for OpenRouterLanguageModel {
         }
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        let model_id = self.model.id().to_lowercase();
+        model_id.starts_with("anthropic/") || model_id.starts_with("google/")
+    }
+
     fn supports_images(&self) -> bool {
         self.model.supports_images.unwrap_or(false)
     }

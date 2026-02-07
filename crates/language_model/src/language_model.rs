@@ -620,6 +620,12 @@ pub trait LanguageModel: Send + Sync {
             .find(|effort_level| effort_level.is_default)
     }
 
+    /// Whether this model requires a valid signature for thinking blocks.
+    /// Some providers (e.g., Anthropic, Google) require thinking blocks to have
+    /// a valid signature when sent back to the API. Others (e.g., DeepSeek, OpenAI)
+    /// ignore signatures entirely.
+    fn requires_thinking_signature(&self) -> bool;
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 

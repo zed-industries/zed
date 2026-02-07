@@ -594,6 +594,14 @@ impl LanguageModel for CloudLanguageModel {
             .collect()
     }
 
+    fn requires_thinking_signature(&self) -> bool {
+        matches!(
+            self.model.provider,
+            cloud_llm_client::LanguageModelProvider::Anthropic
+                | cloud_llm_client::LanguageModelProvider::Google
+        )
+    }
+
     fn supports_streaming_tools(&self) -> bool {
         self.model.supports_streaming_tools
     }

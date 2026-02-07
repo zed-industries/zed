@@ -584,6 +584,13 @@ impl Model {
         }
     }
 
+    pub fn is_anthropic_model(&self) -> bool {
+        match self {
+            Model::Custom { name, .. } => name.starts_with("anthropic."),
+            _ => self.id().starts_with("claude"),
+        }
+    }
+
     pub fn cross_region_inference_id(
         &self,
         region: &str,
