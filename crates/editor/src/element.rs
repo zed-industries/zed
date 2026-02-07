@@ -52,7 +52,7 @@ use gpui::{
     transparent_black,
 };
 use itertools::Itertools;
-use language::{ChunkSpecial, IndentGuideSettings, language_settings::ShowWhitespaceSetting};
+use language::{ChunkKind, IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
@@ -8644,13 +8644,13 @@ impl fmt::Debug for LineFragment {
 impl LineWithInvisibles {
     /// Helper function to get the appropriate font for a chunk, using inlay font if available
     fn font_for_chunk(
-        special: ChunkSpecial,
+        kind: ChunkKind,
         base_font: gpui::Font,
         editor_style: &EditorStyle,
         highlight_style: Option<gpui::HighlightStyle>,
     ) -> gpui::Font {
-        let mut font = match special {
-            ChunkSpecial::InlayHint => {
+        let mut font = match kind {
+            ChunkKind::InlayHint => {
                 // Use inlay-specific font if configured
                 if let Some(inlay_font) = &editor_style.inlay_hints_font {
                     let mut font = base_font.clone();
@@ -8660,7 +8660,7 @@ impl LineWithInvisibles {
                     base_font.clone()
                 }
             }
-            ChunkSpecial::EditPrediction => {
+            ChunkKind::EditPrediction => {
                 // Use inlay-specific font if configured
                 if let Some(edit_prediction_font) = &editor_style.edit_prediction_font {
                     let mut font = base_font.clone();
@@ -8725,7 +8725,7 @@ impl LineWithInvisibles {
             text: "\n",
             style: None,
             is_tab: false,
-            special: ChunkSpecial::None,
+            kind: ChunkKind::None,
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
@@ -8799,7 +8799,7 @@ impl LineWithInvisibles {
                         let run = TextRun {
                             len: x.len(),
                             font: Self::font_for_chunk(
-                                highlighted_chunk.special,
+                                highlighted_chunk.kind,
                                 text_style.font(),
                                 editor_style,
                                 highlighted_chunk.style,
@@ -8874,7 +8874,7 @@ impl LineWithInvisibles {
                         styles.push(TextRun {
                             len: line_chunk.len(),
                             font: Self::font_for_chunk(
-                                highlighted_chunk.special,
+                                highlighted_chunk.kind,
                                 text_style.font(),
                                 editor_style,
                                 highlighted_chunk.style,
@@ -8886,8 +8886,8 @@ impl LineWithInvisibles {
                         });
 
                         if editor_mode.is_full() {
-                            match highlighted_chunk.special {
-                                ChunkSpecial::InlayHint => {}
+                            match highlighted_chunk.kind {
+                                ChunkKind::InlayHint => {}
                                 _ => {
                                     // Line wrap pads its contents with fake whitespaces,
                                     // avoid printing them

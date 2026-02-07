@@ -560,7 +560,7 @@ pub struct BufferChunks<'a> {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-pub enum ChunkSpecial {
+pub enum ChunkKind {
     #[default]
     None,
     InlayHint,
@@ -590,8 +590,8 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Whether this chunk of text was originally an inlay.
-    pub special: ChunkSpecial,
+    /// What kind of chunk this is.
+    pub kind: ChunkKind,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
 }

@@ -10,7 +10,7 @@ use crate::{
     inlays::{Inlay, InlayContent},
 };
 use collections::BTreeSet;
-use language::{Chunk, ChunkSpecial, Edit, Point, TextSummary};
+use language::{Chunk, ChunkKind, Edit, Point, TextSummary};
 use multi_buffer::{
     MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -309,7 +309,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         chars,
                         tabs,
                         newlines,
-                        special: ChunkSpecial::None,
+                        kind: ChunkKind::None,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -337,11 +337,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                                 s.insertion
                             }
                         }),
-                        ChunkSpecial::EditPrediction,
+                        ChunkKind::EditPrediction,
                     ),
-                    InlayId::Hint(_) => (self.highlight_styles.inlay_hint, ChunkSpecial::InlayHint),
+                    InlayId::Hint(_) => (self.highlight_styles.inlay_hint, ChunkKind::InlayHint),
                     InlayId::DebuggerValue(_) => {
-                        (self.highlight_styles.inlay_hint, ChunkSpecial::InlayHint)
+                        (self.highlight_styles.inlay_hint, ChunkKind::InlayHint)
                     }
                     InlayId::ReplResult(_) => {
                         let text = inlay.text().to_string();
@@ -368,7 +368,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                             constrain_width: false,
                             measured_width: None,
                         });
-                        (self.highlight_styles.inlay_hint, ChunkSpecial::InlayHint)
+                        (self.highlight_styles.inlay_hint, ChunkKind::InlayHint)
                     }
                     InlayId::Color(_) => {
                         if let InlayContent::Color(color) = inlay.content {
@@ -399,7 +399,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                                 measured_width: None,
                             });
                         }
-                        (self.highlight_styles.inlay_hint, ChunkSpecial::InlayHint)
+                        (self.highlight_styles.inlay_hint, ChunkKind::InlayHint)
                     }
                 };
                 let next_inlay_highlight_endpoint;
@@ -475,7 +475,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         tabs: new_tabs,
                         newlines: new_newlines,
                         highlight_style,
-                        special: chunk_special,
+                        kind: chunk_special,
                         ..Chunk::default()
                     },
                     renderer,
@@ -2306,8 +2306,7 @@ mod tests {
         let highlighted_chunks: Vec<_> = chunks
             .iter()
             .filter(|c| {
-                c.chunk.highlight_style.is_some()
-                    && matches!(c.chunk.special, ChunkSpecial::InlayHint)
+                c.chunk.highlight_style.is_some() && matches!(c.chunk.kind, ChunkKind::InlayHint)
             })
             .collect();
 
@@ -2430,7 +2429,7 @@ mod tests {
                 .iter()
                 .filter(|c| {
                     c.chunk.highlight_style.is_some()
-                        && matches!(c.chunk.special, ChunkSpecial::InlayHint)
+                        && matches!(c.chunk.kind, ChunkKind::InlayHint)
                 })
                 .map(|c| c.chunk.text)
                 .collect();

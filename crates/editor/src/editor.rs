@@ -25452,10 +25452,7 @@ impl Editor {
             syntax: cx.theme().syntax().clone(),
             status: cx.theme().status().clone(),
             inlay_hints_style: make_inlay_hints_style(cx),
-            inlay_hints_font: settings
-                .edit_prediction_font_family
-                .as_ref()
-                .map(|s| s.into()),
+            inlay_hints_font: settings.inlay_hint_font_family.as_ref().map(|s| s.into()),
             edit_prediction_styles: make_suggestion_styles(cx),
             edit_prediction_font: settings
                 .edit_prediction_font_family
