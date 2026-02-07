@@ -1,5 +1,10 @@
 use collections::HashMap;
 
+use crate::{
+    example::ActualCursor,
+    reorder_patch::{Patch, PatchLine},
+};
+
 pub type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
 
@@ -382,6 +387,105 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
     ClassificationMetrics::from_counts(&expected_lines, &actual_lines)
 }
 
+/// Returns whether the patch contains any isolated whitespace-only changes.
+///
+/// A whitespace-only change is an added or deleted line whose content is empty or
+/// contains only whitespace. It is "isolated" when it is not adjacent to any
+/// substantive (non-whitespace) change within the same contiguous change group.
+pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: Option<&ActualCursor>) -> bool {
+    let patch = Patch::parse_unified_diff(patch_str);
+
+    let cursor_new_file_line = cursor.as_ref().map(|c| (c.row + 1) as usize);
+
+    for hunk in &patch.hunks {
+        let lines = &hunk.lines;
+        let mut new_text_line = hunk.new_start as usize;
+
+        for (i, line) in lines.iter().enumerate() {
+            let content = match line {
+                PatchLine::Addition(s) => {
+                    let addition_line = new_text_line;
+                    new_text_line += 1;
+                    if s.trim().is_empty() && cursor_new_file_line == Some(addition_line) {
+                        continue;
+                    }
+                    s.as_str()
+                }
+                PatchLine::Deletion(s) => s.as_str(),
+                PatchLine::Context(_) => {
+                    new_text_line += 1;
+                    continue;
+                }
+                _ => continue,
+            };
+
+            if !content.trim().is_empty() {
+                continue;
+            }
+
+            if is_whitespace_change_isolated(lines, i) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_whitespace_change_isolated(lines: &[PatchLine], index: usize) -> bool {
+    // Look backward for a non-whitespace change before hitting a context line
+    for line in lines[..index].iter().rev() {
+        match line {
+            PatchLine::Addition(s) | PatchLine::Deletion(s) => {
+                if !s.trim().is_empty() {
+                    return false;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    // Look forward for a non-whitespace change before hitting a context line
+    for line in &lines[index + 1..] {
+        match line {
+            PatchLine::Addition(s) | PatchLine::Deletion(s) => {
+                if !s.trim().is_empty() {
+                    return false;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    true
+}
+
+/// A simple proxy for whether the prediction respects editable region.
+pub fn is_editable_region_correct(actual_patch: &str) -> bool {
+    // A typical sign of a wrong editable region: a bunch of lines deletion
+    // at the beginning or end of the patch.
+    let patch = Patch::parse_unified_diff(actual_patch);
+    if patch.hunks.is_empty() {
+        return true;
+    }
+
+    let hunk = &patch.hunks[0];
+    let mut deletions_at_start = 0;
+
+    for line in hunk.lines.iter() {
+        match line {
+            PatchLine::Deletion(_) => deletions_at_start += 1,
+            _ => break,
+        }
+    }
+
+    if deletions_at_start >= 3 {
+        return false;
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod test_optimization {
     use super::*;
@@ -530,6 +634,18 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::example::ActualCursor;
+    use indoc::indoc;
+
+    fn cursor_on_line(one_based_line: u32) -> ActualCursor {
+        ActualCursor {
+            path: String::new(),
+            row: one_based_line - 1,
+            column: 0,
+            offset: 0,
+            editable_region_offset: None,
+        }
+    }
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -725,5 +841,140 @@ index abc123..def456 100644
         assert_eq!(metrics.true_positives, 0);
         assert_eq!(metrics.false_positives, 0);
         assert_eq!(metrics.false_negatives, 0);
+    }
+
+    #[test]
+    fn test_is_editable_region_correct() {
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            -context
+            -removed
+            -from the beginning of the file
+            import sys
+            +sys.exit(0)
+
+            "};
+        assert!(!is_editable_region_correct(patch));
+
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            "};
+        assert!(is_editable_region_correct(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_purely_whitespace_patch() {
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_adjacent_to_real_change() {
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+            +    let x = 1;
+                 println!(\"hello\");
+             }
+        "};
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_no_whitespace_changes() {
+        let patch = indoc! {"
+            @@ -1,3 +1,3 @@
+             fn main() {
+            -    println!(\"hello\");
+            +    println!(\"world\");
+             }
+        "};
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion() {
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_mixed_groups() {
+        let patch = indoc! {"
+            @@ -1,7 +1,8 @@
+             fn main() {
+            +
+                 let x = 1;
+            -    let y = 2;
+            +    let y = 3;
+
+            +
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_empty_patch() {
+        let patch = "";
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_skipped_on_cursor_line() {
+        // The addition of a blank line at new-file line 2 should be skipped
+        // because the cursor is on that line.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        // New-file line 2 is the added blank line
+        let cursor = cursor_on_line(2);
+        assert!(!has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_not_skipped_when_cursor_on_different_line() {
+        // The blank line is at new-file line 2, but the cursor is on line 1.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        let cursor = cursor_on_line(1);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion_not_skipped_by_cursor() {
+        // Deletions don't have a new-file line, so cursor can't suppress them.
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        let cursor = cursor_on_line(2);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
     }
 }

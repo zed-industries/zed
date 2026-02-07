@@ -377,12 +377,7 @@ impl Worktree {
             .await
             .context("failed to stat worktree path")?;
 
-        let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-            log::error!(
-                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
-            );
-            true
-        });
+        let fs_case_sensitive = fs.is_case_sensitive().await;
 
         let root_file_handle = if metadata.as_ref().is_some() {
             fs.open_handle(&abs_path)
@@ -1087,10 +1082,7 @@ impl LocalWorktree {
                 } else {
                     (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
                 };
-                let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
-                    log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
-                    true
-                });
+                let fs_case_sensitive = fs.is_case_sensitive().await;
 
                 let mut scanner = BackgroundScanner {
                     fs,
@@ -3081,12 +3073,10 @@ impl BackgroundScannerState {
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
             .log_err();
-        if !repository_dir_abs_path.starts_with(&common_dir_abs_path) {
-            watcher
-                .add(&repository_dir_abs_path)
-                .context("failed to add repository directory to watcher")
-                .log_err();
-        }
+        watcher
+            .add(&repository_dir_abs_path)
+            .context("failed to add repository directory to watcher")
+            .log_err();
 
         let work_directory_id = work_dir_entry.id;
 
@@ -3810,8 +3800,9 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
+        let global_gitignore_file = paths::global_gitignore_path();
         let mut global_gitignore_events = if let Some(global_gitignore_path) =
-            &paths::global_gitignore_path()
+            &global_gitignore_file
             && scanning_enabled
         {
             let is_file = self.fs.is_file(&global_gitignore_path).await;
@@ -3823,9 +3814,7 @@ impl BackgroundScanner {
             } else {
                 None
             };
-            if is_file
-                || matches!(global_gitignore_path.parent(), Some(path) if self.fs.is_dir(path).await)
-            {
+            if is_file {
                 self.fs
                     .watch(global_gitignore_path, FS_WATCH_LATENCY)
                     .await
@@ -3941,12 +3930,9 @@ impl BackgroundScanner {
                     self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
                 }
 
-                paths = global_gitignore_events.next().fuse() => {
-                    match paths.as_deref() {
-                        Some([event, ..]) => {
-                            self.update_global_gitignore(&event.path).await;
-                        }
-                        _ => (),
+                _ = global_gitignore_events.next().fuse() => {
+                    if let Some(path) = &global_gitignore_file {
+                        self.update_global_gitignore(&path).await;
                     }
                 }
             }
@@ -6139,4 +6125,6 @@ fn is_known_binary_header(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"\xFF\xD8\xFF") // JPEG
         || bytes.starts_with(b"GIF87a") // GIF87a
         || bytes.starts_with(b"GIF89a") // GIF89a
+        || bytes.starts_with(b"IWAD") // Doom IWAD archive
+        || bytes.starts_with(b"PWAD") // Doom PWAD archive
 }

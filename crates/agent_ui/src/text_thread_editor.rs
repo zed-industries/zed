@@ -1,5 +1,4 @@
 use crate::{
-    agent_panel::AgentType,
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::ModelSelectorTooltip,
 };
@@ -11,7 +10,7 @@ use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
     MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint as _,
-    actions::{MoveToEndOfLine, Newline, SendReviewToAgent, ShowCompletions},
+    actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
@@ -65,10 +64,8 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use workspace::{
     Save, Toast, Workspace,
-    dock::Panel,
     item::{self, FollowableItem, Item},
     notifications::NotificationId,
     pane,
@@ -230,8 +227,7 @@ impl TextThreadEditor {
                     .register_action(TextThreadEditor::quote_selection)
                     .register_action(TextThreadEditor::insert_selection)
                     .register_action(TextThreadEditor::copy_code)
-                    .register_action(TextThreadEditor::handle_insert_dragged_files)
-                    .register_action(TextThreadEditor::handle_send_review_to_agent);
+                    .register_action(TextThreadEditor::handle_insert_dragged_files);
             },
         )
         .detach();
@@ -323,11 +319,15 @@ impl TextThreadEditor {
                         move |model, cx| {
                             update_settings_file(fs.clone(), cx, move |settings, _| {
                                 let provider = model.provider_id().0.to_string();
-                                let model = model.id().0.to_string();
+                                let model_id = model.id().0.to_string();
                                 settings.agent.get_or_insert_default().set_model(
                                     LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider),
-                                        model,
+                                        model: model_id,
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     },
                                 )
                             });
@@ -1011,8 +1011,7 @@ impl TextThreadEditor {
                 .as_f64();
             let scroll_position = editor
                 .scroll_manager
-                .anchor()
-                .scroll_position(&snapshot.display_snapshot);
+                .scroll_position(&snapshot.display_snapshot, cx);
 
             let scroll_bottom = scroll_position.y + editor.visible_line_count().unwrap_or(0.);
             if (scroll_position.y..scroll_bottom).contains(&cursor_row) {
@@ -1498,39 +1497,8 @@ impl TextThreadEditor {
             return;
         };
 
-        // Try terminal selection first (requires focus, so more specific)
-        if let Some(terminal_text) = maybe!({
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx)?;
-
-            if !terminal_panel
-                .read(cx)
-                .focus_handle(cx)
-                .contains_focused(window, cx)
-            {
-                return None;
-            }
-
-            let terminal_view = terminal_panel.read(cx).pane().and_then(|pane| {
-                pane.read(cx)
-                    .active_item()
-                    .and_then(|t| t.downcast::<TerminalView>())
-            })?;
-
-            terminal_view
-                .read(cx)
-                .terminal()
-                .read(cx)
-                .last_content
-                .selection_text
-                .clone()
-        }) {
-            if !terminal_text.is_empty() {
-                agent_panel_delegate.quote_terminal_text(workspace, terminal_text, window, cx);
-                return;
-            }
-        }
-
-        // Try editor selection
+        // Get buffer info for the delegate call (even if empty, AcpThreadView ignores these
+        // params and calls insert_selections which handles both terminal and buffer)
         if let Some((selections, buffer)) = maybe!({
             let editor = workspace
                 .active_item(cx)
@@ -1551,163 +1519,8 @@ impl TextThreadEditor {
             });
             Some((selections, buffer))
         }) {
-            if !selections.is_empty() {
-                agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
-            }
+            agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
         }
-    }
-
-    /// Handles the SendReviewToAgent action from the ProjectDiff toolbar.
-    /// Collects ALL stored review comments from ALL hunks and sends them
-    /// to the Agent panel as creases.
-    pub fn handle_send_review_to_agent(
-        workspace: &mut Workspace,
-        _: &SendReviewToAgent,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        use editor::{DiffHunkKey, StoredReviewComment};
-        use git_ui::project_diff::ProjectDiff;
-
-        // Find the ProjectDiff item
-        let Some(project_diff) = workspace.items_of_type::<ProjectDiff>(cx).next() else {
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<SendReviewToAgent>(),
-                    "No Project Diff panel found. Open it first to add review comments.",
-                ),
-                cx,
-            );
-            return;
-        };
-
-        // Get the buffer reference first (before taking comments)
-        let buffer = project_diff.update(cx, |project_diff, cx| {
-            project_diff
-                .editor()
-                .read(cx)
-                .primary_editor()
-                .read(cx)
-                .buffer()
-                .clone()
-        });
-
-        // Extract all stored comments from all hunks
-        let all_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)> =
-            project_diff.update(cx, |project_diff, cx| {
-                let editor = project_diff.editor().read(cx).primary_editor().clone();
-                editor.update(cx, |editor, cx| editor.take_all_review_comments(cx))
-            });
-
-        // Flatten: we have Vec<(DiffHunkKey, Vec<StoredReviewComment>)>
-        // Convert to Vec<StoredReviewComment> for processing
-        let comments: Vec<StoredReviewComment> = all_comments
-            .into_iter()
-            .flat_map(|(_, comments)| comments)
-            .collect();
-
-        if comments.is_empty() {
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<SendReviewToAgent>(),
-                    "No review comments to send. Add comments using the + button in the diff view.",
-                ),
-                cx,
-            );
-            return;
-        }
-
-        // Get or create the agent panel
-        let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<SendReviewToAgent>(),
-                    "Agent panel is not available.",
-                ),
-                cx,
-            );
-            return;
-        };
-
-        // Create a new thread if there isn't an active one (synchronous call)
-        let has_active_thread = panel.read(cx).active_thread_view().is_some();
-        if !has_active_thread {
-            panel.update(cx, |panel, cx| {
-                panel.new_agent_thread(AgentType::NativeAgent, window, cx);
-            });
-        }
-
-        // Focus the agent panel
-        workspace.focus_panel::<crate::AgentPanel>(window, cx);
-
-        // Defer inserting creases until after the current update cycle completes,
-        // allowing the newly created thread (if any) to fully initialize.
-        cx.defer_in(window, move |workspace, window, cx| {
-            let Some(panel) = workspace.panel::<crate::AgentPanel>(cx) else {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<SendReviewToAgent>(),
-                        "Agent panel closed unexpectedly.",
-                    ),
-                    cx,
-                );
-                return;
-            };
-
-            let thread_view = panel.read(cx).active_thread_view().cloned();
-            let Some(thread_view) = thread_view else {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<SendReviewToAgent>(),
-                        "No active thread view available after creating thread.",
-                    ),
-                    cx,
-                );
-                return;
-            };
-
-            // Build creases for all comments, grouping by code snippet
-            // so each snippet appears once with all its comments
-            let snapshot = buffer.read(cx).snapshot(cx);
-
-            // Group comments by their point range (code snippet)
-            let mut comments_by_range: std::collections::BTreeMap<
-                (rope::Point, rope::Point),
-                Vec<String>,
-            > = std::collections::BTreeMap::new();
-
-            for comment in comments {
-                let start = comment.range.start.to_point(&snapshot);
-                let end = comment.range.end.to_point(&snapshot);
-                comments_by_range
-                    .entry((start, end))
-                    .or_default()
-                    .push(comment.comment);
-            }
-
-            // Build one crease per unique code snippet with all its comments
-            let mut all_creases = Vec::new();
-            for ((start, end), comment_texts) in comments_by_range {
-                let point_range = start..end;
-
-                let mut creases =
-                    selections_creases(vec![point_range.clone()], snapshot.clone(), cx);
-
-                // Append all comments after the code snippet
-                for (code_text, crease_title) in &mut creases {
-                    let comments_section = comment_texts.join("\n\n");
-                    *code_text = format!("{}\n\n{}", code_text, comments_section);
-                    *crease_title = format!("Review: {}", crease_title);
-                }
-
-                all_creases.extend(creases);
-            }
-
-            // Insert all creases into the message editor
-            thread_view.update(cx, |thread_view, cx| {
-                thread_view.insert_code_crease(all_creases, window, cx);
-            });
-        });
     }
 
     pub fn quote_ranges(
@@ -3061,14 +2874,15 @@ impl FollowableItem for TextThreadEditor {
         self.remote_id
     }
 
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant> {
-        let text_thread = self.text_thread.read(cx);
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
+        let context_id = self.text_thread.read(cx).id().to_proto();
+        let editor_proto = self
+            .editor
+            .update(cx, |editor, cx| editor.to_state_proto(window, cx));
         Some(proto::view::Variant::ContextEditor(
             proto::view::ContextEditor {
-                context_id: text_thread.id().to_proto(),
-                editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(window, cx)
-                {
+                context_id,
+                editor: if let Some(proto::view::Variant::Editor(proto)) = editor_proto {
                     Some(proto)
                 } else {
                     None
@@ -3135,12 +2949,12 @@ impl FollowableItem for TextThreadEditor {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool {
-        self.editor
-            .read(cx)
-            .add_event_to_update_proto(event, update, window, cx)
+        self.editor.update(cx, |editor, cx| {
+            editor.add_event_to_update_proto(event, update, window, cx)
+        })
     }
 
     fn apply_update_proto(
@@ -3185,6 +2999,7 @@ fn invoked_slash_command_fold_placeholder(
     text_thread: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
+        collapsed_text: None,
         constrain_width: false,
         merge_adjacent: false,
         render: Arc::new(move |fold_id, _, cx| {

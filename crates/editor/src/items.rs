@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Autoscroll, BufferSerialization, Capability, Editor, EditorEvent, EditorSettings,
     ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
+    ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -39,7 +39,6 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, BufferSnapshot, Selection};
-use theme::Theme;
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
@@ -204,17 +203,20 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_proto(&self, _: &Window, cx: &App) -> Option<proto::view::Variant> {
-        let buffer = self.buffer.read(cx);
-        if buffer
+    fn to_state_proto(&self, _: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
+        let is_private = self
+            .buffer
+            .read(cx)
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
-            .is_some_and(|file| file.is_private())
-        {
+            .is_some_and(|file| file.is_private());
+        if is_private {
             return None;
         }
 
-        let scroll_anchor = self.scroll_manager.anchor();
+        let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
+        let buffer = self.buffer.read(cx);
         let excerpts = buffer
             .read(cx)
             .excerpts()
@@ -269,8 +271,8 @@ impl FollowableItem for Editor {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        _: &Window,
-        cx: &App,
+        _: &mut Window,
+        cx: &mut App,
     ) -> bool {
         let update =
             update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
@@ -305,8 +307,9 @@ impl FollowableItem for Editor {
                     true
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
+                    let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
                     let snapshot = self.buffer.read(cx).snapshot(cx);
-                    let scroll_anchor = self.scroll_manager.anchor();
+                    let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
                     update.scroll_top_anchor =
                         Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
                     update.scroll_x = scroll_anchor.offset.x;
@@ -974,9 +977,9 @@ impl Item for Editor {
     }
 
     // In a non-singleton case, the breadcrumbs are actually shown on sticky file headers of the multibuffer.
-    fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         if self.buffer.read(cx).is_singleton() {
-            self.breadcrumbs_inner(variant, cx)
+            self.breadcrumbs_inner(cx)
         } else {
             None
         }
@@ -1490,13 +1493,12 @@ impl Editor {
     }
 }
 
-pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
     fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
         self.background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
+            .get(&HighlightKey::BufferSearchHighlights)
             .map_or(Vec::new(), |(_color, ranges)| {
                 ranges.iter().cloned().collect()
             })
@@ -1504,7 +1506,7 @@ impl SearchableItem for Editor {
 
     fn clear_matches(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self
-            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .clear_background_highlights(HighlightKey::BufferSearchHighlights, cx)
             .is_some()
         {
             cx.emit(SearchEvent::MatchesInvalidated);
@@ -1520,10 +1522,11 @@ impl SearchableItem for Editor {
     ) {
         let existing_range = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
+            .get(&HighlightKey::BufferSearchHighlights)
             .map(|(_, range)| range.as_ref());
         let updated = existing_range != Some(matches);
-        self.highlight_background::<BufferSearchHighlights>(
+        self.highlight_background(
+            HighlightKey::BufferSearchHighlights,
             matches,
             move |index, theme| {
                 if active_match_index == Some(*index) {
@@ -1540,7 +1543,7 @@ impl SearchableItem for Editor {
     }
 
     fn has_filtered_search_ranges(&mut self) -> bool {
-        self.has_background_highlights::<SearchWithinRange>()
+        self.has_background_highlights(HighlightKey::SearchWithinRange)
     }
 
     fn toggle_filtered_search_ranges(
@@ -1551,7 +1554,7 @@ impl SearchableItem for Editor {
     ) {
         if self.has_filtered_search_ranges() {
             self.previous_search_ranges = self
-                .clear_background_highlights::<SearchWithinRange>(cx)
+                .clear_background_highlights(HighlightKey::SearchWithinRange, cx)
                 .map(|(_, ranges)| ranges)
         }
 
@@ -1775,7 +1778,7 @@ impl SearchableItem for Editor {
         let buffer = self.buffer().read(cx).snapshot(cx);
         let search_within_ranges = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<SearchWithinRange>()))
+            .get(&HighlightKey::SearchWithinRange)
             .map_or(vec![], |(_color, ranges)| {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
@@ -1913,14 +1916,14 @@ pub fn entry_diagnostic_aware_icon_decoration_and_color(
 
 pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, selected: bool) -> Color {
     let tracked = git_status.index + git_status.worktree;
-    if ignored {
-        Color::Ignored
-    } else if git_status.conflict > 0 {
+    if git_status.conflict > 0 {
         Color::Conflict
     } else if tracked.modified > 0 {
         Color::Modified
     } else if tracked.added > 0 || git_status.untracked > 0 {
         Color::Created
+    } else if ignored {
+        Color::Ignored
     } else {
         entry_label_color(selected)
     }

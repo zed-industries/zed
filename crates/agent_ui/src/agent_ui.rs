@@ -21,11 +21,11 @@ mod terminal_inline_assistant;
 mod text_thread_editor;
 mod text_thread_history;
 mod ui;
-mod user_slash_command;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
+// Another comment
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -101,6 +101,10 @@ actions!(
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
         OpenAgentDiff,
+        /// Copies the current thread to the clipboard as JSON for debugging.
+        CopyThreadToClipboard,
+        /// Loads a thread from the clipboard JSON for debugging.
+        LoadThreadFromClipboard,
         /// Keeps the current suggestion or change.
         Keep,
         /// Rejects the current suggestion or change.
@@ -215,6 +219,12 @@ impl ExternalAgent {
             Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
         }
     }
+}
+
+/// Content to initialize new external agent with.
+pub enum ExternalAgentInitialContent {
+    ThreadSummary(acp_thread::AgentSessionInfo),
+    Text(String),
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
@@ -391,6 +401,9 @@ fn update_command_palette_filter(cx: &mut App) {
                 }
                 EditPredictionProvider::Zed
                 | EditPredictionProvider::Codestral
+                | EditPredictionProvider::Ollama
+                | EditPredictionProvider::Sweep
+                | EditPredictionProvider::Mercury
                 | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
@@ -593,9 +606,9 @@ mod tests {
                 store.update_user_settings(cx, |s| {
                     s.project
                         .all_languages
-                        .features
+                        .edit_predictions
                         .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::Copilot);
+                        .provider = Some(EditPredictionProvider::Copilot);
                 });
             });
             update_command_palette_filter(cx);
@@ -615,9 +628,9 @@ mod tests {
                 store.update_user_settings(cx, |s| {
                     s.project
                         .all_languages
-                        .features
+                        .edit_predictions
                         .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::None);
+                        .provider = Some(EditPredictionProvider::None);
                 });
             });
             update_command_palette_filter(cx);

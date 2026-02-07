@@ -55,6 +55,7 @@ messages!(
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
     (CreateImageForPeer, Foreground),
+    (CreateFileForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
     (CreateContext, Foreground),
@@ -66,6 +67,8 @@ messages!(
     (DeleteChannel, Foreground),
     (DeleteNotification, Foreground),
     (DeleteProjectEntry, Foreground),
+    (DownloadFileByPath, Background),
+    (DownloadFileResponse, Background),
     (EndStream, Foreground),
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
@@ -132,6 +135,8 @@ messages!(
     (IncomingCall, Foreground),
     (InlayHints, Background),
     (InlayHintsResponse, Background),
+    (SemanticTokens, Background),
+    (SemanticTokensResponse, Background),
     (InstallExtension, Background),
     (InviteChannelMember, Foreground),
     (JoinChannel, Foreground),
@@ -196,7 +201,8 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
-    (RefreshInlayHints, Foreground),
+    (RefreshInlayHints, Background),
+    (RefreshSemanticTokens, Background),
     (RegisterBufferWithLanguageServers, Background),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -223,6 +229,8 @@ messages!(
     (GetDocumentColorResponse, Background),
     (GetColorPresentation, Background),
     (GetColorPresentationResponse, Background),
+    (GetFoldingRanges, Background),
+    (GetFoldingRangesResponse, Background),
     (RefreshCodeLens, Background),
     (GetCodeLens, Background),
     (GetCodeLensResponse, Background),
@@ -371,6 +379,7 @@ request_messages!(
     (DeclineCall, Ack),
     (DeleteChannel, Ack),
     (DeleteProjectEntry, ProjectEntryResponse),
+    (DownloadFileByPath, DownloadFileResponse),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
@@ -400,6 +409,7 @@ request_messages!(
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
+    (SemanticTokens, SemanticTokensResponse),
     (GetCodeLens, GetCodeLensResponse),
     (InviteChannelMember, Ack),
     (JoinChannel, JoinRoomResponse),
@@ -423,6 +433,7 @@ request_messages!(
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
     (RefreshInlayHints, Ack),
+    (RefreshSemanticTokens, Ack),
     (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
@@ -441,6 +452,7 @@ request_messages!(
     ),
     (ResolveInlayHint, ResolveInlayHintResponse),
     (GetDocumentColor, GetDocumentColorResponse),
+    (GetFoldingRanges, GetFoldingRangesResponse),
     (GetColorPresentation, GetColorPresentationResponse),
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
@@ -548,6 +560,7 @@ request_messages!(
 lsp_messages!(
     (GetReferences, GetReferencesResponse, true),
     (GetDocumentColor, GetDocumentColorResponse, true),
+    (GetFoldingRanges, GetFoldingRangesResponse, true),
     (GetHover, GetHoverResponse, true),
     (GetCodeActions, GetCodeActionsResponse, true),
     (GetSignatureHelp, GetSignatureHelpResponse, true),
@@ -558,6 +571,7 @@ lsp_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
     (InlayHints, InlayHintsResponse, false),
+    (SemanticTokens, SemanticTokensResponse, true)
 );
 
 entity_messages!(
@@ -576,9 +590,11 @@ entity_messages!(
     GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
+    CreateFileForPeer,
     CreateImageForPeer,
     CreateProjectEntry,
     GetDocumentColor,
+    GetFoldingRanges,
     DeleteProjectEntry,
     ExpandProjectEntry,
     ExpandAllForProjectEntry,
@@ -601,6 +617,7 @@ entity_messages!(
     OpenUncommittedDiff,
     GetTypeDefinition,
     InlayHints,
+    SemanticTokens,
     JoinProject,
     LeaveProject,
     LinkedEditingRange,
@@ -619,6 +636,7 @@ entity_messages!(
     PerformRename,
     PrepareRename,
     RefreshInlayHints,
+    RefreshSemanticTokens,
     RefreshCodeLens,
     ReloadBuffers,
     RemoveProjectCollaborator,
@@ -722,6 +740,7 @@ entity_messages!(
     RestrictWorktrees,
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
+    DownloadFileByPath
 );
 
 entity_messages!(
@@ -906,7 +925,9 @@ impl LspQuery {
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            Some(lsp_query::Request::GetFoldingRanges(_)) => ("GetFoldingRanges", false),
             Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
+            Some(lsp_query::Request::SemanticTokens(_)) => ("SemanticTokens", false),
             None => ("<unknown>", true),
         }
     }

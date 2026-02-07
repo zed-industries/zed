@@ -8,9 +8,11 @@ use gpui::{
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
     Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
+use project::project_settings::ProjectSettings;
+use settings::Settings as _;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
@@ -270,6 +272,9 @@ impl CopilotCodeVerification {
                                 cx.listener(move |this, _, _window, cx| {
                                     let command = command.clone();
                                     let copilot_clone = copilot.clone();
+                                    let request_timeout = ProjectSettings::get_global(cx)
+                                        .global_lsp_settings
+                                        .get_request_timeout();
                                     copilot.update(cx, |copilot, cx| {
                                         if let Some(server) = copilot.language_server() {
                                             let server = server.clone();
@@ -284,6 +289,7 @@ impl CopilotCodeVerification {
                                                                 .unwrap_or_default(),
                                                             ..Default::default()
                                                         },
+                                                        request_timeout,
                                                     )
                                                     .await
                                                     .into_response()
@@ -457,7 +463,7 @@ impl Render for CopilotCodeVerification {
 
 pub struct ConfigurationView {
     copilot_status: Option<Status>,
-    is_authenticated: Box<dyn Fn(&App) -> bool + 'static>,
+    is_authenticated: Box<dyn Fn(&mut App) -> bool + 'static>,
     edit_prediction: bool,
     _subscription: Option<Subscription>,
 }
@@ -469,11 +475,13 @@ pub enum ConfigurationMode {
 
 impl ConfigurationView {
     pub fn new(
-        is_authenticated: impl Fn(&App) -> bool + 'static,
+        is_authenticated: impl Fn(&mut App) -> bool + 'static,
         mode: ConfigurationMode,
         cx: &mut Context<Self>,
     ) -> Self {
-        let copilot = GlobalCopilotAuth::try_global(cx).cloned();
+        let copilot = AppState::try_global(cx)
+            .and_then(|state| state.upgrade())
+            .and_then(|state| GlobalCopilotAuth::try_get_or_init(state, cx));
 
         Self {
             copilot_status: copilot.as_ref().map(|copilot| copilot.0.read(cx).status()),
@@ -566,8 +574,11 @@ impl ConfigurationView {
             .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
+            .when(edit_prediction, |this| this.tab_index(0isize))
             .on_click(|_, window, cx| {
-                if let Some(copilot) = GlobalCopilotAuth::get_or_init(cx) {
+                if let Some(app_state) = AppState::global(cx).upgrade()
+                    && let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                {
                     initiate_sign_in(copilot.0, window, cx)
                 }
             })
@@ -594,8 +605,10 @@ impl ConfigurationView {
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
             .on_click(|_, window, cx| {
-                if let Some(copilot) = GlobalCopilotAuth::get_or_init(cx) {
-                    reinstall_and_sign_in(copilot.0, window, cx)
+                if let Some(app_state) = AppState::global(cx).upgrade()
+                    && let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                {
+                    reinstall_and_sign_in(copilot.0, window, cx);
                 }
             })
     }

@@ -9,7 +9,7 @@ use cloud_llm_client::{
     CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use feature_flags::{CloudThinkingToggleFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{CloudThinkingEffortFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -19,11 +19,11 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh, PaymentRequiredError,
-    RateLimiter, RefreshLlmTokenListener,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -34,6 +34,7 @@ pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -167,14 +168,14 @@ impl State {
     }
 
     fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
-        let is_thinking_toggle_enabled = cx.has_flag::<CloudThinkingToggleFeatureFlag>();
+        let is_thinking_effort_enabled = cx.has_flag::<CloudThinkingEffortFeatureFlag>();
 
         let mut models = Vec::new();
 
         for model in response.models {
             models.push(Arc::new(model.clone()));
 
-            if !is_thinking_toggle_enabled {
+            if !is_thinking_effort_enabled {
                 // Right now we represent thinking variants of models as separate models on the client,
                 // so we need to insert variants for any model that supports thinking.
                 if model.supports_thinking {
@@ -565,6 +566,10 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
+    fn is_latest(&self) -> bool {
+        self.model.is_latest
+    }
+
     fn supports_tools(&self) -> bool {
         self.model.supports_tools
     }
@@ -575,6 +580,18 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|effort_level| LanguageModelEffortLevel {
+                name: effort_level.name.clone().into(),
+                value: effort_level.value.clone().into(),
+                is_default: effort_level.is_default.unwrap_or(false),
+            })
+            .collect()
     }
 
     fn supports_streaming_tools(&self) -> bool {
@@ -727,9 +744,9 @@ impl LanguageModel for CloudLanguageModel {
         let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let thinking_allowed = request.thinking_allowed;
-        let is_thinking_toggle_enabled =
-            cx.update(|cx| cx.has_flag::<CloudThinkingToggleFeatureFlag>());
-        let enable_thinking = if is_thinking_toggle_enabled {
+        let is_thinking_effort_enabled =
+            cx.update(|cx| cx.has_flag::<CloudThinkingEffortFeatureFlag>());
+        let enable_thinking = if is_thinking_effort_enabled {
             thinking_allowed && self.model.supports_thinking
         } else {
             thinking_allowed && self.model.id.0.ends_with("-thinking")
@@ -737,7 +754,12 @@ impl LanguageModel for CloudLanguageModel {
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
-                let request = into_anthropic(
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| anthropic::Effort::from_str(effort).ok());
+
+                let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
                     1.0,
@@ -750,6 +772,12 @@ impl LanguageModel for CloudLanguageModel {
                         AnthropicModelMode::Default
                     },
                 );
+
+                if enable_thinking && effort.is_some() {
+                    request.thinking = Some(anthropic::Thinking::Adaptive);
+                    request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -788,8 +816,12 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok());
 
-                let request = into_open_ai_response(
+                let mut request = into_open_ai_response(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -797,6 +829,11 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                     None,
                 );
+
+                if enable_thinking && let Some(effort) = effort {
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                }
+
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,

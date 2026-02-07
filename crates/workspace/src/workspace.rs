@@ -116,9 +116,11 @@ use std::{
     },
     time::Duration,
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext};
+use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
-pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{
+    PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+};
 pub use ui;
 use ui::{Window, prelude::*};
 use util::{
@@ -178,7 +180,7 @@ pub trait DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
@@ -1306,12 +1308,18 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(..) => {
+                &project::Event::WorktreeRemoved(id) | &project::Event::WorktreeAdded(id) => {
                     this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    this.update_history(cx);
+                    if this
+                        .project()
+                        .read(cx)
+                        .worktree_for_id(id, cx)
+                        .is_some_and(|wt| wt.read(cx).is_visible())
+                    {
+                        this.serialize_workspace(window, cx);
+                        this.update_history(cx);
+                    }
                 }
-
                 project::Event::WorktreeUpdatedEntries(..) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);

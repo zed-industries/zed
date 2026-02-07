@@ -1,22 +1,64 @@
-//! Repair predictions that received poor QA scores.
+//! Repair predictions that received poor quality signals.
 //!
-//! This module takes examples with predictions and QA feedback, identifies
-//! predictions that need improvement (based on reverts_edits or low confidence),
-//! and uses an LLM to generate improved predictions.
+//! This module takes examples with predictions, identifies predictions that need
+//! improvement, and uses an LLM to generate improved predictions. It supports
+//! two sources of quality signals:
+//! - QA feedback (reverts_edits or low confidence)
+//! - Computed scores when QA is unavailable (high reversal_ratio or wrong_editable_region)
 
-use crate::BatchProvider;
-use crate::PredictionProvider;
-use crate::anthropic_client::AnthropicClient;
-use crate::example::{Example, ExamplePrediction};
-use crate::format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example};
-use crate::openai_client::OpenAiClient;
-use crate::paths::LLM_CACHE_DB;
-use crate::word_diff::unified_to_word_diff;
-use anyhow::Result;
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use crate::{
+    BatchProvider, PredictionProvider,
+    anthropic_client::AnthropicClient,
+    example::{ActualCursor, Example, ExamplePrediction},
+    format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example, extract_last_codeblock},
+    openai_client::OpenAiClient,
+    parse_output::run_parse_output,
+    paths::LLM_CACHE_DB,
+    progress::{ExampleProgress, Step},
+    word_diff::unified_to_word_diff,
+};
+use anyhow::{Context as _, Result};
+use std::sync::OnceLock;
 
-const PROMPT_TEMPLATE: &str = include_str!("prompts/repair.md");
+const KEEP_PREVIOUS: &str = "KEEP_PREVIOUS";
+
+/// Print a summary report of repair results across all examples.
+pub fn print_report(examples: &[Example], confidence_threshold: u8) {
+    let total = examples.len();
+    let mut no_repair_needed = 0;
+    let mut repaired = 0;
+    let mut repair_failed = 0;
+
+    for example in examples {
+        if !needs_repair(example, confidence_threshold) {
+            no_repair_needed += 1;
+            continue;
+        }
+
+        if has_successful_repair(example) {
+            repaired += 1;
+        } else {
+            repair_failed += 1;
+        }
+    }
+
+    let needed_repair = total - no_repair_needed;
+
+    eprintln!();
+    eprintln!("Repair summary ({total} examples):");
+    eprintln!(
+        "  {no_repair_needed}/{total} didn't need repair (confidence > {confidence_threshold})"
+    );
+    if needed_repair > 0 {
+        eprintln!("  {needed_repair}/{total} needed repair:");
+        if repaired > 0 {
+            eprintln!("    {repaired} repaired successfully");
+        }
+        if repair_failed > 0 {
+            eprintln!("    {repair_failed} failed to repair");
+        }
+    }
+}
 
 /// Arguments for the repair command.
 #[derive(Debug, Clone, clap::Args)]
@@ -24,10 +66,6 @@ pub struct RepairArgs {
     /// Use synchronous API instead of batch
     #[clap(long)]
     pub no_batch: bool,
-
-    /// Wait for batch to complete (polls every 30s)
-    #[clap(long)]
-    pub wait: bool,
 
     /// Confidence threshold: repair predictions with confidence <= this value (1-5)
     #[clap(long, default_value = "2")]
@@ -45,18 +83,92 @@ fn model_for_backend(backend: BatchProvider) -> &'static str {
     }
 }
 
-/// Build the repair prompt for an example that needs improvement.
-///
-/// Returns None if the example doesn't have the required data (predictions, qa, prompt_inputs).
-pub fn build_repair_prompt(example: &Example) -> Option<String> {
-    let prediction = example.predictions.first()?;
+/// Build the quality feedback string from QA results.
+fn build_qa_feedback(example: &Example) -> Option<String> {
     let qa = example.qa.first()?.as_ref()?;
-    let prompt_inputs = example.prompt_inputs.as_ref()?;
-    let actual_patch = prediction.actual_patch.as_ref()?;
+
+    let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
+    let reverts_edits = qa
+        .reverts_edits
+        .map_or("unknown", |v| if v { "yes" } else { "no" });
+    let confidence = qa
+        .confidence
+        .map_or("unknown".to_string(), |v| v.to_string());
+
+    Some(format!(
+        "- **Reverts user edits**: {reverts_edits}\n\
+         - **Confidence score**: {confidence}/5\n\
+         - **Reasoning**: {qa_reasoning}"
+    ))
+}
+
+/// Build the quality feedback string from computed scores when QA is unavailable.
+fn build_score_feedback(example: &Example) -> Option<String> {
+    let score = example.score.first()?;
+
+    let mut issues = Vec::new();
+
+    if score.reversal_ratio > 0.9 {
+        issues.push(format!(
+            "Automated analysis detected a high reversal ratio ({:.2}), which suggests this \
+             prediction may be reverting changes the user intentionally made. Double-check that \
+             the prediction doesn't undo the user's recent edits. If the prediction is actually \
+             fine and the edits are intentional completions rather than reversals, keep it as-is. \
+             If it truly reverts the user's changes, generate an improved prediction that \
+             continues the user's intent instead.",
+            score.reversal_ratio
+        ));
+    }
+
+    if score.wrong_editable_region == Some(true) {
+        issues.push(
+            "Automated analysis detected that the prediction may be modifying code outside \
+             the expected editable region, or producing changes misaligned with the editable \
+             region boundaries. Make sure the prediction only modifies code within the editable \
+             region and is properly aligned."
+                .to_string(),
+        );
+    }
+
+    if issues.is_empty() {
+        return None;
+    }
+
+    let mut feedback = String::from(
+        "No human quality assessment is available, but automated scoring flagged potential issues:\n\n",
+    );
+    for issue in &issues {
+        feedback.push_str(&format!("- {issue}\n"));
+    }
+    feedback.push_str(
+        "\nRemember: if the previous prediction was actually correct, output `KEEP_PREVIOUS`. \
+         If no edits should be made at all and you are unsure how to improve it, output `NO_EDITS`.",
+    );
+
+    Some(feedback)
+}
+
+/// Build the repair prompt for an example that needs improvement.
+pub fn build_repair_prompt(example: &Example) -> Result<String> {
+    let prediction = example
+        .predictions
+        .first()
+        .context("no predictions available")?;
+    let prompt_inputs = example
+        .prompt_inputs
+        .as_ref()
+        .context("prompt_inputs missing (run context retrieval first)")?;
+    let actual_patch = prediction
+        .actual_patch
+        .as_ref()
+        .context("no actual_patch available (run predict first)")?;
+
+    let quality_feedback = build_qa_feedback(example)
+        .or_else(|| build_score_feedback(example))
+        .context("no quality feedback available (need either QA results or computed scores)")?;
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
-    // Format edit history similar to qa.rs
     let mut edit_history = String::new();
     for event in &prompt_inputs.edit_history {
         match event.as_ref() {
@@ -76,47 +188,44 @@ pub fn build_repair_prompt(example: &Example) -> Option<String> {
         }
     }
 
-    // Format related files context (reuse from TeacherPrompt)
     let context = TeacherPrompt::format_context(example);
 
-    // Format cursor excerpt with editable region markers (reuse from format_prompt)
-    let cursor_excerpt = extract_cursor_excerpt_from_example(example)?;
+    let cursor_excerpt =
+        extract_cursor_excerpt_from_example(example).context("failed to extract cursor excerpt")?;
 
-    // Get QA feedback
-    let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
-    let reverts_edits = qa
-        .reverts_edits
-        .map_or("unknown", |v| if v { "yes" } else { "no" });
-    let confidence = qa
-        .confidence
-        .map_or("unknown".to_string(), |v| v.to_string());
-
-    Some(
-        PROMPT_TEMPLATE
-            .replace("{edit_history}", &edit_history)
-            .replace("{context}", &context)
-            .replace("{cursor_excerpt}", &cursor_excerpt)
-            .replace("{actual_patch_word_diff}", &actual_patch_word_diff)
-            .replace("{reverts_edits}", reverts_edits)
-            .replace("{confidence}", &confidence)
-            .replace("{qa_reasoning}", qa_reasoning),
-    )
+    let prompt_template = crate::prompt_assets::get_prompt("repair.md");
+    Ok(prompt_template
+        .replace("{edit_history}", &edit_history)
+        .replace("{context}", &context)
+        .replace("{cursor_excerpt}", &cursor_excerpt)
+        .replace("{actual_patch_word_diff}", &actual_patch_word_diff)
+        .replace("{quality_feedback}", &quality_feedback))
 }
 
-/// Check if an example needs repair based on QA feedback.
+/// Check if an example needs repair based on QA feedback or computed scores.
 pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
-    let Some(qa) = example.qa.first().and_then(|q| q.as_ref()) else {
-        return false;
-    };
+    // Check QA-based signals first.
+    if let Some(qa) = example.qa.first().and_then(|q| q.as_ref()) {
+        if qa.reverts_edits == Some(true) {
+            return true;
+        }
 
-    // Repair if reverts_edits is true
-    if qa.reverts_edits == Some(true) {
-        return true;
+        if let Some(confidence) = qa.confidence {
+            if confidence <= confidence_threshold {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    // Repair if confidence is at or below threshold
-    if let Some(confidence) = qa.confidence {
-        if confidence <= confidence_threshold {
+    // When QA is unavailable, fall back to computed score signals.
+    if let Some(score) = example.score.first() {
+        if score.reversal_ratio > 0.9 {
+            return true;
+        }
+
+        if score.wrong_editable_region == Some(true) {
             return true;
         }
     }
@@ -124,258 +233,186 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
     false
 }
 
-/// Parse the repair response into a prediction.
-fn parse_repair_response(example: &Example, response_text: &str) -> Result<ExamplePrediction> {
-    let actual_patch = TeacherPrompt::parse(example, response_text)?;
-
-    Ok(ExamplePrediction {
-        actual_patch: Some(actual_patch),
-        actual_output: response_text.to_string(),
-        error: None,
-        provider: PredictionProvider::Repair,
-    })
-}
-
-enum RepairClient {
-    Anthropic(AnthropicClient),
-    OpenAi(OpenAiClient),
-}
-
-impl RepairClient {
-    async fn generate(&self, model: &str, max_tokens: u64, prompt: &str) -> Result<Option<String>> {
-        match self {
-            RepairClient::Anthropic(client) => {
-                let messages = vec![anthropic::Message {
-                    role: anthropic::Role::User,
-                    content: vec![anthropic::RequestContent::Text {
-                        text: prompt.to_string(),
-                        cache_control: None,
-                    }],
-                }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
-                Ok(response.map(|r| {
-                    r.content
-                        .iter()
-                        .filter_map(|c| match c {
-                            anthropic::ResponseContent::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-            RepairClient::OpenAi(client) => {
-                let messages = vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt.to_string()),
-                }];
-                let response = client.generate(model, max_tokens, messages, None).await?;
-                Ok(response.map(|r| {
-                    r.choices
-                        .into_iter()
-                        .filter_map(|choice| match choice.message {
-                            open_ai::RequestMessage::Assistant { content, .. } => {
-                                content.map(|c| match c {
-                                    open_ai::MessageContent::Plain(text) => text,
-                                    open_ai::MessageContent::Multipart(parts) => parts
-                                        .into_iter()
-                                        .filter_map(|p| match p {
-                                            open_ai::MessagePart::Text { text } => Some(text),
-                                            _ => None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(""),
-                                })
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                }))
-            }
-        }
+/// Parse repair model output into a patch and optional cursor.
+///
+/// Handles the `KEEP_PREVIOUS` sentinel by copying the teacher's prediction,
+/// and delegates normal output to `TeacherPrompt::parse`.
+pub fn parse(example: &Example, actual_output: &str) -> Result<(String, Option<ActualCursor>)> {
+    let last_codeblock = extract_last_codeblock(actual_output);
+    if last_codeblock.trim() == KEEP_PREVIOUS {
+        let original = example
+            .predictions
+            .first()
+            .context("no original prediction to keep")?;
+        let patch = original.actual_patch.clone().unwrap_or_default();
+        let cursor = original.actual_cursor.clone();
+        return Ok((patch, cursor));
     }
 
-    async fn sync_batches(&self) -> Result<()> {
-        match self {
-            RepairClient::Anthropic(client) => client.sync_batches().await,
-            RepairClient::OpenAi(client) => client.sync_batches().await,
-        }
-    }
+    TeacherPrompt::parse(example, actual_output)
 }
 
-/// Run the repair process on a set of examples.
+/// Check if an example already has a successful repair prediction.
+fn has_successful_repair(example: &Example) -> bool {
+    example
+        .predictions
+        .iter()
+        .any(|p| p.provider == PredictionProvider::Repair && p.actual_patch.is_some())
+}
+
+static ANTHROPIC_CLIENT_BATCH: OnceLock<AnthropicClient> = OnceLock::new();
+static ANTHROPIC_CLIENT_PLAIN: OnceLock<AnthropicClient> = OnceLock::new();
+static OPENAI_CLIENT_BATCH: OnceLock<OpenAiClient> = OnceLock::new();
+static OPENAI_CLIENT_PLAIN: OnceLock<OpenAiClient> = OnceLock::new();
+
+/// Run repair for a single example.
 pub async fn run_repair(
-    examples: &mut [Example],
+    example: &mut Example,
     args: &RepairArgs,
-    output_path: Option<&PathBuf>,
+    example_progress: &ExampleProgress,
 ) -> Result<()> {
+    if has_successful_repair(example) {
+        return Ok(());
+    }
+
+    if !needs_repair(example, args.confidence_threshold) {
+        return Ok(());
+    }
+
+    run_parse_output(example).context("Failed to execute run_parse_output")?;
+
+    if example.prompt_inputs.is_none() {
+        anyhow::bail!("prompt_inputs missing (run context retrieval first)");
+    }
+
+    if example.predictions.is_empty() {
+        anyhow::bail!("no predictions available (run predict first)");
+    }
+
+    let step_progress = example_progress.start(Step::Repair);
+
     let model = model_for_backend(args.backend);
-    let client = match args.backend {
+    let prompt = build_repair_prompt(example).context("Failed to build repair prompt")?;
+
+    step_progress.set_substatus("generating");
+
+    let response = match args.backend {
         BatchProvider::Anthropic => {
-            if args.no_batch {
-                RepairClient::Anthropic(AnthropicClient::plain()?)
+            let client = if args.no_batch {
+                ANTHROPIC_CLIENT_PLAIN.get_or_init(|| {
+                    AnthropicClient::plain().expect("Failed to create Anthropic client")
+                })
             } else {
-                RepairClient::Anthropic(AnthropicClient::batch(&LLM_CACHE_DB)?)
-            }
+                ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                    AnthropicClient::batch(&LLM_CACHE_DB)
+                        .expect("Failed to create Anthropic client")
+                })
+            };
+
+            let messages = vec![anthropic::Message {
+                role: anthropic::Role::User,
+                content: vec![anthropic::RequestContent::Text {
+                    text: prompt,
+                    cache_control: None,
+                }],
+            }];
+
+            let Some(response) = client.generate(model, 16384, messages, None, false).await? else {
+                return Ok(());
+            };
+
+            response
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    anthropic::ResponseContent::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
         }
         BatchProvider::Openai => {
-            if args.no_batch {
-                RepairClient::OpenAi(OpenAiClient::plain()?)
+            let client = if args.no_batch {
+                OPENAI_CLIENT_PLAIN
+                    .get_or_init(|| OpenAiClient::plain().expect("Failed to create OpenAI client"))
             } else {
-                RepairClient::OpenAi(OpenAiClient::batch(&LLM_CACHE_DB)?)
-            }
-        }
-    };
+                OPENAI_CLIENT_BATCH.get_or_init(|| {
+                    OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+                })
+            };
 
-    eprintln!(
-        "Using model: {}, backend: {:?}, batching: {}, confidence_threshold: {}",
-        model, args.backend, !args.no_batch, args.confidence_threshold
-    );
+            let messages = vec![open_ai::RequestMessage::User {
+                content: open_ai::MessageContent::Plain(prompt),
+            }];
 
-    // First pass: identify examples that need repair and build prompts
-    let mut repair_items: Vec<(usize, String)> = Vec::new();
-    let mut skipped_missing_data = 0;
-    let mut skipped_no_repair_needed = 0;
+            let Some(response) = client.generate(model, 16384, messages, None, false).await? else {
+                return Ok(());
+            };
 
-    for (idx, example) in examples.iter().enumerate() {
-        // Skip if missing predictions or qa
-        if example.predictions.is_empty() || example.qa.is_empty() {
-            skipped_missing_data += 1;
-            continue;
-        }
-
-        // Skip if doesn't need repair
-        if !needs_repair(example, args.confidence_threshold) {
-            skipped_no_repair_needed += 1;
-            continue;
-        }
-
-        // Build repair prompt
-        let Some(prompt) = build_repair_prompt(example) else {
-            skipped_missing_data += 1;
-            continue;
-        };
-
-        repair_items.push((idx, prompt));
-    }
-
-    eprintln!(
-        "Skipping {} items with missing data, {} items that don't need repair",
-        skipped_missing_data, skipped_no_repair_needed
-    );
-    eprintln!("{} items to repair", repair_items.len());
-
-    // Process all items
-    let mut results: Vec<(usize, Option<String>)> = Vec::new();
-
-    if args.no_batch {
-        // Synchronous processing
-        for (i, (idx, prompt)) in repair_items.iter().enumerate() {
-            eprint!("\rProcessing {}/{}", i + 1, repair_items.len());
-
-            let response = client.generate(model, 16384, prompt).await?;
-            results.push((*idx, response));
-        }
-        eprintln!();
-    } else {
-        // Queue all for batching
-        for (idx, prompt) in &repair_items {
-            let response = client.generate(model, 16384, prompt).await?;
-            results.push((*idx, response));
-        }
-
-        // Sync batches (upload pending, download finished)
-        client.sync_batches().await?;
-
-        if args.wait {
-            eprintln!("Waiting for batch to complete...");
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                client.sync_batches().await?;
-
-                // Re-check all items that didn't have results
-                let mut all_done = true;
-                for (result_idx, (idx, prompt)) in repair_items.iter().enumerate() {
-                    if results[result_idx].1.is_none() {
-                        let response = client.generate(model, 16384, prompt).await?;
-                        if let Some(text) = response {
-                            results[result_idx] = (*idx, Some(text));
-                        } else {
-                            all_done = false;
-                        }
+            response
+                .choices
+                .into_iter()
+                .filter_map(|choice| match choice.message {
+                    open_ai::RequestMessage::Assistant { content, .. } => {
+                        content.map(|c| match c {
+                            open_ai::MessageContent::Plain(text) => text,
+                            open_ai::MessageContent::Multipart(parts) => parts
+                                .into_iter()
+                                .filter_map(|p| match p {
+                                    open_ai::MessagePart::Text { text } => Some(text),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join(""),
+                        })
                     }
-                }
-
-                let done_count = results.iter().filter(|(_, r)| r.is_some()).count();
-                if all_done {
-                    break;
-                }
-                eprintln!(
-                    "Still waiting... {}/{} results",
-                    done_count,
-                    repair_items.len()
-                );
-            }
-        } else {
-            let pending_count = results.iter().filter(|(_, r)| r.is_none()).count();
-            if pending_count > 0 {
-                eprintln!(
-                    "Batch submitted. {} pending. Run again later to retrieve results.",
-                    pending_count
-                );
-            }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
         }
-    }
-
-    // Build results map by index
-    let mut results_by_idx: std::collections::HashMap<usize, String> =
-        std::collections::HashMap::new();
-    for (idx, result) in results {
-        if let Some(r) = result {
-            results_by_idx.insert(idx, r);
-        }
-    }
-
-    // Output results
-    let mut writer: Box<dyn Write> = if let Some(path) = output_path {
-        Box::new(BufWriter::new(std::fs::File::create(path)?))
-    } else {
-        Box::new(std::io::stdout())
     };
 
-    let mut num_repaired = 0;
-    let mut num_repair_errors = 0;
+    let parse_result = parse(example, &response);
+    let err = parse_result
+        .as_ref()
+        .err()
+        .map(|e| format!("Failed to parse repair response: {}", e));
 
-    for (idx, example) in examples.iter_mut().enumerate() {
-        // Add repair prediction if we have a result
-        if let Some(response_text) = results_by_idx.get(&idx) {
-            match parse_repair_response(example, response_text) {
-                Ok(prediction) => {
-                    example.predictions.push(prediction);
-                    num_repaired += 1;
-                }
-                Err(e) => {
-                    // Add error prediction
-                    example.predictions.push(ExamplePrediction {
-                        actual_patch: None,
-                        actual_output: response_text.clone(),
-                        error: Some(format!("Failed to parse repair response: {}", e)),
-                        provider: PredictionProvider::Repair,
-                    });
-                    num_repair_errors += 1;
-                }
-            }
+    let (actual_patch, actual_cursor) = parse_result.ok().unzip();
+    let actual_cursor = actual_cursor.flatten();
+
+    example.predictions.push(ExamplePrediction {
+        actual_patch,
+        actual_output: response,
+        actual_cursor,
+        error: err,
+        provider: PredictionProvider::Repair,
+    });
+
+    Ok(())
+}
+
+/// Sync batches for repair (upload pending requests, download finished results).
+pub async fn sync_batches(args: &RepairArgs) -> Result<()> {
+    if args.no_batch {
+        return Ok(());
+    }
+
+    match args.backend {
+        BatchProvider::Anthropic => {
+            let client = ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                AnthropicClient::batch(&LLM_CACHE_DB).expect("Failed to create Anthropic client")
+            });
+            client.sync_batches().await?;
         }
-
-        writeln!(writer, "{}", serde_json::to_string(&example)?)?;
+        BatchProvider::Openai => {
+            let client = OPENAI_CLIENT_BATCH.get_or_init(|| {
+                OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+            });
+            client.sync_batches().await?;
+        }
     }
-
-    if let Some(path) = output_path {
-        eprintln!("Results written to {}", path.display());
-    }
-
-    eprintln!("Repaired:      {} items", num_repaired);
-    eprintln!("Repair errors: {} items", num_repair_errors);
 
     Ok(())
 }
