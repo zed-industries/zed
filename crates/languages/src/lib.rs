@@ -67,6 +67,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         ("cpp", tree_sitter_cpp::LANGUAGE),
         ("css", tree_sitter_css::LANGUAGE),
         ("diff", tree_sitter_diff::LANGUAGE),
+        ("doxygen", tree_sitter_doxygen::LANGUAGE),
         ("go", tree_sitter_go::LANGUAGE),
         ("gomod", tree_sitter_go_mod::LANGUAGE),
         ("gowork", tree_sitter_gowork::LANGUAGE),
@@ -135,6 +136,10 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageInfo {
             name: "diff",
             adapters: vec![],
+            ..Default::default()
+        },
+        LanguageInfo {
+            name: "doxygen",
             ..Default::default()
         },
         LanguageInfo {

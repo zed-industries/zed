@@ -19,6 +19,7 @@ load-grammars = [
     "tree-sitter-cpp",
     "tree-sitter-css",
     "tree-sitter-diff",
+    "tree-sitter-doxygen",
     "tree-sitter-gitcommit",
     "tree-sitter-go",
     "tree-sitter-go-mod",
@@ -81,6 +82,7 @@ tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-diff = { workspace = true, optional = true }
+tree-sitter-doxygen = { workspace = true, optional = true }
 tree-sitter-gitcommit = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-go-mod = { workspace = true, optional = true }

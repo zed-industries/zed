@@ -9276,6 +9276,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-diff",
+ "tree-sitter-doxygen",
  "tree-sitter-gitcommit",
  "tree-sitter-go",
  "tree-sitter-gomod",
@@ -17794,6 +17795,15 @@ name = "tree-sitter-diff"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfe1e5ca280a65dfe5ba4205c1bcc84edf486464fed315db53dee6da9a335889"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-doxygen"
+version = "1.1.0"
+source = "git+https://github.com/amaanq/tree-sitter-doxygen?rev=d5f58fd027929692bae779c8f914cadace85fc5a#d5f58fd027929692bae779c8f914cadace85fc5a"
 dependencies = [
  "cc",
  "tree-sitter-language",
