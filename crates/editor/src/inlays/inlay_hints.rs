@@ -39,7 +39,7 @@ pub fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    language_settings(language, file, cx).inlay_hints.clone()
 }
 
 #[derive(Debug)]
@@ -471,7 +471,7 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::SettingsChange(new_settings) => {
-                match inlay_hints.update_settings(*new_settings, visible_inlay_hints) {
+                match inlay_hints.update_settings(new_settings.clone(), visible_inlay_hints) {
                     ControlFlow::Break(Some(InlaySplice {
                         to_remove,
                         to_insert,

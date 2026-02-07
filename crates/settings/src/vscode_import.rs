@@ -929,6 +929,8 @@ impl VsCodeSettings {
             unnecessary_code_fade: None,
             experimental_theme_overrides: None,
             theme_overrides: Default::default(),
+            inlay_hints_font_family: None,
+            edit_predictions_font_family: None,
         }
     }
 

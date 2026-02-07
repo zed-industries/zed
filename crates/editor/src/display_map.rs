@@ -97,7 +97,9 @@ use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
-use language::{Point, Subscription as BufferSubscription, language_settings::language_settings};
+use language::{
+    ChunkSpecial, Point, Subscription as BufferSubscription, language_settings::language_settings,
+};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
@@ -1465,34 +1467,6 @@ pub enum ChunkReplacement {
     Str(SharedString),
 }
 
-#[derive(Copy, Clone, Debug, Default)]
-pub enum ChunkSpecial {
-    #[default]
-    None,
-    InlayHint,
-    EditPrediction,
-}
-
-impl From<fold_map::ChunkSpecial> for ChunkSpecial {
-    fn from(chunk_special: fold_map::ChunkSpecial) -> Self {
-        match chunk_special {
-            fold_map::ChunkSpecial::InlayHint => ChunkSpecial::InlayHint,
-            fold_map::ChunkSpecial::EditPrediction => ChunkSpecial::EditPrediction,
-            fold_map::ChunkSpecial::None => ChunkSpecial::None,
-        }
-    }
-}
-
-impl From<ChunkSpecial> for fold_map::ChunkSpecial {
-    fn from(chunk_special: ChunkSpecial) -> Self {
-        match chunk_special {
-            ChunkSpecial::None => fold_map::ChunkSpecial::None,
-            ChunkSpecial::InlayHint => fold_map::ChunkSpecial::InlayHint,
-            ChunkSpecial::EditPrediction => fold_map::ChunkSpecial::EditPrediction,
-        }
-    }
-}
-
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
@@ -1513,6 +1487,7 @@ impl<'a> HighlightedChunk<'a> {
         let is_tab = self.is_tab;
         let renderer = self.replacement;
         let special = self.special;
+
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -1917,15 +1892,14 @@ impl DisplaySnapshot {
                     // For color inlays, blend the color with the editor background
                     // if the color has transparency (alpha < 1.0)
                     color: chunk_highlight.color.map(|color| match chunk.special {
-                        fold_map::ChunkSpecial::InlayHint => {
+                        ChunkSpecial::InlayHint => {
                             if !color.is_opaque() {
                                 editor_style.background.blend(color)
                             } else {
                                 color
                             }
                         }
-                        fold_map::ChunkSpecial::EditPrediction => color,
-                        fold_map::ChunkSpecial::None => color,
+                        _ => color,
                     }),
                     ..chunk_highlight
                 }
@@ -4006,7 +3980,6 @@ pub mod tests {
             DisplayPoint::new(DisplayRow(1), 11)
         )
     }
-
     fn syntax_chunks(
         rows: Range<DisplayRow>,
         map: &Entity<DisplayMap>,

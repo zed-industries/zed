@@ -309,6 +309,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         chars,
                         tabs,
                         newlines,
+                        special: ChunkSpecial::None,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -486,7 +487,6 @@ impl<'a> Iterator for InlayChunks<'a> {
             self.inlay_chunks = None;
             self.transforms.next();
         }
-
         Some(chunk)
     }
 }
