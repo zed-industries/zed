@@ -1,4 +1,4 @@
-use audio::{CHANNEL_COUNT, RodioExt, SAMPLE_RATE};
+use audio::{AudioSettings, CHANNEL_COUNT, RodioExt, SAMPLE_RATE};
 use cpal::{
     DeviceId, default_host,
     traits::{DeviceTrait, HostTrait},
@@ -11,6 +11,7 @@ use log::info;
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rodio::{DeviceSinkBuilder, Source};
+use settings::{AudioDeviceName, Settings};
 use std::{
     any::Any,
     str::FromStr,
@@ -28,6 +29,7 @@ use workspace::client_side_decorations;
 use super::audio_input_output_setup::{
     AudioDeviceKind, SYSTEM_DEFAULT, render_audio_device_dropdown,
 };
+use crate::{SettingsUiFile, update_settings_file};
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
@@ -45,10 +47,20 @@ impl AudioTestWindow {
             None
         };
 
+        let audio_settings = AudioSettings::get_global(cx);
+        let input_device_id = audio_settings
+            .input_audio_device
+            .clone()
+            .unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
+        let output_device_id = audio_settings
+            .output_audio_device
+            .clone()
+            .unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
+
         Self {
             title_bar,
-            input_device_id: SYSTEM_DEFAULT.to_string(),
-            output_device_id: SYSTEM_DEFAULT.to_string(),
+            input_device_id,
+            output_device_id,
             focus_handle: cx.focus_handle(),
             _stop_playback: None,
         }
@@ -198,10 +210,23 @@ impl Render for AudioTestWindow {
                 "audio-test-input-dropdown",
                 AudioDeviceKind::Input,
                 self.input_device_id.clone(),
-                move |device_id, _, cx| {
+                move |device_id, window, cx| {
                     weak_entity
-                        .update(cx, |this, cx| this.set_input_device(device_id, cx))
+                        .update(cx, |this, cx| this.set_input_device(device_id.clone(), cx))
                         .log_err();
+                    let value: Option<Option<AudioDeviceName>> =
+                        device_id.map(|id| Some(AudioDeviceName(id)));
+                    update_settings_file(
+                        SettingsUiFile::User,
+                        Some("audio.experimental.input_audio_device"),
+                        window,
+                        cx,
+                        move |settings, _cx| {
+                            settings.audio.get_or_insert_default().input_audio_device =
+                                value.clone().flatten();
+                        },
+                    )
+                    .log_err();
                 },
                 window,
                 cx,
@@ -212,10 +237,23 @@ impl Render for AudioTestWindow {
             "audio-test-output-dropdown",
             AudioDeviceKind::Output,
             self.output_device_id.clone(),
-            move |device_id, _, cx| {
+            move |device_id, window, cx| {
                 weak_entity
-                    .update(cx, |this, cx| this.set_output_device(device_id, cx))
+                    .update(cx, |this, cx| this.set_output_device(device_id.clone(), cx))
                     .log_err();
+                let value: Option<Option<AudioDeviceName>> =
+                    device_id.map(|id| Some(AudioDeviceName(id)));
+                update_settings_file(
+                    SettingsUiFile::User,
+                    Some("audio.experimental.output_audio_device"),
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        settings.audio.get_or_insert_default().output_audio_device =
+                            value.clone().flatten();
+                    },
+                )
+                .log_err();
             },
             window,
             cx,
@@ -231,14 +269,14 @@ impl Render for AudioTestWindow {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(Label::new("Input Device"))
-                    .child(input_dropdown),
+                    .child(Label::new("Output Device"))
+                    .child(output_dropdown),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(Label::new("Output Device"))
-                    .child(output_dropdown),
+                    .child(Label::new("Input Device"))
+                    .child(input_dropdown),
             )
             .child(
                 h_flex().w_full().justify_center().pt_4().child(
