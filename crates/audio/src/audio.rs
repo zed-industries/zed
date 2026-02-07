@@ -372,8 +372,7 @@ impl VoipParts {
         let input_audio_device =
             AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                 .flatten()
-                .map(|id| DeviceId::from_str(&id).ok())
-                .flatten();
+                .and_then(|id| DeviceId::from_str(&id).ok());
 
         Ok(Self {
             legacy_audio_compatible,
