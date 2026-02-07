@@ -36,11 +36,11 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     TokenUsage, env_var,
 };
+use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
-use parking_lot::Mutex;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
@@ -590,12 +590,13 @@ impl BedrockModel {
 
     fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<BedrockClient> {
         let mut guard = self.client.lock();
-        
+
         if let Some(client) = guard.as_ref() {
             return Ok(client.clone());
         }
-        
-        let new_client = self.create_client(cx)
+
+        let new_client = self
+            .create_client(cx)
             .context("Failed to initialize Bedrock client")?;
         *guard = Some(new_client.clone());
         Ok(new_client)
@@ -640,15 +641,15 @@ impl BedrockModel {
 
         let task = Tokio::spawn(cx, async move {
             let mut stream = bedrock::stream_completion(runtime_client, request).await?;
-            
+
             // Check first item to detect credential errors early
             let first_item = stream.next().await;
-            
+
             match first_item {
                 Some(Err(ref err)) if BedrockModel::is_credential_error(err) => {
                     // Credential error detected - try to refresh credentials and retry once
                     this.invalidate_client();
-                    
+
                     // Attempt to create a fresh client with refreshed credentials
                     match this.get_or_init_client(cx) {
                         Ok(fresh_client) => {
@@ -666,19 +667,22 @@ impl BedrockModel {
                 }
                 Some(first_result) => {
                     // Prepend first item back to stream
-                    Ok(Box::pin(
-                        futures::stream::once(async move { first_result })
-                            .chain(stream)
-                    ) as BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>)
+                    Ok(
+                        Box::pin(futures::stream::once(async move { first_result }).chain(stream))
+                            as BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>,
+                    )
                 }
                 None => {
                     // Empty stream
-                    Ok(Box::pin(futures::stream::empty()) 
-                        as BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>)
+                    Ok(Box::pin(futures::stream::empty())
+                        as BoxStream<
+                            'static,
+                            Result<BedrockStreamingResponse, BedrockError>,
+                        >)
                 }
             }
         });
-        
+
         async move { task.await.map_err(|err| anyhow!(err))? }.boxed()
     }
 }
