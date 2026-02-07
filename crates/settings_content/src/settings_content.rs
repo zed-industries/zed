@@ -582,6 +582,26 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// How to group entries in the git panel.
+    ///
+    /// "status" groups by file type (Conflicts / Tracked / Untracked).
+    /// "staging" groups by staging state (Staged Changes / Changes),
+    /// similar to VS Code's Source Control panel.
+    ///
+    /// Default: status
+    pub group_by: Option<GitPanelGroupBy>,
+}
+
+/// How to group entries in the git panel.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelGroupBy {
+    /// Group by file type: Conflicts, Tracked, Untracked.
+    #[default]
+    Status,
+    /// Group by staging state: Staged Changes, Changes.
+    Staging,
 }
 
 #[derive(

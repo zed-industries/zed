@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{RegisterSetting, Settings, StatusStyle};
+use settings::{GitPanelGroupBy, RegisterSetting, Settings, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -25,6 +25,7 @@ pub struct GitPanelSettings {
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
     pub tree_view: bool,
+    pub group_by: GitPanelGroupBy,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -58,6 +59,7 @@ impl Settings for GitPanelSettings {
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
             tree_view: git_panel.tree_view.unwrap(),
+            group_by: git_panel.group_by.unwrap_or_default(),
         }
     }
 }
