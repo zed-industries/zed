@@ -3008,6 +3008,22 @@ fn run_multi_workspace_sidebar_visual_tests(
         });
     });
 
+    // Set last-worked-on thread titles on some recent projects for visual testing
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_test_recent_project_thread_title(
+                recent1_dir.to_string_lossy().to_string().into(),
+                "Fix flaky test in CI pipeline".into(),
+                cx,
+            );
+            sidebar.set_test_recent_project_thread_title(
+                recent2_dir.to_string_lossy().to_string().into(),
+                "Upgrade font rendering engine".into(),
+                cx,
+            );
+        });
+    });
+
     cx.run_until_parked();
 
     // Open the sidebar

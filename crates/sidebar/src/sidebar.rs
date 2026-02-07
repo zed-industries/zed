@@ -1,5 +1,6 @@
 use acp_thread::ThreadStatus;
 use agent_ui::{AgentPanel, AgentPanelEvent};
+use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -9,7 +10,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
-#[cfg(any(test, feature = "test-support"))]
+
 use std::collections::HashMap;
 
 use std::path::{Path, PathBuf};
@@ -35,6 +36,8 @@ struct AgentThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
 }
+
+const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
@@ -132,6 +135,7 @@ struct WorkspacePickerDelegate {
     /// All recent projects including what's filtered out of entries
     /// used to add unopened projects to entries on rebuild
     recent_projects: Vec<RecentProjectEntry>,
+    recent_project_thread_titles: HashMap<SharedString, SharedString>,
     matches: Vec<SidebarMatch>,
     selected_index: usize,
     query: String,
@@ -145,6 +149,7 @@ impl WorkspacePickerDelegate {
             active_workspace_index: 0,
             workspace_thread_count: 0,
             recent_projects: Vec::new(),
+            recent_project_thread_titles: HashMap::new(),
             matches: Vec::new(),
             selected_index: 0,
             query: String::new(),
@@ -163,6 +168,17 @@ impl WorkspacePickerDelegate {
     }
 
     fn set_recent_projects(&mut self, recent_projects: Vec<RecentProjectEntry>, cx: &App) {
+        self.recent_project_thread_titles.clear();
+        if let Some(map) = read_thread_title_map() {
+            for entry in &recent_projects {
+                let path_key = sorted_paths_key(&entry.paths);
+                if let Some(title) = map.get(&path_key) {
+                    self.recent_project_thread_titles
+                        .insert(entry.full_path.clone(), title.clone().into());
+                }
+            }
+        }
+
         self.recent_projects = recent_projects;
 
         let workspace_threads: Vec<WorkspaceThreadEntry> = self
@@ -517,6 +533,42 @@ impl PickerDelegate for WorkspacePickerDelegate {
             }
         }
 
+        fn render_project_row(
+            title: AnyElement,
+            thread_subtitle: Option<SharedString>,
+            status_icon: Option<AnyElement>,
+            cx: &App,
+        ) -> Div {
+            h_flex()
+                .items_start()
+                .gap(DynamicSpacing::Base06.rems(cx))
+                .child(
+                    div().pt(px(4.0)).child(
+                        Icon::new(IconName::Folder)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    ),
+                )
+                .child(v_flex().overflow_hidden().child(title).when_some(
+                    thread_subtitle,
+                    |this, subtitle| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .px_0p5()
+                                .when_some(status_icon, |this, icon| this.child(icon))
+                                .child(
+                                    Label::new(subtitle)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                ),
+                        )
+                    },
+                ))
+        }
+
         match entry {
             SidebarEntry::Separator(title) => Some(
                 div()
@@ -564,43 +616,19 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     None
                 };
 
+                let (thread_subtitle, status_icon) = match thread_info {
+                    Some(info) => (
+                        Some(info.title),
+                        Some(render_thread_status_icon(workspace_index, &info.status)),
+                    ),
+                    None => (None, None),
+                };
+
                 Some(
                     ListItem::new(("workspace-item", thread_entry.index))
                         .toggle_state(selected)
                         .when_some(close_button, |item, button| item.end_hover_slot(button))
-                        .child(
-                            h_flex()
-                                .items_start()
-                                .gap(DynamicSpacing::Base06.rems(&*_cx))
-                                .child(
-                                    div().pt(px(4.0)).child(
-                                        Icon::new(IconName::Folder)
-                                            .color(Color::Muted)
-                                            .size(IconSize::XSmall),
-                                    ),
-                                )
-                                .child(v_flex().overflow_hidden().child(title).when_some(
-                                    thread_info,
-                                    |this, info| {
-                                        this.child(
-                                            h_flex()
-                                                .gap_1()
-                                                .items_center()
-                                                .px_0p5()
-                                                .child(render_thread_status_icon(
-                                                    workspace_index,
-                                                    &info.status,
-                                                ))
-                                                .child(
-                                                    Label::new(info.title)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted)
-                                                        .truncate(),
-                                                ),
-                                        )
-                                    },
-                                )),
-                        )
+                        .child(render_project_row(title, thread_subtitle, status_icon, _cx))
                         .when(!full_path.is_empty(), |item| {
                             item.tooltip(move |_, cx| {
                                 Tooltip::with_meta(
@@ -620,16 +648,15 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 let title = render_title(name.clone(), positions);
                 let item_id: SharedString =
                     format!("recent-project-{:?}", project_entry.workspace_id).into();
+                let thread_title = self
+                    .recent_project_thread_titles
+                    .get(&project_entry.full_path)
+                    .cloned();
 
                 Some(
                     ListItem::new(item_id)
                         .toggle_state(selected)
-                        .start_slot(
-                            Icon::new(IconName::Folder)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        )
-                        .child(title)
+                        .child(render_project_row(title, thread_title, None, _cx))
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta(name.clone(), None, full_path.clone(), cx)
                         })
@@ -672,6 +699,8 @@ pub struct Sidebar {
     _thread_subscriptions: Vec<Subscription>,
     #[cfg(any(test, feature = "test-support"))]
     test_thread_infos: HashMap<usize, AgentThreadInfo>,
+    #[cfg(any(test, feature = "test-support"))]
+    test_recent_project_thread_titles: HashMap<SharedString, SharedString>,
     _fetch_recent_projects: Task<()>,
 }
 
@@ -728,6 +757,8 @@ impl Sidebar {
             _thread_subscriptions: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
             test_thread_infos: HashMap::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            test_recent_project_thread_titles: HashMap::new(),
             _fetch_recent_projects: fetch_recent_projects,
         };
         this.queue_refresh(this.multi_workspace.clone(), window, cx);
@@ -810,6 +841,23 @@ impl Sidebar {
             .insert(index, AgentThreadInfo { title, status });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_test_recent_project_thread_title(
+        &mut self,
+        full_path: SharedString,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        self.test_recent_project_thread_titles
+            .insert(full_path.clone(), title.clone());
+        self.picker.update(cx, |picker, _cx| {
+            picker
+                .delegate
+                .recent_project_thread_titles
+                .insert(full_path, title);
+        });
+    }
+
     fn subscribe_to_agent_panels(
         &mut self,
         window: &mut Window,
@@ -851,6 +899,48 @@ impl Sidebar {
             .collect()
     }
 
+    fn persist_thread_titles(
+        &self,
+        entries: &[WorkspaceThreadEntry],
+        multi_workspace: &Entity<MultiWorkspace>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut map = read_thread_title_map().unwrap_or_default();
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+        let mut changed = false;
+
+        for (workspace, entry) in workspaces.iter().zip(entries.iter()) {
+            if let Some(ref info) = entry.thread_info {
+                let paths: Vec<_> = workspace
+                    .read(cx)
+                    .worktrees(cx)
+                    .map(|wt| wt.read(cx).abs_path())
+                    .collect();
+                if paths.is_empty() {
+                    continue;
+                }
+                let path_key = sorted_paths_key(&paths);
+                let title = info.title.to_string();
+                if map.get(&path_key) != Some(&title) {
+                    map.insert(path_key, title);
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            if let Some(json) = serde_json::to_string(&map).log_err() {
+                cx.background_spawn(async move {
+                    KEY_VALUE_STORE
+                        .write_kvp(LAST_THREAD_TITLES_KEY.into(), json)
+                        .await
+                        .log_err();
+                })
+                .detach();
+            }
+        }
+    }
+
     fn queue_refresh(
         &mut self,
         multi_workspace: Entity<MultiWorkspace>,
@@ -864,6 +954,9 @@ impl Sidebar {
             let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
                 this.build_workspace_thread_entries(multi_workspace, cx)
             });
+
+            this.persist_thread_titles(&entries, &multi_workspace, cx);
+
             this.picker.update(cx, |picker, cx| {
                 picker.delegate.set_entries(entries, active_index, cx);
                 let query = picker.query(cx);
@@ -888,6 +981,23 @@ impl Focusable for Sidebar {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }
+}
+
+fn sorted_paths_key<P: AsRef<Path>>(paths: &[P]) -> String {
+    let mut sorted: Vec<String> = paths
+        .iter()
+        .map(|p| p.as_ref().to_string_lossy().to_string())
+        .collect();
+    sorted.sort();
+    sorted.join("\n")
+}
+
+fn read_thread_title_map() -> Option<HashMap<String, String>> {
+    let json = KEY_VALUE_STORE
+        .read_kvp(LAST_THREAD_TITLES_KEY)
+        .log_err()
+        .flatten()?;
+    serde_json::from_str(&json).log_err()
 }
 
 impl Render for Sidebar {
