@@ -2736,13 +2736,24 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_default_diff_view_stacked(cx: &mut TestAppContext) {
+    async fn test_default_diff_view_is_stacked_when_no_setting_specified(cx: &mut TestAppContext) {
         init_test(cx);
         assert_default_diff_view(false, cx).await;
     }
 
     #[gpui::test]
-    async fn test_default_diff_view_side_by_side(cx: &mut TestAppContext) {
+    async fn test_default_diff_view_is_stacked_when_set_to_stacked(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = ProjectSettings::get_global(cx).clone();
+            settings.git.default_diff_view = settings::DefaultDiffView::Stacked;
+            ProjectSettings::override_global(settings, cx);
+        });
+        assert_default_diff_view(false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_default_diff_view_is_split_when_set_to_side_by_side(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             let mut settings = ProjectSettings::get_global(cx).clone();
