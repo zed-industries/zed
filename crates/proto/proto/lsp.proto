@@ -1015,4 +1015,5 @@ message GetFoldingRanges {
 message GetFoldingRangesResponse {
   repeated AnchorRange ranges = 1;
   repeated VectorClockEntry version = 2;
+  repeated string collapsed_texts = 3;
 }

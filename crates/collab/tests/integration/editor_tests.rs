@@ -23,7 +23,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
-use lsp::LSP_REQUEST_TIMEOUT;
+use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
 use project::{
@@ -1255,7 +1255,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_a.run_until_parked();
     cx_b.run_until_parked();
 
-    let long_request_time = LSP_REQUEST_TIMEOUT / 2;
+    let long_request_time = DEFAULT_LSP_REQUEST_TIMEOUT / 2;
     let (request_started_tx, mut request_started_rx) = mpsc::unbounded();
     let requests_started = Arc::new(AtomicUsize::new(0));
     let requests_completed = Arc::new(AtomicUsize::new(0));
@@ -1362,8 +1362,8 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         requests_completed.load(atomic::Ordering::Acquire),
-        3,
-        "After enough time, all 3 LSP requests should have been served by the language server"
+        1,
+        "After enough time, a single, deduplicated, LSP request should have been served by the language server"
     );
     let resulting_lens_actions = editor_b
         .update(cx_b, |editor, cx| {
@@ -1382,7 +1382,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         resulting_lens_actions.first().unwrap().lsp_action.title(),
-        "LSP Command 3",
+        "LSP Command 1",
         "Only the final code lens action should be in the data"
     )
 }
@@ -2164,7 +2164,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2375,7 +2375,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -3414,7 +3414,7 @@ async fn test_lsp_pull_diagnostics(
     }
 
     fake_language_server
-        .request::<lsp::request::WorkspaceDiagnosticRefresh>(())
+        .request::<lsp::request::WorkspaceDiagnosticRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("workspace diagnostics refresh request failed");
@@ -5185,7 +5185,7 @@ async fn test_semantic_token_refresh_is_forwarded(
 
     other_tokens.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::SemanticTokensRefresh>(())
+        .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("semantic tokens refresh request failed");

@@ -2067,13 +2067,7 @@ impl Editor {
             constrain_width: false,
             render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
-                div()
-                    .id(fold_id)
-                    .bg(cx.theme().colors().ghost_element_background)
-                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                    .rounded_xs()
-                    .size_full()
+                FoldPlaceholder::fold_element(fold_id, cx)
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -7583,6 +7577,7 @@ impl Editor {
                 constrain_width: false,
                 merge_adjacent: false,
                 type_tag: Some(type_id),
+                collapsed_text: None,
             };
             let creases = new_newlines
                 .into_iter()
