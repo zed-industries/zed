@@ -20,6 +20,7 @@ time.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 codestral.workspace = true
+open_ai_edit_prediction.workspace = true
 command_palette_hooks.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true

@@ -84,6 +84,7 @@ pub enum EditPredictionProvider {
     Supermaven,
     Zed,
     Codestral,
+    OpenAiCompatible,
     Ollama,
     Sweep,
     Mercury,
@@ -105,6 +106,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Supermaven,
             Zed,
             Codestral,
+            OpenAiCompatible,
             Ollama,
             Sweep,
             Mercury,
@@ -117,6 +119,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
+            Content::OpenAiCompatible => EditPredictionProvider::OpenAiCompatible,
             Content::Ollama => EditPredictionProvider::Ollama,
             Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
@@ -145,6 +148,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::OpenAiCompatible
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury
@@ -158,6 +162,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Supermaven => Some("Supermaven"),
             EditPredictionProvider::Codestral => Some("Codestral"),
+            EditPredictionProvider::OpenAiCompatible => Some("OpenAI Compatible"),
             EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
             EditPredictionProvider::Experimental(
@@ -186,6 +191,8 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
+    /// Settings specific to a generic OpenAI-compatible endpoint.
+    pub open_ai_compatible: Option<OpenAiCompatibleEditPredictionSettingsContent>,
     /// Settings specific to Sweep.
     pub sweep: Option<SweepSettingsContent>,
     /// Settings specific to Ollama.
@@ -235,6 +242,41 @@ pub struct CodestralSettingsContent {
     ///
     /// Default: "https://codestral.mistral.ai"
     pub api_url: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct OpenAiCompatibleEditPredictionSettingsContent {
+    /// API URL for the OpenAI-compatible endpoint (e.g. "http://localhost:8000/v1").
+    ///
+    /// Default: none (must be configured)
+    pub api_url: Option<String>,
+    /// Model name to use for completions.
+    ///
+    /// Default: none (must be configured)
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 256
+    pub max_tokens: Option<u32>,
+    /// Temperature for sampling.
+    ///
+    /// Default: 0.2
+    pub temperature: Option<f32>,
+    /// Controls the length of completions: "short" (1-3 lines, default),
+    /// "medium" (up to ~10 lines), or "long" (no length restriction).
+    ///
+    /// Default: "short"
+    pub completion_length: Option<CompletionLength>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionLength {
+    #[default]
+    Short,
+    Medium,
+    Long,
 }
 
 #[with_fallible_options]

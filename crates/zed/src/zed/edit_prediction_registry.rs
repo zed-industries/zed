@@ -7,7 +7,9 @@ use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-
+use open_ai_edit_prediction::{
+    OpenAiCompatibleEditPredictionDelegate, load_open_ai_compatible_ep_api_key,
+};
 use settings::{EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
@@ -113,6 +115,9 @@ fn assign_edit_prediction_providers(
     if provider == EditPredictionProvider::Codestral {
         load_codestral_api_key(cx).detach();
     }
+    if provider == EditPredictionProvider::OpenAiCompatible {
+        load_open_ai_compatible_ep_api_key(cx).detach();
+    }
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
@@ -186,6 +191,12 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Codestral => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
+        }
+        EditPredictionProvider::OpenAiCompatible => {
+            let http_client = client.http_client();
+            let provider =
+                cx.new(|_| OpenAiCompatibleEditPredictionDelegate::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_)

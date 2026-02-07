@@ -5478,6 +5478,7 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
+ "open_ai_edit_prediction",
  "paths",
  "pretty_assertions",
  "project",
@@ -11204,6 +11205,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "open_ai_edit_prediction"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "edit_prediction",
+ "edit_prediction_types",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "icons",
+ "language",
+ "language_model",
+ "log",
+ "serde",
+ "serde_json",
+ "settings_content",
+ "text",
+]
+
+[[package]]
 name = "open_path_prompt"
 version = "0.1.0"
 dependencies = [
@@ -15232,6 +15253,7 @@ dependencies = [
  "log",
  "menu",
  "node_runtime",
+ "open_ai_edit_prediction",
  "paths",
  "picker",
  "platform_title_bar",
@@ -21070,6 +21092,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "onboarding",
+ "open_ai_edit_prediction",
  "outline",
  "outline_panel",
  "parking_lot",

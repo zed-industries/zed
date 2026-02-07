@@ -390,6 +390,8 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
+    /// Settings specific to a generic OpenAI-compatible endpoint.
+    pub open_ai_compatible: OpenAiCompatibleEditPredictionSettings,
     /// Settings specific to Sweep.
     pub sweep: SweepSettings,
     /// Settings specific to Ollama.
@@ -450,6 +452,20 @@ pub struct SweepSettings {
     /// diagnostics, file paths, repository names, and generated predictions
     /// to improve the service.
     pub privacy_mode: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OpenAiCompatibleEditPredictionSettings {
+    /// API URL for the OpenAI-compatible endpoint.
+    pub api_url: Option<String>,
+    /// Model name to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
+    /// Temperature for sampling.
+    pub temperature: Option<f32>,
+    /// Controls the length of completions.
+    pub completion_length: settings::CompletionLength,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -689,6 +705,17 @@ impl settings::Settings for AllLanguageSettings {
             api_url: codestral.api_url,
         };
 
+        let open_ai_compatible = edit_predictions.open_ai_compatible.unwrap();
+        let open_ai_compatible_settings = OpenAiCompatibleEditPredictionSettings {
+            api_url: open_ai_compatible.api_url,
+            model: open_ai_compatible.model,
+            max_tokens: open_ai_compatible.max_tokens,
+            temperature: open_ai_compatible.temperature,
+            completion_length: open_ai_compatible
+                .completion_length
+                .unwrap_or_default(),
+        };
+
         let sweep = edit_predictions.sweep.unwrap();
         let sweep_settings = SweepSettings {
             privacy_mode: sweep.privacy_mode.unwrap(),
@@ -737,6 +764,7 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
+                open_ai_compatible: open_ai_compatible_settings,
                 sweep: sweep_settings,
                 ollama: ollama_settings,
                 enabled_in_text_threads,

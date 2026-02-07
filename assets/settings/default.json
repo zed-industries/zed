@@ -1504,6 +1504,15 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
+    "open_ai_compatible": {
+      "api_url": null,
+      "model": null,
+      "max_tokens": 256,
+      "temperature": 0.2,
+      // Controls the length of completions: "short" (1-3 lines),
+      // "medium" (up to ~10 lines), or "long" (no length restriction).
+      "completion_length": "short"
+    },
     "sweep": {
       // When enabled, Sweep will not store edit prediction inputs or outputs.
       // When disabled, Sweep may collect data including buffer contents,

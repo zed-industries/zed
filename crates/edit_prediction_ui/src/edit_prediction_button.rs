@@ -403,6 +403,59 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::OpenAiCompatible => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+                let has_api_key = open_ai_edit_prediction::open_ai_compatible_ep_api_key(cx)
+                    .is_some();
+
+                div().child(
+                    PopoverMenu::new("open-ai-compatible")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::OpenAiCompatible,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("open-ai-compatible-icon", IconName::AiOpenAiCompat)
+                                .shape(IconButtonShape::Square)
+                                .when(!has_api_key, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                })
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            {
+                                let tooltip_meta = if has_api_key {
+                                    "Powered by OpenAI Compatible"
+                                } else {
+                                    "Missing API key for OpenAI Compatible"
+                                };
+                                move |_window, cx| {
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        Some(&ToggleMenu),
+                                        tooltip_meta,
+                                        cx,
+                                    )
+                                }
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             provider @ (EditPredictionProvider::Experimental(_)
             | EditPredictionProvider::Zed
             | EditPredictionProvider::Sweep
@@ -1494,6 +1547,10 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     if codestral::codestral_api_key(cx).is_some() {
         providers.push(EditPredictionProvider::Codestral);
+    }
+
+    if open_ai_edit_prediction::open_ai_compatible_ep_api_key(cx).is_some() {
+        providers.push(EditPredictionProvider::OpenAiCompatible);
     }
 
     if edit_prediction::ollama::is_available(cx) {

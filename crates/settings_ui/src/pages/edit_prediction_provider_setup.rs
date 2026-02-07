@@ -7,7 +7,9 @@ use edit_prediction::{
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
-
+use open_ai_edit_prediction::{
+    open_ai_compatible_ep_api_key_state, open_ai_compatible_ep_api_url,
+};
 use settings::Settings as _;
 use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
 use workspace::AppState;
@@ -76,6 +78,28 @@ pub(crate) fn render_edit_prediction_setup_page(
                     settings_window
                         .render_sub_page_items_section(
                             codestral_settings().iter().enumerate(),
+                            true,
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ),
+        Some(
+            render_api_key_provider(
+                IconName::AiOpenAiCompat,
+                "OpenAI Compatible",
+                "https://platform.openai.com/docs/api-reference/completions".into(),
+                open_ai_compatible_ep_api_key_state(cx),
+                |cx| open_ai_compatible_ep_api_url(cx),
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            open_ai_compatible_settings().iter().enumerate(),
                             true,
                             window,
                             cx,
@@ -558,6 +582,104 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                 placeholder: Some("codestral-latest"),
                 ..Default::default()
             })),
+            files: USER,
+        }),
+    ])
+}
+
+fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The base URL of the OpenAI-compatible endpoint (e.g. http://localhost:8000).",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some("http://localhost:8000/v1"),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The model name to use for completions.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible.model"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible
+                        .as_ref()?
+                        .max_tokens
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible
+                        .get_or_insert_default()
+                        .max_tokens = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible.max_tokens"),
+            }),
+            metadata: None,
             files: USER,
         }),
     ])
