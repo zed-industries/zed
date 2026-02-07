@@ -2,11 +2,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
 use futures::future::Shared;
 use gpui::{
-    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
-    StatefulInteractiveElement, Task, TextStyleRefinement, image_cache, prelude::*,
+    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, KeyContext,
+    RetainAllImageCache, StatefulInteractiveElement, Task, TextStyleRefinement, image_cache,
+    prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -357,9 +358,10 @@ impl MarkdownCell {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
-                    min_lines: 1,
-                    max_lines: Some(1024),
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::SizeByContent,
                 },
                 multi_buffer,
                 None,
@@ -378,6 +380,7 @@ impl MarkdownCell {
 
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
+            editor.set_use_modal_editing(true);
             editor
         });
 
@@ -625,9 +628,10 @@ impl CodeCell {
 
         let editor_view = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
-                    min_lines: 1,
-                    max_lines: Some(1024),
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::SizeByContent,
                 },
                 multi_buffer,
                 None,
@@ -646,6 +650,7 @@ impl CodeCell {
 
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
+            editor.set_use_modal_editing(true);
             editor
         });
 
@@ -700,9 +705,11 @@ impl CodeCell {
 
         let editor_view = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
-                    min_lines: 1,
-                    max_lines: Some(1024),
+                
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::SizeByContent,
                 },
                 multi_buffer,
                 None,
@@ -722,6 +729,7 @@ impl CodeCell {
             editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
+            editor.set_use_modal_editing(true);
             editor
         });
 
