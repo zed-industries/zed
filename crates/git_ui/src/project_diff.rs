@@ -2738,54 +2738,21 @@ mod tests {
     #[gpui::test]
     async fn test_default_diff_view_stacked(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "foo.txt": "dominate\n",
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-
-        fs.set_head_and_index_for_repo(
-            Path::new(path!("/project/.git")),
-            &[("foo.txt", "intimidate\n".to_string())],
-        );
-
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        cx.run_until_parked();
-
-        cx.focus(&workspace);
-        cx.update(|window, cx| {
-            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
-        });
-        cx.run_until_parked();
-
-        let diff_item = workspace.update(cx, |workspace, cx| {
-            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
-        });
-        diff_item.read_with(cx, |diff, cx| {
-            assert!(
-                !diff.editor.read(cx).is_split(),
-                "Expected stacked (unsplit) mode by default"
-            );
-        });
+        assert_default_diff_view(false, cx).await;
     }
 
     #[gpui::test]
     async fn test_default_diff_view_side_by_side(cx: &mut TestAppContext) {
         init_test(cx);
-
         cx.update(|cx| {
             let mut settings = ProjectSettings::get_global(cx).clone();
             settings.git.default_diff_view = settings::DefaultDiffView::SideBySide;
             ProjectSettings::override_global(settings, cx);
         });
+        assert_default_diff_view(true, cx).await;
+    }
 
+    async fn assert_default_diff_view(expect_split: bool, cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/project"),
@@ -2816,9 +2783,10 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         diff_item.read_with(cx, |diff, cx| {
-            assert!(
+            assert_eq!(
                 diff.editor.read(cx).is_split(),
-                "Expected side-by-side (split) mode from setting"
+                expect_split,
+                "Expected is_split() to be {expect_split}"
             );
         });
     }
