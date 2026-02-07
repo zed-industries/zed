@@ -633,14 +633,6 @@ async fn get_models(
     Ok(models)
 }
 
-/// Standard headers for Copilot API requests: Authorization, Content-Type, Editor-Version,
-/// and optionally X-Initiator. GitHub identifies Zed traffic by the user-agent header, so
-/// no integration ID is needed.
-///
-/// The X-Initiator header controls premium request billing: "user" marks the initial
-/// user-initiated prompt (which counts as a premium request), while "agent" marks
-/// follow-up turns in a multi-turn agentic process (which don't). Pass `None` for
-/// endpoints like model listing that don't involve completions.
 pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
     oauth_token: &str,
