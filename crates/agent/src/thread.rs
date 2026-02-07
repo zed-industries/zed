@@ -1093,10 +1093,6 @@ impl Thread {
         let profile_id = db_thread
             .profile
             .unwrap_or_else(|| settings.default_profile.clone());
-        let enable_thinking = settings
-            .default_model
-            .as_ref()
-            .is_some_and(|model| model.enable_thinking);
         let thinking_effort = settings
             .default_model
             .as_ref()
@@ -1129,6 +1125,12 @@ impl Thread {
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        // TODO: We should serialize the user's configured thinking parameter on `DbThread`
+        // rather than deriving it from the model's capability. A user may have explicitly
+        // toggled thinking off for a model that supports it, and we'd lose that preference here.
+        let enable_thinking = model
+            .as_deref()
+            .is_some_and(|model| model.supports_thinking());
 
         Self {
             id,
@@ -1156,7 +1158,6 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            // TODO: Should we persist this on the `DbThread`?
             thinking_enabled: enable_thinking,
             thinking_effort,
             project,
@@ -1183,7 +1184,7 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: self.model.as_ref().map(|model| DbLanguageModel {
                 provider: model.provider_id().to_string(),
-                model: model.name().0.to_string(),
+                model: model.id().0.to_string(),
             }),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
